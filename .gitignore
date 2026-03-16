@@ -5,3 +5,4 @@
 *.log
 /.idea
 /.vscode
+/memory-postgres-connection.txt
