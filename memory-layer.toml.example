@@ -1,0 +1,10 @@
+[service]
+bind_addr = "127.0.0.1:4040"
+api_token = "dev-memory-token"
+request_timeout = "30s"
+
+[database]
+url = "postgresql://memory:<password>@localhost:5432/memory"
+
+[features]
+llm_curation = false

@@ -1,0 +1,44 @@
+[workspace]
+members = [
+  "crates/mem-api",
+  "crates/mem-cli",
+  "crates/mem-curate",
+  "crates/mem-ingest",
+  "crates/mem-search",
+  "crates/mem-service",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Codex"]
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+axum = { version = "0.8.6", features = ["macros"] }
+chrono = { version = "0.4.42", features = ["serde"] }
+clap = { version = "4.5.50", features = ["derive", "env"] }
+config = { version = "0.15.18", default-features = false, features = ["toml"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio-rustls", "uuid", "chrono", "json"] }
+thiserror = "2.0.17"
+tokio = { version = "1.48.0", features = ["full"] }
+tower-http = { version = "0.6.6", features = ["trace"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "json"] }
+reqwest = { version = "0.12.24", default-features = false, features = ["http2", "json", "rustls-tls"] }
+uuid = { version = "1.18.1", features = ["serde", "v4"] }
+sha2 = "0.10.9"
+humantime-serde = "1.1.1"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"
+
+[profile.release]
+lto = true
+codegen-units = 1

@@ -1,0 +1,5 @@
+# Minimal agent hint file for the memory-layer skill.
+# Extend this if you want per-agent metadata later.
+name: memory-layer
+version: 0.1.0
+entrypoint: SKILL.md

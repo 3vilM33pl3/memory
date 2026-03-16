@@ -1,0 +1,13 @@
+[package]
+name = "mem-ingest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+chrono.workspace = true
+mem-api = { path = "../mem-api" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

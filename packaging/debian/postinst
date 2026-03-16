@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+id -u memory-layer >/dev/null 2>&1 || useradd --system --home /var/lib/memory-layer --shell /usr/sbin/nologin memory-layer
+install -d -o memory-layer -g memory-layer /etc/memory-layer /var/lib/memory-layer /var/log/memory-layer
+systemctl daemon-reload || true

@@ -1,0 +1,7 @@
+/target
+/.sqlx
+/.env
+*.db
+*.log
+/.idea
+/.vscode

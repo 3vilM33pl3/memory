@@ -1,0 +1,8 @@
+Package: memory-layer
+Version: 0.1.0
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Codex <codex@example.invalid>
+Depends: postgresql
+Description: Local-first project memory backend and CLI
