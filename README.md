@@ -1,9 +1,25 @@
 # Memory Layer
 
-Local-first project memory for coding agents. This repo ships:
+Memory Layer is a local-first memory system for coding agents and the humans working with them. Its goal is to make project-specific knowledge durable and queryable instead of leaving it scattered across past chats, terminal scrollback, commit history, and ad hoc notes.
+
+The system stores two kinds of information:
+- raw task captures, which preserve what happened during a piece of work
+- curated canonical memory, which turns those captures into concise, searchable facts with provenance
+
+That split matters because it keeps the system auditable. You can keep the original task context, summaries, tests, and changed files, then derive cleaner long-lived memory entries from that material without losing where the information came from.
+
+The repository is built around three working parts:
 - `mem-service`: Axum backend over PostgreSQL
 - `mem-cli`: local CLI for query/capture/curate flows
 - `.agents/skills/memory-layer/`: repo-local Codex skill and wrapper scripts
+
+In practice, the intended workflow is:
+1. query memory before answering project-specific questions
+2. capture the result of meaningful work as structured task data
+3. curate those captures into durable project memory
+4. query that memory later by project
+
+The current implementation is designed for local development and experimentation. It runs against PostgreSQL, exposes a localhost HTTP API through `mem-service`, and lets agents or users interact with that API through `mem-cli` or the repo-local skill scripts.
 
 ## Prerequisites
 
