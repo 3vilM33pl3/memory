@@ -3,6 +3,7 @@ mod tui;
 use std::{
     env, fs,
     path::{Path, PathBuf},
+    process::Command as ProcessCommand,
 };
 
 use anyhow::{Context, Result};
@@ -10,7 +11,7 @@ use clap::{Args, Parser, Subcommand};
 use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CurateRequest, CurateResponse,
     MemoryEntryResponse, ProjectMemoriesResponse, ProjectOverviewResponse, QueryFilters,
-    QueryRequest, QueryResponse, ReindexRequest, ReindexResponse,
+    QueryRequest, QueryResponse, ReindexRequest, ReindexResponse, TestResult,
 };
 use reqwest::{Client, header::HeaderMap};
 
@@ -27,6 +28,7 @@ struct Cli {
 enum Command {
     Query(QueryArgs),
     CaptureTask(CaptureTaskArgs),
+    Remember(RememberArgs),
     Curate(CurateArgs),
     Reindex(ProjectArgs),
     Health,
@@ -57,6 +59,30 @@ struct QueryArgs {
 struct CaptureTaskArgs {
     #[arg(long)]
     file: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct RememberArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    title: String,
+    #[arg(long)]
+    prompt: String,
+    #[arg(long)]
+    summary: String,
+    #[arg(long = "note")]
+    notes: Vec<String>,
+    #[arg(long = "file-changed")]
+    files_changed: Vec<String>,
+    #[arg(long = "test-passed")]
+    tests_passed: Vec<String>,
+    #[arg(long = "test-failed")]
+    tests_failed: Vec<String>,
+    #[arg(long)]
+    command_output_file: Option<PathBuf>,
+    #[arg(long, default_value_t = true)]
+    auto_files: bool,
 }
 
 #[derive(Debug, Args)]
@@ -139,6 +165,21 @@ async fn main() -> Result<()> {
                 .send()
                 .await?;
             print_json_response(response).await?;
+        }
+        Command::Remember(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let project = resolve_project_slug(args.project.clone(), &cwd)?;
+            let request = build_remember_request(args, &project)?;
+            let api = ApiClient::new(client, config);
+            let capture = api.capture_task(&request).await?;
+            let curate = api.curate(&project).await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "capture": capture,
+                    "curate": curate
+                }))?
+            );
         }
         Command::Curate(args) => {
             let response = client
@@ -249,6 +290,21 @@ impl ApiClient {
                     &self.config,
                     &format!("/v1/memory/{memory_id}"),
                 ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn capture_task(
+        &self,
+        request: &CaptureTaskRequest,
+    ) -> Result<mem_api::CaptureTaskResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/capture/task"))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .json(request)
                 .send()
                 .await?,
         )
@@ -371,6 +427,92 @@ fn resolve_project_slug(project: Option<String>, cwd: &Path) -> Result<String> {
         anyhow::bail!("could not determine project slug from current directory");
     };
     Ok(name.to_string())
+}
+
+fn build_remember_request(args: RememberArgs, project: &str) -> Result<CaptureTaskRequest> {
+    let mut files_changed = args.files_changed;
+    if args.auto_files {
+        for file in detect_changed_files()? {
+            if !files_changed.contains(&file) {
+                files_changed.push(file);
+            }
+        }
+    }
+
+    let command_output = match args.command_output_file {
+        Some(path) => Some(fs::read_to_string(path).context("read command output file")?),
+        None => None,
+    };
+
+    let tests = args
+        .tests_passed
+        .into_iter()
+        .map(|command| TestResult {
+            command,
+            status: "passed".to_string(),
+            output: None,
+        })
+        .chain(args.tests_failed.into_iter().map(|command| TestResult {
+            command,
+            status: "failed".to_string(),
+            output: None,
+        }))
+        .collect();
+
+    Ok(CaptureTaskRequest {
+        project: project.to_string(),
+        task_title: args.title,
+        user_prompt: args.prompt,
+        agent_summary: args.summary,
+        files_changed,
+        git_diff_summary: None,
+        tests,
+        notes: args.notes,
+        command_output,
+        idempotency_key: None,
+    })
+}
+
+fn detect_changed_files() -> Result<Vec<String>> {
+    let inside_repo = ProcessCommand::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output();
+
+    let Ok(output) = inside_repo else {
+        return Ok(Vec::new());
+    };
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let output = ProcessCommand::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .context("run git status --porcelain")?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let stdout = String::from_utf8(output.stdout).context("decode git status output")?;
+    let mut files = Vec::new();
+    for line in stdout.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let path = line[3..].trim();
+        if path.is_empty() {
+            continue;
+        }
+        let normalized = if let Some((_, new_path)) = path.split_once(" -> ") {
+            new_path.to_string()
+        } else {
+            path.to_string()
+        };
+        if !files.contains(&normalized) {
+            files.push(normalized);
+        }
+    }
+    Ok(files)
 }
 
 pub(crate) trait SourceKindString {

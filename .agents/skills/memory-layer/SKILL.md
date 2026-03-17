@@ -23,33 +23,40 @@ Query memory:
 ./.agents/skills/memory-layer/scripts/query-memory.sh "<question>"
 ```
 
-Capture task context:
+Remember task context automatically:
 ```bash
-./.agents/skills/memory-layer/scripts/capture-task.sh <payload.json>
-```
-
-Curate pending captures:
-```bash
-./.agents/skills/memory-layer/scripts/curate-memory.sh
+./.agents/skills/memory-layer/scripts/remember-task.sh \
+  --title "<task title>" \
+  --prompt "<user prompt>" \
+  --summary "<what changed>" \
+  --note "<durable fact>"
 ```
 
 ## Workflow
 
 1. Query memory before answering project-specific questions.
-2. Capture meaningful task outcomes once work is complete.
-3. Curate after capture so durable memory becomes searchable.
+2. Use the automatic remember workflow once work is complete.
+3. The remember workflow captures and curates in one step.
 4. Prefer insufficient evidence over unsupported conclusions.
 5. Never invent provenance.
 
-## Capture guidance
+## Remember guidance
 
-Payloads should include:
-- `project`
-- `task_title`
-- `user_prompt`
-- `agent_summary`
-- `files_changed`
-- `tests`
-- `notes`
+The automatic remember workflow should be used after meaningful work. It:
+- defaults the project slug from the current directory
+- auto-detects changed files from `git status` when possible
+- captures task context
+- immediately curates it into canonical memory
 
-Only capture verified outcomes and durable lessons.
+Provide:
+- `--title`
+- `--prompt`
+- `--summary`
+- one or more `--note` values for durable facts
+
+Optionally provide:
+- `--test-passed "<command>"`
+- `--test-failed "<command>"`
+- `--command-output-file <path>`
+
+Only store verified outcomes and durable lessons.
