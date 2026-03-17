@@ -30,14 +30,15 @@ Installed:
   $BIN_DIR/memory-watch
 
 Next steps:
-1. In your repo, run:
+1. Edit the shared config:
+   $CONFIG_DIR/memory-layer.toml
+2. In each repo, run:
    $BIN_DIR/mem-cli init
-2. Edit .mem/config.toml
-3. Start the backend:
-   $BIN_DIR/mem-service .mem/config.toml
+3. Start the backend from the repo root:
+   $BIN_DIR/mem-service
 4. Optional: start the automation watcher:
-   $BIN_DIR/memory-watch --config .mem/config.toml run --project <slug>
+   $BIN_DIR/memory-watch run --project <slug>
 5. Launch the TUI:
-   $BIN_DIR/mem-cli --config .mem/config.toml tui
+   $BIN_DIR/mem-cli tui
 
 EOF

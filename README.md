@@ -29,7 +29,26 @@ The current implementation is designed for local development and experimentation
 
 ## Setup
 
-1. Initialize the repository:
+1. Create or edit the shared global config.
+
+Local install path:
+
+```bash
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/memory-layer"
+cp memory-layer.toml.example "${XDG_CONFIG_HOME:-$HOME/.config}/memory-layer/memory-layer.toml"
+```
+
+Packaged/system path:
+
+```bash
+/etc/memory-layer/memory-layer.toml
+```
+
+Set shared values there:
+- `database.url`
+- `service.api_token`
+
+2. Initialize the repository:
 
 ```bash
 cargo run --bin mem-cli -- init
@@ -40,13 +59,11 @@ This creates a local `.mem/` directory with:
 - `.mem/project.toml`
 - `.mem/runtime/`
 
-The generated config contains placeholders and keeps secrets local to the repo. `.mem/` is ignored by git.
+The generated repo-local config only contains project-specific overrides. `.mem/` is ignored by git.
 
-2. Edit `.mem/config.toml` and set:
-- `database.url`
-- `service.api_token`
+3. Optional: edit `.mem/config.toml` for repo-specific overrides such as automation paths or repo root.
 
-Example:
+Global config example:
 
 ```toml
 [service]
@@ -61,24 +78,24 @@ url = "postgresql://memory:YOUR_PASSWORD@localhost:5432/memory"
 llm_curation = false
 ```
 
-3. Start the backend:
+4. Start the backend from the repo root:
 
 ```bash
-cargo run --bin mem-service -- .mem/config.toml
+cargo run --bin mem-service
 ```
 
 When `mem-service` is started with an explicit config file path, it watches that file and restarts itself in place after the file changes. That lets you update values like `service.api_token`, automation settings, or the bind address without manually killing and relaunching the backend.
 
-4. Optional: start the hidden automation watcher:
+5. Optional: start the hidden automation watcher:
 
 ```bash
-cargo run --bin memory-watch -- --config .mem/config.toml run --project memory
+cargo run --bin memory-watch -- run --project memory
 ```
 
-5. In another shell, verify the backend is up:
+6. In another shell, verify the backend is up:
 
 ```bash
-cargo run --bin mem-cli -- --config .mem/config.toml health
+cargo run --bin mem-cli -- health
 ```
 
 ## Install
@@ -96,9 +113,9 @@ Then run:
 ```bash
 # from the target repository root
 ~/.local/bin/mem-cli init
-~/.local/bin/mem-service .mem/config.toml
-~/.local/bin/memory-watch --config .mem/config.toml run --project memory
-~/.local/bin/mem-cli --config .mem/config.toml tui
+~/.local/bin/mem-service
+~/.local/bin/memory-watch run --project memory
+~/.local/bin/mem-cli tui
 ```
 
 ### Debian package build
@@ -116,7 +133,7 @@ The package will be written under `target/debian/`.
 Query memory:
 
 ```bash
-cargo run --bin mem-cli -- --config .mem/config.toml query \
+cargo run --bin mem-cli -- query \
   --project memory \
   --question "How is project memory stored?"
 ```
@@ -124,13 +141,13 @@ cargo run --bin mem-cli -- --config .mem/config.toml query \
 Capture a completed task:
 
 ```bash
-cargo run --bin mem-cli -- --config .mem/config.toml capture-task --file payload.json
+cargo run --bin mem-cli -- capture-task --file payload.json
 ```
 
 Automatically capture and curate a completed task:
 
 ```bash
-cargo run --bin mem-cli -- --config .mem/config.toml remember \
+cargo run --bin mem-cli -- remember \
   --project memory \
   --note "The remember command captures and curates memory in one step." \
   --test-passed "cargo check"
@@ -139,19 +156,19 @@ cargo run --bin mem-cli -- --config .mem/config.toml remember \
 Curate raw captures into canonical memory:
 
 ```bash
-cargo run --bin mem-cli -- --config .mem/config.toml curate --project memory
+cargo run --bin mem-cli -- curate --project memory
 ```
 
 Reindex a project:
 
 ```bash
-cargo run --bin mem-cli -- --config .mem/config.toml reindex --project memory
+cargo run --bin mem-cli -- reindex --project memory
 ```
 
 Show service stats:
 
 ```bash
-cargo run --bin mem-cli -- --config .mem/config.toml stats
+cargo run --bin mem-cli -- stats
 ```
 
 Run setup diagnostics:
@@ -164,14 +181,14 @@ cargo run --bin mem-cli -- doctor --fix
 Launch the TUI:
 
 ```bash
-cargo run --bin mem-cli -- --config .mem/config.toml tui --project memory
+cargo run --bin mem-cli -- tui --project memory
 ```
 
 Inspect or flush automation state:
 
 ```bash
-cargo run --bin mem-cli -- --config .mem/config.toml automation status --project memory
-cargo run --bin mem-cli -- --config .mem/config.toml automation flush --project memory
+cargo run --bin mem-cli -- automation status --project memory
+cargo run --bin mem-cli -- automation flush --project memory
 ```
 
 TUI controls:
@@ -221,7 +238,13 @@ Typical workflow:
 
 The `remember` command auto-detects changed files from `git status` when possible, creates a capture payload for you, sends it to the backend, and then runs curation immediately. If you omit `--title`, `--prompt`, or `--summary`, it derives defaults automatically.
 
-The `doctor` command checks the repo-local `.mem/` bootstrap, config validity, backend reachability, and automation/runtime state. By default it reports issues and suggests exact fixes. With `--fix`, it only applies safe local repairs such as creating missing `.mem/` files or adding `/.mem` to `.gitignore`.
+The runtime config model is layered:
+1. explicit `--config`, if provided
+2. global shared config
+3. repo-local `.mem/config.toml`
+4. `MEMORY_LAYER__...` environment variables
+
+The `doctor` command checks the repo-local `.mem/` bootstrap, merged config validity, backend reachability, and automation/runtime state. By default it reports issues and suggests exact fixes. With `--fix`, it only applies safe local repairs such as creating missing `.mem/` files or adding `/.mem` to `.gitignore`.
 
 When `[automation].enabled = true`, `memory-watch` observes repo activity and can either:
 - `suggest` memory writes by logging candidate work without persisting

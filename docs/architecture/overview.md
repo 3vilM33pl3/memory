@@ -36,7 +36,7 @@ The repo-local skill in `.agents/skills/memory-layer/` tells Codex when to:
 
 The CLI talks to the backend over localhost HTTP.
 
-Initialized repositories keep local project metadata and config under `.mem/`, with `.mem/config.toml` as the preferred repo-local config file and `.mem/runtime/` as the preferred watcher runtime directory.
+Initialized repositories keep local project metadata and overrides under `.mem/`, with `.mem/config.toml` as the repo-local override file and `.mem/runtime/` as the preferred watcher runtime directory. Shared secrets and defaults live in the global config and are merged underneath repo-local overrides.
 
 ### Backend Service (`memory-layer`)
 

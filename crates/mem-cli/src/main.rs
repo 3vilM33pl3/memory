@@ -12,6 +12,7 @@ use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CurateRequest, CurateResponse,
     MemoryEntryResponse, ProjectMemoriesResponse, ProjectOverviewResponse, QueryFilters,
     QueryRequest, QueryResponse, ReindexRequest, ReindexResponse, TestResult,
+    discover_global_config_path,
 };
 use mem_watch::{flush_path, load_state, run_once, to_status};
 use reqwest::{Client, header::HeaderMap};
@@ -346,6 +347,8 @@ struct DoctorReport {
     project: String,
     repo_root: String,
     config_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    global_config_path: Option<String>,
     fix_mode: bool,
     checks: Vec<DoctorCheckResult>,
 }
@@ -402,11 +405,17 @@ async fn run_doctor(
     project: &str,
     fix: bool,
 ) -> Result<DoctorReport> {
-    let config_path = cli_config.unwrap_or_else(|| repo_root.join(".mem").join("config.toml"));
+    let config_path = cli_config
+        .clone()
+        .unwrap_or_else(|| repo_root.join(".mem").join("config.toml"));
+    let global_config_path = discover_global_config_path();
     let mut report = DoctorReport {
         project: project.to_string(),
         repo_root: repo_root.display().to_string(),
         config_path: config_path.display().to_string(),
+        global_config_path: global_config_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
         fix_mode: fix,
         checks: Vec::new(),
     };
@@ -496,6 +505,32 @@ async fn run_doctor(
         project_fix_applied,
     ));
 
+    report.push(doctor_check(
+        "global.config_file",
+        if global_config_path.is_some() {
+            DoctorStatus::Ok
+        } else {
+            DoctorStatus::Warn
+        },
+        if global_config_path.is_some() {
+            "Global shared config is present."
+        } else {
+            "Global shared config is missing."
+        },
+        Some(
+            global_config_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(default_global_config_path_label),
+        ),
+        if global_config_path.is_some() {
+            None
+        } else {
+            Some("Create the global config and set shared defaults there.".to_string())
+        },
+        false,
+    ));
+
     let gitignore_fix_applied = if !root_gitignore_contains_mem(repo_root)? && fix {
         ensure_root_gitignore_entry(&root_gitignore_path, "/.mem\n")?;
         true
@@ -523,12 +558,12 @@ async fn run_doctor(
         gitignore_fix_applied,
     ));
 
-    let config = match AppConfig::load_from_path(Some(config_path.clone())) {
+    let config = match AppConfig::load_from_path(cli_config.clone()) {
         Ok(config) => {
             report.push(doctor_check(
                 "config.load",
                 DoctorStatus::Ok,
-                "Config loads successfully.",
+                "Merged config loads successfully.",
                 None,
                 None,
                 false,
@@ -539,9 +574,16 @@ async fn run_doctor(
             report.push(doctor_check(
                 "config.load",
                 DoctorStatus::Fail,
-                "Config failed to load.",
+                "Merged config failed to load.",
                 Some(error.to_string()),
-                Some(format!("Edit {}", config_path.display())),
+                Some(format!(
+                    "Check {} and {}",
+                    global_config_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(default_global_config_path_label),
+                    config_path.display()
+                )),
                 false,
             ));
             None
@@ -563,7 +605,13 @@ async fn run_doctor(
             },
             Some(mask_database_url(&config.database.url)),
             if is_placeholder_database_url(&config.database.url) {
-                Some(format!("Edit {} and set [database].url", config_path.display()))
+                Some(format!(
+                    "Set [database].url in {}",
+                    global_config_path
+                        .as_ref()
+                        .unwrap_or(&config_path)
+                        .display()
+                ))
             } else {
                 None
             },
@@ -588,7 +636,13 @@ async fn run_doctor(
             },
             None,
             if config.service.api_token.trim().is_empty() {
-                Some(format!("Edit {} and set [service].api_token", config_path.display()))
+                Some(format!(
+                    "Set [service].api_token in {}",
+                    global_config_path
+                        .as_ref()
+                        .unwrap_or(&config_path)
+                        .display()
+                ))
             } else {
                 None
             },
@@ -863,6 +917,15 @@ fn print_doctor_report(report: &DoctorReport) {
         "Doctor report for project {} at {}\n",
         report.project, report.repo_root
     );
+    if let Some(global_config_path) = &report.global_config_path {
+        println!("Merged global config: {global_config_path}");
+    } else {
+        println!(
+            "Merged global config: <not found> (expected at {})",
+            default_global_config_path_label()
+        );
+    }
+    println!("Repo-local config: {}\n", report.config_path);
     for check in &report.checks {
         let icon = match check.status {
             DoctorStatus::Ok => "OK",
@@ -903,6 +966,16 @@ fn print_doctor_report(report: &DoctorReport) {
         .filter(|check| check.status == DoctorStatus::Skipped)
         .count();
     println!("\nSummary: {ok} ok, {warn} warn, {fail} fail, {skipped} skipped");
+}
+
+fn default_global_config_path_label() -> String {
+    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
+        format!("{config_home}/memory-layer/memory-layer.toml")
+    } else if let Ok(home) = env::var("HOME") {
+        format!("{home}/.config/memory-layer/memory-layer.toml")
+    } else {
+        "/etc/memory-layer/memory-layer.toml".to_string()
+    }
 }
 
 fn initialize_repo(repo_root: &Path, project: &str, force: bool, print_only: bool) -> Result<String> {
@@ -949,19 +1022,9 @@ fn initialize_repo(repo_root: &Path, project: &str, force: bool, print_only: boo
 fn render_repo_config(repo_root: &Path) -> String {
     let repo_root = repo_root.display();
     format!(
-        r#"# Fill in the values below before starting the backend.
-# Secrets are kept local to this repo because `.mem/` is ignored by git.
-
-[service]
-bind_addr = "127.0.0.1:4040"
-api_token = "dev-memory-token"
-request_timeout = "30s"
-
-[database]
-url = "postgresql://memory:<password>@localhost:5432/memory"
-
-[features]
-llm_curation = false
+        r#"# Repo-local overrides for this project.
+# Put shared defaults and secrets in the global config:
+#   {}
 
 [automation]
 enabled = false
@@ -974,7 +1037,8 @@ require_passing_test = false
 ignored_paths = [".git/", "target/", ".mem/"]
 audit_log_path = "{repo_root}/.mem/runtime/automation.log"
 state_file_path = "{repo_root}/.mem/runtime/automation-state.json"
-"#
+"#,
+        default_global_config_path_label()
     )
 }
 
@@ -1014,16 +1078,14 @@ fn render_init_summary(
 ) -> String {
     let action = if print_only { "Would create" } else { "Created" };
     format!(
-        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n\nNext steps:\n1. Fill in `database.url` and `service.api_token` in {}\n2. Start the backend:\n   mem-service {}\n3. Optional: start the watcher:\n   memory-watch --config {} run --project {}\n4. Open the TUI:\n   mem-cli --config {} tui --project {}",
+        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n\nNext steps:\n1. Set shared values like `database.url` and `service.api_token` in {}\n2. Use {} only for repo-specific overrides\n3. Start the backend from this repo:\n   mem-service\n4. Optional: start the watcher:\n   memory-watch run --project {}\n5. Open the TUI:\n   mem-cli tui --project {}",
         repo_root.display(),
         config_path.display(),
         project_path.display(),
         config_path.parent().unwrap_or(repo_root).display(),
-        config_path.display(),
-        config_path.display(),
+        default_global_config_path_label(),
         config_path.display(),
         project,
-        config_path.display(),
         project
     )
 }
@@ -1422,7 +1484,8 @@ mod tests {
         let summary = initialize_repo(&repo_root, "memory", false, true).unwrap();
 
         assert!(summary.contains(".mem/config.toml"));
-        assert!(summary.contains("memory-watch --config /tmp/memory/.mem/config.toml run --project memory"));
+        assert!(summary.contains("memory-watch run --project memory"));
+        assert!(summary.contains("mem-service"));
     }
 
     #[test]
@@ -1435,6 +1498,11 @@ mod tests {
         assert!(repo_root.join(".mem/config.toml").is_file());
         assert!(repo_root.join(".mem/project.toml").is_file());
         assert!(repo_root.join(".mem/runtime").is_dir());
+        assert!(
+            fs::read_to_string(repo_root.join(".mem/config.toml"))
+                .unwrap()
+                .contains("[automation]")
+        );
         assert_eq!(
             fs::read_to_string(repo_root.join(".mem/.gitignore")).unwrap(),
             "runtime/\n"

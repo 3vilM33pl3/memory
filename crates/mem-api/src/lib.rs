@@ -424,10 +424,15 @@ impl AppConfig {
         let mut builder = Config::builder();
         if let Some(path) = path {
             builder = builder.add_source(File::from(path).required(false));
-        } else if let Some(path) = discover_repo_config_path() {
-            builder = builder.add_source(File::from(path).required(false));
         } else {
-            builder = builder.add_source(File::with_name("memory-layer").required(false));
+            if let Some(path) = discover_global_config_path() {
+                builder = builder.add_source(File::from(path).required(false));
+            } else {
+                builder = builder.add_source(File::with_name("memory-layer").required(false));
+            }
+            if let Some(path) = discover_repo_config_path() {
+                builder = builder.add_source(File::from(path).required(false));
+            }
         }
 
         builder
@@ -437,12 +442,40 @@ impl AppConfig {
     }
 }
 
-fn discover_repo_config_path() -> Option<PathBuf> {
+pub fn discover_repo_config_path() -> Option<PathBuf> {
     let cwd = env::current_dir().ok()?;
     find_repo_config_path(&cwd)
 }
 
-fn find_repo_config_path(start: &Path) -> Option<PathBuf> {
+pub fn discover_global_config_path() -> Option<PathBuf> {
+    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
+        let candidate = PathBuf::from(config_home)
+            .join("memory-layer")
+            .join("memory-layer.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    if let Ok(home) = env::var("HOME") {
+        let candidate = PathBuf::from(home)
+            .join(".config")
+            .join("memory-layer")
+            .join("memory-layer.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    let system_candidate = PathBuf::from("/etc/memory-layer/memory-layer.toml");
+    if system_candidate.is_file() {
+        return Some(system_candidate);
+    }
+
+    None
+}
+
+pub fn find_repo_config_path(start: &Path) -> Option<PathBuf> {
     for directory in start.ancestors() {
         let candidate = directory.join(".mem").join("config.toml");
         if candidate.is_file() {
@@ -557,7 +590,7 @@ impl ValidationError {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{env, fs};
 
     use super::*;
 
@@ -606,6 +639,41 @@ mod tests {
         let discovered = find_repo_config_path(&nested).unwrap();
         assert_eq!(discovered, config_path);
 
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn prefers_xdg_global_config_path_when_present() {
+        let temp_dir = unique_temp_dir("mem-api-global");
+        let config_home = temp_dir.join("config-home");
+        fs::create_dir_all(config_home.join("memory-layer")).unwrap();
+        let global_path = config_home.join("memory-layer").join("memory-layer.toml");
+        fs::write(&global_path, "test = true\n").unwrap();
+
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", &config_home);
+        }
+        let discovered = discover_global_config_path().unwrap();
+        unsafe {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        assert_eq!(discovered, global_path);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn repo_config_is_found_from_nested_directory() {
+        let temp_dir = unique_temp_dir("mem-api-repo");
+        let mem_dir = temp_dir.join(".mem");
+        fs::create_dir_all(&mem_dir).unwrap();
+        let config_path = mem_dir.join("config.toml");
+        fs::write(&config_path, "[automation]\nenabled = false\n").unwrap();
+
+        let nested = temp_dir.join("nested").join("src");
+        fs::create_dir_all(&nested).unwrap();
+
+        assert_eq!(find_repo_config_path(&nested).unwrap(), config_path);
         let _ = fs::remove_dir_all(temp_dir);
     }
 
