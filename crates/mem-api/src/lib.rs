@@ -1,13 +1,16 @@
 use std::{
     env, fmt,
+    io::Cursor,
     path::{Path, PathBuf},
     time::Duration,
 };
 
+use capnp::{message::ReaderOptions, serialize};
 use chrono::{DateTime, Utc};
 use config::{Config, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -256,6 +259,57 @@ pub struct StatsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StreamRequest {
+    Health,
+    ProjectOverview { project: String },
+    ProjectMemories { project: String },
+    MemoryDetail { memory_id: Uuid },
+    SubscribeProject { project: String },
+    SubscribeMemory { memory_id: Uuid },
+    UnsubscribeMemory,
+    Ping,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StreamResponse {
+    Health {
+        value: serde_json::Value,
+    },
+    ProjectOverview {
+        value: ProjectOverviewResponse,
+    },
+    ProjectMemories {
+        value: ProjectMemoriesResponse,
+    },
+    MemoryDetail {
+        value: Option<MemoryEntryResponse>,
+    },
+    ProjectSnapshot {
+        overview: ProjectOverviewResponse,
+        memories: ProjectMemoriesResponse,
+    },
+    ProjectChanged {
+        overview: ProjectOverviewResponse,
+        memories: ProjectMemoriesResponse,
+    },
+    MemorySnapshot {
+        detail: Option<MemoryEntryResponse>,
+    },
+    MemoryChanged {
+        detail: Option<MemoryEntryResponse>,
+    },
+    Ack {
+        message: String,
+    },
+    Pong,
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveRequest {
     pub project: String,
     #[serde(default = "default_archive_threshold")]
@@ -489,6 +543,10 @@ pub fn find_repo_config_path(start: &Path) -> Option<PathBuf> {
 pub struct ServiceConfig {
     #[serde(default = "default_bind_addr")]
     pub bind_addr: String,
+    #[serde(default = "default_capnp_unix_socket")]
+    pub capnp_unix_socket: String,
+    #[serde(default = "default_capnp_tcp_addr")]
+    pub capnp_tcp_addr: String,
     #[serde(default = "default_api_token")]
     pub api_token: String,
     #[serde(default = "default_request_timeout")]
@@ -558,6 +616,14 @@ fn default_api_token() -> String {
     "dev-memory-token".to_string()
 }
 
+fn default_capnp_unix_socket() -> String {
+    "/tmp/memory-layer.capnp.sock".to_string()
+}
+
+fn default_capnp_tcp_addr() -> String {
+    "127.0.0.1:4041".to_string()
+}
+
 fn default_request_timeout() -> Duration {
     Duration::from_secs(30)
 }
@@ -578,6 +644,52 @@ fn default_min_changed_files() -> usize {
 #[error("{message}")]
 pub struct ValidationError {
     message: String,
+}
+
+pub async fn write_capnp_text_frame<W>(writer: &mut W, text: &str) -> Result<(), std::io::Error>
+where
+    W: AsyncWrite + Unpin,
+{
+    let payload = encode_capnp_text(text)?;
+    writer.write_u32_le(payload.len() as u32).await?;
+    writer.write_all(&payload).await?;
+    writer.flush().await
+}
+
+pub async fn read_capnp_text_frame<R>(reader: &mut R) -> Result<Option<String>, std::io::Error>
+where
+    R: AsyncRead + Unpin,
+{
+    let len = match reader.read_u32_le().await {
+        Ok(len) => len,
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut buf = vec![0_u8; len as usize];
+    reader.read_exact(&mut buf).await?;
+    decode_capnp_text(&buf).map(Some)
+}
+
+pub fn encode_capnp_text(text: &str) -> Result<Vec<u8>, std::io::Error> {
+    let mut message = capnp::message::Builder::new_default();
+    message
+        .set_root::<capnp::text::Owned>(text)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+    let mut bytes = Vec::new();
+    serialize::write_message(&mut bytes, &message)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+    Ok(bytes)
+}
+
+pub fn decode_capnp_text(bytes: &[u8]) -> Result<String, std::io::Error> {
+    let mut cursor = Cursor::new(bytes);
+    let reader = serialize::read_message(&mut cursor, ReaderOptions::new())
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+    let text = reader
+        .get_root::<capnp::text::Reader<'_>>()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+    text.to_string()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))
 }
 
 impl ValidationError {

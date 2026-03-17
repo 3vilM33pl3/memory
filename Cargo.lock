@@ -216,6 +216,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
+name = "capnp"
+version = "0.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e985a566bdaae9a428a957d12b10c318d41b2afddb54cfbb764878059df636e"
+dependencies = [
+ "embedded-io",
+]
+
+[[package]]
 name = "cassowary"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -515,6 +524,12 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "equivalent"
@@ -1260,12 +1275,14 @@ dependencies = [
 name = "mem-api"
 version = "0.1.0"
 dependencies = [
+ "capnp",
  "chrono",
  "config",
  "humantime-serde",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "uuid",
 ]
 
@@ -1274,6 +1291,7 @@ name = "mem-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "capnp",
  "chrono",
  "clap",
  "crossterm",
@@ -1325,6 +1343,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "capnp",
  "chrono",
  "config",
  "mem-api",

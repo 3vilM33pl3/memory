@@ -15,14 +15,19 @@ use axum::{
 use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CurateRequest,
     MemoryEntryResponse, MemorySourceRecord, ProjectMemoriesResponse, ProjectOverviewResponse,
-    QueryRequest, ReindexRequest, ReindexResponse, StatsResponse, ValidationError,
+    QueryRequest, ReindexRequest, ReindexResponse, StatsResponse, StreamRequest, StreamResponse,
+    ValidationError, read_capnp_text_frame, write_capnp_text_frame,
 };
 use mem_curate::{curate, store_capture};
 use mem_search::{parse_memory_type, parse_source_kind, query_memory, rebuild_chunks};
 use mem_service::{fetch_project_memories, fetch_project_overview, parse_status_filter};
 use serde::Deserialize;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
-use tokio::{sync::oneshot, time::Duration};
+use tokio::{
+    net::{TcpListener, UnixListener},
+    sync::{broadcast, oneshot},
+    time::Duration,
+};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
@@ -32,6 +37,13 @@ struct AppState {
     pool: PgPool,
     api_token: String,
     config: AppConfig,
+    events: broadcast::Sender<ServiceEvent>,
+}
+
+#[derive(Clone, Debug)]
+struct ServiceEvent {
+    project: String,
+    memory_id: Option<Uuid>,
 }
 
 #[tokio::main]
@@ -53,48 +65,80 @@ async fn main() -> Result<()> {
             .bind_addr
             .parse()
             .context("parse bind_addr")?;
-        let app = build_app(config.clone()).await?;
+        let state = build_state(config.clone()).await?;
+        let app = build_http_app(state.clone());
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let mut server = tokio::spawn(async move {
+        let mut http_server = tokio::spawn(async move {
             axum::serve(listener, app)
                 .with_graceful_shutdown(async {
                     let _ = shutdown_rx.await;
                 })
                 .await
         });
+        let proto_servers = start_proto_servers(state.clone()).await?;
+        let mut proto_unix =
+            tokio::spawn(run_proto_unix(proto_servers.unix_listener, state.clone()));
+        let mut proto_tcp = tokio::spawn(run_proto_tcp(proto_servers.tcp_listener, state.clone()));
 
-        tracing::info!(%addr, "memory-layer listening");
+        tracing::info!(
+            %addr,
+            unix_socket = %config.service.capnp_unix_socket,
+            tcp_addr = %config.service.capnp_tcp_addr,
+            "memory-layer listening"
+        );
 
         if let Some(path) = config_path.as_deref() {
             tokio::select! {
-                result = &mut server => {
+                result = &mut http_server => {
                     result.context("join mem-service task")??;
+                    break;
+                }
+                result = &mut proto_unix => {
+                    result.context("join capnp unix task")??;
+                    break;
+                }
+                result = &mut proto_tcp => {
+                    result.context("join capnp tcp task")??;
                     break;
                 }
                 result = tokio::signal::ctrl_c() => {
                     result.context("listen for ctrl-c")?;
                     let _ = shutdown_tx.send(());
-                    server.await.context("join mem-service task")??;
+                    http_server.await.context("join mem-service task")??;
+                    proto_unix.abort();
+                    proto_tcp.abort();
                     break;
                 }
                 result = wait_for_config_change(path, config_fingerprint) => {
                     config_fingerprint = result.context("watch config file")?;
                     tracing::info!(path = %path.display(), "config changed; restarting backend");
                     let _ = shutdown_tx.send(());
-                    server.await.context("join mem-service task")??;
+                    http_server.await.context("join mem-service task")??;
+                    proto_unix.abort();
+                    proto_tcp.abort();
                 }
             }
         } else {
             tokio::select! {
-                result = &mut server => {
+                result = &mut http_server => {
                     result.context("join mem-service task")??;
+                    break;
+                }
+                result = &mut proto_unix => {
+                    result.context("join capnp unix task")??;
+                    break;
+                }
+                result = &mut proto_tcp => {
+                    result.context("join capnp tcp task")??;
                     break;
                 }
                 result = tokio::signal::ctrl_c() => {
                     result.context("listen for ctrl-c")?;
                     let _ = shutdown_tx.send(());
-                    server.await.context("join mem-service task")??;
+                    http_server.await.context("join mem-service task")??;
+                    proto_unix.abort();
+                    proto_tcp.abort();
                     break;
                 }
             }
@@ -104,7 +148,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn build_app(config: AppConfig) -> Result<Router> {
+async fn build_state(config: AppConfig) -> Result<AppState> {
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .connect(&config.database.url)
@@ -114,14 +158,18 @@ async fn build_app(config: AppConfig) -> Result<Router> {
         .run(&pool)
         .await
         .context("run migrations")?;
+    let (events, _) = broadcast::channel(128);
 
-    let state = AppState {
+    Ok(AppState {
         pool,
         api_token: config.service.api_token.clone(),
         config,
-    };
+        events,
+    })
+}
 
-    Ok(Router::new()
+fn build_http_app(state: AppState) -> Router {
+    Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/query", post(query))
         .route("/v1/capture/task", post(capture_task))
@@ -133,7 +181,246 @@ async fn build_app(config: AppConfig) -> Result<Router> {
         .route("/v1/projects/{slug}/overview", get(project_overview))
         .route("/v1/archive", post(archive))
         .with_state(state)
-        .layer(TraceLayer::new_for_http()))
+        .layer(TraceLayer::new_for_http())
+}
+
+struct ProtoServers {
+    unix_listener: UnixListener,
+    tcp_listener: TcpListener,
+}
+
+async fn start_proto_servers(state: AppState) -> Result<ProtoServers> {
+    let unix_path = PathBuf::from(&state.config.service.capnp_unix_socket);
+    if let Some(parent) = unix_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create {}", parent.display()))?;
+    }
+    if unix_path.exists() {
+        tokio::fs::remove_file(&unix_path)
+            .await
+            .with_context(|| format!("remove stale socket {}", unix_path.display()))?;
+    }
+
+    let unix_listener = UnixListener::bind(&unix_path)
+        .with_context(|| format!("bind unix socket {}", unix_path.display()))?;
+    let tcp_listener = TcpListener::bind(&state.config.service.capnp_tcp_addr)
+        .await
+        .context("bind capnp tcp addr")?;
+
+    Ok(ProtoServers {
+        unix_listener,
+        tcp_listener,
+    })
+}
+
+async fn run_proto_unix(listener: UnixListener, state: AppState) -> Result<()> {
+    loop {
+        let (stream, _) = listener.accept().await?;
+        tokio::spawn(handle_proto_connection(stream, state.clone()));
+    }
+}
+
+async fn run_proto_tcp(listener: TcpListener, state: AppState) -> Result<()> {
+    loop {
+        let (stream, _) = listener.accept().await?;
+        tokio::spawn(handle_proto_connection(stream, state.clone()));
+    }
+}
+
+#[derive(Default)]
+struct ConnectionSubscriptions {
+    project: Option<String>,
+    memory_id: Option<Uuid>,
+}
+
+async fn handle_proto_connection<S>(stream: S, state: AppState) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    let mut subscriptions = ConnectionSubscriptions::default();
+    let mut events = state.events.subscribe();
+
+    loop {
+        tokio::select! {
+            incoming = read_capnp_text_frame(&mut reader) => {
+                let Some(text) = incoming? else {
+                    break;
+                };
+                let request: StreamRequest = serde_json::from_str(&text)
+                    .map_err(|error| anyhow::anyhow!("parse stream request: {error}"))?;
+                for response in process_stream_request(&state, &mut subscriptions, request).await? {
+                    let text = serde_json::to_string(&response)?;
+                    write_capnp_text_frame(&mut writer, &text).await?;
+                }
+            }
+            event = events.recv() => {
+                let Ok(event) = event else {
+                    continue;
+                };
+                if let Some(response) = render_subscription_update(&state, &subscriptions, &event).await? {
+                    let text = serde_json::to_string(&response)?;
+                    write_capnp_text_frame(&mut writer, &text).await?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn process_stream_request(
+    state: &AppState,
+    subscriptions: &mut ConnectionSubscriptions,
+    request: StreamRequest,
+) -> Result<Vec<StreamResponse>> {
+    let mut responses = Vec::new();
+    match request {
+        StreamRequest::Health => responses.push(StreamResponse::Health {
+            value: health_payload(state).await?,
+        }),
+        StreamRequest::ProjectOverview { project } => {
+            responses.push(StreamResponse::ProjectOverview {
+                value: fetch_project_overview(&state.pool, &project, &state.config.automation)
+                    .await?,
+            });
+        }
+        StreamRequest::ProjectMemories { project } => {
+            responses.push(StreamResponse::ProjectMemories {
+                value: fetch_project_memories(&state.pool, &project, None, 500, 0).await?,
+            });
+        }
+        StreamRequest::MemoryDetail { memory_id } => {
+            responses.push(StreamResponse::MemoryDetail {
+                value: fetch_memory_entry(&state.pool, memory_id).await?,
+            });
+        }
+        StreamRequest::SubscribeProject { project } => {
+            subscriptions.project = Some(project.clone());
+            let overview =
+                fetch_project_overview(&state.pool, &project, &state.config.automation).await?;
+            let memories = fetch_project_memories(&state.pool, &project, None, 500, 0).await?;
+            responses.push(StreamResponse::ProjectSnapshot { overview, memories });
+        }
+        StreamRequest::SubscribeMemory { memory_id } => {
+            subscriptions.memory_id = Some(memory_id);
+            let detail = fetch_memory_entry(&state.pool, memory_id).await?;
+            responses.push(StreamResponse::MemorySnapshot { detail });
+        }
+        StreamRequest::UnsubscribeMemory => {
+            subscriptions.memory_id = None;
+            responses.push(StreamResponse::Ack {
+                message: "memory subscription cleared".to_string(),
+            });
+        }
+        StreamRequest::Ping => responses.push(StreamResponse::Pong),
+    }
+    Ok(responses)
+}
+
+async fn render_subscription_update(
+    state: &AppState,
+    subscriptions: &ConnectionSubscriptions,
+    event: &ServiceEvent,
+) -> Result<Option<StreamResponse>> {
+    if let Some(project) = &subscriptions.project {
+        if project == &event.project {
+            let overview =
+                fetch_project_overview(&state.pool, project, &state.config.automation).await?;
+            let memories = fetch_project_memories(&state.pool, project, None, 500, 0).await?;
+            return Ok(Some(StreamResponse::ProjectChanged { overview, memories }));
+        }
+    }
+
+    if let Some(memory_id) = subscriptions.memory_id {
+        if event.memory_id == Some(memory_id) {
+            let detail = fetch_memory_entry(&state.pool, memory_id).await?;
+            return Ok(Some(StreamResponse::MemoryChanged { detail }));
+        }
+    }
+
+    Ok(None)
+}
+
+async fn health_payload(state: &AppState) -> Result<serde_json::Value> {
+    sqlx::query("SELECT 1").execute(&state.pool).await?;
+    Ok(serde_json::json!({
+        "status": "ok",
+        "database": "up"
+    }))
+}
+
+async fn fetch_memory_entry(
+    pool: &PgPool,
+    id: Uuid,
+) -> Result<Option<MemoryEntryResponse>, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT p.slug, m.id, m.canonical_text, m.summary, m.memory_type, m.importance, m.confidence,
+               m.status, m.created_at, m.updated_at
+        FROM memory_entries m
+        JOIN projects p ON p.id = m.project_id
+        WHERE m.id = $1
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let tags = sqlx::query("SELECT tag FROM memory_tags WHERE memory_entry_id = $1 ORDER BY tag")
+        .bind(id)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|row| row.try_get::<String, _>("tag"))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let sources = sqlx::query(
+        r#"
+        SELECT id, task_id, file_path, git_commit, source_kind, excerpt
+        FROM memory_sources
+        WHERE memory_entry_id = $1
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|row| {
+        Ok(MemorySourceRecord {
+            id: row.try_get("id")?,
+            task_id: row.try_get("task_id")?,
+            file_path: row.try_get("file_path")?,
+            git_commit: row.try_get("git_commit")?,
+            source_kind: parse_source_kind(&row.try_get::<String, _>("source_kind")?),
+            excerpt: row.try_get("excerpt")?,
+        })
+    })
+    .collect::<Result<Vec<_>, sqlx::Error>>()?;
+
+    Ok(Some(MemoryEntryResponse {
+        id,
+        project: row.try_get("slug")?,
+        canonical_text: row.try_get("canonical_text")?,
+        summary: row.try_get("summary")?,
+        memory_type: parse_memory_type(&row.try_get::<String, _>("memory_type")?),
+        importance: row.try_get("importance")?,
+        confidence: row.try_get("confidence")?,
+        status: match row.try_get::<String, _>("status")?.as_str() {
+            "archived" => mem_api::MemoryStatus::Archived,
+            _ => mem_api::MemoryStatus::Active,
+        },
+        tags,
+        sources,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    }))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -181,14 +468,7 @@ async fn config_path_fingerprint(path: Option<&FsPath>) -> Result<ConfigFingerpr
 }
 
 async fn healthz(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    sqlx::query("SELECT 1")
-        .execute(&state.pool)
-        .await
-        .map_err(ApiError::sql)?;
-    Ok(Json(serde_json::json!({
-        "status": "ok",
-        "database": "up"
-    })))
+    Ok(Json(health_payload(&state).await.map_err(ApiError::io)?))
 }
 
 async fn query(
@@ -212,6 +492,7 @@ async fn capture_task(
     let response = store_capture(&state.pool, &request)
         .await
         .map_err(ApiError::sql)?;
+    notify_project_changed(&state, request.project, None);
     Ok(Json(response))
 }
 
@@ -223,6 +504,7 @@ async fn curate_memory(
     require_token(&headers, &state.api_token)?;
     request.validate().map_err(ApiError::validation)?;
     let response = curate(&state.pool, &request).await.map_err(ApiError::sql)?;
+    notify_project_changed(&state, request.project, None);
     Ok(Json(response))
 }
 
@@ -236,6 +518,7 @@ async fn reindex(
     let count = rebuild_chunks(&state.pool, &request.project)
         .await
         .map_err(ApiError::sql)?;
+    notify_project_changed(&state, request.project, None);
     Ok(Json(ReindexResponse {
         reindexed_entries: count,
     }))
@@ -245,81 +528,11 @@ async fn get_memory(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<MemoryEntryResponse>, ApiError> {
-    let row = sqlx::query(
-        r#"
-        SELECT p.slug, m.id, m.canonical_text, m.summary, m.memory_type, m.importance, m.confidence,
-               m.status, m.created_at, m.updated_at
-        FROM memory_entries m
-        JOIN projects p ON p.id = m.project_id
-        WHERE m.id = $1
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(ApiError::sql)?
-    .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
-
-    let tags = sqlx::query("SELECT tag FROM memory_tags WHERE memory_entry_id = $1 ORDER BY tag")
-        .bind(id)
-        .fetch_all(&state.pool)
+    let detail = fetch_memory_entry(&state.pool, id)
         .await
         .map_err(ApiError::sql)?
-        .into_iter()
-        .map(|row| row.try_get::<String, _>("tag"))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(ApiError::sql)?;
-
-    let sources = sqlx::query(
-        r#"
-        SELECT id, task_id, file_path, git_commit, source_kind, excerpt
-        FROM memory_sources
-        WHERE memory_entry_id = $1
-        ORDER BY created_at ASC
-        "#,
-    )
-    .bind(id)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(ApiError::sql)?
-    .into_iter()
-    .map(|row| {
-        Ok(MemorySourceRecord {
-            id: row.try_get("id")?,
-            task_id: row.try_get("task_id")?,
-            file_path: row.try_get("file_path")?,
-            git_commit: row.try_get("git_commit")?,
-            source_kind: parse_source_kind(&row.try_get::<String, _>("source_kind")?),
-            excerpt: row.try_get("excerpt")?,
-        })
-    })
-    .collect::<Result<Vec<_>, sqlx::Error>>()
-    .map_err(ApiError::sql)?;
-
-    Ok(Json(MemoryEntryResponse {
-        id,
-        project: row.try_get("slug").map_err(ApiError::sql)?,
-        canonical_text: row.try_get("canonical_text").map_err(ApiError::sql)?,
-        summary: row.try_get("summary").map_err(ApiError::sql)?,
-        memory_type: parse_memory_type(
-            &row.try_get::<String, _>("memory_type")
-                .map_err(ApiError::sql)?,
-        ),
-        importance: row.try_get("importance").map_err(ApiError::sql)?,
-        confidence: row.try_get("confidence").map_err(ApiError::sql)?,
-        status: match row
-            .try_get::<String, _>("status")
-            .map_err(ApiError::sql)?
-            .as_str()
-        {
-            "archived" => mem_api::MemoryStatus::Archived,
-            _ => mem_api::MemoryStatus::Active,
-        },
-        tags,
-        sources,
-        created_at: row.try_get("created_at").map_err(ApiError::sql)?,
-        updated_at: row.try_get("updated_at").map_err(ApiError::sql)?,
-    }))
+        .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
+    Ok(Json(detail))
 }
 
 async fn stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, ApiError> {
@@ -421,10 +634,15 @@ async fn archive(
     .execute(&state.pool)
     .await
     .map_err(ApiError::sql)?;
+    notify_project_changed(&state, request.project, None);
 
     Ok(Json(ArchiveResponse {
         archived_count: result.rows_affected(),
     }))
+}
+
+fn notify_project_changed(state: &AppState, project: String, memory_id: Option<Uuid>) {
+    let _ = state.events.send(ServiceEvent { project, memory_id });
 }
 
 fn require_token(headers: &HeaderMap, expected: &str) -> Result<(), ApiError> {
@@ -467,6 +685,13 @@ impl ApiError {
     }
 
     fn sql(error: sqlx::Error) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: error.to_string(),
+        }
+    }
+
+    fn io(error: anyhow::Error) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: error.to_string(),

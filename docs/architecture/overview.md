@@ -34,7 +34,9 @@ The repo-local skill in `.agents/skills/memory-layer/` tells Codex when to:
 - TUI views
 - automation status and controls
 
-The CLI talks to the backend over localhost HTTP.
+The CLI currently uses two transports:
+- a localhost HTTP API kept as the compatibility and fallback surface
+- a persistent Cap'n Proto connection for live TUI subscriptions
 
 Initialized repositories keep local project metadata and overrides under `.mem/`, with `.mem/config.toml` as the repo-local override file and `.mem/runtime/` as the preferred watcher runtime directory. Shared secrets and defaults live in the global config and are merged underneath repo-local overrides.
 
@@ -42,6 +44,7 @@ Initialized repositories keep local project metadata and overrides under `.mem/`
 
 The backend owns:
 - API routes
+- persistent streaming transport
 - raw capture ingestion
 - deterministic curation
 - retrieval and ranking
@@ -74,6 +77,14 @@ It does not write directly to database tables. It only orchestrates the existing
 2. Skill or CLI runs `memctl query`
 3. Backend retrieves project memory from PostgreSQL
 4. Ranked results and provenance are returned
+
+### Live TUI Flow
+
+1. `memctl tui` loads an initial project snapshot
+2. It opens a persistent Cap'n Proto connection to the backend
+3. It subscribes to project-level and selected-memory updates
+4. Backend pushes snapshot refreshes after relevant writes
+5. The TUI redraws without requiring manual refresh
 
 ### Remember Flow
 

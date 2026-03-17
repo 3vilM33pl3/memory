@@ -8,7 +8,8 @@ use crossterm::{
 };
 use mem_api::{
     MemoryEntryResponse, MemoryStatus, MemoryType, NamedCount, ProjectMemoriesResponse,
-    ProjectMemoryListItem, ProjectOverviewResponse,
+    ProjectMemoryListItem, ProjectOverviewResponse, StreamRequest, StreamResponse,
+    read_capnp_text_frame, write_capnp_text_frame,
 };
 use ratatui::{
     Terminal,
@@ -17,6 +18,10 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Tabs, Wrap},
+};
+use tokio::{
+    net::{TcpStream, UnixStream},
+    sync::mpsc,
 };
 
 use crate::{ApiClient, SourceKindString};
@@ -44,14 +49,40 @@ pub(crate) async fn run(api: ApiClient, project: String) -> Result<()> {
     let mut terminal = setup_terminal()?;
     let mut app = App::new(project);
     app.refresh(&api).await;
+    let mut stream = StreamSession::connect(&api).await.ok();
+    if let Some(stream_session) = stream.as_mut() {
+        subscribe_stream(stream_session, &app).await?;
+        app.status_message =
+            "Streaming updates enabled. Press r to force resync, q to exit.".to_string();
+    }
 
     loop {
+        let mut stream_failed = false;
+        if let Some(current_stream) = stream.as_mut() {
+            match current_stream.try_recv() {
+                Ok(Some(response)) => {
+                    app.apply_stream_response(response);
+                    while let Ok(Some(response)) = current_stream.try_recv() {
+                        app.apply_stream_response(response);
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    app.status_message =
+                        format!("Streaming disconnected: {error}. Falling back to manual refresh.");
+                    stream_failed = true;
+                }
+            }
+        }
+        if stream_failed {
+            stream = None;
+        }
         terminal.draw(|frame| draw(frame, &app))?;
         if event::poll(Duration::from_millis(200))? {
             match event::read()? {
                 Event::Key(key) if should_quit(key, &app) => break,
                 Event::Key(key) => {
-                    if app.handle_key(key, &api).await? {
+                    if app.handle_key(key, &api, stream.as_mut()).await? {
                         break;
                     }
                 }
@@ -124,7 +155,7 @@ impl App {
                 self.total_memories = total;
                 self.all_memories = items;
                 self.apply_filters();
-                self.fetch_selected_detail(api).await;
+                self.fetch_selected_detail(api, None).await;
                 self.status_message = format!(
                     "Loaded {} visible memories ({} total).",
                     self.filtered_memories.len(),
@@ -142,17 +173,22 @@ impl App {
         }
     }
 
-    async fn handle_key(&mut self, key: KeyEvent, api: &ApiClient) -> Result<bool> {
+    async fn handle_key(
+        &mut self,
+        key: KeyEvent,
+        api: &ApiClient,
+        stream: Option<&mut StreamSession>,
+    ) -> Result<bool> {
         let current_input = std::mem::take(&mut self.input_mode);
         match current_input {
             InputMode::Normal => {}
             InputMode::Search(mut buffer) => {
-                self.handle_text_input(key, api, TextInputKind::Search, &mut buffer)
+                self.handle_text_input(key, api, stream, TextInputKind::Search, &mut buffer)
                     .await?;
                 return Ok(false);
             }
             InputMode::Tag(mut buffer) => {
-                self.handle_text_input(key, api, TextInputKind::Tag, &mut buffer)
+                self.handle_text_input(key, api, stream, TextInputKind::Tag, &mut buffer)
                     .await?;
                 return Ok(false);
             }
@@ -167,10 +203,10 @@ impl App {
             }
             KeyCode::Char('r') if key.modifiers.is_empty() => self.refresh(api).await,
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Memories => {
-                self.move_selection(1, api).await;
+                self.move_selection(1, api, stream).await;
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Memories => {
-                self.move_selection(-1, api).await;
+                self.move_selection(-1, api, stream).await;
             }
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.input_mode = InputMode::Search(self.filters.text.clone());
@@ -185,18 +221,18 @@ impl App {
             KeyCode::Char('t') if key.modifiers.is_empty() => {
                 self.filters.memory_type = self.filters.memory_type.next();
                 self.apply_filters();
-                self.fetch_selected_detail(api).await;
+                self.fetch_selected_detail(api, stream).await;
             }
             KeyCode::Char('s') if key.modifiers.is_empty() => {
                 self.filters.status = self.filters.status.next();
                 self.apply_filters();
-                self.fetch_selected_detail(api).await;
+                self.fetch_selected_detail(api, stream).await;
             }
             KeyCode::Char('x') if key.modifiers.is_empty() => {
                 self.filters = Filters::default();
                 self.input_mode = InputMode::Normal;
                 self.apply_filters();
-                self.fetch_selected_detail(api).await;
+                self.fetch_selected_detail(api, stream).await;
                 self.status_message = "Cleared filters.".to_string();
             }
             KeyCode::Char('c') if key.modifiers.is_empty() => {
@@ -231,6 +267,7 @@ impl App {
         &mut self,
         key: KeyEvent,
         api: &ApiClient,
+        stream: Option<&mut StreamSession>,
         kind: TextInputKind,
         buffer: &mut String,
     ) -> Result<()> {
@@ -246,7 +283,7 @@ impl App {
                 }
                 self.input_mode = InputMode::Normal;
                 self.apply_filters();
-                self.fetch_selected_detail(api).await;
+                self.fetch_selected_detail(api, stream).await;
                 self.status_message = "Applied filter.".to_string();
             }
             KeyCode::Backspace => {
@@ -266,7 +303,12 @@ impl App {
         Ok(())
     }
 
-    async fn move_selection(&mut self, delta: isize, api: &ApiClient) {
+    async fn move_selection(
+        &mut self,
+        delta: isize,
+        api: &ApiClient,
+        stream: Option<&mut StreamSession>,
+    ) {
         if self.filtered_memories.is_empty() {
             return;
         }
@@ -276,16 +318,29 @@ impl App {
         if next != self.selected_index {
             self.selected_index = next;
             self.table_state.select(Some(self.selected_index));
-            self.fetch_selected_detail(api).await;
+            self.fetch_selected_detail(api, stream).await;
         }
     }
 
-    async fn fetch_selected_detail(&mut self, api: &ApiClient) {
+    async fn fetch_selected_detail(
+        &mut self,
+        api: &ApiClient,
+        mut stream: Option<&mut StreamSession>,
+    ) {
         self.selected_detail = None;
         if let Some(item) = self.filtered_memories.get(self.selected_index) {
-            match api.memory_detail(&item.id.to_string()).await {
-                Ok(detail) => self.selected_detail = Some(detail),
-                Err(error) => self.status_message = error.to_string(),
+            if let Some(stream) = stream.as_mut() {
+                if let Err(error) = stream
+                    .send(StreamRequest::SubscribeMemory { memory_id: item.id })
+                    .await
+                {
+                    self.status_message = error.to_string();
+                }
+            } else {
+                match api.memory_detail(&item.id.to_string()).await {
+                    Ok(detail) => self.selected_detail = Some(detail),
+                    Err(error) => self.status_message = error.to_string(),
+                }
             }
         }
     }
@@ -307,6 +362,148 @@ impl App {
             self.table_state.select(Some(self.selected_index));
         }
     }
+
+    fn apply_stream_response(&mut self, response: StreamResponse) {
+        match response {
+            StreamResponse::ProjectSnapshot { overview, memories }
+            | StreamResponse::ProjectChanged { overview, memories } => {
+                self.overview = overview;
+                self.total_memories = memories.total;
+                self.all_memories = memories.items;
+                self.apply_filters();
+                self.status_message = format!(
+                    "Streaming update: {} visible memories ({} total).",
+                    self.filtered_memories.len(),
+                    self.total_memories
+                );
+            }
+            StreamResponse::MemorySnapshot { detail }
+            | StreamResponse::MemoryChanged { detail } => {
+                self.selected_detail = detail;
+            }
+            StreamResponse::Error { message } => {
+                self.status_message = format!("Stream error: {message}");
+            }
+            _ => {}
+        }
+    }
+}
+
+struct StreamSession {
+    writer: tokio::io::WriteHalf<StreamTransport>,
+    rx: mpsc::UnboundedReceiver<StreamResponse>,
+}
+
+enum StreamTransport {
+    Unix(UnixStream),
+    Tcp(TcpStream),
+}
+
+impl tokio::io::AsyncRead for StreamTransport {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
+            StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for StreamTransport {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
+            StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_flush(cx),
+            StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
+            StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+}
+
+impl StreamSession {
+    async fn connect(api: &ApiClient) -> Result<Self> {
+        let transport = if std::path::Path::new(&api.config.service.capnp_unix_socket).exists() {
+            match UnixStream::connect(&api.config.service.capnp_unix_socket).await {
+                Ok(stream) => StreamTransport::Unix(stream),
+                Err(_) => StreamTransport::Tcp(
+                    TcpStream::connect(&api.config.service.capnp_tcp_addr).await?,
+                ),
+            }
+        } else {
+            StreamTransport::Tcp(TcpStream::connect(&api.config.service.capnp_tcp_addr).await?)
+        };
+        let (mut reader, writer) = tokio::io::split(transport);
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            loop {
+                match read_capnp_text_frame(&mut reader).await {
+                    Ok(Some(text)) => {
+                        if let Ok(response) = serde_json::from_str::<StreamResponse>(&text) {
+                            let _ = tx.send(response);
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(_) => break,
+                }
+            }
+        });
+        Ok(Self { writer, rx })
+    }
+
+    async fn send(&mut self, request: StreamRequest) -> Result<()> {
+        let text = serde_json::to_string(&request)?;
+        write_capnp_text_frame(&mut self.writer, &text).await?;
+        Ok(())
+    }
+
+    fn try_recv(&mut self) -> Result<Option<StreamResponse>> {
+        match self.rx.try_recv() {
+            Ok(response) => Ok(Some(response)),
+            Err(mpsc::error::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                anyhow::bail!("stream connection closed")
+            }
+        }
+    }
+}
+
+async fn subscribe_stream(stream: &mut StreamSession, app: &App) -> Result<()> {
+    stream
+        .send(StreamRequest::SubscribeProject {
+            project: app.project.clone(),
+        })
+        .await?;
+    if let Some(item) = app.filtered_memories.get(app.selected_index) {
+        stream
+            .send(StreamRequest::SubscribeMemory { memory_id: item.id })
+            .await?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -486,7 +683,10 @@ impl TypeFilter {
 }
 
 fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
-    frame.render_widget(Block::default().style(Style::default().bg(Theme::BACKGROUND)), frame.area());
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Theme::BACKGROUND)),
+        frame.area(),
+    );
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -506,7 +706,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         .select(app.active_tab.index())
         .block(
             themed_block(format!("Memory Layer TUI - project {}", app.project))
-                .borders(Borders::ALL)
+                .borders(Borders::ALL),
         )
         .style(Style::default().fg(Theme::MUTED).bg(Theme::PANEL))
         .highlight_style(
@@ -519,10 +719,16 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
 
     let filter_bar = Paragraph::new(vec![Line::from(vec![
         accent_span("search=/ "),
-        Span::styled(display_filter(&app.filters.text), Style::default().fg(Theme::TEXT)),
+        Span::styled(
+            display_filter(&app.filters.text),
+            Style::default().fg(Theme::TEXT),
+        ),
         Span::raw("  "),
         accent_span("tag=g "),
-        Span::styled(display_filter(&app.filters.tag), Style::default().fg(Theme::TEXT)),
+        Span::styled(
+            display_filter(&app.filters.tag),
+            Style::default().fg(Theme::TEXT),
+        ),
         Span::raw("  "),
         accent_span("status=s "),
         status_span(app.filters.status.label()),
@@ -629,7 +835,10 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 ),
                 Span::raw("   "),
                 label_span("Importance: "),
-                Span::styled(detail.importance.to_string(), Style::default().fg(Theme::TEXT)),
+                Span::styled(
+                    detail.importance.to_string(),
+                    Style::default().fg(Theme::TEXT),
+                ),
             ]),
             Line::from(vec![
                 label_span("Updated: "),
@@ -714,7 +923,10 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .split(area);
 
     let summary = Paragraph::new(vec![
-        metric_line("Project", Span::styled(&app.overview.project, Style::default().fg(Theme::TEXT))),
+        metric_line(
+            "Project",
+            Span::styled(&app.overview.project, Style::default().fg(Theme::TEXT)),
+        ),
         Line::from(vec![
             label_span("Service: "),
             service_span(&app.overview.service_status),
@@ -771,7 +983,9 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             Span::styled(
                 format!(
                     "{} / {} / {}",
-                    app.overview.tasks_total, app.overview.sessions_total, app.overview.curation_runs_total
+                    app.overview.tasks_total,
+                    app.overview.sessions_total,
+                    app.overview.curation_runs_total
                 ),
                 Style::default().fg(Theme::TEXT),
             ),
@@ -890,10 +1104,22 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     );
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(Span::styled("Actions", Style::default().fg(Theme::ACCENT_STRONG))),
-            Line::from(Span::styled("c curate project", Style::default().fg(Theme::TEXT))),
-            Line::from(Span::styled("i reindex search chunks", Style::default().fg(Theme::TEXT))),
-            Line::from(Span::styled("a archive low-value memories", Style::default().fg(Theme::TEXT))),
+            Line::from(Span::styled(
+                "Actions",
+                Style::default().fg(Theme::ACCENT_STRONG),
+            )),
+            Line::from(Span::styled(
+                "c curate project",
+                Style::default().fg(Theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "i reindex search chunks",
+                Style::default().fg(Theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "a archive low-value memories",
+                Style::default().fg(Theme::TEXT),
+            )),
             Line::from(Span::styled("r refresh", Style::default().fg(Theme::TEXT))),
         ])
         .style(Style::default().bg(Theme::PANEL_ALT))
@@ -925,7 +1151,10 @@ fn memory_row(item: &ProjectMemoryListItem) -> Row<'static> {
         MemoryStatus::Archived => Style::default().fg(Theme::MUTED).bg(Theme::PANEL),
     };
     Row::new(vec![
-        Cell::from(Span::styled(item.summary.clone(), Style::default().fg(Theme::TEXT))),
+        Cell::from(Span::styled(
+            item.summary.clone(),
+            Style::default().fg(Theme::TEXT),
+        )),
         Cell::from(memory_type_span(&item.memory_type)),
         Cell::from(status_span(match item.status {
             MemoryStatus::Active => "active",
@@ -978,12 +1207,21 @@ fn themed_block<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Theme::BORDER))
         .title(title)
-        .title_style(Style::default().fg(Theme::TITLE).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(Theme::TITLE)
+                .add_modifier(Modifier::BOLD),
+        )
         .style(Style::default().bg(Theme::PANEL))
 }
 
 fn accent_span(value: impl Into<String>) -> Span<'static> {
-    Span::styled(value.into(), Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD))
+    Span::styled(
+        value.into(),
+        Style::default()
+            .fg(Theme::ACCENT)
+            .add_modifier(Modifier::BOLD),
+    )
 }
 
 fn label_span(value: impl Into<String>) -> Span<'static> {
@@ -1010,7 +1248,10 @@ fn status_span(value: &str) -> Span<'static> {
         "archived" | "unknown" => Theme::WARNING,
         _ => Theme::DANGER,
     };
-    Span::styled(value.to_string(), Style::default().fg(color).add_modifier(Modifier::BOLD))
+    Span::styled(
+        value.to_string(),
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
 }
 
 fn service_span(value: &str) -> Span<'static> {
@@ -1019,7 +1260,10 @@ fn service_span(value: &str) -> Span<'static> {
         "unknown" => Theme::WARNING,
         _ => Theme::DANGER,
     };
-    Span::styled(value.to_string(), Style::default().fg(color).add_modifier(Modifier::BOLD))
+    Span::styled(
+        value.to_string(),
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
 }
 
 fn memory_type_span(memory_type: &MemoryType) -> Span<'static> {
@@ -1039,7 +1283,10 @@ fn memory_type_span_from_label(label: &str) -> Span<'static> {
         "all" => Theme::TEXT,
         _ => Theme::TEXT,
     };
-    Span::styled(label.to_string(), Style::default().fg(color).add_modifier(Modifier::BOLD))
+    Span::styled(
+        label.to_string(),
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
 }
 
 fn confidence_style(confidence: f32) -> Style {
@@ -1069,7 +1316,9 @@ fn status_message_style(app: &App) -> Style {
     let lowered = app.status_message.to_lowercase();
     let color = if lowered.contains("error") || lowered.contains("failed") {
         Theme::DANGER
-    } else if lowered.contains("refresh") || lowered.contains("loaded") || lowered.contains("curated")
+    } else if lowered.contains("refresh")
+        || lowered.contains("loaded")
+        || lowered.contains("curated")
     {
         Theme::ACCENT
     } else {

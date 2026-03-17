@@ -398,7 +398,11 @@ pub async fn run_once(
             append_audit_log(
                 &config.automation,
                 repo_root,
-                &format!("{} skipped automation write: {}", Utc::now().to_rfc3339(), reason),
+                &format!(
+                    "{} skipped automation write: {}",
+                    Utc::now().to_rfc3339(),
+                    reason
+                ),
             )
             .await?;
             clear_session(&mut state, decision, false);

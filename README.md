@@ -20,7 +20,7 @@ In practice, the intended workflow is:
 3. curate those captures into durable project memory
 4. query that memory later by project
 
-The current implementation is designed for local development and experimentation. It runs against PostgreSQL, exposes a localhost HTTP API through `mem-service`, and lets agents or users interact with that API through `mem-cli` or the repo-local skill scripts.
+The current implementation is designed for local development and experimentation. It runs against PostgreSQL, exposes a localhost HTTP compatibility API through `mem-service`, and now also exposes a persistent Cap'n Proto transport for live client updates. `mem-cli`, the TUI, and the repo-local skill scripts all sit on top of that backend.
 
 ## Prerequisites
 
@@ -68,6 +68,8 @@ Global config example:
 ```toml
 [service]
 bind_addr = "127.0.0.1:4040"
+capnp_unix_socket = "/tmp/memory-layer.capnp.sock"
+capnp_tcp_addr = "127.0.0.1:4041"
 api_token = "dev-memory-token"
 request_timeout = "30s"
 
@@ -184,6 +186,8 @@ Launch the TUI:
 cargo run --bin mem-cli -- tui --project memory
 ```
 
+The TUI opens a persistent connection to the backend. When the Cap'n Proto listener is available it subscribes to project and memory updates, so new memories and overview changes appear without pressing `r`. `r` still forces a full HTTP resync.
+
 Inspect or flush automation state:
 
 ```bash
@@ -199,7 +203,7 @@ TUI controls:
 - `s`: cycle status filter
 - `t`: cycle memory-type filter
 - `x`: clear filters
-- `r`: refresh
+- `r`: force resync
 - `c`: curate project
 - `i`: reindex search chunks
 - `a`: archive low-value memories
@@ -243,6 +247,13 @@ The runtime config model is layered:
 2. global shared config
 3. repo-local `.mem/config.toml`
 4. `MEMORY_LAYER__...` environment variables
+
+Transport defaults:
+- HTTP compatibility API: `service.bind_addr`
+- Cap'n Proto Unix socket: `service.capnp_unix_socket`
+- Cap'n Proto localhost TCP fallback: `service.capnp_tcp_addr`
+
+The backend starts both listeners by default. Local clients prefer the Unix socket when it exists and fall back to the TCP listener otherwise.
 
 The `doctor` command checks the repo-local `.mem/` bootstrap, merged config validity, backend reachability, and automation/runtime state. By default it reports issues and suggests exact fixes. With `--fix`, it only applies safe local repairs such as creating missing `.mem/` files or adding `/.mem` to `.gitignore`.
 

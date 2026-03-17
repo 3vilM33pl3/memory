@@ -172,8 +172,13 @@ async fn main() -> Result<()> {
         Command::Doctor(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let repo_root = resolve_repo_root(&cwd)?;
-            let project = resolve_project_slug(args.project.clone(), &cwd)
-                .unwrap_or_else(|_| repo_root.file_name().and_then(|v| v.to_str()).unwrap_or("memory").to_string());
+            let project = resolve_project_slug(args.project.clone(), &cwd).unwrap_or_else(|_| {
+                repo_root
+                    .file_name()
+                    .and_then(|v| v.to_str())
+                    .unwrap_or("memory")
+                    .to_string()
+            });
             let report = run_doctor(cli_config.clone(), &repo_root, &project, args.fix).await?;
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -702,7 +707,10 @@ async fn run_doctor(
             if resolved_repo_root == repo_root {
                 None
             } else {
-                Some(format!("Edit {} and set [automation].repo_root", config_path.display()))
+                Some(format!(
+                    "Edit {} and set [automation].repo_root",
+                    config_path.display()
+                ))
             },
             false,
         ));
@@ -827,14 +835,38 @@ async fn run_doctor(
         ));
     } else {
         for (id, summary) in [
-            ("config.database_url", "Skipped database URL validation because config could not load."),
-            ("config.api_token", "Skipped API token validation because config could not load."),
-            ("automation.runtime_dir", "Skipped automation runtime checks because config could not load."),
-            ("automation.repo_root", "Skipped automation repo_root check because config could not load."),
-            ("backend.health", "Skipped backend health check because config could not load."),
-            ("backend.project_overview", "Skipped project overview check because config could not load."),
-            ("automation.state", "Skipped automation state check because config could not load."),
-            ("workflow.remember_ready", "Skipped remember readiness check because config could not load."),
+            (
+                "config.database_url",
+                "Skipped database URL validation because config could not load.",
+            ),
+            (
+                "config.api_token",
+                "Skipped API token validation because config could not load.",
+            ),
+            (
+                "automation.runtime_dir",
+                "Skipped automation runtime checks because config could not load.",
+            ),
+            (
+                "automation.repo_root",
+                "Skipped automation repo_root check because config could not load.",
+            ),
+            (
+                "backend.health",
+                "Skipped backend health check because config could not load.",
+            ),
+            (
+                "backend.project_overview",
+                "Skipped project overview check because config could not load.",
+            ),
+            (
+                "automation.state",
+                "Skipped automation state check because config could not load.",
+            ),
+            (
+                "workflow.remember_ready",
+                "Skipped remember readiness check because config could not load.",
+            ),
         ] {
             report.push(doctor_check(
                 id,
@@ -978,7 +1010,12 @@ fn default_global_config_path_label() -> String {
     }
 }
 
-fn initialize_repo(repo_root: &Path, project: &str, force: bool, print_only: bool) -> Result<String> {
+fn initialize_repo(
+    repo_root: &Path,
+    project: &str,
+    force: bool,
+    print_only: bool,
+) -> Result<String> {
     let mem_dir = repo_root.join(".mem");
     let runtime_dir = mem_dir.join("runtime");
     let config_path = mem_dir.join("config.toml");
@@ -1006,7 +1043,8 @@ fn initialize_repo(repo_root: &Path, project: &str, force: bool, print_only: boo
         fs::create_dir_all(&runtime_dir).context("create .mem/runtime")?;
         fs::write(&config_path, config_contents).context("write .mem/config.toml")?;
         fs::write(&project_path, project_contents).context("write .mem/project.toml")?;
-        fs::write(&local_gitignore_path, mem_gitignore_contents).context("write .mem/.gitignore")?;
+        fs::write(&local_gitignore_path, mem_gitignore_contents)
+            .context("write .mem/.gitignore")?;
         ensure_root_gitignore_entry(&root_gitignore_path, root_gitignore_line)?;
     }
 
@@ -1058,7 +1096,10 @@ fn ensure_root_gitignore_entry(path: &Path, line: &str) -> Result<()> {
         String::new()
     };
 
-    if !content.lines().any(|existing| existing.trim() == line.trim()) {
+    if !content
+        .lines()
+        .any(|existing| existing.trim() == line.trim())
+    {
         if !content.is_empty() && !content.ends_with('\n') {
             content.push('\n');
         }
@@ -1076,7 +1117,11 @@ fn render_init_summary(
     project_path: &Path,
     print_only: bool,
 ) -> String {
-    let action = if print_only { "Would create" } else { "Created" };
+    let action = if print_only {
+        "Would create"
+    } else {
+        "Created"
+    };
     format!(
         "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n\nNext steps:\n1. Set shared values like `database.url` and `service.api_token` in {}\n2. Use {} only for repo-specific overrides\n3. Start the backend from this repo:\n   mem-service\n4. Optional: start the watcher:\n   memory-watch run --project {}\n5. Open the TUI:\n   mem-cli tui --project {}",
         repo_root.display(),
