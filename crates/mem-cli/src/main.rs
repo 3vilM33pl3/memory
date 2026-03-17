@@ -1,9 +1,15 @@
-use std::{fs, path::PathBuf};
+mod tui;
+
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use mem_api::{
-    AppConfig, ArchiveRequest, CaptureTaskRequest, CurateRequest, QueryFilters, QueryRequest,
+    AppConfig, ArchiveRequest, CaptureTaskRequest, CurateRequest, MemoryEntryResponse,
+    ProjectMemoriesResponse, ProjectOverviewResponse, QueryFilters, QueryRequest, QueryResponse,
     ReindexRequest,
 };
 use reqwest::{Client, header::HeaderMap};
@@ -26,6 +32,7 @@ enum Command {
     Health,
     Stats,
     Archive(ArchiveArgs),
+    Tui(TuiArgs),
 }
 
 #[derive(Debug, Args)]
@@ -76,6 +83,12 @@ struct ArchiveArgs {
     max_importance: i32,
 }
 
+#[derive(Debug, Args)]
+struct TuiArgs {
+    #[arg(long)]
+    project: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -101,48 +114,26 @@ async fn main() -> Result<()> {
                 top_k: args.limit,
                 min_confidence: args.min_confidence,
             };
-            let response = client
-                .post(format!("http://{}/v1/query", config.service.bind_addr))
-                .json(&request)
-                .send()
-                .await
-                .context("query request failed")?;
-            let status = response.status();
-            let body = response.text().await?;
-            if !status.is_success() {
-                anyhow::bail!("query failed: {status} {body}");
-            }
+            let payload: QueryResponse = get_json(
+                client
+                    .post(service_url(&config, "/v1/query"))
+                    .json(&request)
+                    .send()
+                    .await
+                    .context("query request failed")?,
+            )
+            .await?;
             if args.json {
-                println!("{body}");
+                println!("{}", serde_json::to_string(&payload)?);
             } else {
-                let payload: mem_api::QueryResponse = serde_json::from_str(&body)?;
-                println!("Answer:\n{}\n", payload.answer);
-                println!("Confidence: {:.2}\n", payload.confidence);
-                for result in payload.results {
-                    println!(
-                        "- {} [{}] score={:.2}",
-                        result.summary, result.memory_type, result.score
-                    );
-                    println!("  {}", result.snippet);
-                    for source in result.sources {
-                        let path = source.file_path.unwrap_or_else(|| "<no-file>".to_string());
-                        println!(
-                            "  source: {} {}",
-                            path,
-                            source.source_kind.source_kind_string()
-                        );
-                    }
-                }
+                print_query_response(payload);
             }
         }
         Command::CaptureTask(args) => {
             let request: CaptureTaskRequest =
                 serde_json::from_str(&fs::read_to_string(args.file).context("read payload file")?)?;
             let response = client
-                .post(format!(
-                    "http://{}/v1/capture/task",
-                    config.service.bind_addr
-                ))
+                .post(service_url(&config, "/v1/capture/task"))
                 .headers(write_headers(&config.service.api_token)?)
                 .json(&request)
                 .send()
@@ -151,7 +142,7 @@ async fn main() -> Result<()> {
         }
         Command::Curate(args) => {
             let response = client
-                .post(format!("http://{}/v1/curate", config.service.bind_addr))
+                .post(service_url(&config, "/v1/curate"))
                 .headers(write_headers(&config.service.api_token)?)
                 .json(&CurateRequest {
                     project: args.project,
@@ -163,7 +154,7 @@ async fn main() -> Result<()> {
         }
         Command::Reindex(args) => {
             let response = client
-                .post(format!("http://{}/v1/reindex", config.service.bind_addr))
+                .post(service_url(&config, "/v1/reindex"))
                 .headers(write_headers(&config.service.api_token)?)
                 .json(&ReindexRequest {
                     project: args.project,
@@ -173,22 +164,16 @@ async fn main() -> Result<()> {
             print_json_response(response).await?;
         }
         Command::Health => {
-            let response = client
-                .get(format!("http://{}/healthz", config.service.bind_addr))
-                .send()
-                .await?;
+            let response = client.get(service_url(&config, "/healthz")).send().await?;
             print_json_response(response).await?;
         }
         Command::Stats => {
-            let response = client
-                .get(format!("http://{}/v1/stats", config.service.bind_addr))
-                .send()
-                .await?;
+            let response = client.get(service_url(&config, "/v1/stats")).send().await?;
             print_json_response(response).await?;
         }
         Command::Archive(args) => {
             let response = client
-                .post(format!("http://{}/v1/archive", config.service.bind_addr))
+                .post(service_url(&config, "/v1/archive"))
                 .headers(write_headers(&config.service.api_token)?)
                 .json(&ArchiveRequest {
                     project: args.project,
@@ -199,9 +184,85 @@ async fn main() -> Result<()> {
                 .await?;
             print_json_response(response).await?;
         }
+        Command::Tui(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let project = resolve_project_slug(args.project, &cwd)?;
+            let api = ApiClient::new(client, config);
+            tui::run(api, project).await?;
+        }
     }
 
     Ok(())
+}
+
+#[derive(Clone)]
+pub(crate) struct ApiClient {
+    client: Client,
+    config: AppConfig,
+}
+
+impl ApiClient {
+    pub(crate) fn new(client: Client, config: AppConfig) -> Self {
+        Self { client, config }
+    }
+
+    pub(crate) async fn health(&self) -> Result<serde_json::Value> {
+        get_json(
+            self.client
+                .get(service_url(&self.config, "/healthz"))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn project_memories(&self, project: &str) -> Result<ProjectMemoriesResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/memories"),
+                ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn project_overview(&self, project: &str) -> Result<ProjectOverviewResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/overview"),
+                ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn memory_detail(&self, memory_id: &str) -> Result<MemoryEntryResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/memory/{memory_id}"),
+                ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+}
+
+async fn get_json<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> Result<T> {
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("{status} {body}");
+    }
+    Ok(serde_json::from_str(&body)?)
 }
 
 async fn print_json_response(response: reqwest::Response) -> Result<()> {
@@ -212,6 +273,26 @@ async fn print_json_response(response: reqwest::Response) -> Result<()> {
     }
     println!("{body}");
     Ok(())
+}
+
+fn print_query_response(payload: QueryResponse) {
+    println!("Answer:\n{}\n", payload.answer);
+    println!("Confidence: {:.2}\n", payload.confidence);
+    for result in payload.results {
+        println!(
+            "- {} [{}] score={:.2}",
+            result.summary, result.memory_type, result.score
+        );
+        println!("  {}", result.snippet);
+        for source in result.sources {
+            let path = source.file_path.unwrap_or_else(|| "<no-file>".to_string());
+            println!(
+                "  source: {} {}",
+                path,
+                source.source_kind.source_kind_string()
+            );
+        }
+    }
 }
 
 fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
@@ -233,7 +314,21 @@ fn write_headers(token: &str) -> Result<HeaderMap> {
     Ok(headers)
 }
 
-trait SourceKindString {
+fn service_url(config: &AppConfig, path: &str) -> String {
+    format!("http://{}{}", config.service.bind_addr, path)
+}
+
+fn resolve_project_slug(project: Option<String>, cwd: &Path) -> Result<String> {
+    if let Some(project) = project {
+        return Ok(project);
+    }
+    let Some(name) = cwd.file_name().and_then(|value| value.to_str()) else {
+        anyhow::bail!("could not determine project slug from current directory");
+    };
+    Ok(name.to_string())
+}
+
+pub(crate) trait SourceKindString {
     fn source_kind_string(&self) -> &'static str;
 }
 
@@ -247,5 +342,27 @@ impl SourceKindString for mem_api::SourceKind {
             mem_api::SourceKind::Test => "test",
             mem_api::SourceKind::Note => "note",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::resolve_project_slug;
+
+    #[test]
+    fn project_flag_wins() {
+        let cwd = PathBuf::from("/tmp/example");
+        assert_eq!(
+            resolve_project_slug(Some("override".to_string()), &cwd).unwrap(),
+            "override"
+        );
+    }
+
+    #[test]
+    fn project_defaults_to_cwd_name() {
+        let cwd = PathBuf::from("/tmp/memory");
+        assert_eq!(resolve_project_slug(None, &cwd).unwrap(), "memory");
     }
 }

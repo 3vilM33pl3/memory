@@ -33,6 +33,8 @@ reqwest = { version = "0.12.24", default-features = false, features = ["http2", 
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
 sha2 = "0.10.9"
 humantime-serde = "1.1.1"
+ratatui = "0.29.0"
+crossterm = "0.28.1"
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

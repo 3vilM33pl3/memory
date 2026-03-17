@@ -302,6 +302,64 @@ pub struct ReindexResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectMemoryListItem {
+    pub id: Uuid,
+    pub summary: String,
+    pub preview: String,
+    pub memory_type: MemoryType,
+    pub status: MemoryStatus,
+    pub confidence: f32,
+    pub importance: i32,
+    pub updated_at: DateTime<Utc>,
+    pub tag_count: i64,
+    pub source_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectMemoriesResponse {
+    pub project: String,
+    pub total: i64,
+    pub items: Vec<ProjectMemoryListItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryTypeCount {
+    pub memory_type: MemoryType,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceKindCount {
+    pub source_kind: SourceKind,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectOverviewResponse {
+    pub project: String,
+    pub service_status: String,
+    pub database_status: String,
+    pub memory_entries_total: i64,
+    pub active_memories: i64,
+    pub archived_memories: i64,
+    pub raw_captures_total: i64,
+    pub uncurated_raw_captures: i64,
+    pub tasks_total: i64,
+    pub sessions_total: i64,
+    pub curation_runs_total: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_memory_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_capture_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_curation_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub memory_type_breakdown: Vec<MemoryTypeCount>,
+    #[serde(default)]
+    pub source_kind_breakdown: Vec<SourceKindCount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub service: ServiceConfig,
     pub database: DatabaseConfig,

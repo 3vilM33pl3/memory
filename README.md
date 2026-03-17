@@ -99,6 +99,12 @@ Show service stats:
 cargo run --bin mem-cli -- --config memory-layer.toml stats
 ```
 
+Launch the TUI:
+
+```bash
+cargo run --bin mem-cli -- --config memory-layer.toml tui --project memory
+```
+
 ## Capture Payload Example
 
 ```json
