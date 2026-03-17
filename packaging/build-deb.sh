@@ -36,6 +36,6 @@ install -m 0755 "$ROOT_DIR/packaging/debian/postinst" "$PKG_ROOT/DEBIAN/postinst
 install -m 0755 "$ROOT_DIR/packaging/debian/prerm" "$PKG_ROOT/DEBIAN/prerm"
 
 DEB_PATH="$ROOT_DIR/target/debian/memory-layer_${VERSION}_amd64.deb"
-dpkg-deb --build "$PKG_ROOT" "$DEB_PATH"
+dpkg-deb --root-owner-group --build "$PKG_ROOT" "$DEB_PATH"
 
 echo "Built $DEB_PATH"
