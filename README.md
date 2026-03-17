@@ -83,7 +83,7 @@ url = "postgresql://memory:YOUR_PASSWORD@localhost:5432/memory"
 llm_curation = false
 ```
 
-4. Start the backend from the repo root:
+4. Start the shared backend:
 
 ```bash
 cargo run --bin mem-service
@@ -91,10 +91,17 @@ cargo run --bin mem-service
 
 When `mem-service` is started with an explicit config file path, it watches that file and restarts itself in place after the file changes. That lets you update values like `service.api_token`, automation settings, or the bind address without manually killing and relaunching the backend.
 
-5. Optional: start the hidden automation watcher:
+5. Optional: enable the per-repo watcher as a `systemd --user` service:
 
 ```bash
-cargo run --bin memory-watch -- run --project memory
+cargo run --bin mem-cli -- watch enable --project memory
+```
+
+Check or disable it later with:
+
+```bash
+cargo run --bin mem-cli -- watch status --project memory
+cargo run --bin mem-cli -- watch disable --project memory
 ```
 
 6. In another shell, verify the backend is up:
@@ -119,7 +126,7 @@ Then run:
 # from the target repository root
 ~/.local/bin/mem-cli init
 ~/.local/bin/mem-service
-~/.local/bin/memory-watch run --project memory
+~/.local/bin/mem-cli watch enable --project memory
 ~/.local/bin/mem-cli tui
 ```
 
@@ -152,7 +159,8 @@ Recommended Debian workflow for another repo:
 sudoedit /etc/memory-layer/memory-layer.toml
 cd /path/to/another-project
 mem-cli init
-mem-service
+sudo systemctl enable --now memory-layer.service
+mem-cli watch enable --project another-project
 mem-cli tui
 ```
 
@@ -271,7 +279,8 @@ TUI controls:
 Typical workflow:
 1. Run `memctl init`
 2. Start `mem-service`
-3. `remember` the completed task
+3. Optional: `mem-cli watch enable --project <slug>`
+4. `remember` the completed task
 4. Query the resulting memory
 
 The `remember` command auto-detects changed files from `git status` when possible, creates a capture payload for you, sends it to the backend, and then runs curation immediately. If you omit `--title`, `--prompt`, or `--summary`, it derives defaults automatically.

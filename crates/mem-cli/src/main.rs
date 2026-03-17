@@ -31,6 +31,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Init(InitArgs),
+    Watch(WatchArgs),
     Doctor(DoctorArgs),
     Query(QueryArgs),
     CaptureTask(CaptureTaskArgs),
@@ -62,6 +63,25 @@ struct DoctorArgs {
     fix: bool,
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct WatchArgs {
+    #[command(subcommand)]
+    command: WatchCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum WatchCommand {
+    Enable(WatchProjectArgs),
+    Disable(WatchProjectArgs),
+    Status(WatchProjectArgs),
+}
+
+#[derive(Debug, Args)]
+struct WatchProjectArgs {
+    #[arg(long)]
+    project: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -170,6 +190,28 @@ async fn main() -> Result<()> {
             println!("{output}");
             return Ok(());
         }
+        Command::Watch(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            match &args.command {
+                WatchCommand::Enable(args) => {
+                    let project = resolve_project_slug(args.project.clone(), &cwd)?;
+                    let output = enable_watch_service(&repo_root, &project)?;
+                    println!("{output}");
+                }
+                WatchCommand::Disable(args) => {
+                    let project = resolve_project_slug(args.project.clone(), &cwd)?;
+                    let output = disable_watch_service(&project)?;
+                    println!("{output}");
+                }
+                WatchCommand::Status(args) => {
+                    let project = resolve_project_slug(args.project.clone(), &cwd)?;
+                    let output = watch_service_status(&repo_root, &project)?;
+                    println!("{output}");
+                }
+            }
+            return Ok(());
+        }
         Command::Doctor(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let repo_root = resolve_repo_root(&cwd)?;
@@ -199,6 +241,7 @@ async fn main() -> Result<()> {
 
     match command {
         Command::Init(_) => unreachable!("init is handled before config loading"),
+        Command::Watch(_) => unreachable!("watch is handled before config loading"),
         Command::Doctor(_) => unreachable!("doctor is handled before config loading"),
         Command::Query(args) => {
             let request = QueryRequest {
@@ -1082,6 +1125,148 @@ fn initialize_repo(
     ))
 }
 
+fn enable_watch_service(repo_root: &Path, project: &str) -> Result<String> {
+    let unit_name = watch_unit_name(project);
+    let unit_dir = user_systemd_unit_dir()?;
+    let unit_path = unit_dir.join(&unit_name);
+    fs::create_dir_all(&unit_dir).with_context(|| format!("create {}", unit_dir.display()))?;
+    fs::write(&unit_path, render_watch_unit(repo_root, project)?)
+        .with_context(|| format!("write {}", unit_path.display()))?;
+    run_systemctl_user(["daemon-reload"])?;
+    run_systemctl_user(["enable", "--now", &unit_name])?;
+    Ok(format!(
+        "Installed and started user service {}.\nUnit: {}\nRepo: {}\nProject: {}\n\nManage it with:\n- mem-cli watch status --project {}\n- mem-cli watch disable --project {}\n- systemctl --user restart {}",
+        unit_name,
+        unit_path.display(),
+        repo_root.display(),
+        project,
+        project,
+        project,
+        unit_name
+    ))
+}
+
+fn disable_watch_service(project: &str) -> Result<String> {
+    let unit_name = watch_unit_name(project);
+    let unit_path = user_systemd_unit_dir()?.join(&unit_name);
+    let _ = run_systemctl_user(["disable", "--now", &unit_name]);
+    if unit_path.exists() {
+        fs::remove_file(&unit_path).with_context(|| format!("remove {}", unit_path.display()))?;
+    }
+    run_systemctl_user(["daemon-reload"])?;
+    Ok(format!(
+        "Disabled user service {}.\nRemoved unit: {}",
+        unit_name,
+        unit_path.display()
+    ))
+}
+
+fn watch_service_status(repo_root: &Path, project: &str) -> Result<String> {
+    let unit_name = watch_unit_name(project);
+    let unit_path = user_systemd_unit_dir()?.join(&unit_name);
+    let is_enabled = run_systemctl_user(["is-enabled", &unit_name]).is_ok();
+    let is_active = run_systemctl_user(["is-active", &unit_name]).is_ok();
+    Ok(format!(
+        "Watcher service for project {}:\n- unit: {}\n- repo: {}\n- installed: {}\n- enabled: {}\n- active: {}\n\nInspect with:\n- systemctl --user status {}",
+        project,
+        unit_path.display(),
+        repo_root.display(),
+        yes_no(unit_path.exists()),
+        yes_no(is_enabled),
+        yes_no(is_active),
+        unit_name
+    ))
+}
+
+fn render_watch_unit(repo_root: &Path, project: &str) -> Result<String> {
+    let watch_binary = memory_watch_binary_path()?;
+    let working_directory = repo_root
+        .canonicalize()
+        .with_context(|| format!("canonicalize {}", repo_root.display()))?;
+    Ok(format!(
+        "[Unit]\nDescription=Memory Layer Watcher ({project})\nAfter=default.target\n\n[Service]\nType=simple\nWorkingDirectory={}\nExecStart={} run --project {}\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
+        working_directory.display(),
+        shell_escape_path(&watch_binary),
+        shell_escape_str(project),
+    ))
+}
+
+fn user_systemd_unit_dir() -> Result<PathBuf> {
+    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
+        return Ok(PathBuf::from(config_home).join("systemd").join("user"));
+    }
+    let home = env::var("HOME").context("HOME is not set")?;
+    Ok(PathBuf::from(home)
+        .join(".config")
+        .join("systemd")
+        .join("user"))
+}
+
+fn memory_watch_binary_path() -> Result<PathBuf> {
+    let current_exe = env::current_exe().context("locate current executable")?;
+    if let Some(bin_dir) = current_exe.parent() {
+        let sibling = bin_dir.join("memory-watch");
+        if sibling.is_file() {
+            return Ok(sibling);
+        }
+    }
+    Ok(PathBuf::from("memory-watch"))
+}
+
+fn watch_unit_name(project: &str) -> String {
+    let sanitized = project
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
+            _ => '-',
+        })
+        .collect::<String>();
+    format!("memory-watch-{}.service", sanitized)
+}
+
+fn run_systemctl_user<const N: usize>(args: [&str; N]) -> Result<()> {
+    let output = ProcessCommand::new("systemctl")
+        .arg("--user")
+        .args(args)
+        .output()
+        .with_context(|| format!("run systemctl --user {}", args.join(" ")))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    anyhow::bail!(
+        "systemctl --user {} failed: {}{}{}",
+        args.join(" "),
+        stderr.trim(),
+        if stderr.trim().is_empty() || stdout.trim().is_empty() {
+            ""
+        } else {
+            " | "
+        },
+        stdout.trim()
+    )
+}
+
+fn shell_escape_path(value: &Path) -> String {
+    shell_escape_str(&value.display().to_string())
+}
+
+fn shell_escape_str(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
 fn discover_skill_template_dir() -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(exe) = env::current_exe() {
@@ -1236,7 +1421,7 @@ fn render_init_summary(
         "Created"
     };
     format!(
-        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url` and `service.api_token` in {}\n2. Use {} only for repo-specific overrides\n3. Start the backend from this repo:\n   mem-service\n4. Optional: start the watcher:\n   memory-watch run --project {}\n5. Open the TUI:\n   mem-cli tui --project {}\n6. Use the repo-local skill from {}",
+        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url` and `service.api_token` in {}\n2. Use {} only for repo-specific overrides\n3. Start the shared backend if it is not already running:\n   mem-service\n4. Optional: enable the per-repo watcher user service:\n   mem-cli watch enable --project {}\n5. Open the TUI:\n   mem-cli tui --project {}\n6. Use the repo-local skill from {}",
         repo_root.display(),
         config_path.display(),
         project_path.display(),
@@ -1606,8 +1791,8 @@ mod tests {
 
     use super::{
         RememberArgs, build_remember_request, initialize_repo, is_placeholder_database_url,
-        mask_database_url, repair_repo_bootstrap, resolve_project_slug, resolve_repo_root,
-        root_gitignore_contains_mem,
+        mask_database_url, render_watch_unit, repair_repo_bootstrap, resolve_project_slug,
+        resolve_repo_root, root_gitignore_contains_mem, watch_unit_name,
     };
 
     #[test]
@@ -1656,7 +1841,7 @@ mod tests {
 
         assert!(summary.contains(".mem/config.toml"));
         assert!(summary.contains(".agents/skills/memory-layer"));
-        assert!(summary.contains("memory-watch run --project memory"));
+        assert!(summary.contains("mem-cli watch enable --project memory"));
         assert!(summary.contains("mem-service"));
     }
 
@@ -1738,6 +1923,28 @@ mod tests {
                 .is_file()
         );
         assert!(root_gitignore_contains_mem(&repo_root).unwrap());
+
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn watch_unit_name_is_project_scoped() {
+        assert_eq!(watch_unit_name("homelab"), "memory-watch-homelab.service");
+        assert_eq!(
+            watch_unit_name("customer portal"),
+            "memory-watch-customer-portal.service"
+        );
+    }
+
+    #[test]
+    fn watch_unit_uses_repo_root_and_project() {
+        let repo_root = unique_temp_dir("mem-watch-unit");
+        fs::create_dir_all(&repo_root).unwrap();
+        let unit = render_watch_unit(&repo_root, "homelab").unwrap();
+
+        assert!(unit.contains("Description=Memory Layer Watcher (homelab)"));
+        assert!(unit.contains(&format!("WorkingDirectory={}", repo_root.display())));
+        assert!(unit.contains("run --project homelab"));
 
         let _ = fs::remove_dir_all(repo_root);
     }
