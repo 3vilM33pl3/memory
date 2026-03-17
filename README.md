@@ -249,6 +249,7 @@ TUI controls:
 - `c`: curate project
 - `i`: reindex search chunks
 - `a`: archive low-value memories
+- `D`: delete the selected memory
 - `q`: quit
 
 ## Capture Payload Example

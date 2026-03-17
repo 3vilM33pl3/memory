@@ -319,6 +319,13 @@ impl App {
                 );
                 self.refresh(api).await;
             }
+            KeyCode::Char('D') if key.modifiers == KeyModifiers::SHIFT => {
+                if self.active_tab == TabKind::Memories {
+                    self.delete_selected_memory(api).await?;
+                } else if self.active_tab == TabKind::Query {
+                    self.delete_selected_query_memory(api).await?;
+                }
+            }
             KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => return Ok(true),
             _ => {}
         }
@@ -532,6 +539,30 @@ impl App {
             .as_ref()
             .map(|response| response.results.as_slice())
             .unwrap_or(&[])
+    }
+
+    async fn delete_selected_memory(&mut self, api: &ApiClient) -> Result<()> {
+        let Some(item) = self.filtered_memories.get(self.selected_index) else {
+            self.status_message = "No selected memory to delete.".to_string();
+            return Ok(());
+        };
+        let response = api.delete_memory(item.id).await?;
+        self.status_message = format!("Deleted memory: {}", response.summary);
+        self.refresh(api).await;
+        Ok(())
+    }
+
+    async fn delete_selected_query_memory(&mut self, api: &ApiClient) -> Result<()> {
+        let Some(result) = self.query_results().get(self.query_selected_index) else {
+            self.status_message = "No selected query result to delete.".to_string();
+            return Ok(());
+        };
+        let response = api.delete_memory(result.memory_id).await?;
+        self.status_message = format!("Deleted memory: {}", response.summary);
+        self.query_selected_detail = None;
+        self.run_query(api).await;
+        self.refresh(api).await;
+        Ok(())
     }
 
     fn scroll_project(&mut self, delta: i16) {
@@ -899,7 +930,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             memory_type_span_from_label(app.filters.memory_type.label()),
             Span::raw("  "),
             Span::styled(
-                "clear=x curate=c reindex=i archive=a",
+                "clear=x curate=c reindex=i archive=a delete=D",
                 Style::default().fg(Theme::MUTED),
             ),
         ],

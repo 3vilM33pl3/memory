@@ -341,6 +341,28 @@ pub struct ArchiveResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteMemoryRequest {
+    pub memory_id: Uuid,
+}
+
+impl DeleteMemoryRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.memory_id.is_nil() {
+            return Err(ValidationError::new("memory_id must be non-nil"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteMemoryResponse {
+    pub memory_id: Uuid,
+    pub project: String,
+    pub summary: String,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReindexRequest {
     pub project: String,
 }

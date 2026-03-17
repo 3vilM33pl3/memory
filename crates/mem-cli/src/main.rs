@@ -11,13 +11,14 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CurateRequest, CurateResponse,
-    MemoryEntryResponse, ProjectMemoriesResponse, ProjectOverviewResponse, QueryFilters,
-    QueryRequest, QueryResponse, ReindexRequest, ReindexResponse, TestResult,
-    discover_global_config_path,
+    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, ProjectMemoriesResponse,
+    ProjectOverviewResponse, QueryFilters, QueryRequest, QueryResponse, ReindexRequest,
+    ReindexResponse, TestResult, discover_global_config_path,
 };
 use mem_watch::{flush_path, load_state, run_once, to_status};
 use reqwest::{Client, header::HeaderMap};
 use serde::Serialize;
+use uuid::Uuid;
 
 #[derive(Debug, Parser)]
 #[command(name = "memctl", version)]
@@ -1579,6 +1580,18 @@ impl ApiClient {
                     max_confidence: 0.3,
                     max_importance: 1,
                 })
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn delete_memory(&self, memory_id: Uuid) -> Result<DeleteMemoryResponse> {
+        get_json(
+            self.client
+                .delete(service_url(&self.config, "/v1/memory"))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .json(&DeleteMemoryRequest { memory_id })
                 .send()
                 .await?,
         )

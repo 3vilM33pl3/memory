@@ -10,13 +10,14 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CurateRequest,
-    MemoryEntryResponse, MemorySourceRecord, ProjectMemoriesResponse, ProjectOverviewResponse,
-    QueryRequest, ReindexRequest, ReindexResponse, StatsResponse, StreamRequest, StreamResponse,
-    ValidationError, read_capnp_text_frame, write_capnp_text_frame,
+    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, MemorySourceRecord,
+    ProjectMemoriesResponse, ProjectOverviewResponse, QueryRequest, ReindexRequest,
+    ReindexResponse, StatsResponse, StreamRequest, StreamResponse, ValidationError,
+    read_capnp_text_frame, write_capnp_text_frame,
 };
 use mem_curate::{curate, store_capture};
 use mem_search::{parse_memory_type, parse_source_kind, query_memory, rebuild_chunks};
@@ -181,6 +182,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/curate", post(curate_memory))
         .route("/v1/reindex", post(reindex))
         .route("/v1/memory/{id}", get(get_memory))
+        .route("/v1/memory", delete(delete_memory))
         .route("/v1/stats", get(stats))
         .route("/v1/projects/{slug}/memories", get(project_memories))
         .route("/v1/projects/{slug}/overview", get(project_overview))
@@ -644,6 +646,42 @@ async fn archive(
 
     Ok(Json(ArchiveResponse {
         archived_count: result.rows_affected(),
+    }))
+}
+
+async fn delete_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<DeleteMemoryRequest>,
+) -> Result<Json<DeleteMemoryResponse>, ApiError> {
+    require_token(&headers, &state.api_token)?;
+    request.validate().map_err(ApiError::validation)?;
+
+    let record = sqlx::query(
+        r#"
+        DELETE FROM memory_entries m
+        USING projects p
+        WHERE m.project_id = p.id
+          AND m.id = $1
+        RETURNING m.id, p.slug, m.summary
+        "#,
+    )
+    .bind(request.memory_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(ApiError::sql)?
+    .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
+
+    let memory_id = record.try_get("id").map_err(ApiError::sql)?;
+    let project: String = record.try_get("slug").map_err(ApiError::sql)?;
+    let summary: String = record.try_get("summary").map_err(ApiError::sql)?;
+    notify_project_changed(&state, project.clone(), Some(memory_id));
+
+    Ok(Json(DeleteMemoryResponse {
+        memory_id,
+        project,
+        summary,
+        deleted: true,
     }))
 }
 
