@@ -227,6 +227,7 @@ The TUI opens a persistent connection to the backend. When the Cap'n Proto liste
 Tabs:
 - `Memories`: browse the stored corpus
 - `Query`: run a question and inspect the memories returned for that question
+- `Log`: inspect query prompts and the returned answers/errors
 - `Project`: view project-level health and counts
 
 Inspect or flush automation state:

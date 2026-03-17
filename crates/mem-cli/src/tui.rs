@@ -1,6 +1,7 @@
 use std::{io, process::Command, time::Duration};
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
@@ -109,6 +110,9 @@ struct App {
     query_selected_detail: Option<MemoryEntryResponse>,
     query_selected_index: usize,
     query_table_state: TableState,
+    query_logs: Vec<QueryLogEntry>,
+    log_selected_index: usize,
+    log_table_state: TableState,
     project_scroll: u16,
     versions: ToolVersions,
     status_message: String,
@@ -123,12 +127,25 @@ struct ToolVersions {
     memory_watch: String,
 }
 
+struct QueryLogEntry {
+    recorded_at: DateTime<Utc>,
+    question: String,
+    outcome: QueryLogOutcome,
+}
+
+enum QueryLogOutcome {
+    Success(QueryResponse),
+    Error(String),
+}
+
 impl App {
     fn new(project: String, versions: ToolVersions) -> Self {
         let mut table_state = TableState::default();
         table_state.select(Some(0));
         let mut query_table_state = TableState::default();
         query_table_state.select(Some(0));
+        let mut log_table_state = TableState::default();
+        log_table_state.select(Some(0));
         Self {
             project: project.clone(),
             active_tab: TabKind::Memories,
@@ -144,6 +161,9 @@ impl App {
             query_selected_detail: None,
             query_selected_index: 0,
             query_table_state,
+            query_logs: Vec::new(),
+            log_selected_index: 0,
+            log_table_state,
             project_scroll: 0,
             versions,
             status_message: "Press r to refresh, q to exit.".to_string(),
@@ -249,6 +269,12 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Query => {
                 self.move_query_selection(-1, api).await;
+            }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Log => {
+                self.move_log_selection(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Log => {
+                self.move_log_selection(-1);
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Project => {
                 self.scroll_project(1);
@@ -497,6 +523,10 @@ impl App {
             .await
         {
             Ok(response) => {
+                self.record_query_log(
+                    question.to_string(),
+                    QueryLogOutcome::Success(response.clone()),
+                );
                 self.query_response = Some(response);
                 self.query_selected_index = 0;
                 if self.query_results().is_empty() {
@@ -510,6 +540,10 @@ impl App {
                     format!("Query returned {} memories.", self.query_results().len());
             }
             Err(error) => {
+                self.record_query_log(
+                    question.to_string(),
+                    QueryLogOutcome::Error(error.to_string()),
+                );
                 self.query_response = None;
                 self.query_selected_detail = None;
                 self.query_table_state.select(None);
@@ -548,6 +582,31 @@ impl App {
             .as_ref()
             .map(|response| response.results.as_slice())
             .unwrap_or(&[])
+    }
+
+    fn record_query_log(&mut self, question: String, outcome: QueryLogOutcome) {
+        self.query_logs.insert(
+            0,
+            QueryLogEntry {
+                recorded_at: Utc::now(),
+                question,
+                outcome,
+            },
+        );
+        self.log_selected_index = 0;
+        self.log_table_state.select(Some(0));
+    }
+
+    fn move_log_selection(&mut self, delta: isize) {
+        if self.query_logs.is_empty() {
+            return;
+        }
+        let next = (self.log_selected_index as isize + delta)
+            .clamp(0, self.query_logs.len().saturating_sub(1) as isize) as usize;
+        if next != self.log_selected_index {
+            self.log_selected_index = next;
+            self.log_table_state.select(Some(self.log_selected_index));
+        }
     }
 
     async fn delete_selected_memory(&mut self, api: &ApiClient) -> Result<()> {
@@ -705,6 +764,7 @@ async fn subscribe_stream(stream: &mut StreamSession, app: &App) -> Result<()> {
 enum TabKind {
     Memories,
     Query,
+    Log,
     Project,
 }
 
@@ -712,7 +772,8 @@ impl TabKind {
     fn next(self) -> Self {
         match self {
             Self::Memories => Self::Query,
-            Self::Query => Self::Project,
+            Self::Query => Self::Log,
+            Self::Log => Self::Project,
             Self::Project => Self::Memories,
         }
     }
@@ -725,7 +786,8 @@ impl TabKind {
         match self {
             Self::Memories => 0,
             Self::Query => 1,
-            Self::Project => 2,
+            Self::Log => 2,
+            Self::Project => 3,
         }
     }
 }
@@ -899,7 +961,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         ])
         .split(frame.area());
 
-    let titles = ["Memories", "Query", "Project"]
+    let titles = ["Memories", "Query", "Log", "Project"]
         .into_iter()
         .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
         .collect::<Vec<_>>();
@@ -957,6 +1019,14 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                 Style::default().fg(Theme::MUTED),
             ),
         ],
+        TabKind::Log => vec![
+            accent_span("history "),
+            Span::styled("j/k move  ", Style::default().fg(Theme::TEXT)),
+            Span::styled(
+                "shows query prompts and answers/errors",
+                Style::default().fg(Theme::MUTED),
+            ),
+        ],
         TabKind::Project => vec![
             accent_span("scroll "),
             Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
@@ -996,6 +1066,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     match app.active_tab {
         TabKind::Memories => draw_memories_tab(frame, app, chunks[2]),
         TabKind::Query => draw_query_tab(frame, app, chunks[2]),
+        TabKind::Log => draw_log_tab(frame, app, chunks[2]),
         TabKind::Project => draw_project_tab(frame, app, chunks[2]),
     }
 
@@ -1559,6 +1630,131 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(detail, lower[1]);
 }
 
+fn draw_log_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .split(area);
+
+    let header = Row::new(["When", "Question", "Status"]).style(
+        Style::default()
+            .fg(Theme::ACCENT_STRONG)
+            .bg(Theme::PANEL_ALT)
+            .add_modifier(Modifier::BOLD),
+    );
+    let rows = app.query_logs.iter().map(log_row);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(17),
+            Constraint::Percentage(68),
+            Constraint::Length(10),
+        ],
+    )
+    .header(header)
+    .row_highlight_style(
+        Style::default()
+            .fg(Theme::SELECTION_FG)
+            .bg(Theme::SELECTION_BG)
+            .add_modifier(Modifier::BOLD),
+    )
+    .block(themed_block(format!(
+        "Query Log ({})",
+        app.query_logs.len()
+    )));
+    let mut state = app.log_table_state.clone();
+    frame.render_stateful_widget(table, chunks[0], &mut state);
+
+    let detail_lines = if let Some(entry) = app.query_logs.get(app.log_selected_index) {
+        let mut lines = vec![
+            Line::from(vec![
+                label_span("When: "),
+                Span::styled(
+                    entry
+                        .recorded_at
+                        .format("%Y-%m-%d %H:%M:%S UTC")
+                        .to_string(),
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]),
+            Line::from(vec![
+                label_span("Question: "),
+                Span::styled(entry.question.clone(), Style::default().fg(Theme::TEXT)),
+            ]),
+            Line::from(""),
+        ];
+
+        match &entry.outcome {
+            QueryLogOutcome::Success(response) => {
+                lines.push(Line::from(vec![section_span("Answer")]));
+                lines.push(Line::from(Span::styled(
+                    response.answer.clone(),
+                    Style::default().fg(Theme::TEXT),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![
+                    label_span("Confidence: "),
+                    Span::styled(
+                        format!("{:.2}", response.confidence),
+                        confidence_style(response.confidence),
+                    ),
+                    Span::raw("   "),
+                    label_span("Evidence: "),
+                    Span::styled(
+                        if response.insufficient_evidence {
+                            "insufficient"
+                        } else {
+                            "sufficient"
+                        },
+                        if response.insufficient_evidence {
+                            Style::default().fg(Theme::WARNING)
+                        } else {
+                            Style::default().fg(Theme::SUCCESS)
+                        },
+                    ),
+                ]));
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![section_span("Returned Memories")]));
+                if response.results.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "No memories returned.",
+                        Style::default().fg(Theme::MUTED),
+                    )));
+                } else {
+                    for result in &response.results {
+                        lines.push(Line::from(Span::styled(
+                            format!(
+                                "{} [{}] score={:.2}",
+                                result.summary, result.memory_type, result.score
+                            ),
+                            Style::default().fg(Theme::TEXT),
+                        )));
+                    }
+                }
+            }
+            QueryLogOutcome::Error(error) => {
+                lines.push(Line::from(vec![section_span("Error")]));
+                lines.push(Line::from(Span::styled(
+                    error.clone(),
+                    Style::default().fg(Theme::DANGER),
+                )));
+            }
+        }
+        lines
+    } else {
+        vec![Line::from(Span::styled(
+            "No query history yet. Run a query to populate the log.",
+            Style::default().fg(Theme::MUTED),
+        ))]
+    };
+
+    let detail = Paragraph::new(detail_lines)
+        .style(Style::default().bg(Theme::PANEL))
+        .wrap(Wrap { trim: false })
+        .block(themed_block("Log Detail"));
+    frame.render_widget(detail, chunks[1]);
+}
+
 fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'static>> {
     if items.is_empty() {
         vec![Line::from(empty.to_string())]
@@ -1614,6 +1810,31 @@ fn query_row(item: &QueryResult) -> Row<'static> {
             format!("{:.2}", item.score),
             Style::default().fg(Theme::ACCENT_STRONG),
         )),
+    ])
+}
+
+fn log_row(item: &QueryLogEntry) -> Row<'static> {
+    let status = match &item.outcome {
+        QueryLogOutcome::Success(response) => {
+            if response.insufficient_evidence {
+                Span::styled("weak", Style::default().fg(Theme::WARNING))
+            } else {
+                Span::styled("ok", Style::default().fg(Theme::SUCCESS))
+            }
+        }
+        QueryLogOutcome::Error(_) => Span::styled("error", Style::default().fg(Theme::DANGER)),
+    };
+
+    Row::new(vec![
+        Cell::from(Span::styled(
+            item.recorded_at.format("%H:%M:%S UTC").to_string(),
+            Style::default().fg(Theme::TEXT),
+        )),
+        Cell::from(Span::styled(
+            item.question.clone(),
+            Style::default().fg(Theme::TEXT),
+        )),
+        Cell::from(status),
     ])
 }
 
