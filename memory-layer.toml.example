@@ -8,3 +8,15 @@ url = "postgresql://memory:<password>@localhost:5432/memory"
 
 [features]
 llm_curation = false
+
+[automation]
+enabled = false
+mode = "suggest"
+poll_interval = "10s"
+idle_threshold = "5m"
+min_changed_files = 2
+require_passing_test = false
+ignored_paths = [".git/", "target/", ".memory-layer/"]
+# repo_root = "/path/to/repo"
+# audit_log_path = "/path/to/repo/.memory-layer/automation.log"
+# state_file_path = "/path/to/repo/.memory-layer/automation-state.json"

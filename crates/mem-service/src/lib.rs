@@ -1,8 +1,11 @@
+use std::path::PathBuf;
+
 use mem_api::{
     MemoryStatus, MemoryTypeCount, NamedCount, ProjectMemoriesResponse, ProjectMemoryListItem,
     ProjectOverviewResponse, SourceKindCount, ValidationError,
 };
 use mem_search::{parse_memory_type, parse_source_kind};
+use mem_watch::{load_state, to_status};
 use sqlx::{PgPool, Row};
 
 pub fn parse_status_filter(input: &str) -> Result<String, ValidationError> {
@@ -96,6 +99,7 @@ pub async fn fetch_project_memories(
 pub async fn fetch_project_overview(
     pool: &PgPool,
     slug: &str,
+    config: &mem_api::AutomationConfig,
 ) -> Result<ProjectOverviewResponse, sqlx::Error> {
     let row = sqlx::query(
         r#"
@@ -136,6 +140,7 @@ pub async fn fetch_project_overview(
     let source_kind_breakdown = fetch_source_kind_breakdown(pool, slug).await?;
     let top_tags = fetch_top_tags(pool, slug).await?;
     let top_files = fetch_top_files(pool, slug).await?;
+    let automation = load_automation_status(slug, config).await;
 
     let Some(row) = row else {
         return Ok(empty_overview(
@@ -144,6 +149,7 @@ pub async fn fetch_project_overview(
             source_kind_breakdown,
             top_tags,
             top_files,
+            automation,
         ));
     };
 
@@ -172,6 +178,7 @@ pub async fn fetch_project_overview(
         source_kind_breakdown,
         top_tags,
         top_files,
+        automation,
     })
 }
 
@@ -293,6 +300,7 @@ fn empty_overview(
     source_kind_breakdown: Vec<SourceKindCount>,
     top_tags: Vec<NamedCount>,
     top_files: Vec<NamedCount>,
+    automation: Option<mem_api::AutomationStatus>,
 ) -> ProjectOverviewResponse {
     ProjectOverviewResponse {
         project: slug.to_string(),
@@ -319,7 +327,17 @@ fn empty_overview(
         source_kind_breakdown,
         top_tags,
         top_files,
+        automation,
     }
+}
+
+async fn load_automation_status(
+    slug: &str,
+    config: &mem_api::AutomationConfig,
+) -> Option<mem_api::AutomationStatus> {
+    let repo_root = config.repo_root.as_ref().map(PathBuf::from)?;
+    let state = load_state(slug, &repo_root, config).await.ok()?;
+    Some(to_status(&state))
 }
 
 #[cfg(test)]
@@ -360,7 +378,9 @@ mod tests {
         let slug = format!("test-{}", Uuid::new_v4());
         seed_project(&pool, &slug).await.unwrap();
 
-        let overview = fetch_project_overview(&pool, &slug).await.unwrap();
+        let overview = fetch_project_overview(&pool, &slug, &mem_api::AutomationConfig::default())
+            .await
+            .unwrap();
         assert_eq!(overview.project, slug);
         assert_eq!(overview.memory_entries_total, 1);
         assert_eq!(overview.active_memories, 1);

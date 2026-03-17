@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/mem-api",
+  "crates/mem-watch",
   "crates/mem-cli",
   "crates/mem-curate",
   "crates/mem-ingest",

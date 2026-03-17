@@ -706,6 +706,14 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 .map(|hours| format!("{hours}h"))
                 .unwrap_or_else(|| "n/a".to_string())
         )),
+        Line::from(format!(
+            "Automation: {}",
+            app.overview
+                .automation
+                .as_ref()
+                .map(format_automation_status)
+                .unwrap_or_else(|| "not configured".to_string())
+        )),
     ])
     .block(Block::default().borders(Borders::ALL).title("Overview"));
     frame.render_widget(summary, chunks[0]);
@@ -828,6 +836,22 @@ fn display_filter(value: &str) -> String {
     }
 }
 
+fn format_automation_status(status: &mem_api::AutomationStatus) -> String {
+    format!(
+        "enabled={} mode={} dirty_files={} last_decision={}",
+        status.enabled,
+        match status.mode {
+            mem_api::AutomationMode::Suggest => "suggest",
+            mem_api::AutomationMode::Auto => "auto",
+        },
+        status.dirty_file_count.unwrap_or(0),
+        status
+            .last_decision
+            .clone()
+            .unwrap_or_else(|| "none".to_string())
+    )
+}
+
 fn should_quit(key: KeyEvent, app: &App) -> bool {
     matches!(app.input_mode, InputMode::Normal) && matches!(key.code, KeyCode::Char('q'))
 }
@@ -858,6 +882,7 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
         source_kind_breakdown: Vec::new(),
         top_tags: Vec::<NamedCount>::new(),
         top_files: Vec::<NamedCount>::new(),
+        automation: None,
     }
 }
 

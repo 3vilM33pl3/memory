@@ -376,6 +376,33 @@ pub struct ProjectOverviewResponse {
     pub top_tags: Vec<NamedCount>,
     #[serde(default)]
     pub top_files: Vec<NamedCount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation: Option<AutomationStatus>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationMode {
+    #[default]
+    Suggest,
+    Auto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationStatus {
+    pub enabled: bool,
+    pub mode: AutomationMode,
+    pub repo_root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_persisted_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dirty_file_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_note_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_decision: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,6 +411,8 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     #[serde(default)]
     pub features: FeatureFlags,
+    #[serde(default)]
+    pub automation: AutomationConfig,
 }
 
 impl AppConfig {
@@ -424,6 +453,49 @@ pub struct FeatureFlags {
     pub llm_curation: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub mode: AutomationMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
+    #[serde(default = "default_poll_interval")]
+    #[serde(with = "humantime_serde")]
+    pub poll_interval: Duration,
+    #[serde(default = "default_idle_threshold")]
+    #[serde(with = "humantime_serde")]
+    pub idle_threshold: Duration,
+    #[serde(default = "default_min_changed_files")]
+    pub min_changed_files: usize,
+    #[serde(default)]
+    pub require_passing_test: bool,
+    #[serde(default)]
+    pub ignored_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit_log_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_file_path: Option<String>,
+}
+
+impl Default for AutomationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: AutomationMode::Suggest,
+            repo_root: None,
+            poll_interval: default_poll_interval(),
+            idle_threshold: default_idle_threshold(),
+            min_changed_files: default_min_changed_files(),
+            require_passing_test: false,
+            ignored_paths: Vec::new(),
+            audit_log_path: None,
+            state_file_path: None,
+        }
+    }
+}
+
 fn default_bind_addr() -> String {
     "127.0.0.1:4040".to_string()
 }
@@ -434,6 +506,18 @@ fn default_api_token() -> String {
 
 fn default_request_timeout() -> Duration {
     Duration::from_secs(30)
+}
+
+fn default_poll_interval() -> Duration {
+    Duration::from_secs(10)
+}
+
+fn default_idle_threshold() -> Duration {
+    Duration::from_secs(300)
+}
+
+fn default_min_changed_files() -> usize {
+    2
 }
 
 #[derive(Debug, Error)]

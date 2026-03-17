@@ -1,5 +1,5 @@
 [package]
-name = "mem-service"
+name = "mem-watch"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,18 +7,19 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-axum.workspace = true
 chrono.workspace = true
-config.workspace = true
+clap.workspace = true
 mem-api = { path = "../mem-api" }
-mem-curate = { path = "../mem-curate" }
-mem-search = { path = "../mem-search" }
-mem-watch = { path = "../mem-watch" }
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sqlx.workspace = true
+sha2.workspace = true
 tokio.workspace = true
-tower-http.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
-uuid.workspace = true
+
+[[bin]]
+name = "memory-watch"
+path = "src/main.rs"
+
+[lints]
+workspace = true

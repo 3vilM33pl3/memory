@@ -9,10 +9,11 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/memory-layer"
 mkdir -p "$BIN_DIR" "$CONFIG_DIR"
 
 echo "Building release binaries..."
-cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin mem-cli --bin mem-service
+cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin mem-cli --bin mem-service --bin memory-watch
 
 install -m 0755 "$ROOT_DIR/target/release/mem-cli" "$BIN_DIR/mem-cli"
 install -m 0755 "$ROOT_DIR/target/release/mem-service" "$BIN_DIR/mem-service"
+install -m 0755 "$ROOT_DIR/target/release/memory-watch" "$BIN_DIR/memory-watch"
 
 if [[ ! -f "$CONFIG_DIR/memory-layer.toml" ]]; then
   install -m 0644 "$ROOT_DIR/memory-layer.toml.example" "$CONFIG_DIR/memory-layer.toml"
@@ -26,12 +27,15 @@ cat <<EOF
 Installed:
   $BIN_DIR/mem-cli
   $BIN_DIR/mem-service
+  $BIN_DIR/memory-watch
 
 Next steps:
 1. Edit $CONFIG_DIR/memory-layer.toml
 2. Start the backend:
    $BIN_DIR/mem-service $CONFIG_DIR/memory-layer.toml
-3. Launch the TUI:
+3. Optional: start the automation watcher:
+   $BIN_DIR/memory-watch --config $CONFIG_DIR/memory-layer.toml run
+4. Launch the TUI:
    $BIN_DIR/mem-cli --config $CONFIG_DIR/memory-layer.toml tui
 
 EOF

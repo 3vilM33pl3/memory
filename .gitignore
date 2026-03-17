@@ -6,3 +6,4 @@
 /.idea
 /.vscode
 /memory-postgres-connection.txt
+/.memory-layer

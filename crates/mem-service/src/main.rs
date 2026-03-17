@@ -26,6 +26,7 @@ use uuid::Uuid;
 struct AppState {
     pool: PgPool,
     api_token: String,
+    config: AppConfig,
 }
 
 #[tokio::main]
@@ -50,6 +51,7 @@ async fn main() -> Result<()> {
     let state = AppState {
         pool,
         api_token: config.service.api_token.clone(),
+        config: config.clone(),
     };
 
     let app = Router::new()
@@ -287,7 +289,7 @@ async fn project_overview(
     Path(slug): Path<String>,
 ) -> Result<Json<ProjectOverviewResponse>, ApiError> {
     Ok(Json(
-        fetch_project_overview(&state.pool, &slug)
+        fetch_project_overview(&state.pool, &slug, &state.config.automation)
             .await
             .map_err(ApiError::sql)?,
     ))

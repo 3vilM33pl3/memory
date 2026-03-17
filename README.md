@@ -59,7 +59,13 @@ llm_curation = false
 cargo run --bin mem-service -- memory-layer.toml
 ```
 
-4. In another shell, verify it is up:
+4. Optional: start the hidden automation watcher:
+
+```bash
+cargo run --bin memory-watch -- --config memory-layer.toml run
+```
+
+5. In another shell, verify the backend is up:
 
 ```bash
 cargo run --bin mem-cli -- --config memory-layer.toml health
@@ -79,6 +85,7 @@ Then run:
 
 ```bash
 ~/.local/bin/mem-service ~/.config/memory-layer/memory-layer.toml
+~/.local/bin/memory-watch --config ~/.config/memory-layer/memory-layer.toml run
 ~/.local/bin/mem-cli --config ~/.config/memory-layer/memory-layer.toml tui
 ```
 
@@ -141,6 +148,13 @@ Launch the TUI:
 cargo run --bin mem-cli -- --config memory-layer.toml tui --project memory
 ```
 
+Inspect or flush automation state:
+
+```bash
+cargo run --bin mem-cli -- --config memory-layer.toml automation status --project memory
+cargo run --bin mem-cli -- --config memory-layer.toml automation flush --project memory
+```
+
 TUI controls:
 - `Tab`, `h`, `l`: switch tabs
 - `j`, `k`: move selection
@@ -186,6 +200,14 @@ Typical workflow:
 3. Query the resulting memory
 
 The `remember` command auto-detects changed files from `git status` when possible, creates a capture payload for you, sends it to the backend, and then runs curation immediately. If you omit `--title`, `--prompt`, or `--summary`, it derives defaults automatically.
+
+When `[automation].enabled = true`, `memory-watch` observes repo activity and can either:
+- `suggest` memory writes by logging candidate work without persisting
+- `auto` persist high-confidence work through the same remember flow
+
+See:
+- `docs/architecture/hidden-memory-daemon.md`
+- `docs/plans/hidden-memory-daemon-plan.md`
 
 ## Skill Usage
 

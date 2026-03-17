@@ -1,0 +1,21 @@
+[Unit]
+Description=Memory Layer Watcher
+After=network.target memory-layer.service
+
+[Service]
+Type=simple
+User=memory-layer
+Group=memory-layer
+EnvironmentFile=/etc/memory-layer/memory-layer.env
+WorkingDirectory=/var/lib/memory-layer
+ExecStart=/usr/bin/memory-watch --config /etc/memory-layer/memory-layer.toml run
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/memory-layer /var/log/memory-layer /etc/memory-layer
+
+[Install]
+WantedBy=multi-user.target

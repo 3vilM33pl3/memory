@@ -1278,6 +1278,7 @@ dependencies = [
  "clap",
  "crossterm",
  "mem-api",
+ "mem-watch",
  "ratatui",
  "reqwest",
  "serde",
@@ -1329,6 +1330,7 @@ dependencies = [
  "mem-api",
  "mem-curate",
  "mem-search",
+ "mem-watch",
  "serde",
  "serde_json",
  "sqlx",
@@ -1337,6 +1339,22 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "mem-watch"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "mem-api",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

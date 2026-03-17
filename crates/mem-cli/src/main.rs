@@ -13,6 +13,7 @@ use mem_api::{
     MemoryEntryResponse, ProjectMemoriesResponse, ProjectOverviewResponse, QueryFilters,
     QueryRequest, QueryResponse, ReindexRequest, ReindexResponse, TestResult,
 };
+use mem_watch::{flush_path, load_state, run_once, to_status};
 use reqwest::{Client, header::HeaderMap};
 
 #[derive(Debug, Parser)]
@@ -34,6 +35,7 @@ enum Command {
     Health,
     Stats,
     Archive(ArchiveArgs),
+    Automation(AutomationArgs),
     Tui(TuiArgs),
 }
 
@@ -113,6 +115,18 @@ struct ArchiveArgs {
 struct TuiArgs {
     #[arg(long)]
     project: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct AutomationArgs {
+    #[command(subcommand)]
+    command: AutomationCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum AutomationCommand {
+    Status(ProjectArgs),
+    Flush(ProjectArgs),
 }
 
 #[tokio::main]
@@ -224,6 +238,43 @@ async fn main() -> Result<()> {
                 .send()
                 .await?;
             print_json_response(response).await?;
+        }
+        Command::Automation(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            match args.command {
+                AutomationCommand::Status(args) => {
+                    let project = resolve_project_slug(Some(args.project), &cwd)?;
+                    let repo_root = config
+                        .automation
+                        .repo_root
+                        .as_ref()
+                        .map(PathBuf::from)
+                        .unwrap_or(cwd);
+                    let state = load_state(&project, &repo_root, &config.automation).await?;
+                    println!("{}", serde_json::to_string_pretty(&to_status(&state))?);
+                }
+                AutomationCommand::Flush(args) => {
+                    let project = resolve_project_slug(Some(args.project), &cwd)?;
+                    let repo_root = config
+                        .automation
+                        .repo_root
+                        .as_ref()
+                        .map(PathBuf::from)
+                        .unwrap_or(cwd);
+                    let api = ApiClient::new(client.clone(), config.clone());
+                    tokio::fs::write(flush_path(&repo_root), b"flush\n")
+                        .await
+                        .ok();
+                    run_once(&api.config, &api.client, &project, &repo_root, true).await?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "project": project,
+                            "status": "flush_requested"
+                        }))?
+                    );
+                }
+            }
         }
         Command::Tui(args) => {
             let cwd = env::current_dir().context("read current directory")?;
