@@ -21,6 +21,25 @@ use ratatui::{
 
 use crate::{ApiClient, SourceKindString};
 
+struct Theme;
+
+impl Theme {
+    const BACKGROUND: Color = Color::Rgb(12, 18, 28);
+    const PANEL: Color = Color::Rgb(22, 31, 46);
+    const PANEL_ALT: Color = Color::Rgb(28, 39, 58);
+    const BORDER: Color = Color::Rgb(74, 94, 122);
+    const TITLE: Color = Color::Rgb(146, 195, 255);
+    const TEXT: Color = Color::Rgb(230, 236, 245);
+    const MUTED: Color = Color::Rgb(150, 165, 186);
+    const ACCENT: Color = Color::Rgb(92, 194, 255);
+    const ACCENT_STRONG: Color = Color::Rgb(255, 196, 85);
+    const SUCCESS: Color = Color::Rgb(104, 211, 145);
+    const WARNING: Color = Color::Rgb(255, 187, 92);
+    const DANGER: Color = Color::Rgb(255, 122, 122);
+    const SELECTION_BG: Color = Color::Rgb(61, 96, 153);
+    const SELECTION_FG: Color = Color::Rgb(250, 251, 255);
+}
+
 pub(crate) async fn run(api: ApiClient, project: String) -> Result<()> {
     let mut terminal = setup_terminal()?;
     let mut app = App::new(project);
@@ -467,6 +486,8 @@ impl TypeFilter {
 }
 
 fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
+    frame.render_widget(Block::default().style(Style::default().bg(Theme::BACKGROUND)), frame.area());
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -479,50 +500,59 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
 
     let titles = ["Memories", "Project"]
         .into_iter()
-        .map(Line::from)
+        .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
         .collect::<Vec<_>>();
     let tabs = Tabs::new(titles)
         .select(app.active_tab.index())
         .block(
-            Block::default()
+            themed_block(format!("Memory Layer TUI - project {}", app.project))
                 .borders(Borders::ALL)
-                .title(format!("Memory Layer TUI - project {}", app.project)),
         )
+        .style(Style::default().fg(Theme::MUTED).bg(Theme::PANEL))
         .highlight_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(Theme::SELECTION_FG)
+                .bg(Theme::ACCENT)
                 .add_modifier(Modifier::BOLD),
         );
     frame.render_widget(tabs, chunks[0]);
 
-    let filter_bar = Paragraph::new(vec![Line::from(format!(
-        "search=/ {}  tag=g {}  status=s {}  type=t {}  clear=x  curate=c  reindex=i  archive=a",
-        display_filter(&app.filters.text),
-        display_filter(&app.filters.tag),
-        app.filters.status.label(),
-        app.filters.memory_type.label(),
-    ))])
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(match &app.input_mode {
-                InputMode::Normal => "Controls",
-                InputMode::Search(value) => {
-                    if value.is_empty() {
-                        "Search Input"
-                    } else {
-                        "Search Input (editing)"
-                    }
-                }
-                InputMode::Tag(value) => {
-                    if value.is_empty() {
-                        "Tag Filter Input"
-                    } else {
-                        "Tag Filter Input (editing)"
-                    }
-                }
-            }),
-    );
+    let filter_bar = Paragraph::new(vec![Line::from(vec![
+        accent_span("search=/ "),
+        Span::styled(display_filter(&app.filters.text), Style::default().fg(Theme::TEXT)),
+        Span::raw("  "),
+        accent_span("tag=g "),
+        Span::styled(display_filter(&app.filters.tag), Style::default().fg(Theme::TEXT)),
+        Span::raw("  "),
+        accent_span("status=s "),
+        status_span(app.filters.status.label()),
+        Span::raw("  "),
+        accent_span("type=t "),
+        memory_type_span_from_label(app.filters.memory_type.label()),
+        Span::raw("  "),
+        Span::styled(
+            "clear=x curate=c reindex=i archive=a",
+            Style::default().fg(Theme::MUTED),
+        ),
+    ])])
+    .style(Style::default().bg(Theme::PANEL_ALT))
+    .block(themed_block(match &app.input_mode {
+        InputMode::Normal => "Controls",
+        InputMode::Search(value) => {
+            if value.is_empty() {
+                "Search Input"
+            } else {
+                "Search Input (editing)"
+            }
+        }
+        InputMode::Tag(value) => {
+            if value.is_empty() {
+                "Tag Filter Input"
+            } else {
+                "Tag Filter Input (editing)"
+            }
+        }
+    }));
     frame.render_widget(filter_bar, chunks[1]);
 
     match app.active_tab {
@@ -531,8 +561,9 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     }
 
     let footer = Paragraph::new(app.status_message.clone())
+        .style(status_message_style(app))
         .wrap(Wrap { trim: false })
-        .block(Block::default().borders(Borders::ALL).title("Status"));
+        .block(themed_block("Status"));
     frame.render_widget(footer, chunks[3]);
 }
 
@@ -544,7 +575,8 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 
     let header = Row::new(["Summary", "Type", "Status", "Conf", "Updated"]).style(
         Style::default()
-            .fg(Color::Yellow)
+            .fg(Theme::ACCENT_STRONG)
+            .bg(Theme::PANEL_ALT)
             .add_modifier(Modifier::BOLD),
     );
     let rows = app.filtered_memories.iter().map(memory_row);
@@ -559,8 +591,13 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         ],
     )
     .header(header)
-    .row_highlight_style(Style::default().bg(Color::Blue))
-    .block(Block::default().borders(Borders::ALL).title(format!(
+    .row_highlight_style(
+        Style::default()
+            .fg(Theme::SELECTION_FG)
+            .bg(Theme::SELECTION_BG)
+            .add_modifier(Modifier::BOLD),
+    )
+    .block(themed_block(format!(
         "Memories (showing {} / {})",
         app.filtered_memories.len(),
         app.total_memories
@@ -571,60 +608,63 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let detail_text = if let Some(detail) = &app.selected_detail {
         let mut lines = vec![
             Line::from(vec![
-                Span::styled("Summary: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(detail.summary.clone()),
+                label_span("Summary: "),
+                Span::styled(detail.summary.clone(), Style::default().fg(Theme::TEXT)),
             ]),
             Line::from(vec![
-                Span::styled("Type: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(detail.memory_type.to_string()),
+                label_span("Type: "),
+                memory_type_span(&detail.memory_type),
                 Span::raw("   "),
-                Span::styled("Status: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(match detail.status {
+                label_span("Status: "),
+                status_span(match detail.status {
                     MemoryStatus::Active => "active",
                     MemoryStatus::Archived => "archived",
                 }),
             ]),
             Line::from(vec![
+                label_span("Confidence: "),
                 Span::styled(
-                    "Confidence: ",
-                    Style::default().add_modifier(Modifier::BOLD),
+                    format!("{:.2}", detail.confidence),
+                    confidence_style(detail.confidence),
                 ),
-                Span::raw(format!("{:.2}", detail.confidence)),
                 Span::raw("   "),
+                label_span("Importance: "),
+                Span::styled(detail.importance.to_string(), Style::default().fg(Theme::TEXT)),
+            ]),
+            Line::from(vec![
+                label_span("Updated: "),
                 Span::styled(
-                    "Importance: ",
-                    Style::default().add_modifier(Modifier::BOLD),
+                    detail.updated_at.format("%Y-%m-%d %H:%M UTC").to_string(),
+                    Style::default().fg(Theme::TEXT),
                 ),
-                Span::raw(detail.importance.to_string()),
-            ]),
-            Line::from(vec![
-                Span::styled("Updated: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(detail.updated_at.format("%Y-%m-%d %H:%M UTC").to_string()),
             ]),
             Line::from(""),
-            Line::from(vec![Span::styled(
-                "Canonical Text",
-                Style::default().add_modifier(Modifier::BOLD),
-            )]),
-            Line::from(detail.canonical_text.clone()),
+            Line::from(vec![section_span("Canonical Text")]),
+            Line::from(Span::styled(
+                detail.canonical_text.clone(),
+                Style::default().fg(Theme::TEXT),
+            )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("Tags: ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(if detail.tags.is_empty() {
-                    "none".to_string()
-                } else {
-                    detail.tags.join(", ")
-                }),
+                label_span("Tags: "),
+                Span::styled(
+                    if detail.tags.is_empty() {
+                        "none".to_string()
+                    } else {
+                        detail.tags.join(", ")
+                    },
+                    Style::default().fg(Theme::TEXT),
+                ),
             ]),
             Line::from(""),
-            Line::from(vec![Span::styled(
-                "Sources",
-                Style::default().add_modifier(Modifier::BOLD),
-            )]),
+            Line::from(vec![section_span("Sources")]),
         ];
 
         if detail.sources.is_empty() {
-            lines.push(Line::from("No provenance sources recorded."));
+            lines.push(Line::from(Span::styled(
+                "No provenance sources recorded.",
+                Style::default().fg(Theme::MUTED),
+            )));
         } else {
             for source in &detail.sources {
                 let mut parts = vec![source.source_kind.source_kind_string().to_string()];
@@ -634,22 +674,32 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 if let Some(excerpt) = &source.excerpt {
                     parts.push(excerpt.clone());
                 }
-                lines.push(Line::from(parts.join(" | ")));
+                lines.push(Line::from(Span::styled(
+                    parts.join(" | "),
+                    Style::default().fg(Theme::TEXT),
+                )));
             }
         }
         lines
     } else if app.filtered_memories.is_empty() {
-        vec![Line::from(format!(
-            "No memories match the current filters for project {}.",
-            app.project
+        vec![Line::from(Span::styled(
+            format!(
+                "No memories match the current filters for project {}.",
+                app.project
+            ),
+            Style::default().fg(Theme::MUTED),
         ))]
     } else {
-        vec![Line::from("Select a memory to load its details.")]
+        vec![Line::from(Span::styled(
+            "Select a memory to load its details.",
+            Style::default().fg(Theme::MUTED),
+        ))]
     };
 
     let detail = Paragraph::new(detail_text)
+        .style(Style::default().bg(Theme::PANEL))
         .wrap(Wrap { trim: false })
-        .block(Block::default().borders(Borders::ALL).title("Detail"));
+        .block(themed_block("Detail"));
     frame.render_widget(detail, chunks[1]);
 }
 
@@ -664,58 +714,107 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .split(area);
 
     let summary = Paragraph::new(vec![
-        Line::from(format!("Project: {}", app.overview.project)),
-        Line::from(format!(
-            "Service: {}   Database: {}",
-            app.overview.service_status, app.overview.database_status
-        )),
-        Line::from(format!(
-            "Memories: {} total / {} active / {} archived",
-            app.overview.memory_entries_total,
-            app.overview.active_memories,
-            app.overview.archived_memories
-        )),
-        Line::from(format!(
-            "Confidence bins: {} high / {} medium / {} low",
-            app.overview.high_confidence_memories,
-            app.overview.medium_confidence_memories,
-            app.overview.low_confidence_memories
-        )),
-        Line::from(format!(
-            "Recent 7d: {} memories / {} captures",
-            app.overview.recent_memories_7d, app.overview.recent_captures_7d
-        )),
-        Line::from(format!(
-            "Raw captures: {} total / {} uncurated",
-            app.overview.raw_captures_total, app.overview.uncurated_raw_captures
-        )),
-        Line::from(format!(
-            "Tasks: {}   Sessions: {}   Curation runs: {}",
-            app.overview.tasks_total, app.overview.sessions_total, app.overview.curation_runs_total
-        )),
-        Line::from(format!(
-            "Last memory: {}   Last curation: {}",
-            format_timestamp(app.overview.last_memory_at),
-            format_timestamp(app.overview.last_curation_at)
-        )),
-        Line::from(format!(
-            "Last capture: {}   Oldest uncurated age: {}",
-            format_timestamp(app.overview.last_capture_at),
-            app.overview
-                .oldest_uncurated_capture_age_hours
-                .map(|hours| format!("{hours}h"))
-                .unwrap_or_else(|| "n/a".to_string())
-        )),
-        Line::from(format!(
-            "Automation: {}",
-            app.overview
-                .automation
-                .as_ref()
-                .map(format_automation_status)
-                .unwrap_or_else(|| "not configured".to_string())
-        )),
+        metric_line("Project", Span::styled(&app.overview.project, Style::default().fg(Theme::TEXT))),
+        Line::from(vec![
+            label_span("Service: "),
+            service_span(&app.overview.service_status),
+            Span::raw("   "),
+            label_span("Database: "),
+            service_span(&app.overview.database_status),
+        ]),
+        Line::from(vec![
+            label_span("Memories: "),
+            Span::styled(
+                format!(
+                    "{} total / {} active / {} archived",
+                    app.overview.memory_entries_total,
+                    app.overview.active_memories,
+                    app.overview.archived_memories
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Confidence bins: "),
+            Span::styled(
+                format!(
+                    "{} high / {} medium / {} low",
+                    app.overview.high_confidence_memories,
+                    app.overview.medium_confidence_memories,
+                    app.overview.low_confidence_memories
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        metric_line(
+            "Recent 7d",
+            Span::styled(
+                format!(
+                    "{} memories / {} captures",
+                    app.overview.recent_memories_7d, app.overview.recent_captures_7d
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ),
+        metric_line(
+            "Raw captures",
+            Span::styled(
+                format!(
+                    "{} total / {} uncurated",
+                    app.overview.raw_captures_total, app.overview.uncurated_raw_captures
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ),
+        metric_line(
+            "Tasks / Sessions / Runs",
+            Span::styled(
+                format!(
+                    "{} / {} / {}",
+                    app.overview.tasks_total, app.overview.sessions_total, app.overview.curation_runs_total
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ),
+        metric_line(
+            "Last memory / curation",
+            Span::styled(
+                format!(
+                    "{} / {}",
+                    format_timestamp(app.overview.last_memory_at),
+                    format_timestamp(app.overview.last_curation_at)
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ),
+        metric_line(
+            "Last capture / oldest uncurated",
+            Span::styled(
+                format!(
+                    "{} / {}",
+                    format_timestamp(app.overview.last_capture_at),
+                    app.overview
+                        .oldest_uncurated_capture_age_hours
+                        .map(|hours| format!("{hours}h"))
+                        .unwrap_or_else(|| "n/a".to_string())
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ),
+        metric_line(
+            "Automation",
+            Span::styled(
+                app.overview
+                    .automation
+                    .as_ref()
+                    .map(format_automation_status)
+                    .unwrap_or_else(|| "not configured".to_string()),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ),
     ])
-    .block(Block::default().borders(Borders::ALL).title("Overview"));
+    .style(Style::default().bg(Theme::PANEL))
+    .block(themed_block("Overview"));
     frame.render_widget(summary, chunks[0]);
 
     let mid = Layout::default()
@@ -736,7 +835,8 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 .collect(),
             "No memory entries yet.",
         ))
-        .block(Block::default().borders(Borders::ALL).title("Memory Types")),
+        .style(Style::default().bg(Theme::PANEL_ALT))
+        .block(themed_block("Memory Types")),
         mid[0],
     );
     frame.render_widget(
@@ -753,7 +853,8 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 .collect(),
             "No sources yet.",
         ))
-        .block(Block::default().borders(Borders::ALL).title("Source Kinds")),
+        .style(Style::default().bg(Theme::PANEL_ALT))
+        .block(themed_block("Source Kinds")),
         mid[1],
     );
     frame.render_widget(
@@ -765,7 +866,8 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 .collect(),
             "No tags yet.",
         ))
-        .block(Block::default().borders(Borders::ALL).title("Top Tags")),
+        .style(Style::default().bg(Theme::PANEL_ALT))
+        .block(themed_block("Top Tags")),
         mid[2],
     );
 
@@ -782,18 +884,20 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 .collect(),
             "No file provenance yet.",
         ))
-        .block(Block::default().borders(Borders::ALL).title("Top Files")),
+        .style(Style::default().bg(Theme::PANEL_ALT))
+        .block(themed_block("Top Files")),
         bottom[0],
     );
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from("Actions"),
-            Line::from("c curate project"),
-            Line::from("i reindex search chunks"),
-            Line::from("a archive low-value memories"),
-            Line::from("r refresh"),
+            Line::from(Span::styled("Actions", Style::default().fg(Theme::ACCENT_STRONG))),
+            Line::from(Span::styled("c curate project", Style::default().fg(Theme::TEXT))),
+            Line::from(Span::styled("i reindex search chunks", Style::default().fg(Theme::TEXT))),
+            Line::from(Span::styled("a archive low-value memories", Style::default().fg(Theme::TEXT))),
+            Line::from(Span::styled("r refresh", Style::default().fg(Theme::TEXT))),
         ])
-        .block(Block::default().borders(Borders::ALL).title("Operations")),
+        .style(Style::default().bg(Theme::PANEL_ALT))
+        .block(themed_block("Operations")),
         bottom[1],
     );
 }
@@ -804,22 +908,39 @@ fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'s
     } else {
         items
             .into_iter()
-            .map(|(name, count)| Line::from(format!("{name}: {count}")))
+            .map(|(name, count)| {
+                Line::from(vec![
+                    Span::styled(name, Style::default().fg(Theme::TEXT)),
+                    Span::styled(": ", Style::default().fg(Theme::MUTED)),
+                    Span::styled(count.to_string(), Style::default().fg(Theme::ACCENT_STRONG)),
+                ])
+            })
             .collect()
     }
 }
 
 fn memory_row(item: &ProjectMemoryListItem) -> Row<'static> {
+    let row_style = match item.status {
+        MemoryStatus::Active => Style::default().fg(Theme::TEXT).bg(Theme::PANEL),
+        MemoryStatus::Archived => Style::default().fg(Theme::MUTED).bg(Theme::PANEL),
+    };
     Row::new(vec![
-        Cell::from(item.summary.clone()),
-        Cell::from(item.memory_type.to_string()),
-        Cell::from(match item.status {
-            MemoryStatus::Active => "active".to_string(),
-            MemoryStatus::Archived => "archived".to_string(),
-        }),
-        Cell::from(format!("{:.2}", item.confidence)),
-        Cell::from(item.updated_at.format("%Y-%m-%d %H:%M").to_string()),
+        Cell::from(Span::styled(item.summary.clone(), Style::default().fg(Theme::TEXT))),
+        Cell::from(memory_type_span(&item.memory_type)),
+        Cell::from(status_span(match item.status {
+            MemoryStatus::Active => "active",
+            MemoryStatus::Archived => "archived",
+        })),
+        Cell::from(Span::styled(
+            format!("{:.2}", item.confidence),
+            confidence_style(item.confidence),
+        )),
+        Cell::from(Span::styled(
+            item.updated_at.format("%Y-%m-%d %H:%M").to_string(),
+            Style::default().fg(Theme::MUTED),
+        )),
     ])
+    .style(row_style)
 }
 
 fn format_timestamp(value: Option<chrono::DateTime<chrono::Utc>>) -> String {
@@ -850,6 +971,111 @@ fn format_automation_status(status: &mem_api::AutomationStatus) -> String {
             .clone()
             .unwrap_or_else(|| "none".to_string())
     )
+}
+
+fn themed_block<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Theme::BORDER))
+        .title(title)
+        .title_style(Style::default().fg(Theme::TITLE).add_modifier(Modifier::BOLD))
+        .style(Style::default().bg(Theme::PANEL))
+}
+
+fn accent_span(value: impl Into<String>) -> Span<'static> {
+    Span::styled(value.into(), Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD))
+}
+
+fn label_span(value: impl Into<String>) -> Span<'static> {
+    Span::styled(
+        value.into(),
+        Style::default()
+            .fg(Theme::ACCENT_STRONG)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn section_span(value: impl Into<String>) -> Span<'static> {
+    Span::styled(
+        value.into(),
+        Style::default()
+            .fg(Theme::TITLE)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )
+}
+
+fn status_span(value: &str) -> Span<'static> {
+    let color = match value {
+        "active" | "ok" | "up" => Theme::SUCCESS,
+        "archived" | "unknown" => Theme::WARNING,
+        _ => Theme::DANGER,
+    };
+    Span::styled(value.to_string(), Style::default().fg(color).add_modifier(Modifier::BOLD))
+}
+
+fn service_span(value: &str) -> Span<'static> {
+    let color = match value {
+        "ok" | "up" => Theme::SUCCESS,
+        "unknown" => Theme::WARNING,
+        _ => Theme::DANGER,
+    };
+    Span::styled(value.to_string(), Style::default().fg(color).add_modifier(Modifier::BOLD))
+}
+
+fn memory_type_span(memory_type: &MemoryType) -> Span<'static> {
+    let label = memory_type.to_string();
+    memory_type_span_from_label(&label)
+}
+
+fn memory_type_span_from_label(label: &str) -> Span<'static> {
+    let color = match label {
+        "architecture" => Color::Rgb(120, 190, 255),
+        "convention" => Color::Rgb(149, 220, 180),
+        "decision" => Color::Rgb(255, 205, 120),
+        "incident" => Color::Rgb(255, 140, 140),
+        "debugging" => Color::Rgb(255, 170, 110),
+        "environment" => Color::Rgb(190, 170, 255),
+        "domain_fact" => Color::Rgb(130, 225, 220),
+        "all" => Theme::TEXT,
+        _ => Theme::TEXT,
+    };
+    Span::styled(label.to_string(), Style::default().fg(color).add_modifier(Modifier::BOLD))
+}
+
+fn confidence_style(confidence: f32) -> Style {
+    let color = if confidence >= 0.8 {
+        Theme::SUCCESS
+    } else if confidence >= 0.5 {
+        Theme::WARNING
+    } else {
+        Theme::DANGER
+    };
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
+}
+
+fn metric_line<'a>(label: &str, value: Span<'a>) -> Line<'a> {
+    Line::from(vec![
+        Span::styled(
+            format!("{label}: "),
+            Style::default()
+                .fg(Theme::ACCENT_STRONG)
+                .add_modifier(Modifier::BOLD),
+        ),
+        value,
+    ])
+}
+
+fn status_message_style(app: &App) -> Style {
+    let lowered = app.status_message.to_lowercase();
+    let color = if lowered.contains("error") || lowered.contains("failed") {
+        Theme::DANGER
+    } else if lowered.contains("refresh") || lowered.contains("loaded") || lowered.contains("curated")
+    {
+        Theme::ACCENT
+    } else {
+        Theme::TEXT
+    };
+    Style::default().fg(color).bg(Theme::PANEL_ALT)
 }
 
 fn should_quit(key: KeyEvent, app: &App) -> bool {
