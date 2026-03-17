@@ -188,6 +188,8 @@ pub struct QueryResult {
     pub score: f64,
     pub snippet: String,
     #[serde(default)]
+    pub score_explanation: Vec<String>,
+    #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
     pub sources: Vec<QuerySource>,

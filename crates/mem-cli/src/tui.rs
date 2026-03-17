@@ -1588,6 +1588,17 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             )),
         ];
 
+        if !result.score_explanation.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Why It Ranked")]));
+            for explanation in &result.score_explanation {
+                lines.push(Line::from(Span::styled(
+                    format!("- {explanation}"),
+                    Style::default().fg(Theme::ACCENT),
+                )));
+            }
+        }
+
         if let Some(detail) = &app.query_selected_detail {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![section_span("Canonical Text")]));
@@ -1729,6 +1740,12 @@ fn draw_log_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                             ),
                             Style::default().fg(Theme::TEXT),
                         )));
+                        if !result.score_explanation.is_empty() {
+                            lines.push(Line::from(Span::styled(
+                                format!("  why: {}", result.score_explanation.join(" | ")),
+                                Style::default().fg(Theme::ACCENT),
+                            )));
+                        }
                     }
                 }
             }

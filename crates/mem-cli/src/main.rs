@@ -1620,13 +1620,27 @@ async fn print_json_response(response: reqwest::Response) -> Result<()> {
 
 fn print_query_response(payload: QueryResponse) {
     println!("Answer:\n{}\n", payload.answer);
-    println!("Confidence: {:.2}\n", payload.confidence);
+    println!(
+        "Confidence: {:.2} | Evidence: {}\n",
+        payload.confidence,
+        if payload.insufficient_evidence {
+            "insufficient"
+        } else {
+            "sufficient"
+        }
+    );
     for result in payload.results {
         println!(
             "- {} [{}] score={:.2}",
             result.summary, result.memory_type, result.score
         );
         println!("  {}", result.snippet);
+        if !result.score_explanation.is_empty() {
+            println!("  why: {}", result.score_explanation.join(" | "));
+        }
+        if !result.tags.is_empty() {
+            println!("  tags: {}", result.tags.join(", "));
+        }
         for source in result.sources {
             let path = source.file_path.unwrap_or_else(|| "<no-file>".to_string());
             println!(
