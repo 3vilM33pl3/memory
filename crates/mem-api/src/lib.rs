@@ -311,6 +311,8 @@ pub struct ProjectMemoryListItem {
     pub confidence: f32,
     pub importance: i32,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub tag_count: i64,
     pub source_count: i64,
 }
@@ -335,6 +337,12 @@ pub struct SourceKindCount {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NamedCount {
+    pub name: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectOverviewResponse {
     pub project: String,
     pub service_status: String,
@@ -347,16 +355,27 @@ pub struct ProjectOverviewResponse {
     pub tasks_total: i64,
     pub sessions_total: i64,
     pub curation_runs_total: i64,
+    pub recent_memories_7d: i64,
+    pub recent_captures_7d: i64,
+    pub high_confidence_memories: i64,
+    pub medium_confidence_memories: i64,
+    pub low_confidence_memories: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_memory_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_capture_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_curation_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_uncurated_capture_age_hours: Option<i64>,
     #[serde(default)]
     pub memory_type_breakdown: Vec<MemoryTypeCount>,
     #[serde(default)]
     pub source_kind_breakdown: Vec<SourceKindCount>,
+    #[serde(default)]
+    pub top_tags: Vec<NamedCount>,
+    #[serde(default)]
+    pub top_files: Vec<NamedCount>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

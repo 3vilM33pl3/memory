@@ -8,6 +8,7 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+chrono.workspace = true
 config.workspace = true
 mem-api = { path = "../mem-api" }
 mem-curate = { path = "../mem-curate" }

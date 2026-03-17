@@ -8,9 +8,9 @@ use std::{
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use mem_api::{
-    AppConfig, ArchiveRequest, CaptureTaskRequest, CurateRequest, MemoryEntryResponse,
-    ProjectMemoriesResponse, ProjectOverviewResponse, QueryFilters, QueryRequest, QueryResponse,
-    ReindexRequest,
+    AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CurateRequest, CurateResponse,
+    MemoryEntryResponse, ProjectMemoriesResponse, ProjectOverviewResponse, QueryFilters,
+    QueryRequest, QueryResponse, ReindexRequest, ReindexResponse,
 };
 use reqwest::{Client, header::HeaderMap};
 
@@ -249,6 +249,51 @@ impl ApiClient {
                     &self.config,
                     &format!("/v1/memory/{memory_id}"),
                 ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn curate(&self, project: &str) -> Result<CurateResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/curate"))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .json(&CurateRequest {
+                    project: project.to_string(),
+                    batch_size: None,
+                })
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn reindex(&self, project: &str) -> Result<ReindexResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/reindex"))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .json(&ReindexRequest {
+                    project: project.to_string(),
+                })
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn archive_low_value(&self, project: &str) -> Result<ArchiveResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/archive"))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .json(&ArchiveRequest {
+                    project: project.to_string(),
+                    max_confidence: 0.3,
+                    max_importance: 1,
+                })
                 .send()
                 .await?,
         )

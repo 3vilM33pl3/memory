@@ -10,12 +10,12 @@ use axum::{
 };
 use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CurateRequest,
-    MemoryEntryResponse, MemorySourceRecord, MemoryTypeCount, ProjectMemoriesResponse,
-    ProjectMemoryListItem, ProjectOverviewResponse, QueryRequest, ReindexRequest, ReindexResponse,
-    SourceKindCount, StatsResponse, ValidationError,
+    MemoryEntryResponse, MemorySourceRecord, ProjectMemoriesResponse, ProjectOverviewResponse,
+    QueryRequest, ReindexRequest, ReindexResponse, StatsResponse, ValidationError,
 };
 use mem_curate::{curate, store_capture};
 use mem_search::{parse_memory_type, parse_source_kind, query_memory, rebuild_chunks};
+use mem_service::{fetch_project_memories, fetch_project_overview, parse_status_filter};
 use serde::Deserialize;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use tower_http::trace::TraceLayer;
@@ -275,211 +275,22 @@ async fn project_memories(
         .transpose()
         .map_err(ApiError::validation)?;
 
-    let total_row = sqlx::query(
-        r#"
-        SELECT COUNT(*) AS count
-        FROM memory_entries m
-        JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
-          AND ($2::text IS NULL OR m.status = $2)
-        "#,
-    )
-    .bind(&slug)
-    .bind(status_filter.as_deref())
-    .fetch_one(&state.pool)
-    .await
-    .map_err(ApiError::sql)?;
-    let total = total_row.try_get("count").map_err(ApiError::sql)?;
-
-    let rows = sqlx::query(
-        r#"
-        SELECT
-            m.id,
-            m.summary,
-            left(m.canonical_text, 240) AS preview,
-            m.memory_type,
-            m.status,
-            m.confidence,
-            m.importance,
-            m.updated_at,
-            COUNT(DISTINCT mt.tag) AS tag_count,
-            COUNT(DISTINCT ms.id) AS source_count
-        FROM memory_entries m
-        JOIN projects p ON p.id = m.project_id
-        LEFT JOIN memory_tags mt ON mt.memory_entry_id = m.id
-        LEFT JOIN memory_sources ms ON ms.memory_entry_id = m.id
-        WHERE p.slug = $1
-          AND ($2::text IS NULL OR m.status = $2)
-        GROUP BY m.id
-        ORDER BY m.updated_at DESC, m.id DESC
-        LIMIT $3 OFFSET $4
-        "#,
-    )
-    .bind(&slug)
-    .bind(status_filter.as_deref())
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(ApiError::sql)?;
-
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        items.push(ProjectMemoryListItem {
-            id: row.try_get("id").map_err(ApiError::sql)?,
-            summary: row.try_get("summary").map_err(ApiError::sql)?,
-            preview: row.try_get("preview").map_err(ApiError::sql)?,
-            memory_type: parse_memory_type(
-                &row.try_get::<String, _>("memory_type")
-                    .map_err(ApiError::sql)?,
-            ),
-            status: match row
-                .try_get::<String, _>("status")
-                .map_err(ApiError::sql)?
-                .as_str()
-            {
-                "archived" => mem_api::MemoryStatus::Archived,
-                _ => mem_api::MemoryStatus::Active,
-            },
-            confidence: row.try_get("confidence").map_err(ApiError::sql)?,
-            importance: row.try_get("importance").map_err(ApiError::sql)?,
-            updated_at: row.try_get("updated_at").map_err(ApiError::sql)?,
-            tag_count: row.try_get("tag_count").map_err(ApiError::sql)?,
-            source_count: row.try_get("source_count").map_err(ApiError::sql)?,
-        });
-    }
-
-    Ok(Json(ProjectMemoriesResponse {
-        project: slug,
-        total,
-        items,
-    }))
+    Ok(Json(
+        fetch_project_memories(&state.pool, &slug, status_filter.as_deref(), limit, offset)
+            .await
+            .map_err(ApiError::sql)?,
+    ))
 }
 
 async fn project_overview(
     State(state): State<AppState>,
     Path(slug): Path<String>,
 ) -> Result<Json<ProjectOverviewResponse>, ApiError> {
-    let row = sqlx::query(
-        r#"
-        SELECT
-            p.slug,
-            COUNT(DISTINCT m.id) AS memory_entries_total,
-            COUNT(DISTINCT m.id) FILTER (WHERE m.status = 'active') AS active_memories,
-            COUNT(DISTINCT m.id) FILTER (WHERE m.status = 'archived') AS archived_memories,
-            COUNT(DISTINCT rc.id) AS raw_captures_total,
-            COUNT(DISTINCT rc.id) FILTER (WHERE rc.curated_at IS NULL) AS uncurated_raw_captures,
-            COUNT(DISTINCT t.id) AS tasks_total,
-            COUNT(DISTINCT s.id) AS sessions_total,
-            COUNT(DISTINCT cr.id) AS curation_runs_total,
-            MAX(m.updated_at) AS last_memory_at,
-            MAX(rc.created_at) AS last_capture_at,
-            MAX(cr.created_at) AS last_curation_at
-        FROM projects p
-        LEFT JOIN memory_entries m ON m.project_id = p.id
-        LEFT JOIN sessions s ON s.project_id = p.id
-        LEFT JOIN tasks t ON t.session_id = s.id
-        LEFT JOIN raw_captures rc ON rc.task_id = t.id
-        LEFT JOIN curation_runs cr ON cr.project_id = p.id
-        WHERE p.slug = $1
-        GROUP BY p.slug
-        "#,
-    )
-    .bind(&slug)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(ApiError::sql)?;
-
-    let Some(row) = row else {
-        return Ok(Json(ProjectOverviewResponse {
-            project: slug,
-            service_status: "ok".to_string(),
-            database_status: "up".to_string(),
-            memory_entries_total: 0,
-            active_memories: 0,
-            archived_memories: 0,
-            raw_captures_total: 0,
-            uncurated_raw_captures: 0,
-            tasks_total: 0,
-            sessions_total: 0,
-            curation_runs_total: 0,
-            last_memory_at: None,
-            last_capture_at: None,
-            last_curation_at: None,
-            memory_type_breakdown: Vec::new(),
-            source_kind_breakdown: Vec::new(),
-        }));
-    };
-
-    let memory_type_rows = sqlx::query(
-        r#"
-        SELECT m.memory_type, COUNT(*) AS count
-        FROM memory_entries m
-        JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
-        GROUP BY m.memory_type
-        ORDER BY count DESC, m.memory_type ASC
-        "#,
-    )
-    .bind(&slug)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(ApiError::sql)?;
-
-    let source_kind_rows = sqlx::query(
-        r#"
-        SELECT ms.source_kind, COUNT(*) AS count
-        FROM memory_sources ms
-        JOIN memory_entries m ON m.id = ms.memory_entry_id
-        JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
-        GROUP BY ms.source_kind
-        ORDER BY count DESC, ms.source_kind ASC
-        "#,
-    )
-    .bind(&slug)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(ApiError::sql)?;
-
-    Ok(Json(ProjectOverviewResponse {
-        project: slug,
-        service_status: "ok".to_string(),
-        database_status: "up".to_string(),
-        memory_entries_total: row.try_get("memory_entries_total").map_err(ApiError::sql)?,
-        active_memories: row.try_get("active_memories").map_err(ApiError::sql)?,
-        archived_memories: row.try_get("archived_memories").map_err(ApiError::sql)?,
-        raw_captures_total: row.try_get("raw_captures_total").map_err(ApiError::sql)?,
-        uncurated_raw_captures: row
-            .try_get("uncurated_raw_captures")
+    Ok(Json(
+        fetch_project_overview(&state.pool, &slug)
+            .await
             .map_err(ApiError::sql)?,
-        tasks_total: row.try_get("tasks_total").map_err(ApiError::sql)?,
-        sessions_total: row.try_get("sessions_total").map_err(ApiError::sql)?,
-        curation_runs_total: row.try_get("curation_runs_total").map_err(ApiError::sql)?,
-        last_memory_at: row.try_get("last_memory_at").map_err(ApiError::sql)?,
-        last_capture_at: row.try_get("last_capture_at").map_err(ApiError::sql)?,
-        last_curation_at: row.try_get("last_curation_at").map_err(ApiError::sql)?,
-        memory_type_breakdown: memory_type_rows
-            .into_iter()
-            .map(|row| {
-                Ok(MemoryTypeCount {
-                    memory_type: parse_memory_type(&row.try_get::<String, _>("memory_type")?),
-                    count: row.try_get("count")?,
-                })
-            })
-            .collect::<Result<Vec<_>, sqlx::Error>>()
-            .map_err(ApiError::sql)?,
-        source_kind_breakdown: source_kind_rows
-            .into_iter()
-            .map(|row| {
-                Ok(SourceKindCount {
-                    source_kind: parse_source_kind(&row.try_get::<String, _>("source_kind")?),
-                    count: row.try_get("count")?,
-                })
-            })
-            .collect::<Result<Vec<_>, sqlx::Error>>()
-            .map_err(ApiError::sql)?,
-    }))
+    ))
 }
 
 async fn archive(
@@ -557,13 +368,6 @@ impl ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: error.to_string(),
         }
-    }
-}
-
-fn parse_status_filter(input: &str) -> Result<String, ValidationError> {
-    match input {
-        "active" | "archived" => Ok(input.to_string()),
-        _ => Err(ValidationError::new("status must be active or archived")),
     }
 }
 

@@ -65,6 +65,33 @@ cargo run --bin mem-service -- memory-layer.toml
 cargo run --bin mem-cli -- --config memory-layer.toml health
 ```
 
+## Install
+
+### Local install
+
+Install both binaries into `~/.local/bin` and create a default config in `~/.config/memory-layer/`:
+
+```bash
+./scripts/install-local.sh
+```
+
+Then run:
+
+```bash
+~/.local/bin/mem-service ~/.config/memory-layer/memory-layer.toml
+~/.local/bin/mem-cli --config ~/.config/memory-layer/memory-layer.toml tui
+```
+
+### Debian package build
+
+Build a `.deb` package:
+
+```bash
+./packaging/build-deb.sh
+```
+
+The package will be written under `target/debian/`.
+
 ## Common Commands
 
 Query memory:
@@ -104,6 +131,20 @@ Launch the TUI:
 ```bash
 cargo run --bin mem-cli -- --config memory-layer.toml tui --project memory
 ```
+
+TUI controls:
+- `Tab`, `h`, `l`: switch tabs
+- `j`, `k`: move selection
+- `/`: text search filter
+- `g`: tag filter
+- `s`: cycle status filter
+- `t`: cycle memory-type filter
+- `x`: clear filters
+- `r`: refresh
+- `c`: curate project
+- `i`: reindex search chunks
+- `a`: archive low-value memories
+- `q`: quit
 
 ## Capture Payload Example
 
