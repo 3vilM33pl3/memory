@@ -14,7 +14,8 @@ mkdir -p \
   "$PKG_ROOT/usr/bin" \
   "$PKG_ROOT/etc/memory-layer" \
   "$PKG_ROOT/lib/systemd/system" \
-  "$PKG_ROOT/usr/share/doc/memory-layer"
+  "$PKG_ROOT/usr/share/doc/memory-layer" \
+  "$PKG_ROOT/usr/share/memory-layer/skill-template"
 
 echo "Building release binaries..."
 cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin mem-cli --bin mem-service --bin memory-watch
@@ -27,6 +28,8 @@ install -m 0644 "$ROOT_DIR/packaging/debian/memory-watch.service" "$PKG_ROOT/lib
 install -m 0644 "$ROOT_DIR/packaging/debian/memory-layer.env" "$PKG_ROOT/etc/memory-layer/memory-layer.env"
 install -m 0644 "$ROOT_DIR/memory-layer.toml.example" "$PKG_ROOT/etc/memory-layer/memory-layer.toml"
 install -m 0644 "$ROOT_DIR/README.md" "$PKG_ROOT/usr/share/doc/memory-layer/README.md"
+cp -R "$ROOT_DIR/.agents/skills/memory-layer/." "$PKG_ROOT/usr/share/memory-layer/skill-template/"
+find "$PKG_ROOT/usr/share/memory-layer/skill-template" -type f -path '*/scripts/*' -exec chmod 0755 {} +
 
 sed "s/^Version: .*/Version: $VERSION/" "$ROOT_DIR/packaging/debian/control" > "$PKG_ROOT/DEBIAN/control"
 install -m 0755 "$ROOT_DIR/packaging/debian/postinst" "$PKG_ROOT/DEBIAN/postinst"

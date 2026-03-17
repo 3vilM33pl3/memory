@@ -2,6 +2,7 @@ mod tui;
 
 use std::{
     env, fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
 };
@@ -888,6 +889,10 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
     let config_path = mem_dir.join("config.toml");
     let project_path = mem_dir.join("project.toml");
     let local_gitignore_path = mem_dir.join(".gitignore");
+    let skill_dir = repo_root
+        .join(".agents")
+        .join("skills")
+        .join("memory-layer");
 
     fs::create_dir_all(&runtime_dir).context("create .mem/runtime")?;
     if !config_path.exists() {
@@ -899,6 +904,12 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
     }
     if !local_gitignore_path.exists() {
         fs::write(&local_gitignore_path, "runtime/\n").context("write .mem/.gitignore")?;
+    }
+    if !skill_dir.exists() {
+        let skill_template_dir = discover_skill_template_dir().ok_or_else(|| {
+            anyhow::anyhow!("could not locate packaged memory-layer skill template")
+        })?;
+        copy_skill_template(&skill_template_dir, &skill_dir, false)?;
     }
     ensure_root_gitignore_entry(&repo_root.join(".gitignore"), "/.mem\n")?;
     Ok(())
@@ -1022,6 +1033,12 @@ fn initialize_repo(
     let project_path = mem_dir.join("project.toml");
     let local_gitignore_path = mem_dir.join(".gitignore");
     let root_gitignore_path = repo_root.join(".gitignore");
+    let skill_dir = repo_root
+        .join(".agents")
+        .join("skills")
+        .join("memory-layer");
+    let skill_template_dir = discover_skill_template_dir()
+        .ok_or_else(|| anyhow::anyhow!("could not locate packaged memory-layer skill template"))?;
 
     if !force {
         for path in [&config_path, &project_path] {
@@ -1031,6 +1048,12 @@ fn initialize_repo(
                     path.display()
                 );
             }
+        }
+        if skill_dir.exists() {
+            anyhow::bail!(
+                "{} already exists; rerun with --force to overwrite generated files",
+                skill_dir.display()
+            );
         }
     }
 
@@ -1045,6 +1068,7 @@ fn initialize_repo(
         fs::write(&project_path, project_contents).context("write .mem/project.toml")?;
         fs::write(&local_gitignore_path, mem_gitignore_contents)
             .context("write .mem/.gitignore")?;
+        copy_skill_template(&skill_template_dir, &skill_dir, force)?;
         ensure_root_gitignore_entry(&root_gitignore_path, root_gitignore_line)?;
     }
 
@@ -1053,8 +1077,96 @@ fn initialize_repo(
         project,
         &config_path,
         &project_path,
+        &skill_dir,
         print_only,
     ))
+}
+
+fn discover_skill_template_dir() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(exe) = env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            if let Some(prefix) = bin_dir.parent() {
+                candidates.push(
+                    prefix
+                        .join("share")
+                        .join("memory-layer")
+                        .join("skill-template"),
+                );
+            }
+        }
+    }
+    if let Ok(data_home) = env::var("XDG_DATA_HOME") {
+        candidates.push(
+            PathBuf::from(data_home)
+                .join("memory-layer")
+                .join("skill-template"),
+        );
+    }
+    if let Ok(home) = env::var("HOME") {
+        candidates.push(
+            PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("memory-layer")
+                .join("skill-template"),
+        );
+    }
+    candidates.push(PathBuf::from("/usr/share/memory-layer/skill-template"));
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join(".agents")
+            .join("skills")
+            .join("memory-layer"),
+    );
+
+    candidates.into_iter().find(|path| path.is_dir())
+}
+
+fn copy_skill_template(src: &Path, dest: &Path, force: bool) -> Result<()> {
+    if dest.exists() {
+        if force {
+            fs::remove_dir_all(dest).with_context(|| format!("remove {}", dest.display()))?;
+        } else {
+            anyhow::bail!(
+                "{} already exists; rerun with --force to overwrite generated files",
+                dest.display()
+            );
+        }
+    }
+    copy_directory_tree(src, dest)
+}
+
+fn copy_directory_tree(src: &Path, dest: &Path) -> Result<()> {
+    fs::create_dir_all(dest).with_context(|| format!("create {}", dest.display()))?;
+    for entry in fs::read_dir(src).with_context(|| format!("read {}", src.display()))? {
+        let entry = entry.with_context(|| format!("read entry in {}", src.display()))?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("read type for {}", src_path.display()))?;
+        if file_type.is_dir() {
+            copy_directory_tree(&src_path, &dest_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&src_path, &dest_path).with_context(|| {
+                format!("copy {} -> {}", src_path.display(), dest_path.display())
+            })?;
+            let mode = if src_path
+                .components()
+                .any(|component| component.as_os_str() == "scripts")
+            {
+                0o755
+            } else {
+                0o644
+            };
+            fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))
+                .with_context(|| format!("chmod {}", dest_path.display()))?;
+        }
+    }
+    Ok(())
 }
 
 fn render_repo_config(repo_root: &Path) -> String {
@@ -1115,6 +1227,7 @@ fn render_init_summary(
     project: &str,
     config_path: &Path,
     project_path: &Path,
+    skill_path: &Path,
     print_only: bool,
 ) -> String {
     let action = if print_only {
@@ -1123,15 +1236,17 @@ fn render_init_summary(
         "Created"
     };
     format!(
-        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n\nNext steps:\n1. Set shared values like `database.url` and `service.api_token` in {}\n2. Use {} only for repo-specific overrides\n3. Start the backend from this repo:\n   mem-service\n4. Optional: start the watcher:\n   memory-watch run --project {}\n5. Open the TUI:\n   mem-cli tui --project {}",
+        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url` and `service.api_token` in {}\n2. Use {} only for repo-specific overrides\n3. Start the backend from this repo:\n   mem-service\n4. Optional: start the watcher:\n   memory-watch run --project {}\n5. Open the TUI:\n   mem-cli tui --project {}\n6. Use the repo-local skill from {}",
         repo_root.display(),
         config_path.display(),
         project_path.display(),
         config_path.parent().unwrap_or(repo_root).display(),
+        skill_path.display(),
         default_global_config_path_label(),
         config_path.display(),
         project,
-        project
+        project,
+        skill_path.display()
     )
 }
 
@@ -1540,6 +1655,7 @@ mod tests {
         let summary = initialize_repo(&repo_root, "memory", false, true).unwrap();
 
         assert!(summary.contains(".mem/config.toml"));
+        assert!(summary.contains(".agents/skills/memory-layer"));
         assert!(summary.contains("memory-watch run --project memory"));
         assert!(summary.contains("mem-service"));
     }
@@ -1554,6 +1670,16 @@ mod tests {
         assert!(repo_root.join(".mem/config.toml").is_file());
         assert!(repo_root.join(".mem/project.toml").is_file());
         assert!(repo_root.join(".mem/runtime").is_dir());
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-layer/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-layer/scripts/remember-task.sh")
+                .is_file()
+        );
         assert!(
             fs::read_to_string(repo_root.join(".mem/config.toml"))
                 .unwrap()
@@ -1606,6 +1732,11 @@ mod tests {
         assert!(repo_root.join(".mem/config.toml").is_file());
         assert!(repo_root.join(".mem/project.toml").is_file());
         assert!(repo_root.join(".mem/runtime").is_dir());
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-layer/SKILL.md")
+                .is_file()
+        );
         assert!(root_gitignore_contains_mem(&repo_root).unwrap());
 
         let _ = fs::remove_dir_all(repo_root);

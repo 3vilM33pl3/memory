@@ -59,6 +59,9 @@ This creates a local `.mem/` directory with:
 - `.mem/project.toml`
 - `.mem/runtime/`
 
+It also installs the repo-local skill under:
+- `.agents/skills/memory-layer/`
+
 The generated repo-local config only contains project-specific overrides. `.mem/` is ignored by git.
 
 3. Optional: edit `.mem/config.toml` for repo-specific overrides such as automation paths or repo root.
@@ -129,6 +132,31 @@ Build a `.deb` package:
 ```
 
 The package will be written under `target/debian/`.
+
+Install it on a Debian machine:
+
+```bash
+sudo dpkg -i target/debian/memory-layer_0.1.0_amd64.deb
+```
+
+That installs:
+- `mem-cli`
+- `mem-service`
+- `memory-watch`
+- shared config in `/etc/memory-layer/`
+- the skill template in `/usr/share/memory-layer/skill-template`
+
+Recommended Debian workflow for another repo:
+
+```bash
+sudoedit /etc/memory-layer/memory-layer.toml
+cd /path/to/another-project
+mem-cli init
+mem-service
+mem-cli tui
+```
+
+`mem-cli init` now creates both `.mem/` and `.agents/skills/memory-layer/` in the target repository.
 
 ## Common Commands
 
