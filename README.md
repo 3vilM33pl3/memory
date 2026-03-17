@@ -188,6 +188,11 @@ cargo run --bin mem-cli -- tui --project memory
 
 The TUI opens a persistent connection to the backend. When the Cap'n Proto listener is available it subscribes to project and memory updates, so new memories and overview changes appear without pressing `r`. `r` still forces a full HTTP resync.
 
+Tabs:
+- `Memories`: browse the stored corpus
+- `Query`: run a question and inspect the memories returned for that question
+- `Project`: view project-level health and counts
+
 Inspect or flush automation state:
 
 ```bash
@@ -199,6 +204,7 @@ TUI controls:
 - `Tab`, `h`, `l`: switch tabs
 - `j`, `k`: move selection
 - `/`: text search filter
+- `?`: open query input and run a question in the Query tab
 - `g`: tag filter
 - `s`: cycle status filter
 - `t`: cycle memory-type filter

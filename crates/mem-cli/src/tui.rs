@@ -8,8 +8,8 @@ use crossterm::{
 };
 use mem_api::{
     MemoryEntryResponse, MemoryStatus, MemoryType, NamedCount, ProjectMemoriesResponse,
-    ProjectMemoryListItem, ProjectOverviewResponse, StreamRequest, StreamResponse,
-    read_capnp_text_frame, write_capnp_text_frame,
+    ProjectMemoryListItem, ProjectOverviewResponse, QueryFilters, QueryRequest, QueryResponse,
+    QueryResult, StreamRequest, StreamResponse, read_capnp_text_frame, write_capnp_text_frame,
 };
 use ratatui::{
     Terminal,
@@ -104,6 +104,11 @@ struct App {
     selected_detail: Option<MemoryEntryResponse>,
     selected_index: usize,
     table_state: TableState,
+    query_text: String,
+    query_response: Option<QueryResponse>,
+    query_selected_detail: Option<MemoryEntryResponse>,
+    query_selected_index: usize,
+    query_table_state: TableState,
     status_message: String,
     health_ok: bool,
     filters: Filters,
@@ -114,6 +119,8 @@ impl App {
     fn new(project: String) -> Self {
         let mut table_state = TableState::default();
         table_state.select(Some(0));
+        let mut query_table_state = TableState::default();
+        query_table_state.select(Some(0));
         Self {
             project: project.clone(),
             active_tab: TabKind::Memories,
@@ -124,6 +131,11 @@ impl App {
             selected_detail: None,
             selected_index: 0,
             table_state,
+            query_text: String::new(),
+            query_response: None,
+            query_selected_detail: None,
+            query_selected_index: 0,
+            query_table_state,
             status_message: "Press r to refresh, q to exit.".to_string(),
             health_ok: false,
             filters: Filters::default(),
@@ -192,6 +204,11 @@ impl App {
                     .await?;
                 return Ok(false);
             }
+            InputMode::Query(mut buffer) => {
+                self.handle_text_input(key, api, stream, TextInputKind::Query, &mut buffer)
+                    .await?;
+                return Ok(false);
+            }
         }
 
         match key.code {
@@ -208,10 +225,21 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Memories => {
                 self.move_selection(-1, api, stream).await;
             }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Query => {
+                self.move_query_selection(1, api).await;
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Query => {
+                self.move_query_selection(-1, api).await;
+            }
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.input_mode = InputMode::Search(self.filters.text.clone());
                 self.status_message =
                     "Type search text, Enter to apply, Esc to cancel.".to_string();
+            }
+            KeyCode::Char('?') if key.modifiers.is_empty() => {
+                self.active_tab = TabKind::Query;
+                self.input_mode = InputMode::Query(self.query_text.clone());
+                self.status_message = "Type a question, Enter to run, Esc to cancel.".to_string();
             }
             KeyCode::Char('g') if key.modifiers.is_empty() => {
                 self.input_mode = InputMode::Tag(self.filters.tag.clone());
@@ -280,11 +308,19 @@ impl App {
                 match kind {
                     TextInputKind::Search => self.filters.text = buffer.clone(),
                     TextInputKind::Tag => self.filters.tag = buffer.clone(),
+                    TextInputKind::Query => self.query_text = buffer.clone(),
                 }
                 self.input_mode = InputMode::Normal;
-                self.apply_filters();
-                self.fetch_selected_detail(api, stream).await;
-                self.status_message = "Applied filter.".to_string();
+                match kind {
+                    TextInputKind::Query => {
+                        self.run_query(api).await;
+                    }
+                    _ => {
+                        self.apply_filters();
+                        self.fetch_selected_detail(api, stream).await;
+                        self.status_message = "Applied filter.".to_string();
+                    }
+                }
             }
             KeyCode::Backspace => {
                 buffer.pop();
@@ -386,6 +422,82 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    async fn run_query(&mut self, api: &ApiClient) {
+        let question = self.query_text.trim();
+        if question.is_empty() {
+            self.query_response = None;
+            self.query_selected_detail = None;
+            self.query_selected_index = 0;
+            self.query_table_state.select(None);
+            self.status_message = "Enter a query before running search.".to_string();
+            return;
+        }
+
+        self.status_message = format!("Running query for \"{question}\"...");
+        match api
+            .query(&QueryRequest {
+                project: self.project.clone(),
+                query: question.to_string(),
+                filters: QueryFilters::default(),
+                top_k: 8,
+                min_confidence: None,
+            })
+            .await
+        {
+            Ok(response) => {
+                self.query_response = Some(response);
+                self.query_selected_index = 0;
+                if self.query_results().is_empty() {
+                    self.query_selected_detail = None;
+                    self.query_table_state.select(None);
+                } else {
+                    self.query_table_state.select(Some(0));
+                    self.fetch_selected_query_detail(api).await;
+                }
+                self.status_message =
+                    format!("Query returned {} memories.", self.query_results().len());
+            }
+            Err(error) => {
+                self.query_response = None;
+                self.query_selected_detail = None;
+                self.query_table_state.select(None);
+                self.status_message = error.to_string();
+            }
+        }
+    }
+
+    async fn move_query_selection(&mut self, delta: isize, api: &ApiClient) {
+        if self.query_results().is_empty() {
+            return;
+        }
+        let next = (self.query_selected_index as isize + delta)
+            .clamp(0, self.query_results().len().saturating_sub(1) as isize)
+            as usize;
+        if next != self.query_selected_index {
+            self.query_selected_index = next;
+            self.query_table_state
+                .select(Some(self.query_selected_index));
+            self.fetch_selected_query_detail(api).await;
+        }
+    }
+
+    async fn fetch_selected_query_detail(&mut self, api: &ApiClient) {
+        self.query_selected_detail = None;
+        if let Some(result) = self.query_results().get(self.query_selected_index) {
+            match api.memory_detail(&result.memory_id.to_string()).await {
+                Ok(detail) => self.query_selected_detail = Some(detail),
+                Err(error) => self.status_message = error.to_string(),
+            }
+        }
+    }
+
+    fn query_results(&self) -> &[QueryResult] {
+        self.query_response
+            .as_ref()
+            .map(|response| response.results.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -509,13 +621,15 @@ async fn subscribe_stream(stream: &mut StreamSession, app: &App) -> Result<()> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TabKind {
     Memories,
+    Query,
     Project,
 }
 
 impl TabKind {
     fn next(self) -> Self {
         match self {
-            Self::Memories => Self::Project,
+            Self::Memories => Self::Query,
+            Self::Query => Self::Project,
             Self::Project => Self::Memories,
         }
     }
@@ -527,7 +641,8 @@ impl TabKind {
     fn index(self) -> usize {
         match self {
             Self::Memories => 0,
-            Self::Project => 1,
+            Self::Query => 1,
+            Self::Project => 2,
         }
     }
 }
@@ -575,12 +690,14 @@ enum InputMode {
     Normal,
     Search(String),
     Tag(String),
+    Query(String),
 }
 
 #[derive(Clone, Copy)]
 enum TextInputKind {
     Search,
     Tag,
+    Query,
 }
 
 impl TextInputKind {
@@ -588,6 +705,7 @@ impl TextInputKind {
         match self {
             Self::Search => InputMode::Search(value),
             Self::Tag => InputMode::Tag(value),
+            Self::Query => InputMode::Query(value),
         }
     }
 }
@@ -698,7 +816,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         ])
         .split(frame.area());
 
-    let titles = ["Memories", "Project"]
+    let titles = ["Memories", "Query", "Project"]
         .into_iter()
         .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
         .collect::<Vec<_>>();
@@ -717,30 +835,50 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         );
     frame.render_widget(tabs, chunks[0]);
 
-    let filter_bar = Paragraph::new(vec![Line::from(vec![
-        accent_span("search=/ "),
-        Span::styled(
-            display_filter(&app.filters.text),
-            Style::default().fg(Theme::TEXT),
-        ),
-        Span::raw("  "),
-        accent_span("tag=g "),
-        Span::styled(
-            display_filter(&app.filters.tag),
-            Style::default().fg(Theme::TEXT),
-        ),
-        Span::raw("  "),
-        accent_span("status=s "),
-        status_span(app.filters.status.label()),
-        Span::raw("  "),
-        accent_span("type=t "),
-        memory_type_span_from_label(app.filters.memory_type.label()),
-        Span::raw("  "),
-        Span::styled(
-            "clear=x curate=c reindex=i archive=a",
+    let filter_bar = Paragraph::new(vec![Line::from(match app.active_tab {
+        TabKind::Memories => vec![
+            accent_span("search=/ "),
+            Span::styled(
+                display_filter(&app.filters.text),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("  "),
+            accent_span("tag=g "),
+            Span::styled(
+                display_filter(&app.filters.tag),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("  "),
+            accent_span("status=s "),
+            status_span(app.filters.status.label()),
+            Span::raw("  "),
+            accent_span("type=t "),
+            memory_type_span_from_label(app.filters.memory_type.label()),
+            Span::raw("  "),
+            Span::styled(
+                "clear=x curate=c reindex=i archive=a",
+                Style::default().fg(Theme::MUTED),
+            ),
+        ],
+        TabKind::Query => vec![
+            accent_span("query=? "),
+            Span::styled(
+                display_filter(&app.query_text),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("  "),
+            Span::styled("j/k move result", Style::default().fg(Theme::MUTED)),
+            Span::raw("  "),
+            Span::styled(
+                "Enter runs while editing",
+                Style::default().fg(Theme::MUTED),
+            ),
+        ],
+        TabKind::Project => vec![Span::styled(
+            "Tab/h/l switch tabs. Use the Query tab to inspect what a question returns.",
             Style::default().fg(Theme::MUTED),
-        ),
-    ])])
+        )],
+    })])
     .style(Style::default().bg(Theme::PANEL_ALT))
     .block(themed_block(match &app.input_mode {
         InputMode::Normal => "Controls",
@@ -758,11 +896,19 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                 "Tag Filter Input (editing)"
             }
         }
+        InputMode::Query(value) => {
+            if value.is_empty() {
+                "Query Input"
+            } else {
+                "Query Input (editing)"
+            }
+        }
     }));
     frame.render_widget(filter_bar, chunks[1]);
 
     match app.active_tab {
         TabKind::Memories => draw_memories_tab(frame, app, chunks[2]),
+        TabKind::Query => draw_query_tab(frame, app, chunks[2]),
         TabKind::Project => draw_project_tab(frame, app, chunks[2]),
     }
 
@@ -1128,6 +1274,179 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     );
 }
 
+fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(8), Constraint::Min(12)])
+        .split(area);
+
+    let answer_text = if let Some(response) = &app.query_response {
+        vec![
+            Line::from(vec![
+                label_span("Question: "),
+                Span::styled(
+                    if app.query_text.trim().is_empty() {
+                        "<empty>".to_string()
+                    } else {
+                        app.query_text.clone()
+                    },
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]),
+            Line::from(vec![
+                label_span("Answer: "),
+                Span::styled(response.answer.clone(), Style::default().fg(Theme::TEXT)),
+            ]),
+            Line::from(vec![
+                label_span("Confidence: "),
+                Span::styled(
+                    format!("{:.2}", response.confidence),
+                    confidence_style(response.confidence),
+                ),
+                Span::raw("   "),
+                label_span("Evidence: "),
+                Span::styled(
+                    if response.insufficient_evidence {
+                        "insufficient"
+                    } else {
+                        "sufficient"
+                    },
+                    if response.insufficient_evidence {
+                        Style::default().fg(Theme::WARNING)
+                    } else {
+                        Style::default().fg(Theme::SUCCESS)
+                    },
+                ),
+                Span::raw("   "),
+                label_span("Matches: "),
+                Span::styled(
+                    response.results.len().to_string(),
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]),
+        ]
+    } else {
+        vec![
+            Line::from(vec![
+                label_span("Question: "),
+                Span::styled(
+                    display_filter(&app.query_text),
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]),
+            Line::from(Span::styled(
+                "Press ? to enter a question. The result table below shows the memories returned for that query.",
+                Style::default().fg(Theme::MUTED),
+            )),
+        ]
+    };
+
+    let answer = Paragraph::new(answer_text)
+        .style(Style::default().bg(Theme::PANEL))
+        .wrap(Wrap { trim: false })
+        .block(themed_block("Query Result"));
+    frame.render_widget(answer, chunks[0]);
+
+    let lower = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
+        .split(chunks[1]);
+
+    let header = Row::new(["Summary", "Type", "Score"]).style(
+        Style::default()
+            .fg(Theme::ACCENT_STRONG)
+            .bg(Theme::PANEL_ALT)
+            .add_modifier(Modifier::BOLD),
+    );
+    let rows = app.query_results().iter().map(query_row);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Percentage(62),
+            Constraint::Length(14),
+            Constraint::Length(8),
+        ],
+    )
+    .header(header)
+    .row_highlight_style(
+        Style::default()
+            .fg(Theme::SELECTION_FG)
+            .bg(Theme::SELECTION_BG)
+            .add_modifier(Modifier::BOLD),
+    )
+    .block(themed_block(format!(
+        "Returned Memories ({})",
+        app.query_results().len()
+    )));
+    let mut state = app.query_table_state.clone();
+    frame.render_stateful_widget(table, lower[0], &mut state);
+
+    let detail_text = if let Some(result) = app.query_results().get(app.query_selected_index) {
+        let mut lines = vec![
+            Line::from(vec![
+                label_span("Summary: "),
+                Span::styled(result.summary.clone(), Style::default().fg(Theme::TEXT)),
+            ]),
+            Line::from(vec![
+                label_span("Type: "),
+                memory_type_span(&result.memory_type),
+                Span::raw("   "),
+                label_span("Score: "),
+                Span::styled(
+                    format!("{:.2}", result.score),
+                    Style::default().fg(Theme::ACCENT_STRONG),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![section_span("Snippet")]),
+            Line::from(Span::styled(
+                result.snippet.clone(),
+                Style::default().fg(Theme::TEXT),
+            )),
+        ];
+
+        if let Some(detail) = &app.query_selected_detail {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Canonical Text")]));
+            lines.push(Line::from(Span::styled(
+                detail.canonical_text.clone(),
+                Style::default().fg(Theme::TEXT),
+            )));
+        }
+
+        if !result.sources.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Sources")]));
+            for source in &result.sources {
+                let mut parts = vec![source.source_kind.source_kind_string().to_string()];
+                if let Some(path) = &source.file_path {
+                    parts.push(path.clone());
+                }
+                if let Some(excerpt) = &source.excerpt {
+                    parts.push(excerpt.clone());
+                }
+                lines.push(Line::from(Span::styled(
+                    parts.join(" | "),
+                    Style::default().fg(Theme::TEXT),
+                )));
+            }
+        }
+
+        lines
+    } else {
+        vec![Line::from(Span::styled(
+            "Run a query to inspect the returned memories.",
+            Style::default().fg(Theme::MUTED),
+        ))]
+    };
+
+    let detail = Paragraph::new(detail_text)
+        .style(Style::default().bg(Theme::PANEL))
+        .wrap(Wrap { trim: false })
+        .block(themed_block("Returned Memory Detail"));
+    frame.render_widget(detail, lower[1]);
+}
+
 fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'static>> {
     if items.is_empty() {
         vec![Line::from(empty.to_string())]
@@ -1170,6 +1489,20 @@ fn memory_row(item: &ProjectMemoryListItem) -> Row<'static> {
         )),
     ])
     .style(row_style)
+}
+
+fn query_row(item: &QueryResult) -> Row<'static> {
+    Row::new(vec![
+        Cell::from(Span::styled(
+            item.summary.clone(),
+            Style::default().fg(Theme::TEXT),
+        )),
+        Cell::from(memory_type_span(&item.memory_type)),
+        Cell::from(Span::styled(
+            format!("{:.2}", item.score),
+            Style::default().fg(Theme::ACCENT_STRONG),
+        )),
+    ])
 }
 
 fn format_timestamp(value: Option<chrono::DateTime<chrono::Utc>>) -> String {

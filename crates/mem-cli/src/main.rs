@@ -1201,6 +1201,17 @@ impl ApiClient {
         .await
     }
 
+    pub(crate) async fn query(&self, request: &QueryRequest) -> Result<QueryResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/query"))
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
     pub(crate) async fn memory_detail(&self, memory_id: &str) -> Result<MemoryEntryResponse> {
         get_json(
             self.client
