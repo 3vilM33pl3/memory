@@ -15,6 +15,7 @@ use mem_api::{
 };
 use mem_watch::{flush_path, load_state, run_once, to_status};
 use reqwest::{Client, header::HeaderMap};
+use serde::Serialize;
 
 #[derive(Debug, Parser)]
 #[command(name = "memctl")]
@@ -28,6 +29,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Init(InitArgs),
+    Doctor(DoctorArgs),
     Query(QueryArgs),
     CaptureTask(CaptureTaskArgs),
     Remember(RememberArgs),
@@ -48,6 +50,16 @@ struct InitArgs {
     force: bool,
     #[arg(long)]
     print: bool,
+}
+
+#[derive(Debug, Args)]
+struct DoctorArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    fix: bool,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -147,13 +159,29 @@ async fn main() -> Result<()> {
         command,
     } = Cli::parse();
 
-    if let Command::Init(args) = &command {
-        let cwd = env::current_dir().context("read current directory")?;
-        let project = resolve_project_slug(args.project.clone(), &cwd)?;
-        let repo_root = resolve_repo_root(&cwd)?;
-        let output = initialize_repo(&repo_root, &project, args.force, args.print)?;
-        println!("{output}");
-        return Ok(());
+    match &command {
+        Command::Init(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let project = resolve_project_slug(args.project.clone(), &cwd)?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            let output = initialize_repo(&repo_root, &project, args.force, args.print)?;
+            println!("{output}");
+            return Ok(());
+        }
+        Command::Doctor(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            let project = resolve_project_slug(args.project.clone(), &cwd)
+                .unwrap_or_else(|_| repo_root.file_name().and_then(|v| v.to_str()).unwrap_or("memory").to_string());
+            let report = run_doctor(cli_config.clone(), &repo_root, &project, args.fix).await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print_doctor_report(&report);
+            }
+            return Ok(());
+        }
+        _ => {}
     }
 
     let config = AppConfig::load_from_path(cli_config).context("load config")?;
@@ -164,6 +192,7 @@ async fn main() -> Result<()> {
 
     match command {
         Command::Init(_) => unreachable!("init is handled before config loading"),
+        Command::Doctor(_) => unreachable!("doctor is handled before config loading"),
         Command::Query(args) => {
             let request = QueryRequest {
                 project: args.project,
@@ -310,6 +339,570 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DoctorReport {
+    project: String,
+    repo_root: String,
+    config_path: String,
+    fix_mode: bool,
+    checks: Vec<DoctorCheckResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DoctorCheckResult {
+    id: String,
+    status: DoctorStatus,
+    summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggested_fix: Option<String>,
+    #[serde(default)]
+    fix_applied: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DoctorStatus {
+    Ok,
+    Warn,
+    Fail,
+    Skipped,
+}
+
+impl DoctorReport {
+    fn push(&mut self, result: DoctorCheckResult) {
+        self.checks.push(result);
+    }
+}
+
+fn doctor_check(
+    id: &str,
+    status: DoctorStatus,
+    summary: impl Into<String>,
+    details: Option<String>,
+    suggested_fix: Option<String>,
+    fix_applied: bool,
+) -> DoctorCheckResult {
+    DoctorCheckResult {
+        id: id.to_string(),
+        status,
+        summary: summary.into(),
+        details,
+        suggested_fix,
+        fix_applied,
+    }
+}
+
+async fn run_doctor(
+    cli_config: Option<PathBuf>,
+    repo_root: &Path,
+    project: &str,
+    fix: bool,
+) -> Result<DoctorReport> {
+    let config_path = cli_config.unwrap_or_else(|| repo_root.join(".mem").join("config.toml"));
+    let mut report = DoctorReport {
+        project: project.to_string(),
+        repo_root: repo_root.display().to_string(),
+        config_path: config_path.display().to_string(),
+        fix_mode: fix,
+        checks: Vec::new(),
+    };
+
+    let mem_dir = repo_root.join(".mem");
+    let project_path = mem_dir.join("project.toml");
+    let root_gitignore_path = repo_root.join(".gitignore");
+
+    let mut init_fix_applied = false;
+    if !mem_dir.exists() && fix {
+        initialize_repo(repo_root, project, false, false)?;
+        init_fix_applied = true;
+    }
+
+    report.push(doctor_check(
+        "repo.bootstrap_dir",
+        if mem_dir.exists() || init_fix_applied {
+            DoctorStatus::Ok
+        } else {
+            DoctorStatus::Fail
+        },
+        if mem_dir.exists() || init_fix_applied {
+            "Repo-local .mem directory is present."
+        } else {
+            "Repo-local .mem directory is missing."
+        },
+        Some(mem_dir.display().to_string()),
+        if mem_dir.exists() || init_fix_applied {
+            None
+        } else {
+            Some("memctl init".to_string())
+        },
+        init_fix_applied,
+    ));
+
+    let config_fix_applied = if !config_path.exists() && fix {
+        repair_repo_bootstrap(repo_root, project)?;
+        true
+    } else {
+        false
+    };
+    report.push(doctor_check(
+        "repo.config_file",
+        if config_path.exists() || config_fix_applied {
+            DoctorStatus::Ok
+        } else {
+            DoctorStatus::Fail
+        },
+        if config_path.exists() || config_fix_applied {
+            "Config file is present."
+        } else {
+            "Config file is missing."
+        },
+        Some(config_path.display().to_string()),
+        if config_path.exists() || config_fix_applied {
+            None
+        } else {
+            Some("memctl init".to_string())
+        },
+        config_fix_applied,
+    ));
+
+    let project_fix_applied = if !project_path.exists() && fix {
+        repair_repo_bootstrap(repo_root, project)?;
+        true
+    } else {
+        false
+    };
+    report.push(doctor_check(
+        "repo.project_file",
+        if project_path.exists() || project_fix_applied {
+            DoctorStatus::Ok
+        } else {
+            DoctorStatus::Fail
+        },
+        if project_path.exists() || project_fix_applied {
+            "Project metadata file is present."
+        } else {
+            "Project metadata file is missing."
+        },
+        Some(project_path.display().to_string()),
+        if project_path.exists() || project_fix_applied {
+            None
+        } else {
+            Some("memctl init".to_string())
+        },
+        project_fix_applied,
+    ));
+
+    let gitignore_fix_applied = if !root_gitignore_contains_mem(repo_root)? && fix {
+        ensure_root_gitignore_entry(&root_gitignore_path, "/.mem\n")?;
+        true
+    } else {
+        false
+    };
+    report.push(doctor_check(
+        "repo.gitignore",
+        if root_gitignore_contains_mem(repo_root)? {
+            DoctorStatus::Ok
+        } else {
+            DoctorStatus::Warn
+        },
+        if root_gitignore_contains_mem(repo_root)? {
+            "Root .gitignore ignores .mem."
+        } else {
+            "Root .gitignore does not ignore .mem."
+        },
+        Some(root_gitignore_path.display().to_string()),
+        if root_gitignore_contains_mem(repo_root)? {
+            None
+        } else {
+            Some("memctl doctor --fix".to_string())
+        },
+        gitignore_fix_applied,
+    ));
+
+    let config = match AppConfig::load_from_path(Some(config_path.clone())) {
+        Ok(config) => {
+            report.push(doctor_check(
+                "config.load",
+                DoctorStatus::Ok,
+                "Config loads successfully.",
+                None,
+                None,
+                false,
+            ));
+            Some(config)
+        }
+        Err(error) => {
+            report.push(doctor_check(
+                "config.load",
+                DoctorStatus::Fail,
+                "Config failed to load.",
+                Some(error.to_string()),
+                Some(format!("Edit {}", config_path.display())),
+                false,
+            ));
+            None
+        }
+    };
+
+    if let Some(config) = config {
+        report.push(doctor_check(
+            "config.database_url",
+            if is_placeholder_database_url(&config.database.url) {
+                DoctorStatus::Warn
+            } else {
+                DoctorStatus::Ok
+            },
+            if is_placeholder_database_url(&config.database.url) {
+                "Database URL still uses the placeholder value."
+            } else {
+                "Database URL is configured."
+            },
+            Some(mask_database_url(&config.database.url)),
+            if is_placeholder_database_url(&config.database.url) {
+                Some(format!("Edit {} and set [database].url", config_path.display()))
+            } else {
+                None
+            },
+            false,
+        ));
+
+        report.push(doctor_check(
+            "config.api_token",
+            if config.service.api_token.trim().is_empty() {
+                DoctorStatus::Fail
+            } else if config.service.api_token == "dev-memory-token" {
+                DoctorStatus::Warn
+            } else {
+                DoctorStatus::Ok
+            },
+            if config.service.api_token.trim().is_empty() {
+                "API token is empty."
+            } else if config.service.api_token == "dev-memory-token" {
+                "API token is set to the development default."
+            } else {
+                "API token is configured."
+            },
+            None,
+            if config.service.api_token.trim().is_empty() {
+                Some(format!("Edit {} and set [service].api_token", config_path.display()))
+            } else {
+                None
+            },
+            false,
+        ));
+
+        let runtime_dir = automation_runtime_dir(&config, repo_root);
+        let runtime_fix_applied = if !runtime_dir.exists() && fix {
+            fs::create_dir_all(&runtime_dir)
+                .with_context(|| format!("create {}", runtime_dir.display()))?;
+            true
+        } else {
+            false
+        };
+        report.push(doctor_check(
+            "automation.runtime_dir",
+            if runtime_dir.exists() {
+                DoctorStatus::Ok
+            } else if config.automation.enabled {
+                DoctorStatus::Warn
+            } else {
+                DoctorStatus::Warn
+            },
+            if runtime_dir.exists() {
+                "Automation runtime directory is present."
+            } else {
+                "Automation runtime directory is missing."
+            },
+            Some(runtime_dir.display().to_string()),
+            if runtime_dir.exists() {
+                None
+            } else {
+                Some("memctl doctor --fix".to_string())
+            },
+            runtime_fix_applied,
+        ));
+
+        let resolved_repo_root = config
+            .automation
+            .repo_root
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| repo_root.to_path_buf());
+        report.push(doctor_check(
+            "automation.repo_root",
+            if resolved_repo_root == repo_root {
+                DoctorStatus::Ok
+            } else {
+                DoctorStatus::Warn
+            },
+            if resolved_repo_root == repo_root {
+                "Automation repo_root matches the current repository."
+            } else {
+                "Automation repo_root differs from the current repository."
+            },
+            Some(resolved_repo_root.display().to_string()),
+            if resolved_repo_root == repo_root {
+                None
+            } else {
+                Some(format!("Edit {} and set [automation].repo_root", config_path.display()))
+            },
+            false,
+        ));
+
+        let client = Client::builder()
+            .timeout(config.service.request_timeout)
+            .build()
+            .context("build doctor http client")?;
+        let api = ApiClient::new(client, config.clone());
+
+        match api.health().await {
+            Ok(value) => {
+                report.push(doctor_check(
+                    "backend.health",
+                    DoctorStatus::Ok,
+                    "Backend health endpoint is reachable.",
+                    Some(value.to_string()),
+                    None,
+                    false,
+                ));
+                match api.project_overview(project).await {
+                    Ok(overview) => report.push(doctor_check(
+                        "backend.project_overview",
+                        DoctorStatus::Ok,
+                        "Project overview endpoint is reachable.",
+                        Some(format!(
+                            "{} memories / {} raw captures",
+                            overview.memory_entries_total, overview.raw_captures_total
+                        )),
+                        None,
+                        false,
+                    )),
+                    Err(error) => report.push(doctor_check(
+                        "backend.project_overview",
+                        DoctorStatus::Warn,
+                        "Project overview endpoint did not return data.",
+                        Some(error.to_string()),
+                        Some(format!("memctl init --project {}", project)),
+                        false,
+                    )),
+                }
+            }
+            Err(error) => {
+                report.push(doctor_check(
+                    "backend.health",
+                    DoctorStatus::Fail,
+                    "Backend health endpoint is not reachable.",
+                    Some(error.to_string()),
+                    Some(format!("mem-service {}", config_path.display())),
+                    false,
+                ));
+                report.push(doctor_check(
+                    "backend.project_overview",
+                    DoctorStatus::Skipped,
+                    "Skipped project overview because the backend is unavailable.",
+                    None,
+                    None,
+                    false,
+                ));
+            }
+        }
+
+        match load_state(project, &resolved_repo_root, &config.automation).await {
+            Ok(state) => report.push(doctor_check(
+                "automation.state",
+                if config.automation.enabled {
+                    DoctorStatus::Ok
+                } else {
+                    DoctorStatus::Skipped
+                },
+                if config.automation.enabled {
+                    "Automation state can be loaded."
+                } else {
+                    "Skipped automation state because automation is disabled."
+                },
+                Some(format!(
+                    "enabled={} dirty_files={}",
+                    state.enabled,
+                    state.current_session.changed_files.len()
+                )),
+                None,
+                false,
+            )),
+            Err(error) => report.push(doctor_check(
+                "automation.state",
+                if config.automation.enabled {
+                    DoctorStatus::Warn
+                } else {
+                    DoctorStatus::Skipped
+                },
+                if config.automation.enabled {
+                    "Automation state could not be loaded."
+                } else {
+                    "Skipped automation state because automation is disabled."
+                },
+                Some(error.to_string()),
+                Some("memctl doctor --fix".to_string()),
+                false,
+            )),
+        }
+
+        let remember_prereqs = detect_changed_files().is_ok();
+        report.push(doctor_check(
+            "workflow.remember_ready",
+            if remember_prereqs {
+                DoctorStatus::Ok
+            } else {
+                DoctorStatus::Warn
+            },
+            if remember_prereqs {
+                "Remember workflow prerequisites look usable."
+            } else {
+                "Remember workflow could not inspect repo state."
+            },
+            None,
+            if remember_prereqs {
+                None
+            } else {
+                Some("Ensure git is available and run inside the repo".to_string())
+            },
+            false,
+        ));
+    } else {
+        for (id, summary) in [
+            ("config.database_url", "Skipped database URL validation because config could not load."),
+            ("config.api_token", "Skipped API token validation because config could not load."),
+            ("automation.runtime_dir", "Skipped automation runtime checks because config could not load."),
+            ("automation.repo_root", "Skipped automation repo_root check because config could not load."),
+            ("backend.health", "Skipped backend health check because config could not load."),
+            ("backend.project_overview", "Skipped project overview check because config could not load."),
+            ("automation.state", "Skipped automation state check because config could not load."),
+            ("workflow.remember_ready", "Skipped remember readiness check because config could not load."),
+        ] {
+            report.push(doctor_check(
+                id,
+                DoctorStatus::Skipped,
+                summary,
+                None,
+                None,
+                false,
+            ));
+        }
+    }
+
+    Ok(report)
+}
+
+fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
+    let mem_dir = repo_root.join(".mem");
+    let runtime_dir = mem_dir.join("runtime");
+    let config_path = mem_dir.join("config.toml");
+    let project_path = mem_dir.join("project.toml");
+    let local_gitignore_path = mem_dir.join(".gitignore");
+
+    fs::create_dir_all(&runtime_dir).context("create .mem/runtime")?;
+    if !config_path.exists() {
+        fs::write(&config_path, render_repo_config(repo_root)).context("write .mem/config.toml")?;
+    }
+    if !project_path.exists() {
+        fs::write(&project_path, render_project_metadata(project, repo_root))
+            .context("write .mem/project.toml")?;
+    }
+    if !local_gitignore_path.exists() {
+        fs::write(&local_gitignore_path, "runtime/\n").context("write .mem/.gitignore")?;
+    }
+    ensure_root_gitignore_entry(&repo_root.join(".gitignore"), "/.mem\n")?;
+    Ok(())
+}
+
+fn root_gitignore_contains_mem(repo_root: &Path) -> Result<bool> {
+    let path = repo_root.join(".gitignore");
+    if !path.exists() {
+        return Ok(false);
+    }
+    let content = fs::read_to_string(path)?;
+    Ok(content.lines().any(|line| line.trim() == "/.mem"))
+}
+
+fn is_placeholder_database_url(value: &str) -> bool {
+    value.contains("<password>") || value.trim().is_empty()
+}
+
+fn mask_database_url(value: &str) -> String {
+    if let Some((prefix, rest)) = value.split_once("://") {
+        if let Some((creds, suffix)) = rest.split_once('@') {
+            if creds.contains(':') {
+                return format!("{prefix}://<redacted>@{suffix}");
+            }
+        }
+    }
+    value.to_string()
+}
+
+fn automation_runtime_dir(config: &AppConfig, repo_root: &Path) -> PathBuf {
+    if let Some(path) = &config.automation.state_file_path {
+        PathBuf::from(path)
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| repo_root.join(".mem").join("runtime"))
+    } else if let Some(path) = &config.automation.audit_log_path {
+        PathBuf::from(path)
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| repo_root.join(".mem").join("runtime"))
+    } else {
+        repo_root.join(".mem").join("runtime")
+    }
+}
+
+fn print_doctor_report(report: &DoctorReport) {
+    println!(
+        "Doctor report for project {} at {}\n",
+        report.project, report.repo_root
+    );
+    for check in &report.checks {
+        let icon = match check.status {
+            DoctorStatus::Ok => "OK",
+            DoctorStatus::Warn => "WARN",
+            DoctorStatus::Fail => "FAIL",
+            DoctorStatus::Skipped => "SKIP",
+        };
+        println!("[{icon}] {} - {}", check.id, check.summary);
+        if let Some(details) = &check.details {
+            println!("  details: {details}");
+        }
+        if let Some(fix) = &check.suggested_fix {
+            println!("  fix: {fix}");
+        }
+        if check.fix_applied {
+            println!("  applied: true");
+        }
+    }
+
+    let ok = report
+        .checks
+        .iter()
+        .filter(|check| check.status == DoctorStatus::Ok)
+        .count();
+    let warn = report
+        .checks
+        .iter()
+        .filter(|check| check.status == DoctorStatus::Warn)
+        .count();
+    let fail = report
+        .checks
+        .iter()
+        .filter(|check| check.status == DoctorStatus::Fail)
+        .count();
+    let skipped = report
+        .checks
+        .iter()
+        .filter(|check| check.status == DoctorStatus::Skipped)
+        .count();
+    println!("\nSummary: {ok} ok, {warn} warn, {fail} fail, {skipped} skipped");
 }
 
 fn initialize_repo(repo_root: &Path, project: &str, force: bool, print_only: bool) -> Result<String> {
@@ -779,8 +1372,9 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     use super::{
-        RememberArgs, build_remember_request, initialize_repo, resolve_project_slug,
-        resolve_repo_root,
+        RememberArgs, build_remember_request, initialize_repo, is_placeholder_database_url,
+        mask_database_url, repair_repo_bootstrap, resolve_project_slug, resolve_repo_root,
+        root_gitignore_contains_mem,
     };
 
     #[test]
@@ -858,6 +1452,39 @@ mod tests {
     fn resolve_repo_root_falls_back_to_cwd() {
         let cwd = PathBuf::from("/tmp/not-a-repo");
         assert_eq!(resolve_repo_root(&cwd).unwrap(), cwd);
+    }
+
+    #[test]
+    fn placeholder_database_url_is_detected() {
+        assert!(is_placeholder_database_url(
+            "postgresql://memory:<password>@localhost:5432/memory"
+        ));
+        assert!(!is_placeholder_database_url(
+            "postgresql://memory:secret@localhost:5432/memory"
+        ));
+    }
+
+    #[test]
+    fn database_url_is_masked_for_output() {
+        assert_eq!(
+            mask_database_url("postgresql://memory:secret@localhost:5432/memory"),
+            "postgresql://<redacted>@localhost:5432/memory"
+        );
+    }
+
+    #[test]
+    fn repair_repo_bootstrap_creates_missing_files() {
+        let repo_root = unique_temp_dir("mem-doctor-fix");
+        fs::create_dir_all(&repo_root).unwrap();
+
+        repair_repo_bootstrap(&repo_root, "memory").unwrap();
+
+        assert!(repo_root.join(".mem/config.toml").is_file());
+        assert!(repo_root.join(".mem/project.toml").is_file());
+        assert!(repo_root.join(".mem/runtime").is_dir());
+        assert!(root_gitignore_contains_mem(&repo_root).unwrap());
+
+        let _ = fs::remove_dir_all(repo_root);
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {

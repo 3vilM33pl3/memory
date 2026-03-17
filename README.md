@@ -154,6 +154,13 @@ Show service stats:
 cargo run --bin mem-cli -- --config .mem/config.toml stats
 ```
 
+Run setup diagnostics:
+
+```bash
+cargo run --bin mem-cli -- doctor
+cargo run --bin mem-cli -- doctor --fix
+```
+
 Launch the TUI:
 
 ```bash
@@ -213,6 +220,8 @@ Typical workflow:
 4. Query the resulting memory
 
 The `remember` command auto-detects changed files from `git status` when possible, creates a capture payload for you, sends it to the backend, and then runs curation immediately. If you omit `--title`, `--prompt`, or `--summary`, it derives defaults automatically.
+
+The `doctor` command checks the repo-local `.mem/` bootstrap, config validity, backend reachability, and automation/runtime state. By default it reports issues and suggests exact fixes. With `--fix`, it only applies safe local repairs such as creating missing `.mem/` files or adding `/.mem` to `.gitignore`.
 
 When `[automation].enabled = true`, `memory-watch` observes repo activity and can either:
 - `suggest` memory writes by logging candidate work without persisting
