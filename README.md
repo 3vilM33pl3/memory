@@ -241,6 +241,7 @@ TUI controls:
 - `j`, `k`: move selection
 - `/`: text search filter
 - `?`: open query input and run a question in the Query tab
+- typing in the `Query` tab starts question input directly
 - `g`: tag filter
 - `s`: cycle status filter
 - `t`: cycle memory-type filter

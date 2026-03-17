@@ -275,6 +275,15 @@ impl App {
                 self.input_mode = InputMode::Query(self.query_text.clone());
                 self.status_message = "Type a question, Enter to run, Esc to cancel.".to_string();
             }
+            KeyCode::Char(ch)
+                if self.active_tab == TabKind::Query
+                    && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT) =>
+            {
+                let mut buffer = self.query_text.clone();
+                buffer.push(ch);
+                self.input_mode = InputMode::Query(buffer);
+                self.status_message = "Type a question, Enter to run, Esc to cancel.".to_string();
+            }
             KeyCode::Char('g') if key.modifiers.is_empty() => {
                 self.input_mode = InputMode::Tag(self.filters.tag.clone());
                 self.status_message =
