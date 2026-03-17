@@ -48,6 +48,11 @@ struct ServiceEvent {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args().any(|arg| arg == "--version" || arg == "-V") {
+        println!("mem-service {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .with(tracing_subscriber::fmt::layer().json())
@@ -347,7 +352,8 @@ async fn health_payload(state: &AppState) -> Result<serde_json::Value> {
     sqlx::query("SELECT 1").execute(&state.pool).await?;
     Ok(serde_json::json!({
         "status": "ok",
-        "database": "up"
+        "database": "up",
+        "version": env!("CARGO_PKG_VERSION")
     }))
 }
 

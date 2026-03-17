@@ -1,4 +1,4 @@
-use std::{io, time::Duration};
+use std::{io, process::Command, time::Duration};
 
 use anyhow::Result;
 use crossterm::{
@@ -47,7 +47,7 @@ impl Theme {
 
 pub(crate) async fn run(api: ApiClient, project: String) -> Result<()> {
     let mut terminal = setup_terminal()?;
-    let mut app = App::new(project);
+    let mut app = App::new(project, detect_tool_versions());
     app.refresh(&api).await;
     let mut stream = StreamSession::connect(&api).await.ok();
     if let Some(stream_session) = stream.as_mut() {
@@ -109,14 +109,21 @@ struct App {
     query_selected_detail: Option<MemoryEntryResponse>,
     query_selected_index: usize,
     query_table_state: TableState,
+    versions: ToolVersions,
     status_message: String,
     health_ok: bool,
     filters: Filters,
     input_mode: InputMode,
 }
 
+struct ToolVersions {
+    mem_cli: String,
+    mem_service: String,
+    memory_watch: String,
+}
+
 impl App {
-    fn new(project: String) -> Self {
+    fn new(project: String, versions: ToolVersions) -> Self {
         let mut table_state = TableState::default();
         table_state.select(Some(0));
         let mut query_table_state = TableState::default();
@@ -136,6 +143,7 @@ impl App {
             query_selected_detail: None,
             query_selected_index: 0,
             query_table_state,
+            versions,
             status_message: "Press r to refresh, q to exit.".to_string(),
             health_ok: false,
             filters: Filters::default(),
@@ -147,10 +155,19 @@ impl App {
         self.status_message = "Refreshing...".to_string();
         self.selected_detail = None;
 
-        self.health_ok = api.health().await.is_ok();
-        if !self.health_ok {
-            self.overview.service_status = "error".to_string();
-            self.overview.database_status = "unknown".to_string();
+        match api.health().await {
+            Ok(health) => {
+                self.health_ok = true;
+                if let Some(version) = health.get("version").and_then(|value| value.as_str()) {
+                    self.versions.mem_service = version.to_string();
+                }
+            }
+            Err(_) => {
+                self.health_ok = false;
+                self.overview.service_status = "error".to_string();
+                self.overview.database_status = "unknown".to_string();
+                self.versions.mem_service = "unreachable".to_string();
+            }
         }
 
         match api.project_overview(&self.project).await {
@@ -1062,7 +1079,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(10),
+            Constraint::Length(12),
             Constraint::Length(8),
             Constraint::Min(8),
         ])
@@ -1157,6 +1174,16 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                         .oldest_uncurated_capture_age_hours
                         .map(|hours| format!("{hours}h"))
                         .unwrap_or_else(|| "n/a".to_string())
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ),
+        metric_line(
+            "Tool versions",
+            Span::styled(
+                format!(
+                    "mem-cli {} / mem-service {} / memory-watch {}",
+                    app.versions.mem_cli, app.versions.mem_service, app.versions.memory_watch
                 ),
                 Style::default().fg(Theme::TEXT),
             ),
@@ -1692,6 +1719,44 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
         top_files: Vec::<NamedCount>::new(),
         automation: None,
     }
+}
+
+fn detect_tool_versions() -> ToolVersions {
+    ToolVersions {
+        mem_cli: env!("CARGO_PKG_VERSION").to_string(),
+        mem_service: "unknown".to_string(),
+        memory_watch: detect_binary_version("memory-watch"),
+    }
+}
+
+fn detect_binary_version(binary: &str) -> String {
+    let current_exe = std::env::current_exe().ok();
+    let sibling = current_exe
+        .as_ref()
+        .and_then(|path| path.parent())
+        .map(|dir| dir.join(binary));
+
+    let candidates = sibling
+        .into_iter()
+        .chain(std::iter::once(std::path::PathBuf::from(binary)));
+
+    for candidate in candidates {
+        let output = Command::new(&candidate).arg("--version").output();
+        if let Ok(output) = output {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let version = stdout.trim();
+                if !version.is_empty() {
+                    return version
+                        .strip_prefix(&format!("{binary} "))
+                        .unwrap_or(version)
+                        .to_string();
+                }
+            }
+        }
+    }
+
+    "unknown".to_string()
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {

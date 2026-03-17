@@ -20,7 +20,7 @@ use reqwest::{Client, header::HeaderMap};
 use serde::Serialize;
 
 #[derive(Debug, Parser)]
-#[command(name = "memctl")]
+#[command(name = "memctl", version)]
 struct Cli {
     #[arg(long, env = "MEMORY_LAYER_CONFIG")]
     config: Option<PathBuf>,

@@ -7,7 +7,7 @@ use mem_watch::{flush_path, load_state, run_once, to_status};
 use reqwest::Client;
 
 #[derive(Debug, Parser)]
-#[command(name = "memory-watch")]
+#[command(name = "memory-watch", version)]
 struct Cli {
     #[arg(long, env = "MEMORY_LAYER_CONFIG")]
     config: Option<PathBuf>,
