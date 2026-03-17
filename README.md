@@ -113,9 +113,6 @@ Automatically capture and curate a completed task:
 ```bash
 cargo run --bin mem-cli -- --config memory-layer.toml remember \
   --project memory \
-  --title "Add durable memory workflow" \
-  --prompt "Persist task results without writing a payload file by hand" \
-  --summary "Added a one-step remember workflow that captures and curates automatically." \
   --note "The remember command captures and curates memory in one step." \
   --test-passed "cargo check"
 ```
@@ -188,7 +185,7 @@ Typical workflow:
 2. `remember` the completed task
 3. Query the resulting memory
 
-The `remember` command auto-detects changed files from `git status` when possible, creates a capture payload for you, sends it to the backend, and then runs curation immediately.
+The `remember` command auto-detects changed files from `git status` when possible, creates a capture payload for you, sends it to the backend, and then runs curation immediately. If you omit `--title`, `--prompt`, or `--summary`, it derives defaults automatically.
 
 ## Skill Usage
 
@@ -200,6 +197,7 @@ Helper scripts:
 - `.agents/skills/memory-layer/scripts/capture-task.sh`
 - `.agents/skills/memory-layer/scripts/curate-memory.sh`
 - `.agents/skills/memory-layer/scripts/remember-task.sh`
+- `.agents/skills/memory-layer/scripts/remember-current-work.sh`
 
 Examples:
 
@@ -208,10 +206,9 @@ Examples:
 ./.agents/skills/memory-layer/scripts/capture-task.sh payload.json
 ./.agents/skills/memory-layer/scripts/curate-memory.sh memory
 ./.agents/skills/memory-layer/scripts/remember-task.sh \
-  --title "Document memory workflow" \
-  --prompt "Store the durable workflow" \
-  --summary "Added a one-step remember flow." \
   --note "The remember workflow captures and curates memory in one step."
+./.agents/skills/memory-layer/scripts/remember-current-work.sh \
+  --note "Store the durable workflow automatically after meaningful work."
 ```
 
 The scripts default to running the CLI with `cargo run`, so they work from source as long as the backend is already running.

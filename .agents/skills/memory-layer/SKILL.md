@@ -8,7 +8,7 @@ description: Query project memory before answering project-specific questions; c
 Use this skill when:
 - the user asks how this repository works
 - you discover a durable convention, decision, or debugging lesson
-- you complete work that should be captured for later retrieval
+- you complete meaningful work in this repository
 - the user explicitly asks to store or query memory
 
 Do not use this skill for:
@@ -40,6 +40,15 @@ Remember task context automatically:
 4. Prefer insufficient evidence over unsupported conclusions.
 5. Never invent provenance.
 
+## Mandatory post-task rule
+
+After any meaningful repository work, run the remember workflow before sending the final response unless one of these is true:
+- no durable knowledge was produced
+- the work was purely trivial
+- the user explicitly asked not to store memory
+
+This skill should default to storing durable project knowledge, not waiting for the user to ask again.
+
 ## Remember guidance
 
 The automatic remember workflow should be used after meaningful work. It:
@@ -49,14 +58,16 @@ The automatic remember workflow should be used after meaningful work. It:
 - immediately curates it into canonical memory
 
 Provide:
-- `--title`
-- `--prompt`
-- `--summary`
 - one or more `--note` values for durable facts
 
 Optionally provide:
+- `--title`
+- `--prompt`
+- `--summary`
 - `--test-passed "<command>"`
 - `--test-failed "<command>"`
 - `--command-output-file <path>`
 
 Only store verified outcomes and durable lessons.
+
+If title, prompt, or summary are omitted, the remember command derives sensible defaults from the current project and changed files. Use that defaulting so memory capture stays lightweight and automatic.

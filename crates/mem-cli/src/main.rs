@@ -66,11 +66,11 @@ struct RememberArgs {
     #[arg(long)]
     project: Option<String>,
     #[arg(long)]
-    title: String,
+    title: Option<String>,
     #[arg(long)]
-    prompt: String,
+    prompt: Option<String>,
     #[arg(long)]
-    summary: String,
+    summary: Option<String>,
     #[arg(long = "note")]
     notes: Vec<String>,
     #[arg(long = "file-changed")]
@@ -459,11 +459,21 @@ fn build_remember_request(args: RememberArgs, project: &str) -> Result<CaptureTa
         }))
         .collect();
 
+    let title = args
+        .title
+        .unwrap_or_else(|| format!("Memory update for {project}"));
+    let prompt = args
+        .prompt
+        .unwrap_or_else(|| format!("Auto-captured repository work in project {project}."));
+    let summary = args
+        .summary
+        .unwrap_or_else(|| derive_summary(project, &files_changed));
+
     Ok(CaptureTaskRequest {
         project: project.to_string(),
-        task_title: args.title,
-        user_prompt: args.prompt,
-        agent_summary: args.summary,
+        task_title: title,
+        user_prompt: prompt,
+        agent_summary: summary,
         files_changed,
         git_diff_summary: None,
         tests,
@@ -471,6 +481,20 @@ fn build_remember_request(args: RememberArgs, project: &str) -> Result<CaptureTa
         command_output,
         idempotency_key: None,
     })
+}
+
+fn derive_summary(project: &str, files_changed: &[String]) -> String {
+    if files_changed.is_empty() {
+        format!("Captured meaningful work for project {project}.")
+    } else {
+        let preview = files_changed
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("Updated files in project {project}: {preview}.")
+    }
 }
 
 fn detect_changed_files() -> Result<Vec<String>> {
@@ -536,7 +560,7 @@ impl SourceKindString for mem_api::SourceKind {
 mod tests {
     use std::path::PathBuf;
 
-    use super::resolve_project_slug;
+    use super::{RememberArgs, build_remember_request, resolve_project_slug};
 
     #[test]
     fn project_flag_wins() {
@@ -551,5 +575,29 @@ mod tests {
     fn project_defaults_to_cwd_name() {
         let cwd = PathBuf::from("/tmp/memory");
         assert_eq!(resolve_project_slug(None, &cwd).unwrap(), "memory");
+    }
+
+    #[test]
+    fn remember_request_uses_defaults() {
+        let request = build_remember_request(
+            RememberArgs {
+                project: None,
+                title: None,
+                prompt: None,
+                summary: None,
+                notes: vec!["durable fact".to_string()],
+                files_changed: vec!["src/main.rs".to_string()],
+                tests_passed: vec![],
+                tests_failed: vec![],
+                command_output_file: None,
+                auto_files: false,
+            },
+            "memory",
+        )
+        .unwrap();
+
+        assert_eq!(request.task_title, "Memory update for memory");
+        assert!(request.user_prompt.contains("Auto-captured"));
+        assert!(request.agent_summary.contains("src/main.rs"));
     }
 }
