@@ -109,6 +109,7 @@ struct App {
     query_selected_detail: Option<MemoryEntryResponse>,
     query_selected_index: usize,
     query_table_state: TableState,
+    project_scroll: u16,
     versions: ToolVersions,
     status_message: String,
     health_ok: bool,
@@ -143,6 +144,7 @@ impl App {
             query_selected_detail: None,
             query_selected_index: 0,
             query_table_state,
+            project_scroll: 0,
             versions,
             status_message: "Press r to refresh, q to exit.".to_string(),
             health_ok: false,
@@ -247,6 +249,21 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Query => {
                 self.move_query_selection(-1, api).await;
+            }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Project => {
+                self.scroll_project(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Project => {
+                self.scroll_project(-1);
+            }
+            KeyCode::PageDown if self.active_tab == TabKind::Project => {
+                self.scroll_project(8);
+            }
+            KeyCode::PageUp if self.active_tab == TabKind::Project => {
+                self.scroll_project(-8);
+            }
+            KeyCode::Home if self.active_tab == TabKind::Project => {
+                self.project_scroll = 0;
             }
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.input_mode = InputMode::Search(self.filters.text.clone());
@@ -515,6 +532,15 @@ impl App {
             .as_ref()
             .map(|response| response.results.as_slice())
             .unwrap_or(&[])
+    }
+
+    fn scroll_project(&mut self, delta: i16) {
+        self.project_scroll = if delta.is_negative() {
+            self.project_scroll.saturating_sub(delta.unsigned_abs())
+        } else {
+            self.project_scroll
+                .saturating_add(u16::try_from(delta).unwrap_or(0))
+        };
     }
 }
 
@@ -891,10 +917,14 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                 Style::default().fg(Theme::MUTED),
             ),
         ],
-        TabKind::Project => vec![Span::styled(
-            "Tab/h/l switch tabs. Use the Query tab to inspect what a question returns.",
-            Style::default().fg(Theme::MUTED),
-        )],
+        TabKind::Project => vec![
+            accent_span("scroll "),
+            Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+            accent_span("page "),
+            Span::styled("PgUp/PgDn  ", Style::default().fg(Theme::TEXT)),
+            accent_span("jump "),
+            Span::styled("Home", Style::default().fg(Theme::TEXT)),
+        ],
     })])
     .style(Style::default().bg(Theme::PANEL_ALT))
     .block(themed_block(match &app.input_mode {
@@ -1076,16 +1106,7 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 }
 
 fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(12),
-            Constraint::Length(8),
-            Constraint::Min(8),
-        ])
-        .split(area);
-
-    let summary = Paragraph::new(vec![
+    let mut lines = vec![
         metric_line(
             "Project",
             Span::styled(&app.overview.project, Style::default().fg(Theme::TEXT)),
@@ -1199,106 +1220,85 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::TEXT),
             ),
         ),
-    ])
-    .style(Style::default().bg(Theme::PANEL))
-    .block(themed_block("Overview"));
-    frame.render_widget(summary, chunks[0]);
+    ];
 
-    let mid = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-            Constraint::Percentage(34),
-        ])
-        .split(chunks[1]);
+    lines.push(Line::from(""));
+    lines.push(Line::from(section_span("Memory Types")));
+    lines.extend(lines_for_named_counts(
+        app.overview
+            .memory_type_breakdown
+            .iter()
+            .map(|item| (item.memory_type.to_string(), item.count))
+            .collect(),
+        "No memory entries yet.",
+    ));
 
-    frame.render_widget(
-        Paragraph::new(lines_for_named_counts(
-            app.overview
-                .memory_type_breakdown
-                .iter()
-                .map(|item| (item.memory_type.to_string(), item.count))
-                .collect(),
-            "No memory entries yet.",
-        ))
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block("Memory Types")),
-        mid[0],
-    );
-    frame.render_widget(
-        Paragraph::new(lines_for_named_counts(
-            app.overview
-                .source_kind_breakdown
-                .iter()
-                .map(|item| {
-                    (
-                        item.source_kind.source_kind_string().to_string(),
-                        item.count,
-                    )
-                })
-                .collect(),
-            "No sources yet.",
-        ))
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block("Source Kinds")),
-        mid[1],
-    );
-    frame.render_widget(
-        Paragraph::new(lines_for_named_counts(
-            app.overview
-                .top_tags
-                .iter()
-                .map(|item| (item.name.clone(), item.count))
-                .collect(),
-            "No tags yet.",
-        ))
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block("Top Tags")),
-        mid[2],
-    );
+    lines.push(Line::from(""));
+    lines.push(Line::from(section_span("Source Kinds")));
+    lines.extend(lines_for_named_counts(
+        app.overview
+            .source_kind_breakdown
+            .iter()
+            .map(|item| {
+                (
+                    item.source_kind.source_kind_string().to_string(),
+                    item.count,
+                )
+            })
+            .collect(),
+        "No sources yet.",
+    ));
 
-    let bottom = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[2]);
-    frame.render_widget(
-        Paragraph::new(lines_for_named_counts(
-            app.overview
-                .top_files
-                .iter()
-                .map(|item| (item.name.clone(), item.count))
-                .collect(),
-            "No file provenance yet.",
-        ))
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block("Top Files")),
-        bottom[0],
-    );
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(Span::styled(
-                "Actions",
-                Style::default().fg(Theme::ACCENT_STRONG),
-            )),
-            Line::from(Span::styled(
-                "c curate project",
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(Span::styled(
-                "i reindex search chunks",
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(Span::styled(
-                "a archive low-value memories",
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(Span::styled("r refresh", Style::default().fg(Theme::TEXT))),
-        ])
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block("Operations")),
-        bottom[1],
-    );
+    lines.push(Line::from(""));
+    lines.push(Line::from(section_span("Top Tags")));
+    lines.extend(lines_for_named_counts(
+        app.overview
+            .top_tags
+            .iter()
+            .map(|item| (item.name.clone(), item.count))
+            .collect(),
+        "No tags yet.",
+    ));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(section_span("Top Files")));
+    lines.extend(lines_for_named_counts(
+        app.overview
+            .top_files
+            .iter()
+            .map(|item| (item.name.clone(), item.count))
+            .collect(),
+        "No file provenance yet.",
+    ));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(section_span("Operations")));
+    lines.push(Line::from(Span::styled(
+        "c curate project",
+        Style::default().fg(Theme::TEXT),
+    )));
+    lines.push(Line::from(Span::styled(
+        "i reindex search chunks",
+        Style::default().fg(Theme::TEXT),
+    )));
+    lines.push(Line::from(Span::styled(
+        "a archive low-value memories",
+        Style::default().fg(Theme::TEXT),
+    )));
+    lines.push(Line::from(Span::styled(
+        "r refresh",
+        Style::default().fg(Theme::TEXT),
+    )));
+
+    let project = Paragraph::new(lines)
+        .scroll((app.project_scroll, 0))
+        .style(Style::default().bg(Theme::PANEL))
+        .wrap(Wrap { trim: false })
+        .block(themed_block(format!(
+            "Overview (scroll {})",
+            app.project_scroll
+        )));
+    frame.render_widget(project, area);
 }
 
 fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
