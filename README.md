@@ -59,6 +59,8 @@ llm_curation = false
 cargo run --bin mem-service -- memory-layer.toml
 ```
 
+When `mem-service` is started with an explicit config file path, it watches that file and restarts itself in place after the file changes. That lets you update values like `service.api_token`, automation settings, or the bind address without manually killing and relaunching the backend.
+
 4. Optional: start the hidden automation watcher:
 
 ```bash

@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{
+    net::SocketAddr,
+    path::{Path as FsPath, PathBuf},
+    time::SystemTime,
+};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -18,6 +22,7 @@ use mem_search::{parse_memory_type, parse_source_kind, query_memory, rebuild_chu
 use mem_service::{fetch_project_memories, fetch_project_overview, parse_status_filter};
 use serde::Deserialize;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
+use tokio::{sync::oneshot, time::Duration};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
@@ -37,7 +42,69 @@ async fn main() -> Result<()> {
         .init();
 
     let config_path = std::env::args().nth(1).map(PathBuf::from);
-    let config = AppConfig::load_from_path(config_path).context("load config")?;
+    let mut config_fingerprint = config_path_fingerprint(config_path.as_deref())
+        .await
+        .context("inspect config file")?;
+
+    loop {
+        let config = AppConfig::load_from_path(config_path.clone()).context("load config")?;
+        let addr: SocketAddr = config
+            .service
+            .bind_addr
+            .parse()
+            .context("parse bind_addr")?;
+        let app = build_app(config.clone()).await?;
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let mut server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+        });
+
+        tracing::info!(%addr, "memory-layer listening");
+
+        if let Some(path) = config_path.as_deref() {
+            tokio::select! {
+                result = &mut server => {
+                    result.context("join mem-service task")??;
+                    break;
+                }
+                result = tokio::signal::ctrl_c() => {
+                    result.context("listen for ctrl-c")?;
+                    let _ = shutdown_tx.send(());
+                    server.await.context("join mem-service task")??;
+                    break;
+                }
+                result = wait_for_config_change(path, config_fingerprint) => {
+                    config_fingerprint = result.context("watch config file")?;
+                    tracing::info!(path = %path.display(), "config changed; restarting backend");
+                    let _ = shutdown_tx.send(());
+                    server.await.context("join mem-service task")??;
+                }
+            }
+        } else {
+            tokio::select! {
+                result = &mut server => {
+                    result.context("join mem-service task")??;
+                    break;
+                }
+                result = tokio::signal::ctrl_c() => {
+                    result.context("listen for ctrl-c")?;
+                    let _ = shutdown_tx.send(());
+                    server.await.context("join mem-service task")??;
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn build_app(config: AppConfig) -> Result<Router> {
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .connect(&config.database.url)
@@ -51,10 +118,10 @@ async fn main() -> Result<()> {
     let state = AppState {
         pool,
         api_token: config.service.api_token.clone(),
-        config: config.clone(),
+        config,
     };
 
-    let app = Router::new()
+    Ok(Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/query", post(query))
         .route("/v1/capture/task", post(capture_task))
@@ -66,17 +133,51 @@ async fn main() -> Result<()> {
         .route("/v1/projects/{slug}/overview", get(project_overview))
         .route("/v1/archive", post(archive))
         .with_state(state)
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http()))
+}
 
-    let addr: SocketAddr = config
-        .service
-        .bind_addr
-        .parse()
-        .context("parse bind_addr")?;
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "memory-layer listening");
-    axum::serve(listener, app).await?;
-    Ok(())
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ConfigFingerprint {
+    exists: bool,
+    modified: Option<SystemTime>,
+    len: Option<u64>,
+}
+
+async fn wait_for_config_change(
+    path: &FsPath,
+    previous: ConfigFingerprint,
+) -> Result<ConfigFingerprint> {
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let current = config_path_fingerprint(Some(path)).await?;
+        if current != previous {
+            return Ok(current);
+        }
+    }
+}
+
+async fn config_path_fingerprint(path: Option<&FsPath>) -> Result<ConfigFingerprint> {
+    let Some(path) = path else {
+        return Ok(ConfigFingerprint {
+            exists: false,
+            modified: None,
+            len: None,
+        });
+    };
+
+    match tokio::fs::metadata(path).await {
+        Ok(metadata) => Ok(ConfigFingerprint {
+            exists: true,
+            modified: metadata.modified().ok(),
+            len: Some(metadata.len()),
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(ConfigFingerprint {
+            exists: false,
+            modified: None,
+            len: None,
+        }),
+        Err(error) => Err(error).with_context(|| format!("read metadata for {}", path.display())),
+    }
 }
 
 async fn healthz(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
