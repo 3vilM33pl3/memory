@@ -27,6 +27,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Init(InitArgs),
     Query(QueryArgs),
     CaptureTask(CaptureTaskArgs),
     Remember(RememberArgs),
@@ -37,6 +38,16 @@ enum Command {
     Archive(ArchiveArgs),
     Automation(AutomationArgs),
     Tui(TuiArgs),
+}
+
+#[derive(Debug, Args)]
+struct InitArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    force: bool,
+    #[arg(long)]
+    print: bool,
 }
 
 #[derive(Debug, Args)]
@@ -131,14 +142,28 @@ enum AutomationCommand {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let config = AppConfig::load_from_path(cli.config).context("load config")?;
+    let Cli {
+        config: cli_config,
+        command,
+    } = Cli::parse();
+
+    if let Command::Init(args) = &command {
+        let cwd = env::current_dir().context("read current directory")?;
+        let project = resolve_project_slug(args.project.clone(), &cwd)?;
+        let repo_root = resolve_repo_root(&cwd)?;
+        let output = initialize_repo(&repo_root, &project, args.force, args.print)?;
+        println!("{output}");
+        return Ok(());
+    }
+
+    let config = AppConfig::load_from_path(cli_config).context("load config")?;
     let client = Client::builder()
         .timeout(config.service.request_timeout)
         .build()
         .context("build http client")?;
 
-    match cli.command {
+    match command {
+        Command::Init(_) => unreachable!("init is handled before config loading"),
         Command::Query(args) => {
             let request = QueryRequest {
                 project: args.project,
@@ -285,6 +310,148 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn initialize_repo(repo_root: &Path, project: &str, force: bool, print_only: bool) -> Result<String> {
+    let mem_dir = repo_root.join(".mem");
+    let runtime_dir = mem_dir.join("runtime");
+    let config_path = mem_dir.join("config.toml");
+    let project_path = mem_dir.join("project.toml");
+    let local_gitignore_path = mem_dir.join(".gitignore");
+    let root_gitignore_path = repo_root.join(".gitignore");
+
+    if !force {
+        for path in [&config_path, &project_path] {
+            if path.exists() {
+                anyhow::bail!(
+                    "{} already exists; rerun with --force to overwrite generated files",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    let config_contents = render_repo_config(repo_root);
+    let project_contents = render_project_metadata(project, repo_root);
+    let mem_gitignore_contents = "runtime/\n";
+    let root_gitignore_line = "/.mem\n";
+
+    if !print_only {
+        fs::create_dir_all(&runtime_dir).context("create .mem/runtime")?;
+        fs::write(&config_path, config_contents).context("write .mem/config.toml")?;
+        fs::write(&project_path, project_contents).context("write .mem/project.toml")?;
+        fs::write(&local_gitignore_path, mem_gitignore_contents).context("write .mem/.gitignore")?;
+        ensure_root_gitignore_entry(&root_gitignore_path, root_gitignore_line)?;
+    }
+
+    Ok(render_init_summary(
+        repo_root,
+        project,
+        &config_path,
+        &project_path,
+        print_only,
+    ))
+}
+
+fn render_repo_config(repo_root: &Path) -> String {
+    let repo_root = repo_root.display();
+    format!(
+        r#"# Fill in the values below before starting the backend.
+# Secrets are kept local to this repo because `.mem/` is ignored by git.
+
+[service]
+bind_addr = "127.0.0.1:4040"
+api_token = "dev-memory-token"
+request_timeout = "30s"
+
+[database]
+url = "postgresql://memory:<password>@localhost:5432/memory"
+
+[features]
+llm_curation = false
+
+[automation]
+enabled = false
+mode = "suggest"
+repo_root = "{repo_root}"
+poll_interval = "10s"
+idle_threshold = "5m"
+min_changed_files = 2
+require_passing_test = false
+ignored_paths = [".git/", "target/", ".mem/"]
+audit_log_path = "{repo_root}/.mem/runtime/automation.log"
+state_file_path = "{repo_root}/.mem/runtime/automation-state.json"
+"#
+    )
+}
+
+fn render_project_metadata(project: &str, repo_root: &Path) -> String {
+    format!(
+        r#"slug = "{project}"
+repo_root = "{}"
+"#,
+        repo_root.display()
+    )
+}
+
+fn ensure_root_gitignore_entry(path: &Path, line: &str) -> Result<()> {
+    let mut content = if path.exists() {
+        fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
+    } else {
+        String::new()
+    };
+
+    if !content.lines().any(|existing| existing.trim() == line.trim()) {
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(line);
+        fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
+    }
+
+    Ok(())
+}
+
+fn render_init_summary(
+    repo_root: &Path,
+    project: &str,
+    config_path: &Path,
+    project_path: &Path,
+    print_only: bool,
+) -> String {
+    let action = if print_only { "Would create" } else { "Created" };
+    format!(
+        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n\nNext steps:\n1. Fill in `database.url` and `service.api_token` in {}\n2. Start the backend:\n   mem-service {}\n3. Optional: start the watcher:\n   memory-watch --config {} run --project {}\n4. Open the TUI:\n   mem-cli --config {} tui --project {}",
+        repo_root.display(),
+        config_path.display(),
+        project_path.display(),
+        config_path.parent().unwrap_or(repo_root).display(),
+        config_path.display(),
+        config_path.display(),
+        config_path.display(),
+        project,
+        config_path.display(),
+        project
+    )
+}
+
+fn resolve_repo_root(cwd: &Path) -> Result<PathBuf> {
+    let output = ProcessCommand::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(cwd)
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            let stdout = String::from_utf8(output.stdout).context("decode git rev-parse output")?;
+            let root = stdout.trim();
+            if !root.is_empty() {
+                return Ok(PathBuf::from(root));
+            }
+        }
+    }
+
+    Ok(cwd.to_path_buf())
 }
 
 #[derive(Clone)]
@@ -609,9 +776,12 @@ impl SourceKindString for mem_api::SourceKind {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{fs, path::PathBuf};
 
-    use super::{RememberArgs, build_remember_request, resolve_project_slug};
+    use super::{
+        RememberArgs, build_remember_request, initialize_repo, resolve_project_slug,
+        resolve_repo_root,
+    };
 
     #[test]
     fn project_flag_wins() {
@@ -650,5 +820,58 @@ mod tests {
         assert_eq!(request.task_title, "Memory update for memory");
         assert!(request.user_prompt.contains("Auto-captured"));
         assert!(request.agent_summary.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn init_print_describes_repo_layout() {
+        let repo_root = PathBuf::from("/tmp/memory");
+        let summary = initialize_repo(&repo_root, "memory", false, true).unwrap();
+
+        assert!(summary.contains(".mem/config.toml"));
+        assert!(summary.contains("memory-watch --config /tmp/memory/.mem/config.toml run --project memory"));
+    }
+
+    #[test]
+    fn init_creates_repo_files_and_gitignore_entry() {
+        let repo_root = unique_temp_dir("mem-init");
+        fs::create_dir_all(&repo_root).unwrap();
+
+        initialize_repo(&repo_root, "memory", false, false).unwrap();
+
+        assert!(repo_root.join(".mem/config.toml").is_file());
+        assert!(repo_root.join(".mem/project.toml").is_file());
+        assert!(repo_root.join(".mem/runtime").is_dir());
+        assert_eq!(
+            fs::read_to_string(repo_root.join(".mem/.gitignore")).unwrap(),
+            "runtime/\n"
+        );
+        assert!(
+            fs::read_to_string(repo_root.join(".gitignore"))
+                .unwrap()
+                .contains("/.mem")
+        );
+
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn resolve_repo_root_falls_back_to_cwd() {
+        let cwd = PathBuf::from("/tmp/not-a-repo");
+        assert_eq!(resolve_repo_root(&cwd).unwrap(), cwd);
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        if path.exists() {
+            let _ = fs::remove_dir_all(&path);
+        }
+        path
     }
 }

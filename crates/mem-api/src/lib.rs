@@ -1,4 +1,8 @@
-use std::{fmt, path::PathBuf, time::Duration};
+use std::{
+    env, fmt,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use config::{Config, ConfigError, Environment, File};
@@ -420,6 +424,8 @@ impl AppConfig {
         let mut builder = Config::builder();
         if let Some(path) = path {
             builder = builder.add_source(File::from(path).required(false));
+        } else if let Some(path) = discover_repo_config_path() {
+            builder = builder.add_source(File::from(path).required(false));
         } else {
             builder = builder.add_source(File::with_name("memory-layer").required(false));
         }
@@ -429,6 +435,21 @@ impl AppConfig {
             .build()?
             .try_deserialize()
     }
+}
+
+fn discover_repo_config_path() -> Option<PathBuf> {
+    let cwd = env::current_dir().ok()?;
+    find_repo_config_path(&cwd)
+}
+
+fn find_repo_config_path(start: &Path) -> Option<PathBuf> {
+    for directory in start.ancestors() {
+        let candidate = directory.join(".mem").join("config.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -536,6 +557,8 @@ impl ValidationError {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]
@@ -567,5 +590,37 @@ mod tests {
         };
 
         assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn finds_repo_local_mem_config() {
+        let temp_dir = unique_temp_dir("mem-api-config");
+        let mem_dir = temp_dir.join(".mem");
+        fs::create_dir_all(&mem_dir).unwrap();
+        let config_path = mem_dir.join("config.toml");
+        fs::write(&config_path, "test = true\n").unwrap();
+
+        let nested = temp_dir.join("nested").join("deeper");
+        fs::create_dir_all(&nested).unwrap();
+
+        let discovered = find_repo_config_path(&nested).unwrap();
+        assert_eq!(discovered, config_path);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        if path.exists() {
+            let _ = fs::remove_dir_all(&path);
+        }
+        path
     }
 }

@@ -25,6 +25,7 @@ The repo-local skill in `.agents/skills/memory-layer/` tells Codex when to:
 ### CLI (`memctl`)
 
 `memctl` is the user and agent entrypoint for:
+- repo bootstrap (`init`)
 - query
 - remember
 - capture-task
@@ -34,6 +35,8 @@ The repo-local skill in `.agents/skills/memory-layer/` tells Codex when to:
 - automation status and controls
 
 The CLI talks to the backend over localhost HTTP.
+
+Initialized repositories keep local project metadata and config under `.mem/`, with `.mem/config.toml` as the preferred repo-local config file and `.mem/runtime/` as the preferred watcher runtime directory.
 
 ### Backend Service (`memory-layer`)
 

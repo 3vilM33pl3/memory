@@ -28,13 +28,20 @@ The current implementation is designed for local development and experimentation
 
 ## Setup
 
-1. Copy the example config:
+1. Initialize the repository:
 
 ```bash
-cp memory-layer.toml.example memory-layer.toml
+cargo run --bin mem-cli -- init
 ```
 
-2. Edit `memory-layer.toml` and set:
+This creates a local `.mem/` directory with:
+- `.mem/config.toml`
+- `.mem/project.toml`
+- `.mem/runtime/`
+
+The generated config contains placeholders and keeps secrets local to the repo. `.mem/` is ignored by git.
+
+2. Edit `.mem/config.toml` and set:
 - `database.url`
 - `service.api_token`
 
@@ -56,7 +63,7 @@ llm_curation = false
 3. Start the backend:
 
 ```bash
-cargo run --bin mem-service -- memory-layer.toml
+cargo run --bin mem-service -- .mem/config.toml
 ```
 
 When `mem-service` is started with an explicit config file path, it watches that file and restarts itself in place after the file changes. That lets you update values like `service.api_token`, automation settings, or the bind address without manually killing and relaunching the backend.
@@ -64,20 +71,20 @@ When `mem-service` is started with an explicit config file path, it watches that
 4. Optional: start the hidden automation watcher:
 
 ```bash
-cargo run --bin memory-watch -- --config memory-layer.toml run
+cargo run --bin memory-watch -- --config .mem/config.toml run --project memory
 ```
 
 5. In another shell, verify the backend is up:
 
 ```bash
-cargo run --bin mem-cli -- --config memory-layer.toml health
+cargo run --bin mem-cli -- --config .mem/config.toml health
 ```
 
 ## Install
 
 ### Local install
 
-Install both binaries into `~/.local/bin` and create a default config in `~/.config/memory-layer/`:
+Install both binaries into `~/.local/bin`:
 
 ```bash
 ./scripts/install-local.sh
@@ -86,9 +93,10 @@ Install both binaries into `~/.local/bin` and create a default config in `~/.con
 Then run:
 
 ```bash
-~/.local/bin/mem-service ~/.config/memory-layer/memory-layer.toml
-~/.local/bin/memory-watch --config ~/.config/memory-layer/memory-layer.toml run
-~/.local/bin/mem-cli --config ~/.config/memory-layer/memory-layer.toml tui
+~/.local/bin/mem-cli init
+~/.local/bin/mem-service .mem/config.toml
+~/.local/bin/memory-watch --config .mem/config.toml run --project memory
+~/.local/bin/mem-cli --config .mem/config.toml tui
 ```
 
 ### Debian package build
@@ -106,7 +114,7 @@ The package will be written under `target/debian/`.
 Query memory:
 
 ```bash
-cargo run --bin mem-cli -- --config memory-layer.toml query \
+cargo run --bin mem-cli -- --config .mem/config.toml query \
   --project memory \
   --question "How is project memory stored?"
 ```
@@ -114,13 +122,13 @@ cargo run --bin mem-cli -- --config memory-layer.toml query \
 Capture a completed task:
 
 ```bash
-cargo run --bin mem-cli -- --config memory-layer.toml capture-task --file payload.json
+cargo run --bin mem-cli -- --config .mem/config.toml capture-task --file payload.json
 ```
 
 Automatically capture and curate a completed task:
 
 ```bash
-cargo run --bin mem-cli -- --config memory-layer.toml remember \
+cargo run --bin mem-cli -- --config .mem/config.toml remember \
   --project memory \
   --note "The remember command captures and curates memory in one step." \
   --test-passed "cargo check"
@@ -129,32 +137,32 @@ cargo run --bin mem-cli -- --config memory-layer.toml remember \
 Curate raw captures into canonical memory:
 
 ```bash
-cargo run --bin mem-cli -- --config memory-layer.toml curate --project memory
+cargo run --bin mem-cli -- --config .mem/config.toml curate --project memory
 ```
 
 Reindex a project:
 
 ```bash
-cargo run --bin mem-cli -- --config memory-layer.toml reindex --project memory
+cargo run --bin mem-cli -- --config .mem/config.toml reindex --project memory
 ```
 
 Show service stats:
 
 ```bash
-cargo run --bin mem-cli -- --config memory-layer.toml stats
+cargo run --bin mem-cli -- --config .mem/config.toml stats
 ```
 
 Launch the TUI:
 
 ```bash
-cargo run --bin mem-cli -- --config memory-layer.toml tui --project memory
+cargo run --bin mem-cli -- --config .mem/config.toml tui --project memory
 ```
 
 Inspect or flush automation state:
 
 ```bash
-cargo run --bin mem-cli -- --config memory-layer.toml automation status --project memory
-cargo run --bin mem-cli -- --config memory-layer.toml automation flush --project memory
+cargo run --bin mem-cli -- --config .mem/config.toml automation status --project memory
+cargo run --bin mem-cli -- --config .mem/config.toml automation flush --project memory
 ```
 
 TUI controls:
@@ -197,9 +205,10 @@ TUI controls:
 ```
 
 Typical workflow:
-1. Start `mem-service`
-2. `remember` the completed task
-3. Query the resulting memory
+1. Run `memctl init`
+2. Start `mem-service`
+3. `remember` the completed task
+4. Query the resulting memory
 
 The `remember` command auto-detects changed files from `git status` when possible, creates a capture payload for you, sends it to the backend, and then runs curation immediately. If you omit `--title`, `--prompt`, or `--summary`, it derives defaults automatically.
 
