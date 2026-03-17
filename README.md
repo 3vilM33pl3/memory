@@ -8,9 +8,10 @@ The system stores two kinds of information:
 
 That split matters because it keeps the system auditable. You can keep the original task context, summaries, tests, and changed files, then derive cleaner long-lived memory entries from that material without losing where the information came from.
 
-The repository is built around three working parts:
+The repository is built around four working parts:
 - `mem-service`: Axum backend over PostgreSQL
 - `mem-cli`: local CLI for query/capture/curate flows
+- `memory-watch`: optional background watcher for conservative automatic memory capture
 - `.agents/skills/memory-layer/`: repo-local Codex skill and wrapper scripts
 
 In practice, the intended workflow is:
@@ -93,6 +94,7 @@ Install both binaries into `~/.local/bin`:
 Then run:
 
 ```bash
+# from the target repository root
 ~/.local/bin/mem-cli init
 ~/.local/bin/mem-service .mem/config.toml
 ~/.local/bin/memory-watch --config .mem/config.toml run --project memory
@@ -262,4 +264,10 @@ cargo test
 
 ## Packaging
 
-Debian/systemd assets live under `packaging/debian/`, but this repo does not yet build a `.deb` automatically. The current supported path is running from source with `cargo`.
+Debian/systemd assets live under `packaging/debian/`. You can build a `.deb` manually with:
+
+```bash
+./packaging/build-deb.sh
+```
+
+The current primary development workflow is still running from source with `cargo`, but Debian packaging is available when you want a packaged install artifact.
