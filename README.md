@@ -49,6 +49,16 @@ Set shared values there:
 - `service.api_token`
 - `[llm]` configuration for `memctl scan`
 
+Set shared environment variables for CLI and services:
+- local/user installs: `${XDG_CONFIG_HOME:-$HOME/.config}/memory-layer/memory-layer.env`
+- Debian/system installs: `/etc/memory-layer/memory-layer.env`
+
+Example:
+
+```bash
+OPENAI_API_KEY=your-api-key-here
+```
+
 2. Initialize the repository:
 
 ```bash
@@ -114,6 +124,14 @@ cargo run --bin mem-cli -- watch status --project memory
 cargo run --bin mem-cli -- watch disable --project memory
 ```
 
+The generated watcher unit reads shared environment variables from:
+
+```bash
+${XDG_CONFIG_HOME:-$HOME/.config}/memory-layer/memory-layer.env
+```
+
+So putting `OPENAI_API_KEY=...` there makes it available to the watcher without exporting it in every shell.
+
 6. In another shell, verify the backend is up:
 
 ```bash
@@ -161,12 +179,14 @@ That installs:
 - `mem-service`
 - `memory-watch`
 - shared config in `/etc/memory-layer/`
+- shared environment file in `/etc/memory-layer/memory-layer.env`
 - the skill template in `/usr/share/memory-layer/skill-template`
 
 Recommended Debian workflow for another repo:
 
 ```bash
 sudoedit /etc/memory-layer/memory-layer.toml
+sudoedit /etc/memory-layer/memory-layer.env
 cd /path/to/another-project
 mem-cli init
 sudo systemctl enable --now memory-layer.service

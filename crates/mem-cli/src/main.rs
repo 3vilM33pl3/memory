@@ -1277,11 +1277,13 @@ fn watch_service_status(repo_root: &Path, project: &str) -> Result<String> {
 
 fn render_watch_unit(repo_root: &Path, project: &str) -> Result<String> {
     let watch_binary = memory_watch_binary_path()?;
+    let env_file = user_memory_layer_env_file()?;
     let working_directory = repo_root
         .canonicalize()
         .with_context(|| format!("canonicalize {}", repo_root.display()))?;
     Ok(format!(
-        "[Unit]\nDescription=Memory Layer Watcher ({project})\nAfter=default.target\n\n[Service]\nType=simple\nWorkingDirectory={}\nExecStart={} run --project {}\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Memory Layer Watcher ({project})\nAfter=default.target\n\n[Service]\nType=simple\nEnvironmentFile=-{}\nWorkingDirectory={}\nExecStart={} run --project {}\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
+        shell_escape_path(&env_file),
         working_directory.display(),
         shell_escape_path(&watch_binary),
         shell_escape_str(project),
@@ -1297,6 +1299,19 @@ fn user_systemd_unit_dir() -> Result<PathBuf> {
         .join(".config")
         .join("systemd")
         .join("user"))
+}
+
+fn user_memory_layer_env_file() -> Result<PathBuf> {
+    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
+        return Ok(PathBuf::from(config_home)
+            .join("memory-layer")
+            .join("memory-layer.env"));
+    }
+    let home = env::var("HOME").context("HOME is not set")?;
+    Ok(PathBuf::from(home)
+        .join(".config")
+        .join("memory-layer")
+        .join("memory-layer.env"))
 }
 
 fn memory_watch_binary_path() -> Result<PathBuf> {
