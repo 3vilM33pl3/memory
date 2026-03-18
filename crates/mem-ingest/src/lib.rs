@@ -36,6 +36,11 @@ pub fn idempotency_key(request: &CaptureTaskRequest) -> String {
     for note in &request.notes {
         hasher.update(note.as_bytes());
     }
+    for candidate in &request.structured_candidates {
+        hasher.update(candidate.canonical_text.as_bytes());
+        hasher.update(candidate.summary.as_bytes());
+        hasher.update(candidate.memory_type.to_string().as_bytes());
+    }
     format!("{:x}", hasher.finalize())
 }
 
@@ -54,6 +59,31 @@ pub fn extract_candidates(request: &CaptureTaskRequest) -> Vec<CandidateAssertio
     let confidence = infer_confidence(request);
     let importance = infer_importance(request);
     let tags = infer_tags(request);
+
+    if !request.structured_candidates.is_empty() {
+        return request
+            .structured_candidates
+            .iter()
+            .map(|candidate| CandidateAssertion {
+                canonical_text: normalize_sentence(&candidate.canonical_text),
+                summary: normalize_summary(&candidate.summary, request),
+                memory_type: candidate.memory_type.clone(),
+                confidence: candidate.confidence,
+                importance: candidate.importance,
+                tags: normalize_tags(&candidate.tags),
+                sources: candidate
+                    .sources
+                    .iter()
+                    .map(|source| CandidateSource {
+                        file_path: source.file_path.clone(),
+                        source_kind: source.source_kind.clone(),
+                        excerpt: source.excerpt.clone(),
+                    })
+                    .collect(),
+            })
+            .collect();
+    }
+
     for note in &request.notes {
         items.push(CandidateAssertion {
             canonical_text: normalize_sentence(note),
@@ -149,6 +179,17 @@ fn infer_tags(request: &CaptureTaskRequest) -> Vec<String> {
     tags
 }
 
+fn normalize_tags(tags: &[String]) -> Vec<String> {
+    let mut tags = tags
+        .iter()
+        .map(|tag| tag.trim().to_lowercase())
+        .filter(|tag| !tag.is_empty())
+        .collect::<Vec<_>>();
+    tags.sort();
+    tags.dedup();
+    tags
+}
+
 fn build_sources(
     request: &CaptureTaskRequest,
     note: &str,
@@ -165,6 +206,20 @@ fn build_sources(
         source_kind: SourceKind::Note,
         excerpt: Some(note.to_string()),
     });
+    if let Some(summary) = &request.git_diff_summary {
+        sources.push(CandidateSource {
+            file_path: None,
+            source_kind: SourceKind::GitCommit,
+            excerpt: Some(summary.clone()),
+        });
+    }
+    if let Some(output) = &request.command_output {
+        sources.push(CandidateSource {
+            file_path: None,
+            source_kind: SourceKind::CommandOutput,
+            excerpt: Some(output.clone()),
+        });
+    }
     for test in &request.tests {
         sources.push(CandidateSource {
             file_path: None,
@@ -186,6 +241,19 @@ fn normalize_sentence(input: &str) -> String {
     value
 }
 
+fn normalize_summary(input: &str, request: &CaptureTaskRequest) -> String {
+    let value = input.trim();
+    if value.is_empty() {
+        summarize(request)
+    } else {
+        value
+            .split_whitespace()
+            .take(12)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,6 +271,7 @@ mod tests {
                 "The backend service owns capture, curation, and query endpoints".to_string(),
                 "Project memory is stored in PostgreSQL".to_string(),
             ],
+            structured_candidates: Vec::new(),
             command_output: None,
             idempotency_key: None,
         }

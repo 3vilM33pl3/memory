@@ -67,6 +67,30 @@ pub struct TestResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureCandidateSourceInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    pub source_kind: SourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureCandidateInput {
+    pub canonical_text: String,
+    pub summary: String,
+    pub memory_type: MemoryType,
+    #[serde(default = "default_candidate_confidence")]
+    pub confidence: f32,
+    #[serde(default = "default_candidate_importance")]
+    pub importance: i32,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub sources: Vec<CaptureCandidateSourceInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureTaskRequest {
     pub project: String,
     pub task_title: String,
@@ -80,6 +104,8 @@ pub struct CaptureTaskRequest {
     pub tests: Vec<TestResult>,
     #[serde(default)]
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub structured_candidates: Vec<CaptureCandidateInput>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_output: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -167,6 +193,14 @@ impl QueryRequest {
 
 fn default_top_k() -> i64 {
     8
+}
+
+fn default_candidate_confidence() -> f32 {
+    0.75
+}
+
+fn default_candidate_importance() -> i32 {
+    2
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -517,6 +551,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub features: FeatureFlags,
     #[serde(default)]
+    pub llm: LlmConfig,
+    #[serde(default)]
     pub automation: AutomationConfig,
 }
 
@@ -613,6 +649,38 @@ pub struct FeatureFlags {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmConfig {
+    #[serde(default = "default_llm_provider")]
+    pub provider: String,
+    #[serde(default = "default_llm_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_llm_api_key_env")]
+    pub api_key_env: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub temperature: f32,
+    #[serde(default = "default_llm_max_input_bytes")]
+    pub max_input_bytes: usize,
+    #[serde(default = "default_llm_max_output_tokens")]
+    pub max_output_tokens: u32,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_llm_provider(),
+            base_url: default_llm_base_url(),
+            api_key_env: default_llm_api_key_env(),
+            model: String::new(),
+            temperature: 0.0,
+            max_input_bytes: default_llm_max_input_bytes(),
+            max_output_tokens: default_llm_max_output_tokens(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutomationConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -673,6 +741,26 @@ fn default_capnp_tcp_addr() -> String {
 
 fn default_request_timeout() -> Duration {
     Duration::from_secs(30)
+}
+
+fn default_llm_provider() -> String {
+    "openai_compatible".to_string()
+}
+
+fn default_llm_base_url() -> String {
+    "https://api.openai.com/v1".to_string()
+}
+
+fn default_llm_api_key_env() -> String {
+    "OPENAI_API_KEY".to_string()
+}
+
+fn default_llm_max_input_bytes() -> usize {
+    120_000
+}
+
+fn default_llm_max_output_tokens() -> u32 {
+    3_000
 }
 
 fn default_poll_interval() -> Duration {
@@ -777,6 +865,7 @@ mod tests {
             git_diff_summary: None,
             tests: Vec::new(),
             notes: Vec::new(),
+            structured_candidates: Vec::new(),
             command_output: None,
             idempotency_key: None,
         };

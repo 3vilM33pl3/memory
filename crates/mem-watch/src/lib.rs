@@ -323,6 +323,7 @@ pub fn build_capture_request(state: &AutomationState) -> CaptureTaskRequest {
             })
             .collect(),
         notes: state.current_session.notes.clone(),
+        structured_candidates: Vec::new(),
         command_output: None,
         idempotency_key: None,
     }

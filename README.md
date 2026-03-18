@@ -47,6 +47,7 @@ Packaged/system path:
 Set shared values there:
 - `database.url`
 - `service.api_token`
+- `[llm]` configuration for `memctl scan`
 
 2. Initialize the repository:
 
@@ -81,6 +82,15 @@ url = "postgresql://memory:YOUR_PASSWORD@localhost:5432/memory"
 
 [features]
 llm_curation = false
+
+[llm]
+provider = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = ""
+temperature = 0.0
+max_input_bytes = 120000
+max_output_tokens = 3000
 ```
 
 4. Start the shared backend:
@@ -176,6 +186,18 @@ cargo run --bin mem-cli -- query \
   --question "How is project memory stored?"
 ```
 
+Scan an existing repository and write initial durable memory:
+
+```bash
+cargo run --bin mem-cli -- scan --project memory
+```
+
+Preview the scan without writing:
+
+```bash
+cargo run --bin mem-cli -- scan --project memory --dry-run
+```
+
 Capture a completed task:
 
 ```bash
@@ -228,6 +250,7 @@ Tabs:
 - `Memories`: browse the stored corpus
 - `Query`: run a question and inspect the memories returned for that question
 - `Log`: inspect query prompts and the returned answers/errors
+- `Activity`: inspect streamed capture/curate/reindex/archive/delete events
 - `Project`: view project-level health and counts
 
 Inspect or flush automation state:
@@ -301,7 +324,7 @@ Transport defaults:
 
 The backend starts both listeners by default. Local clients prefer the Unix socket when it exists and fall back to the TCP listener otherwise.
 
-The `doctor` command checks the repo-local `.mem/` bootstrap, merged config validity, backend reachability, and automation/runtime state. By default it reports issues and suggests exact fixes. With `--fix`, it only applies safe local repairs such as creating missing `.mem/` files or adding `/.mem` to `.gitignore`.
+The `doctor` command checks the repo-local `.mem/` bootstrap, merged config validity, backend reachability, LLM config needed for `scan`, and automation/runtime state. By default it reports issues and suggests exact fixes. With `--fix`, it only applies safe local repairs such as creating missing `.mem/` files or adding `/.mem` to `.gitignore`.
 
 When `[automation].enabled = true`, `memory-watch` observes repo activity and can either:
 - `suggest` memory writes by logging candidate work without persisting

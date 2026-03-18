@@ -14,6 +14,15 @@ url = "postgresql://memory:<password>@localhost:5432/memory"
 [features]
 llm_curation = false
 
+[llm]
+provider = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = ""
+temperature = 0.0
+max_input_bytes = 120000
+max_output_tokens = 3000
+
 [automation]
 enabled = false
 mode = "suggest"

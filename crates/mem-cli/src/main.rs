@@ -1,3 +1,4 @@
+mod scan;
 mod tui;
 
 use std::{
@@ -35,6 +36,7 @@ enum Command {
     Watch(WatchArgs),
     Doctor(DoctorArgs),
     Query(QueryArgs),
+    Scan(ScanArgs),
     CaptureTask(CaptureTaskArgs),
     Remember(RememberArgs),
     Curate(CurateArgs),
@@ -107,6 +109,18 @@ struct QueryArgs {
 struct CaptureTaskArgs {
     #[arg(long)]
     file: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct ScanArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    since: Option<String>,
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -272,6 +286,25 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string(&payload)?);
             } else {
                 print_query_response(payload);
+            }
+        }
+        Command::Scan(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            let project = resolve_project_slug(args.project, &cwd)?;
+            let api = ApiClient::new(client, config);
+            let report = scan::run_scan(
+                &api,
+                &repo_root,
+                &project,
+                args.since.as_deref(),
+                args.dry_run,
+            )
+            .await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print_scan_report(&report);
             }
         }
         Command::CaptureTask(args) => {
@@ -699,6 +732,61 @@ async fn run_doctor(
             false,
         ));
 
+        report.push(doctor_check(
+            "config.llm_model",
+            if config.llm.model.trim().is_empty() {
+                DoctorStatus::Fail
+            } else {
+                DoctorStatus::Ok
+            },
+            if config.llm.model.trim().is_empty() {
+                "LLM model is not configured."
+            } else {
+                "LLM model is configured."
+            },
+            Some(format!(
+                "provider={} base_url={}",
+                config.llm.provider, config.llm.base_url
+            )),
+            if config.llm.model.trim().is_empty() {
+                Some(format!(
+                    "Set [llm].model in {}",
+                    global_config_path
+                        .as_ref()
+                        .unwrap_or(&config_path)
+                        .display()
+                ))
+            } else {
+                None
+            },
+            false,
+        ));
+
+        let llm_api_key_value = env::var(&config.llm.api_key_env).unwrap_or_default();
+        report.push(doctor_check(
+            "config.llm_api_key",
+            if llm_api_key_value.trim().is_empty() {
+                DoctorStatus::Fail
+            } else {
+                DoctorStatus::Ok
+            },
+            if llm_api_key_value.trim().is_empty() {
+                "LLM API key environment variable is missing."
+            } else {
+                "LLM API key environment variable is present."
+            },
+            Some(config.llm.api_key_env.clone()),
+            if llm_api_key_value.trim().is_empty() {
+                Some(format!(
+                    "Export {} before running memctl scan",
+                    config.llm.api_key_env
+                ))
+            } else {
+                None
+            },
+            false,
+        ));
+
         let runtime_dir = automation_runtime_dir(&config, repo_root);
         let runtime_fix_applied = if !runtime_dir.exists() && fix {
             fs::create_dir_all(&runtime_dir)
@@ -891,6 +979,14 @@ async fn run_doctor(
             (
                 "automation.runtime_dir",
                 "Skipped automation runtime checks because config could not load.",
+            ),
+            (
+                "config.llm_model",
+                "Skipped LLM model validation because config could not load.",
+            ),
+            (
+                "config.llm_api_key",
+                "Skipped LLM API key validation because config could not load.",
             ),
             (
                 "automation.repo_root",
@@ -1361,6 +1457,7 @@ fn render_repo_config(repo_root: &Path) -> String {
         r#"# Repo-local overrides for this project.
 # Put shared defaults and secrets in the global config:
 #   {}
+# Shared LLM settings for `memctl scan` should also live there under [llm].
 
 [automation]
 enabled = false
@@ -1422,7 +1519,7 @@ fn render_init_summary(
         "Created"
     };
     format!(
-        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url` and `service.api_token` in {}\n2. Use {} only for repo-specific overrides\n3. Start the shared backend if it is not already running:\n   mem-service\n4. Optional: enable the per-repo watcher user service:\n   mem-cli watch enable --project {}\n5. Open the TUI:\n   mem-cli tui --project {}\n6. Use the repo-local skill from {}",
+        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} only for repo-specific overrides\n3. Start the shared backend if it is not already running:\n   mem-service\n4. Optional: run a project scan:\n   mem-cli scan --project {}\n5. Optional: enable the per-repo watcher user service:\n   mem-cli watch enable --project {}\n6. Open the TUI:\n   mem-cli tui --project {}\n7. Use the repo-local skill from {}",
         repo_root.display(),
         config_path.display(),
         project_path.display(),
@@ -1430,6 +1527,7 @@ fn render_init_summary(
         skill_path.display(),
         default_global_config_path_label(),
         config_path.display(),
+        project,
         project,
         project,
         skill_path.display()
@@ -1652,6 +1750,25 @@ fn print_query_response(payload: QueryResponse) {
     }
 }
 
+fn print_scan_report(report: &scan::ScanReport) {
+    println!("Scan summary:\n{}\n", report.summary);
+    println!(
+        "Project: {} | Files: {} | Commits: {} | Candidates: {} | Written: {}",
+        report.project,
+        report.files_considered,
+        report.commits_considered,
+        report.candidate_count,
+        if report.written { "yes" } else { "no" }
+    );
+    println!("Report: {}", report.report_path);
+    if let Some(capture_id) = &report.capture_id {
+        println!("Capture: {capture_id}");
+    }
+    if let Some(run_id) = &report.curate_run_id {
+        println!("Curate run: {run_id}");
+    }
+}
+
 fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
     match input.as_str() {
         "architecture" => Ok(mem_api::MemoryType::Architecture),
@@ -1734,6 +1851,7 @@ fn build_remember_request(args: RememberArgs, project: &str) -> Result<CaptureTa
         git_diff_summary: None,
         tests,
         notes: args.notes,
+        structured_candidates: Vec::new(),
         command_output,
         idempotency_key: None,
     })
