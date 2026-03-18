@@ -29,6 +29,22 @@ The current implementation is designed for local development and experimentation
 
 ## Setup
 
+Recommended first step:
+
+```bash
+cargo run --bin mem-cli -- wizard
+```
+
+The wizard guides you through:
+- global config
+- shared env file
+- optional repo bootstrap
+- optional backend service enablement
+- optional watcher setup
+- optional initial scan
+
+Manual setup is still available below.
+
 1. Create or edit the shared global config.
 
 Local install path:
@@ -152,7 +168,7 @@ Then run:
 
 ```bash
 # from the target repository root
-~/.local/bin/mem-cli init
+~/.local/bin/mem-cli wizard
 ~/.local/bin/mem-service
 ~/.local/bin/mem-cli watch enable --project memory
 ~/.local/bin/mem-cli tui
@@ -185,10 +201,8 @@ That installs:
 Recommended Debian workflow for another repo:
 
 ```bash
-sudoedit /etc/memory-layer/memory-layer.toml
-sudoedit /etc/memory-layer/memory-layer.env
 cd /path/to/another-project
-mem-cli init
+mem-cli wizard
 sudo systemctl enable --now memory-layer.service
 mem-cli watch enable --project another-project
 mem-cli tui

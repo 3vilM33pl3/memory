@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use mem_api::{
     AppConfig, CaptureCandidateInput, CaptureCandidateSourceInput, CaptureTaskRequest, MemoryType,
-    SourceKind,
+    SourceKind, discover_global_config_path,
 };
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
@@ -93,10 +93,10 @@ fn ensure_llm_config(config: &AppConfig) -> Result<()> {
     if config.llm.model.trim().is_empty() {
         anyhow::bail!("missing [llm].model in config");
     }
-    let api_key = env::var(&config.llm.api_key_env).unwrap_or_default();
+    let api_key = llm_api_key(config).unwrap_or_default();
     if api_key.trim().is_empty() {
         anyhow::bail!(
-            "missing LLM API key in environment variable {}",
+            "missing LLM API key in {} or the shared env file",
             config.llm.api_key_env
         );
     }
@@ -324,8 +324,9 @@ async fn analyze_dossier(
     config: &AppConfig,
     dossier: &ScanDossier,
 ) -> Result<ScanLlmResponse> {
-    let api_key = env::var(&config.llm.api_key_env)
-        .with_context(|| format!("read {}", config.llm.api_key_env))?;
+    let api_key = llm_api_key(config)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("read {}", config.llm.api_key_env))?;
     let request = ChatCompletionRequest {
         model: &config.llm.model,
         temperature: config.llm.temperature,
@@ -386,6 +387,34 @@ async fn analyze_dossier(
         .ok_or_else(|| anyhow::anyhow!("llm scan response did not include message content"))?;
 
     serde_json::from_str(&content).context("parse llm scan JSON")
+}
+
+fn llm_api_key(config: &AppConfig) -> Option<String> {
+    env::var(&config.llm.api_key_env).ok().or_else(|| {
+        discover_global_config_path()
+            .map(|path| {
+                path.parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join("memory-layer.env")
+            })
+            .and_then(|path| shared_env_lookup(&path, &config.llm.api_key_env))
+    })
+}
+
+fn shared_env_lookup(path: &Path, key: &str) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((name, value)) = trimmed.split_once('=') {
+            if name.trim() == key {
+                return Some(value.trim().to_string());
+            }
+        }
+    }
+    None
 }
 
 fn extract_content_text(value: &serde_json::Value) -> Result<String> {

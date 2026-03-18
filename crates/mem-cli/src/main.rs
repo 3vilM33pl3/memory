@@ -3,6 +3,7 @@ mod tui;
 
 use std::{
     env, fs,
+    io::{self, Write},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
@@ -32,6 +33,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Wizard(WizardArgs),
     Init(InitArgs),
     Watch(WatchArgs),
     Doctor(DoctorArgs),
@@ -46,6 +48,12 @@ enum Command {
     Archive(ArchiveArgs),
     Automation(AutomationArgs),
     Tui(TuiArgs),
+}
+
+#[derive(Debug, Args)]
+struct WizardArgs {
+    #[arg(long)]
+    project: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -197,6 +205,17 @@ async fn main() -> Result<()> {
     } = Cli::parse();
 
     match &command {
+        Command::Wizard(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            let project = if repo_root == cwd || repo_root.join(".git").exists() {
+                resolve_project_slug(args.project.clone(), &repo_root).ok()
+            } else {
+                args.project.clone()
+            };
+            run_wizard(&cwd, &repo_root, project).await?;
+            return Ok(());
+        }
         Command::Init(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let project = resolve_project_slug(args.project.clone(), &cwd)?;
@@ -255,6 +274,7 @@ async fn main() -> Result<()> {
         .context("build http client")?;
 
     match command {
+        Command::Wizard(_) => unreachable!("wizard is handled before config loading"),
         Command::Init(_) => unreachable!("init is handled before config loading"),
         Command::Watch(_) => unreachable!("watch is handled before config loading"),
         Command::Doctor(_) => unreachable!("doctor is handled before config loading"),
@@ -423,6 +443,425 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct WizardState {
+    global_config_path: PathBuf,
+    shared_env_path: PathBuf,
+    repo_root: Option<PathBuf>,
+    project: Option<String>,
+    database_url: String,
+    api_token: String,
+    llm_provider: String,
+    llm_base_url: String,
+    llm_api_key_env: String,
+    llm_model: String,
+    llm_api_key_value: Option<String>,
+    initialize_repo: bool,
+    enable_backend_service: bool,
+    enable_watcher_service: bool,
+    run_scan: bool,
+    scan_dry_run: bool,
+}
+
+async fn run_wizard(cwd: &Path, repo_root: &Path, project: Option<String>) -> Result<()> {
+    let existing_global = discover_global_config_path().unwrap_or_else(default_global_config_path);
+    let shared_env_path = shared_env_path_for_config(&existing_global);
+    let existing_config = AppConfig::load_from_path(Some(existing_global.clone())).ok();
+    let repo_available = repo_root != cwd || repo_root.join(".git").exists();
+    let repo_root = repo_available.then(|| repo_root.to_path_buf());
+
+    let mut state = WizardState {
+        database_url: existing_config
+            .as_ref()
+            .map(|config| config.database.url.clone())
+            .unwrap_or_else(|| "postgresql://memory:<password>@localhost:5432/memory".to_string()),
+        api_token: existing_config
+            .as_ref()
+            .map(|config| config.service.api_token.clone())
+            .unwrap_or_else(|| "dev-memory-token".to_string()),
+        llm_provider: existing_config
+            .as_ref()
+            .map(|config| config.llm.provider.clone())
+            .unwrap_or_else(|| "openai_compatible".to_string()),
+        llm_base_url: existing_config
+            .as_ref()
+            .map(|config| config.llm.base_url.clone())
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+        llm_api_key_env: existing_config
+            .as_ref()
+            .map(|config| config.llm.api_key_env.clone())
+            .unwrap_or_else(|| "OPENAI_API_KEY".to_string()),
+        llm_model: existing_config
+            .as_ref()
+            .map(|config| config.llm.model.clone())
+            .unwrap_or_default(),
+        llm_api_key_value: shared_env_lookup(
+            &shared_env_path,
+            existing_config
+                .as_ref()
+                .map(|config| config.llm.api_key_env.as_str())
+                .unwrap_or("OPENAI_API_KEY"),
+        )
+        .or_else(|| env::var("OPENAI_API_KEY").ok()),
+        global_config_path: existing_global,
+        shared_env_path,
+        repo_root: repo_root.clone(),
+        project,
+        initialize_repo: repo_root
+            .as_ref()
+            .is_some_and(|root| !root.join(".mem").exists()),
+        enable_backend_service: packaged_service_available(),
+        enable_watcher_service: false,
+        run_scan: false,
+        scan_dry_run: true,
+    };
+
+    println!("Memory Layer setup wizard\n");
+    println!(
+        "This will configure shared settings and optionally initialize the current repository.\n"
+    );
+
+    state.database_url = prompt_string("Database URL", &state.database_url)?;
+    state.api_token = prompt_string("Write API token", &state.api_token)?;
+    state.llm_provider = prompt_string("LLM provider", &state.llm_provider)?;
+    state.llm_base_url = prompt_string("LLM base URL", &state.llm_base_url)?;
+    state.llm_api_key_env = prompt_string("LLM API key env var name", &state.llm_api_key_env)?;
+    state.llm_model = prompt_string("LLM model", &state.llm_model)?;
+    let current_key = state
+        .llm_api_key_value
+        .as_deref()
+        .map(|_| "<configured>")
+        .unwrap_or("");
+    let entered_key = prompt_string(
+        "LLM API key value (leave blank to keep current / skip)",
+        current_key,
+    )?;
+    if entered_key.trim().is_empty() || entered_key == "<configured>" {
+        if state.llm_api_key_value.is_none() && current_key.is_empty() {
+            state.llm_api_key_value = None;
+        }
+    } else {
+        state.llm_api_key_value = Some(entered_key);
+    }
+
+    if let Some(repo_root) = &state.repo_root {
+        let guessed_project = state.project.clone().unwrap_or_else(|| {
+            repo_root
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("memory")
+                .to_string()
+        });
+        let project = prompt_string("Project slug", &guessed_project)?;
+        state.project = Some(project.clone());
+        state.initialize_repo = prompt_yes_no(
+            &format!(
+                "Initialize repository {} for Memory Layer?",
+                repo_root.display()
+            ),
+            state.initialize_repo,
+        )?;
+        state.enable_watcher_service =
+            prompt_yes_no("Enable the per-repo watcher user service?", false)?;
+        state.run_scan = prompt_yes_no("Run an initial repository scan after setup?", false)?;
+        if state.run_scan {
+            state.scan_dry_run = prompt_yes_no("Run scan as dry-run only?", true)?;
+        }
+    }
+
+    if packaged_service_available() {
+        state.enable_backend_service =
+            prompt_yes_no("Enable/start the shared backend system service?", true)?;
+    } else {
+        state.enable_backend_service = false;
+    }
+
+    print_wizard_review(&state);
+    if !prompt_yes_no("Apply these changes?", true)? {
+        println!("Wizard cancelled.");
+        return Ok(());
+    }
+
+    apply_wizard(&state).await?;
+    println!("\nWizard applied.\n");
+
+    if let Some(repo_root) = &state.repo_root {
+        let project = state.project.as_deref().unwrap_or("memory");
+        let report = run_doctor(None, repo_root, project, false).await?;
+        print_doctor_report(&report);
+    }
+
+    Ok(())
+}
+
+fn print_wizard_review(state: &WizardState) {
+    println!("\nReview");
+    println!("- Global config: {}", state.global_config_path.display());
+    println!("- Shared env file: {}", state.shared_env_path.display());
+    println!("- Database URL: {}", mask_database_url(&state.database_url));
+    println!(
+        "- API token: {}",
+        if state.api_token.trim().is_empty() {
+            "<empty>"
+        } else {
+            "<configured>"
+        }
+    );
+    println!(
+        "- LLM: provider={} base_url={} model={}",
+        state.llm_provider, state.llm_base_url, state.llm_model
+    );
+    println!(
+        "- LLM API key: {} via {}",
+        if state.llm_api_key_value.is_some() {
+            "<configured>"
+        } else {
+            "<not set>"
+        },
+        state.llm_api_key_env
+    );
+    if let Some(repo_root) = &state.repo_root {
+        println!("- Repo root: {}", repo_root.display());
+        println!(
+            "- Repo init: {}",
+            if state.initialize_repo { "yes" } else { "no" }
+        );
+        println!(
+            "- Watcher service: {}",
+            if state.enable_watcher_service {
+                "enable"
+            } else {
+                "skip"
+            }
+        );
+        println!(
+            "- Initial scan: {}",
+            if state.run_scan {
+                if state.scan_dry_run {
+                    "dry-run"
+                } else {
+                    "write"
+                }
+            } else {
+                "skip"
+            }
+        );
+    }
+    println!(
+        "- Backend system service: {}",
+        if state.enable_backend_service {
+            "enable"
+        } else {
+            "skip"
+        }
+    );
+}
+
+async fn apply_wizard(state: &WizardState) -> Result<()> {
+    write_global_config(state)?;
+    if let Some(value) = &state.llm_api_key_value {
+        write_shared_env_file(&state.shared_env_path, &state.llm_api_key_env, value)?;
+    }
+
+    if let (Some(repo_root), Some(project)) = (&state.repo_root, &state.project) {
+        if state.initialize_repo {
+            let output = initialize_repo(repo_root, project, false, false)?;
+            println!("{output}");
+        }
+        if state.enable_watcher_service {
+            let output = enable_watch_service(repo_root, project)?;
+            println!("{output}");
+        }
+    }
+
+    if state.enable_backend_service {
+        run_systemctl_system(["daemon-reload"])?;
+        run_systemctl_system(["enable", "--now", "memory-layer.service"])?;
+        println!("Enabled memory-layer.service");
+    }
+
+    if state.run_scan {
+        let config = AppConfig::load_from_path(None).context("reload config after wizard")?;
+        let client = Client::builder()
+            .timeout(config.service.request_timeout)
+            .build()
+            .context("build http client")?;
+        let api = ApiClient::new(client, config);
+        let repo_root = state
+            .repo_root
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("scan requested without a repository"))?;
+        let project = state
+            .project
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("scan requested without a project"))?;
+        let report = scan::run_scan(&api, repo_root, project, None, state.scan_dry_run).await?;
+        print_scan_report(&report);
+    }
+
+    Ok(())
+}
+
+fn prompt_string(label: &str, default: &str) -> Result<String> {
+    print!("{label}");
+    if !default.is_empty() {
+        print!(" [{default}]");
+    }
+    print!(": ");
+    io::stdout().flush().context("flush stdout")?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).context("read input")?;
+    let value = input.trim();
+    if value.is_empty() {
+        Ok(default.to_string())
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+fn prompt_yes_no(label: &str, default: bool) -> Result<bool> {
+    let suffix = if default { "[Y/n]" } else { "[y/N]" };
+    print!("{label} {suffix}: ");
+    io::stdout().flush().context("flush stdout")?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).context("read input")?;
+    let value = input.trim().to_lowercase();
+    if value.is_empty() {
+        Ok(default)
+    } else if matches!(value.as_str(), "y" | "yes") {
+        Ok(true)
+    } else if matches!(value.as_str(), "n" | "no") {
+        Ok(false)
+    } else {
+        anyhow::bail!("expected yes or no")
+    }
+}
+
+fn write_global_config(state: &WizardState) -> Result<()> {
+    let parent = state
+        .global_config_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("global config path has no parent"))?;
+    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    fs::write(&state.global_config_path, render_global_config(state))
+        .with_context(|| format!("write {}", state.global_config_path.display()))
+}
+
+fn render_global_config(state: &WizardState) -> String {
+    format!(
+        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/memory-layer.capnp.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"{}\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\nidle_threshold = \"5m\"\nmin_changed_files = 2\nrequire_passing_test = false\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
+        state.api_token,
+        state.database_url,
+        state.llm_provider,
+        state.llm_base_url,
+        state.llm_api_key_env,
+        state.llm_model,
+    )
+}
+
+fn write_shared_env_file(path: &Path, key: &str, value: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("env file path has no parent"))?;
+    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    let mut lines = if path.exists() {
+        fs::read_to_string(path)
+            .with_context(|| format!("read {}", path.display()))?
+            .lines()
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let wanted = format!("{key}={value}");
+    let mut replaced = false;
+    for line in &mut lines {
+        if line
+            .split_once('=')
+            .is_some_and(|(existing, _)| existing.trim() == key)
+        {
+            *line = wanted.clone();
+            replaced = true;
+        }
+    }
+    if !replaced {
+        lines.push(wanted);
+    }
+    let mut content = lines.join("\n");
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("chmod {}", path.display()))
+}
+
+fn shared_env_lookup(path: &Path, key: &str) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((name, value)) = trimmed.split_once('=') {
+            if name.trim() == key {
+                return Some(value.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn shared_env_path_for_config(config_path: &Path) -> PathBuf {
+    config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("memory-layer.env")
+}
+
+fn default_global_config_path() -> PathBuf {
+    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
+        PathBuf::from(config_home)
+            .join("memory-layer")
+            .join("memory-layer.toml")
+    } else if let Ok(home) = env::var("HOME") {
+        PathBuf::from(home)
+            .join(".config")
+            .join("memory-layer")
+            .join("memory-layer.toml")
+    } else {
+        PathBuf::from("/etc/memory-layer/memory-layer.toml")
+    }
+}
+
+fn packaged_service_available() -> bool {
+    Path::new("/lib/systemd/system/memory-layer.service").is_file()
+        || Path::new("/etc/systemd/system/memory-layer.service").is_file()
+}
+
+fn run_systemctl_system<const N: usize>(args: [&str; N]) -> Result<()> {
+    let output = ProcessCommand::new("systemctl")
+        .args(args)
+        .output()
+        .with_context(|| format!("run systemctl {}", args.join(" ")))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    anyhow::bail!(
+        "systemctl {} failed: {}{}{}",
+        args.join(" "),
+        stderr.trim(),
+        if stderr.trim().is_empty() || stdout.trim().is_empty() {
+            ""
+        } else {
+            " | "
+        },
+        stdout.trim()
+    )
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -762,7 +1201,14 @@ async fn run_doctor(
             false,
         ));
 
-        let llm_api_key_value = env::var(&config.llm.api_key_env).unwrap_or_default();
+        let llm_api_key_value = env::var(&config.llm.api_key_env)
+            .ok()
+            .or_else(|| {
+                global_config_path.as_ref().and_then(|path| {
+                    shared_env_lookup(&shared_env_path_for_config(path), &config.llm.api_key_env)
+                })
+            })
+            .unwrap_or_default();
         report.push(doctor_check(
             "config.llm_api_key",
             if llm_api_key_value.trim().is_empty() {
@@ -778,8 +1224,14 @@ async fn run_doctor(
             Some(config.llm.api_key_env.clone()),
             if llm_api_key_value.trim().is_empty() {
                 Some(format!(
-                    "Export {} before running memctl scan",
-                    config.llm.api_key_env
+                    "Set {} in {} or export it in your shell",
+                    config.llm.api_key_env,
+                    global_config_path
+                        .as_ref()
+                        .map(|path| shared_env_path_for_config(path).display().to_string())
+                        .unwrap_or_else(|| shared_env_path_for_config(&config_path)
+                            .display()
+                            .to_string())
                 ))
             } else {
                 None
@@ -2104,9 +2556,25 @@ mod tests {
 
         assert!(unit.contains("Description=Memory Layer Watcher (homelab)"));
         assert!(unit.contains(&format!("WorkingDirectory={}", repo_root.display())));
+        assert!(unit.contains("EnvironmentFile=-"));
         assert!(unit.contains("run --project homelab"));
 
         let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn shared_env_lookup_reads_key() {
+        let dir = unique_temp_dir("mem-shared-env");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory-layer.env");
+        fs::write(&path, "OPENAI_API_KEY=test-key\n").unwrap();
+
+        assert_eq!(
+            super::shared_env_lookup(&path, "OPENAI_API_KEY").as_deref(),
+            Some("test-key")
+        );
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {

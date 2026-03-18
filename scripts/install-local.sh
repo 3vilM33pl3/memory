@@ -50,12 +50,12 @@ Installed:
   $SKILL_TEMPLATE_DIR
 
 Next steps:
-1. Edit the shared config:
+1. In each repo, run:
+   $BIN_DIR/mem-cli wizard
+2. Manual shared config path if needed:
    $CONFIG_DIR/memory-layer.toml
-2. Add shared environment variables for CLI and watcher services:
+3. Manual shared env file path if needed:
    $ENV_FILE
-3. In each repo, run:
-   $BIN_DIR/mem-cli init
 4. Start the backend from the repo root:
    $BIN_DIR/mem-service
 5. Optional: enable the automation watcher user service:
