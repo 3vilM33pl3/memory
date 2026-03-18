@@ -13,10 +13,10 @@ use axum::{
     routing::{delete, get, post},
 };
 use mem_api::{
-    AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CurateRequest,
-    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, MemorySourceRecord,
-    ProjectMemoriesResponse, ProjectOverviewResponse, QueryRequest, ReindexRequest,
-    ReindexResponse, StatsResponse, StreamRequest, StreamResponse, ValidationError,
+    ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
+    CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse,
+    MemorySourceRecord, ProjectMemoriesResponse, ProjectOverviewResponse, QueryRequest,
+    ReindexRequest, ReindexResponse, StatsResponse, StreamRequest, StreamResponse, ValidationError,
     read_capnp_text_frame, write_capnp_text_frame,
 };
 use mem_curate::{curate, store_capture};
@@ -45,6 +45,9 @@ struct AppState {
 struct ServiceEvent {
     project: String,
     memory_id: Option<Uuid>,
+    kind: ActivityKind,
+    summary: String,
+    recorded_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[tokio::main]
@@ -266,7 +269,7 @@ where
                 let Ok(event) = event else {
                     continue;
                 };
-                if let Some(response) = render_subscription_update(&state, &subscriptions, &event).await? {
+                for response in render_subscription_updates(&state, &subscriptions, &event).await? {
                     let text = serde_json::to_string(&response)?;
                     write_capnp_text_frame(&mut writer, &text).await?;
                 }
@@ -326,28 +329,38 @@ async fn process_stream_request(
     Ok(responses)
 }
 
-async fn render_subscription_update(
+async fn render_subscription_updates(
     state: &AppState,
     subscriptions: &ConnectionSubscriptions,
     event: &ServiceEvent,
-) -> Result<Option<StreamResponse>> {
+) -> Result<Vec<StreamResponse>> {
+    let mut responses = Vec::new();
     if let Some(project) = &subscriptions.project {
         if project == &event.project {
+            responses.push(StreamResponse::Activity {
+                event: ActivityEvent {
+                    recorded_at: event.recorded_at,
+                    project: event.project.clone(),
+                    kind: event.kind.clone(),
+                    memory_id: event.memory_id,
+                    summary: event.summary.clone(),
+                },
+            });
             let overview =
                 fetch_project_overview(&state.pool, project, &state.config.automation).await?;
             let memories = fetch_project_memories(&state.pool, project, None, 500, 0).await?;
-            return Ok(Some(StreamResponse::ProjectChanged { overview, memories }));
+            responses.push(StreamResponse::ProjectChanged { overview, memories });
         }
     }
 
     if let Some(memory_id) = subscriptions.memory_id {
         if event.memory_id == Some(memory_id) {
             let detail = fetch_memory_entry(&state.pool, memory_id).await?;
-            return Ok(Some(StreamResponse::MemoryChanged { detail }));
+            responses.push(StreamResponse::MemoryChanged { detail });
         }
     }
 
-    Ok(None)
+    Ok(responses)
 }
 
 async fn health_payload(state: &AppState) -> Result<serde_json::Value> {
@@ -497,10 +510,18 @@ async fn capture_task(
 ) -> Result<Json<mem_api::CaptureTaskResponse>, ApiError> {
     require_token(&headers, &state.api_token)?;
     request.validate().map_err(ApiError::validation)?;
+    let task_title = request.task_title.clone();
+    let project = request.project.clone();
     let response = store_capture(&state.pool, &request)
         .await
         .map_err(ApiError::sql)?;
-    notify_project_changed(&state, request.project, None);
+    notify_project_changed(
+        &state,
+        project,
+        None,
+        ActivityKind::CaptureTask,
+        format!("Captured task: {task_title}"),
+    );
     Ok(Json(response))
 }
 
@@ -511,8 +532,18 @@ async fn curate_memory(
 ) -> Result<Json<mem_api::CurateResponse>, ApiError> {
     require_token(&headers, &state.api_token)?;
     request.validate().map_err(ApiError::validation)?;
+    let project = request.project.clone();
     let response = curate(&state.pool, &request).await.map_err(ApiError::sql)?;
-    notify_project_changed(&state, request.project, None);
+    notify_project_changed(
+        &state,
+        project,
+        None,
+        ActivityKind::Curate,
+        format!(
+            "Curated {} capture(s) into {} memory entry/entries.",
+            response.input_count, response.output_count
+        ),
+    );
     Ok(Json(response))
 }
 
@@ -523,10 +554,17 @@ async fn reindex(
 ) -> Result<Json<ReindexResponse>, ApiError> {
     require_token(&headers, &state.api_token)?;
     request.validate().map_err(ApiError::validation)?;
+    let project = request.project.clone();
     let count = rebuild_chunks(&state.pool, &request.project)
         .await
         .map_err(ApiError::sql)?;
-    notify_project_changed(&state, request.project, None);
+    notify_project_changed(
+        &state,
+        project,
+        None,
+        ActivityKind::Reindex,
+        format!("Reindexed {count} memory entry/entries."),
+    );
     Ok(Json(ReindexResponse {
         reindexed_entries: count,
     }))
@@ -624,6 +662,7 @@ async fn archive(
 ) -> Result<Json<ArchiveResponse>, ApiError> {
     require_token(&headers, &state.api_token)?;
     request.validate().map_err(ApiError::validation)?;
+    let project = request.project.clone();
     let result = sqlx::query(
         r#"
         UPDATE memory_entries m
@@ -642,7 +681,16 @@ async fn archive(
     .execute(&state.pool)
     .await
     .map_err(ApiError::sql)?;
-    notify_project_changed(&state, request.project, None);
+    notify_project_changed(
+        &state,
+        project,
+        None,
+        ActivityKind::Archive,
+        format!(
+            "Archived {} low-value memory entry/entries.",
+            result.rows_affected()
+        ),
+    );
 
     Ok(Json(ArchiveResponse {
         archived_count: result.rows_affected(),
@@ -675,7 +723,13 @@ async fn delete_memory(
     let memory_id = record.try_get("id").map_err(ApiError::sql)?;
     let project: String = record.try_get("slug").map_err(ApiError::sql)?;
     let summary: String = record.try_get("summary").map_err(ApiError::sql)?;
-    notify_project_changed(&state, project.clone(), Some(memory_id));
+    notify_project_changed(
+        &state,
+        project.clone(),
+        Some(memory_id),
+        ActivityKind::DeleteMemory,
+        format!("Deleted memory: {summary}"),
+    );
 
     Ok(Json(DeleteMemoryResponse {
         memory_id,
@@ -685,8 +739,20 @@ async fn delete_memory(
     }))
 }
 
-fn notify_project_changed(state: &AppState, project: String, memory_id: Option<Uuid>) {
-    let _ = state.events.send(ServiceEvent { project, memory_id });
+fn notify_project_changed(
+    state: &AppState,
+    project: String,
+    memory_id: Option<Uuid>,
+    kind: ActivityKind,
+    summary: String,
+) {
+    let _ = state.events.send(ServiceEvent {
+        project,
+        memory_id,
+        kind,
+        summary,
+        recorded_at: chrono::Utc::now(),
+    });
 }
 
 fn require_token(headers: &HeaderMap, expected: &str) -> Result<(), ApiError> {

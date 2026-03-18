@@ -302,6 +302,9 @@ pub enum StreamResponse {
     MemoryChanged {
         detail: Option<MemoryEntryResponse>,
     },
+    Activity {
+        event: ActivityEvent,
+    },
     Ack {
         message: String,
     },
@@ -309,6 +312,26 @@ pub enum StreamResponse {
     Error {
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityKind {
+    CaptureTask,
+    Curate,
+    Reindex,
+    Archive,
+    DeleteMemory,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityEvent {
+    pub recorded_at: DateTime<Utc>,
+    pub project: String,
+    pub kind: ActivityKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_id: Option<Uuid>,
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -8,9 +8,10 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use mem_api::{
-    MemoryEntryResponse, MemoryStatus, MemoryType, NamedCount, ProjectMemoriesResponse,
-    ProjectMemoryListItem, ProjectOverviewResponse, QueryFilters, QueryRequest, QueryResponse,
-    QueryResult, StreamRequest, StreamResponse, read_capnp_text_frame, write_capnp_text_frame,
+    ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType, NamedCount,
+    ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse, QueryFilters,
+    QueryRequest, QueryResponse, QueryResult, StreamRequest, StreamResponse, read_capnp_text_frame,
+    write_capnp_text_frame,
 };
 use ratatui::{
     Terminal,
@@ -113,6 +114,9 @@ struct App {
     query_logs: Vec<QueryLogEntry>,
     log_selected_index: usize,
     log_table_state: TableState,
+    activity_events: Vec<ActivityEvent>,
+    activity_selected_index: usize,
+    activity_table_state: TableState,
     project_scroll: u16,
     versions: ToolVersions,
     status_message: String,
@@ -146,6 +150,8 @@ impl App {
         query_table_state.select(Some(0));
         let mut log_table_state = TableState::default();
         log_table_state.select(Some(0));
+        let mut activity_table_state = TableState::default();
+        activity_table_state.select(Some(0));
         Self {
             project: project.clone(),
             active_tab: TabKind::Memories,
@@ -164,6 +170,9 @@ impl App {
             query_logs: Vec::new(),
             log_selected_index: 0,
             log_table_state,
+            activity_events: Vec::new(),
+            activity_selected_index: 0,
+            activity_table_state,
             project_scroll: 0,
             versions,
             status_message: "Press r to refresh, q to exit.".to_string(),
@@ -275,6 +284,12 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Log => {
                 self.move_log_selection(-1);
+            }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Activity => {
+                self.move_activity_selection(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Activity => {
+                self.move_activity_selection(-1);
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Project => {
                 self.scroll_project(1);
@@ -493,6 +508,9 @@ impl App {
             | StreamResponse::MemoryChanged { detail } => {
                 self.selected_detail = detail;
             }
+            StreamResponse::Activity { event } => {
+                self.record_activity(event);
+            }
             StreamResponse::Error { message } => {
                 self.status_message = format!("Stream error: {message}");
             }
@@ -606,6 +624,29 @@ impl App {
         if next != self.log_selected_index {
             self.log_selected_index = next;
             self.log_table_state.select(Some(self.log_selected_index));
+        }
+    }
+
+    fn record_activity(&mut self, event: ActivityEvent) {
+        self.activity_events.insert(0, event);
+        if self.activity_events.len() > 200 {
+            self.activity_events.truncate(200);
+        }
+        self.activity_selected_index = 0;
+        self.activity_table_state.select(Some(0));
+    }
+
+    fn move_activity_selection(&mut self, delta: isize) {
+        if self.activity_events.is_empty() {
+            return;
+        }
+        let next = (self.activity_selected_index as isize + delta)
+            .clamp(0, self.activity_events.len().saturating_sub(1) as isize)
+            as usize;
+        if next != self.activity_selected_index {
+            self.activity_selected_index = next;
+            self.activity_table_state
+                .select(Some(self.activity_selected_index));
         }
     }
 
@@ -765,6 +806,7 @@ enum TabKind {
     Memories,
     Query,
     Log,
+    Activity,
     Project,
 }
 
@@ -773,7 +815,8 @@ impl TabKind {
         match self {
             Self::Memories => Self::Query,
             Self::Query => Self::Log,
-            Self::Log => Self::Project,
+            Self::Log => Self::Activity,
+            Self::Activity => Self::Project,
             Self::Project => Self::Memories,
         }
     }
@@ -787,7 +830,8 @@ impl TabKind {
             Self::Memories => 0,
             Self::Query => 1,
             Self::Log => 2,
-            Self::Project => 3,
+            Self::Activity => 3,
+            Self::Project => 4,
         }
     }
 }
@@ -961,7 +1005,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         ])
         .split(frame.area());
 
-    let titles = ["Memories", "Query", "Log", "Project"]
+    let titles = ["Memories", "Query", "Log", "Activity", "Project"]
         .into_iter()
         .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
         .collect::<Vec<_>>();
@@ -1027,6 +1071,14 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                 Style::default().fg(Theme::MUTED),
             ),
         ],
+        TabKind::Activity => vec![
+            accent_span("activity "),
+            Span::styled("j/k move  ", Style::default().fg(Theme::TEXT)),
+            Span::styled(
+                "shows backend capture/curate/reindex/archive/delete events",
+                Style::default().fg(Theme::MUTED),
+            ),
+        ],
         TabKind::Project => vec![
             accent_span("scroll "),
             Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
@@ -1067,6 +1119,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         TabKind::Memories => draw_memories_tab(frame, app, chunks[2]),
         TabKind::Query => draw_query_tab(frame, app, chunks[2]),
         TabKind::Log => draw_log_tab(frame, app, chunks[2]),
+        TabKind::Activity => draw_activity_tab(frame, app, chunks[2]),
         TabKind::Project => draw_project_tab(frame, app, chunks[2]),
     }
 
@@ -1772,6 +1825,90 @@ fn draw_log_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(detail, chunks[1]);
 }
 
+fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .split(area);
+
+    let header = Row::new(["When", "Kind", "Summary"]).style(
+        Style::default()
+            .fg(Theme::ACCENT_STRONG)
+            .bg(Theme::PANEL_ALT)
+            .add_modifier(Modifier::BOLD),
+    );
+    let rows = app.activity_events.iter().map(activity_row);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(17),
+            Constraint::Length(12),
+            Constraint::Percentage(100),
+        ],
+    )
+    .header(header)
+    .row_highlight_style(
+        Style::default()
+            .fg(Theme::SELECTION_FG)
+            .bg(Theme::SELECTION_BG)
+            .add_modifier(Modifier::BOLD),
+    )
+    .block(themed_block(format!(
+        "Activity ({})",
+        app.activity_events.len()
+    )));
+    let mut state = app.activity_table_state.clone();
+    frame.render_stateful_widget(table, chunks[0], &mut state);
+
+    let detail_lines = if let Some(entry) = app.activity_events.get(app.activity_selected_index) {
+        vec![
+            Line::from(vec![
+                label_span("When: "),
+                Span::styled(
+                    entry
+                        .recorded_at
+                        .format("%Y-%m-%d %H:%M:%S UTC")
+                        .to_string(),
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]),
+            Line::from(vec![
+                label_span("Project: "),
+                Span::styled(entry.project.clone(), Style::default().fg(Theme::TEXT)),
+            ]),
+            Line::from(vec![label_span("Kind: "), activity_kind_span(&entry.kind)]),
+            Line::from(""),
+            Line::from(vec![section_span("Summary")]),
+            Line::from(Span::styled(
+                entry.summary.clone(),
+                Style::default().fg(Theme::TEXT),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                label_span("Memory Id: "),
+                Span::styled(
+                    entry
+                        .memory_id
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "n/a".to_string()),
+                    Style::default().fg(Theme::MUTED),
+                ),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            "No activity yet. Keep the TUI open while captures, curations, reindexing, archiving, or deletions happen for this project.",
+            Style::default().fg(Theme::MUTED),
+        ))]
+    };
+
+    let detail = Paragraph::new(detail_lines)
+        .style(Style::default().bg(Theme::PANEL))
+        .wrap(Wrap { trim: false })
+        .block(themed_block("Activity Detail"));
+    frame.render_widget(detail, chunks[1]);
+}
+
 fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'static>> {
     if items.is_empty() {
         vec![Line::from(empty.to_string())]
@@ -1855,6 +1992,20 @@ fn log_row(item: &QueryLogEntry) -> Row<'static> {
     ])
 }
 
+fn activity_row(item: &ActivityEvent) -> Row<'static> {
+    Row::new(vec![
+        Cell::from(Span::styled(
+            item.recorded_at.format("%H:%M:%S UTC").to_string(),
+            Style::default().fg(Theme::TEXT),
+        )),
+        Cell::from(activity_kind_span(&item.kind)),
+        Cell::from(Span::styled(
+            item.summary.clone(),
+            Style::default().fg(Theme::TEXT),
+        )),
+    ])
+}
+
 fn format_timestamp(value: Option<chrono::DateTime<chrono::Utc>>) -> String {
     value
         .map(|value| value.format("%Y-%m-%d %H:%M:%S UTC").to_string())
@@ -1922,6 +2073,20 @@ fn section_span(value: impl Into<String>) -> Span<'static> {
         Style::default()
             .fg(Theme::TITLE)
             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+    )
+}
+
+fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
+    let (label, color) = match kind {
+        ActivityKind::CaptureTask => ("capture", Theme::ACCENT),
+        ActivityKind::Curate => ("curate", Theme::SUCCESS),
+        ActivityKind::Reindex => ("reindex", Theme::ACCENT_STRONG),
+        ActivityKind::Archive => ("archive", Theme::WARNING),
+        ActivityKind::DeleteMemory => ("delete", Theme::DANGER),
+    };
+    Span::styled(
+        label,
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
     )
 }
 
