@@ -134,6 +134,8 @@ struct WizardDraft {
     llm_api_key_env: String,
     llm_model: String,
     llm_api_key_value: String,
+    local_database_url: String,
+    local_llm_api_key_value: String,
     apply_repo_setup: ToggleChoice,
     automation_enabled: ToggleChoice,
     automation_mode: AutomationMode,
@@ -155,10 +157,11 @@ impl WizardDraft {
         let shared_env_path = shared_env_path_for_config(&global_config_path);
         let repo_available = repo_root != cwd || repo_root.join(".git").exists();
         let repo_root = repo_available.then(|| repo_root.to_path_buf());
+        let global_config = AppConfig::load_from_path(Some(global_config_path.clone())).ok();
         let existing_config = if repo_available {
             AppConfig::load_from_path(None).ok()
         } else {
-            AppConfig::load_from_path(Some(global_config_path.clone())).ok()
+            global_config.clone()
         };
         let project = project
             .or_else(|| repo_root.as_deref().and_then(read_project_slug))
@@ -176,13 +179,26 @@ impl WizardDraft {
             })
             .unwrap_or_else(|| "memory".to_string());
 
-        let llm_api_key_env = existing_config
+        let llm_api_key_env = global_config
             .as_ref()
             .map(|config| config.llm.api_key_env.clone())
+            .or_else(|| {
+                existing_config
+                    .as_ref()
+                    .map(|config| config.llm.api_key_env.clone())
+            })
             .unwrap_or_else(|| "OPENAI_API_KEY".to_string());
 
         let llm_api_key_value = shared_env_lookup(&shared_env_path, &llm_api_key_env)
             .or_else(|| env::var(&llm_api_key_env).ok())
+            .unwrap_or_default();
+        let local_database_url = repo_root
+            .as_deref()
+            .and_then(read_local_database_override)
+            .unwrap_or_default();
+        let local_llm_api_key_value = repo_root
+            .as_deref()
+            .and_then(|root| read_local_env_override(root, &llm_api_key_env))
             .unwrap_or_default();
 
         Self {
@@ -191,30 +207,32 @@ impl WizardDraft {
             repo_root: repo_root.clone(),
             project,
             include_global: default_include_global(repo_root.is_some(), prefer_global),
-            database_url: existing_config
+            database_url: global_config
                 .as_ref()
                 .map(|config| config.database.url.clone())
                 .unwrap_or_else(|| {
                     "postgresql://memory:<password>@localhost:5432/memory".to_string()
                 }),
-            api_token: existing_config
+            api_token: global_config
                 .as_ref()
                 .map(|config| config.service.api_token.clone())
                 .unwrap_or_else(|| "dev-memory-token".to_string()),
-            llm_provider: existing_config
+            llm_provider: global_config
                 .as_ref()
                 .map(|config| config.llm.provider.clone())
                 .unwrap_or_else(|| "openai_compatible".to_string()),
-            llm_base_url: existing_config
+            llm_base_url: global_config
                 .as_ref()
                 .map(|config| config.llm.base_url.clone())
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             llm_api_key_env,
-            llm_model: existing_config
+            llm_model: global_config
                 .as_ref()
                 .map(|config| config.llm.model.clone())
                 .unwrap_or_default(),
             llm_api_key_value,
+            local_database_url,
+            local_llm_api_key_value,
             apply_repo_setup: if repo_root.is_some() {
                 ToggleChoice::Yes
             } else {
@@ -278,6 +296,8 @@ enum FieldKey {
     LlmApiKeyEnv,
     LlmApiKeyValue,
     Project,
+    LocalDatabaseUrl,
+    LocalLlmApiKeyValue,
     ApplyRepoSetup,
     AutomationEnabled,
     AutomationMode,
@@ -566,6 +586,8 @@ impl WizardApp {
             FieldKey::LlmApiKeyEnv => self.draft.llm_api_key_env.clone(),
             FieldKey::LlmApiKeyValue => self.draft.llm_api_key_value.clone(),
             FieldKey::Project => self.draft.project.clone(),
+            FieldKey::LocalDatabaseUrl => self.draft.local_database_url.clone(),
+            FieldKey::LocalLlmApiKeyValue => self.draft.local_llm_api_key_value.clone(),
             FieldKey::AutomationPollInterval => self.draft.automation_poll_interval.clone(),
             FieldKey::AutomationIdleThreshold => self.draft.automation_idle_threshold.clone(),
             FieldKey::AutomationMinChangedFiles => {
@@ -584,6 +606,8 @@ impl WizardApp {
             FieldKey::LlmApiKeyEnv => self.draft.llm_api_key_env = value,
             FieldKey::LlmApiKeyValue => self.draft.llm_api_key_value = value,
             FieldKey::Project => self.draft.project = value,
+            FieldKey::LocalDatabaseUrl => self.draft.local_database_url = value,
+            FieldKey::LocalLlmApiKeyValue => self.draft.local_llm_api_key_value = value,
             FieldKey::AutomationPollInterval => self.draft.automation_poll_interval = value,
             FieldKey::AutomationIdleThreshold => self.draft.automation_idle_threshold = value,
             FieldKey::AutomationMinChangedFiles => self.draft.automation_min_changed_files = value,
@@ -656,6 +680,16 @@ fn repo_items(draft: &WizardDraft) -> Vec<StepItem> {
             FieldKey::ApplyRepoSetup,
             "Apply repo-local setup",
             draft.apply_repo_setup.label(),
+        ),
+        text_item(
+            FieldKey::LocalDatabaseUrl,
+            "Local DB override",
+            &display_override(&draft.local_database_url),
+        ),
+        text_item(
+            FieldKey::LocalLlmApiKeyValue,
+            "Local LLM API key",
+            &secret_override_label(&draft.local_llm_api_key_value),
         ),
         choice_item(
             FieldKey::AutomationEnabled,
@@ -952,6 +986,14 @@ fn review_lines(draft: &WizardDraft, step: Step, status: &str) -> Vec<Line<'stat
         )));
         if draft.applies_repo_setup() {
             lines.push(Line::from(format!(
+                "Local DB override: {}",
+                display_override(&draft.local_database_url)
+            )));
+            lines.push(Line::from(format!(
+                "Local LLM API key: {}",
+                secret_override_label(&draft.local_llm_api_key_value)
+            )));
+            lines.push(Line::from(format!(
                 "Automation enabled/mode: {} / {}",
                 draft.automation_enabled.label(),
                 automation_mode_label(&draft.automation_mode)
@@ -1140,6 +1182,19 @@ async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
                 draft.project,
                 repo_root.display()
             ));
+            write_optional_env_file(
+                &repo_root.join(".mem").join("memory-layer.env"),
+                &draft.llm_api_key_env,
+                &draft.local_llm_api_key_value,
+            )?;
+            if draft.local_llm_api_key_value.trim().is_empty() {
+                lines.push("Cleared repo-local LLM API key override.".to_string());
+            } else {
+                lines.push(format!(
+                    "Updated repo-local env override at {}",
+                    repo_root.join(".mem").join("memory-layer.env").display()
+                ));
+            }
         }
         if draft.enable_watcher_service.is_yes() {
             lines.extend(split_lines(enable_watch_service(repo_root, &draft.project)?));
@@ -1236,8 +1291,17 @@ fn render_local_repo_config(repo_root: &Path, draft: &WizardDraft) -> String {
         .map(|value| format!("\"{value}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    format!(
-        "# Repo-local overrides for this project.\n# Put shared defaults and secrets in the global config.\n\n[automation]\nenabled = {}\nmode = \"{}\"\nrepo_root = \"{}\"\npoll_interval = \"{}\"\nidle_threshold = \"{}\"\nmin_changed_files = {}\nrequire_passing_test = {}\nignored_paths = [{}]\naudit_log_path = \"{}/.mem/runtime/automation.log\"\nstate_file_path = \"{}/.mem/runtime/automation-state.json\"\n",
+    let mut content = format!(
+        "# Repo-local overrides for this project.\n# Put shared defaults and secrets in the global config.\n\n"
+    );
+    if !draft.local_database_url.trim().is_empty() {
+        content.push_str(&format!(
+            "[database]\nurl = \"{}\"\n\n",
+            draft.local_database_url.trim()
+        ));
+    }
+    content.push_str(&format!(
+        "[automation]\nenabled = {}\nmode = \"{}\"\nrepo_root = \"{}\"\npoll_interval = \"{}\"\nidle_threshold = \"{}\"\nmin_changed_files = {}\nrequire_passing_test = {}\nignored_paths = [{}]\naudit_log_path = \"{}/.mem/runtime/automation.log\"\nstate_file_path = \"{}/.mem/runtime/automation-state.json\"\n",
         draft.automation_enabled.is_yes(),
         automation_mode_label(&draft.automation_mode),
         repo_root.display(),
@@ -1248,7 +1312,43 @@ fn render_local_repo_config(repo_root: &Path, draft: &WizardDraft) -> String {
         ignored_paths,
         repo_root.display(),
         repo_root.display(),
-    )
+    ));
+    content
+}
+
+fn write_optional_env_file(path: &Path, key: &str, value: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("env file path has no parent"))?;
+    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    let mut lines = if path.exists() {
+        fs::read_to_string(path)
+            .with_context(|| format!("read {}", path.display()))?
+            .lines()
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    lines.retain(|line| {
+        line.split_once('=')
+            .map(|(existing, _)| existing.trim() != key)
+            .unwrap_or(true)
+    });
+    if !value.trim().is_empty() {
+        lines.push(format!("{key}={value}"));
+    }
+    if lines.is_empty() {
+        if path.exists() {
+            fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
+        }
+        return Ok(());
+    }
+    let mut content = lines.join("\n");
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    fs::write(path, content).with_context(|| format!("write {}", path.display()))
 }
 
 fn format_scan_report(report: &ScanReport) -> Vec<String> {
@@ -1327,6 +1427,8 @@ fn field_label(field: FieldKey) -> &'static str {
         FieldKey::LlmApiKeyEnv => "LLM API key env var",
         FieldKey::LlmApiKeyValue => "LLM API key value",
         FieldKey::Project => "Project slug",
+        FieldKey::LocalDatabaseUrl => "Local DB override",
+        FieldKey::LocalLlmApiKeyValue => "Local LLM API key",
         FieldKey::ApplyRepoSetup => "Apply repo-local setup",
         FieldKey::AutomationEnabled => "Automation enabled",
         FieldKey::AutomationMode => "Automation mode",
@@ -1370,6 +1472,29 @@ fn read_project_slug(repo_root: &Path) -> Option<String> {
         }
     }
     None
+}
+
+fn read_local_database_override(repo_root: &Path) -> Option<String> {
+    let config_path = repo_root.join(".mem").join("config.toml");
+    let content = fs::read_to_string(config_path).ok()?;
+    let mut in_database = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_database = trimmed == "[database]";
+            continue;
+        }
+        if in_database {
+            if let Some(value) = trimmed.strip_prefix("url = ") {
+                return Some(value.trim_matches('"').to_string());
+            }
+        }
+    }
+    None
+}
+
+fn read_local_env_override(repo_root: &Path, key: &str) -> Option<String> {
+    shared_env_lookup(&repo_root.join(".mem").join("memory-layer.env"), key)
 }
 
 fn default_include_global(repo_available: bool, prefer_global: bool) -> ToggleChoice {
@@ -1421,6 +1546,24 @@ fn secret_label(value: &str) -> String {
         "<unset>".to_string()
     } else {
         "<configured>".to_string()
+    }
+}
+
+fn display_override(value: &str) -> String {
+    if value.trim().is_empty() {
+        "<inherit shared/global>".to_string()
+    } else if value.contains("://") {
+        mask_database_url(value)
+    } else {
+        value.to_string()
+    }
+}
+
+fn secret_override_label(value: &str) -> String {
+    if value.trim().is_empty() {
+        "<inherit shared/global>".to_string()
+    } else {
+        "<configured locally>".to_string()
     }
 }
 
@@ -1478,6 +1621,8 @@ mod tests {
             llm_api_key_env: String::new(),
             llm_model: String::new(),
             llm_api_key_value: String::new(),
+            local_database_url: String::new(),
+            local_llm_api_key_value: String::new(),
             apply_repo_setup: super::ToggleChoice::Yes,
             automation_enabled: super::ToggleChoice::No,
             automation_mode: AutomationMode::Suggest,

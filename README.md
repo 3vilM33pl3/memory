@@ -93,12 +93,13 @@ cargo run --bin mem-cli -- init
 This creates a local `.mem/` directory with:
 - `.mem/config.toml`
 - `.mem/project.toml`
+- `.mem/memory-layer.env` when you set repo-local secret overrides
 - `.mem/runtime/`
 
 It also installs the repo-local skill under:
 - `.agents/skills/memory-layer/`
 
-The generated repo-local config only contains project-specific overrides. `.mem/` is ignored by git.
+The generated repo-local config contains project-specific overrides. It can also override shared settings like `database.url`. Repo-local secret overrides such as an LLM API key live in `.mem/memory-layer.env`. `.mem/` is ignored by git.
 
 3. Optional: edit `.mem/config.toml` for repo-specific overrides such as automation paths or repo root.
 

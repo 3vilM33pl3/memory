@@ -584,6 +584,16 @@ pub fn discover_repo_config_path() -> Option<PathBuf> {
     find_repo_config_path(&cwd)
 }
 
+pub fn discover_repo_env_path() -> Option<PathBuf> {
+    let config_path = discover_repo_config_path()?;
+    Some(
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("memory-layer.env"),
+    )
+}
+
 pub fn discover_global_config_path() -> Option<PathBuf> {
     if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
         let candidate = PathBuf::from(config_home)

@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use mem_api::{
     AppConfig, CaptureCandidateInput, CaptureCandidateSourceInput, CaptureTaskRequest, MemoryType,
-    SourceKind, discover_global_config_path,
+    SourceKind, discover_global_config_path, discover_repo_env_path,
 };
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
@@ -390,15 +390,21 @@ async fn analyze_dossier(
 }
 
 fn llm_api_key(config: &AppConfig) -> Option<String> {
-    env::var(&config.llm.api_key_env).ok().or_else(|| {
-        discover_global_config_path()
-            .map(|path| {
-                path.parent()
-                    .unwrap_or_else(|| Path::new("."))
-                    .join("memory-layer.env")
-            })
-            .and_then(|path| shared_env_lookup(&path, &config.llm.api_key_env))
-    })
+    env::var(&config.llm.api_key_env)
+        .ok()
+        .or_else(|| {
+            discover_repo_env_path()
+                .and_then(|path| shared_env_lookup(&path, &config.llm.api_key_env))
+        })
+        .or_else(|| {
+            discover_global_config_path()
+                .map(|path| {
+                    path.parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .join("memory-layer.env")
+                })
+                .and_then(|path| shared_env_lookup(&path, &config.llm.api_key_env))
+        })
 }
 
 fn shared_env_lookup(path: &Path, key: &str) -> Option<String> {

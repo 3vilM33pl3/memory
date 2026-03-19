@@ -15,7 +15,7 @@ use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CurateRequest, CurateResponse,
     DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, ProjectMemoriesResponse,
     ProjectOverviewResponse, QueryFilters, QueryRequest, QueryResponse, ReindexRequest,
-    ReindexResponse, TestResult, discover_global_config_path,
+    ReindexResponse, TestResult, discover_global_config_path, discover_repo_env_path,
 };
 use mem_watch::{flush_path, load_state, run_once, to_status};
 use reqwest::{Client, header::HeaderMap};
@@ -887,8 +887,14 @@ async fn run_doctor(
             false,
         ));
 
+        let repo_env_path = discover_repo_env_path();
         let llm_api_key_value = env::var(&config.llm.api_key_env)
             .ok()
+            .or_else(|| {
+                repo_env_path
+                    .as_ref()
+                    .and_then(|path| shared_env_lookup(path, &config.llm.api_key_env))
+            })
             .or_else(|| {
                 global_config_path.as_ref().and_then(|path| {
                     shared_env_lookup(&shared_env_path_for_config(path), &config.llm.api_key_env)
@@ -909,16 +915,25 @@ async fn run_doctor(
             },
             Some(config.llm.api_key_env.clone()),
             if llm_api_key_value.trim().is_empty() {
-                Some(format!(
-                    "Set {} in {} or export it in your shell",
-                    config.llm.api_key_env,
-                    global_config_path
-                        .as_ref()
-                        .map(|path| shared_env_path_for_config(path).display().to_string())
-                        .unwrap_or_else(|| shared_env_path_for_config(&config_path)
-                            .display()
-                            .to_string())
-                ))
+                Some({
+                    let mut locations = Vec::new();
+                    if let Some(path) = repo_env_path.as_ref() {
+                        locations.push(path.display().to_string());
+                    }
+                    locations.push(
+                        global_config_path
+                            .as_ref()
+                            .map(|path| shared_env_path_for_config(path).display().to_string())
+                            .unwrap_or_else(|| {
+                                shared_env_path_for_config(&config_path).display().to_string()
+                            }),
+                    );
+                    format!(
+                        "Set {} in {} or export it in your shell",
+                        config.llm.api_key_env,
+                        locations.join(" or ")
+                    )
+                })
             } else {
                 None
             },
