@@ -1,5 +1,6 @@
 use std::{
-    env, fs, io,
+    env, fs,
+    io::{self, IsTerminal},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -908,6 +909,8 @@ async fn apply(state: WizardState) -> Result<()> {
         }
     }
 
+    wait_for_exit()?;
+
     Ok(())
 }
 
@@ -931,6 +934,18 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> Res
     disable_raw_mode().context("disable raw mode")?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen).context("leave alternate screen")?;
     terminal.show_cursor().context("show cursor")
+}
+
+fn wait_for_exit() -> Result<()> {
+    if !io::stdin().is_terminal() {
+        return Ok(());
+    }
+    println!("Press Enter to close the wizard.");
+    let mut buffer = String::new();
+    io::stdin()
+        .read_line(&mut buffer)
+        .context("read exit confirmation")?;
+    Ok(())
 }
 
 fn write_global_config(state: &WizardState) -> Result<()> {
