@@ -147,7 +147,7 @@ struct ChatMessageResponse {
 struct ChatCompletionRequest<'a> {
     model: &'a str,
     temperature: f32,
-    max_tokens: u32,
+    max_completion_tokens: u32,
     response_format: serde_json::Value,
     messages: Vec<ChatMessage<'a>>,
 }
@@ -330,7 +330,7 @@ async fn analyze_dossier(
     let request = ChatCompletionRequest {
         model: &config.llm.model,
         temperature: config.llm.temperature,
-        max_tokens: config.llm.max_output_tokens,
+        max_completion_tokens: config.llm.max_output_tokens,
         response_format: serde_json::json!({ "type": "json_object" }),
         messages: vec![
             ChatMessage {
