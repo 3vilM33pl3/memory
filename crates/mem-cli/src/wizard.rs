@@ -80,6 +80,7 @@ struct WizardState {
     enable_watcher_service: bool,
     run_scan: bool,
     scan_dry_run: bool,
+    run_doctor: bool,
 }
 
 impl WizardState {
@@ -154,6 +155,7 @@ impl WizardState {
             enable_watcher_service: false,
             run_scan: false,
             scan_dry_run: true,
+            run_doctor: false,
         }
     }
 
@@ -186,6 +188,7 @@ enum WizardField {
     EnableWatcher,
     RunScan,
     ScanDryRun,
+    RunDoctor,
     DatabaseUrl,
     ApiToken,
     LlmProvider,
@@ -284,6 +287,12 @@ impl WizardApp {
                 key: WizardField::RunScan,
                 label: "Run initial project scan",
                 value: bool_label(self.state.run_scan),
+                kind: FieldKind::Toggle,
+            });
+            fields.push(VisibleField {
+                key: WizardField::RunDoctor,
+                label: "Run doctor after setup",
+                value: bool_label(self.state.run_doctor),
                 kind: FieldKind::Toggle,
             });
             if self.state.run_scan {
@@ -507,6 +516,9 @@ impl WizardApp {
                     self.state.scan_dry_run = true;
                 }
             }
+            WizardField::RunDoctor => {
+                self.state.run_doctor = !self.state.run_doctor;
+            }
             WizardField::ScanDryRun => {
                 self.state.scan_dry_run = !self.state.scan_dry_run;
             }
@@ -678,6 +690,14 @@ fn draw_summary(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
                 "skip"
             }
         )));
+        lines.push(Line::from(format!(
+            "Post-setup doctor: {}",
+            if app.state.run_doctor {
+                "run after apply"
+            } else {
+                "skip"
+            }
+        )));
     } else {
         lines.push(Line::from("No repository detected."));
     }
@@ -802,6 +822,7 @@ fn field_label(field: WizardField) -> &'static str {
         WizardField::EnableWatcher => "Enable watcher user service",
         WizardField::RunScan => "Run initial project scan",
         WizardField::ScanDryRun => "Scan dry-run only",
+        WizardField::RunDoctor => "Run doctor after setup",
         WizardField::DatabaseUrl => "Database URL",
         WizardField::ApiToken => "Write API token",
         WizardField::LlmProvider => "LLM provider",
@@ -880,9 +901,11 @@ async fn apply(state: WizardState) -> Result<()> {
         println!("{output}\n");
     }
 
-    if let Some(repo_root) = &state.repo_root {
-        let report = run_doctor(None, repo_root, &state.project, false).await?;
-        print_doctor_report(&report);
+    if state.run_doctor {
+        if let Some(repo_root) = &state.repo_root {
+            let report = run_doctor(None, repo_root, &state.project, false).await?;
+            print_doctor_report(&report);
+        }
     }
 
     Ok(())
