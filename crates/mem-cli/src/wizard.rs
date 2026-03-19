@@ -1,6 +1,5 @@
 use std::{
-    env, fs,
-    io::{self, IsTerminal},
+    env, fs, io,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -11,7 +10,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use mem_api::{AppConfig, discover_global_config_path};
+use mem_api::{AppConfig, AutomationMode, discover_global_config_path};
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -23,12 +22,12 @@ use ratatui::{
 use reqwest::Client;
 
 use super::{
-    ApiClient, default_global_config_path, enable_watch_service, mask_database_url,
-    packaged_service_available, print_doctor_report, print_scan_report, render_project_metadata,
+    ApiClient, DoctorReport, DoctorStatus, default_global_config_path, enable_watch_service,
+    mask_database_url, packaged_service_available, render_project_metadata,
     repair_repo_bootstrap, run_doctor, run_systemctl_system, shared_env_lookup,
     shared_env_path_for_config, write_shared_env_file,
 };
-use crate::scan;
+use crate::scan::{self, ScanReport};
 
 pub(crate) async fn run(
     cwd: &Path,
@@ -38,37 +37,96 @@ pub(crate) async fn run(
 ) -> Result<()> {
     let mut terminal = setup_terminal()?;
     let mut app = WizardApp::new(cwd, repo_root, project, prefer_global);
-    let outcome = loop {
+
+    loop {
         terminal.draw(|frame| draw(frame, &app))?;
         if event::poll(Duration::from_millis(200))? {
             match event::read()? {
                 Event::Key(key) => {
-                    if let Some(outcome) = app.handle_key(key)? {
-                        break outcome;
+                    if app.handle_key(key).await? {
+                        break;
                     }
                 }
                 _ => {}
             }
         }
-    };
-    restore_terminal(terminal)?;
+    }
 
-    match outcome {
-        WizardOutcome::Cancel => {
-            println!("Wizard cancelled.");
-            Ok(())
+    restore_terminal(terminal)?;
+    if let Some(message) = &app.exit_message {
+        println!("{message}");
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Step {
+    Welcome,
+    Shared,
+    Repo,
+    Services,
+    Review,
+    Result,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ToggleChoice {
+    Yes,
+    No,
+}
+
+impl ToggleChoice {
+    fn toggle(&mut self) {
+        *self = match self {
+            Self::Yes => Self::No,
+            Self::No => Self::Yes,
+        };
+    }
+
+    fn is_yes(self) -> bool {
+        matches!(self, Self::Yes)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Yes => "Yes",
+            Self::No => "No",
         }
-        WizardOutcome::Apply(state) => apply(state).await,
     }
 }
 
-#[derive(Debug, Clone)]
-struct WizardState {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScanChoice {
+    Skip,
+    DryRun,
+    Write,
+}
+
+impl ScanChoice {
+    fn cycle(&mut self) {
+        *self = match self {
+            Self::Skip => Self::DryRun,
+            Self::DryRun => Self::Write,
+            Self::Write => Self::Skip,
+        };
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Skip => "Skip",
+            Self::DryRun => "Dry-run",
+            Self::Write => "Write",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct WizardDraft {
     global_config_path: PathBuf,
     shared_env_path: PathBuf,
     repo_root: Option<PathBuf>,
     project: String,
-    configure_global: bool,
+    include_global: ToggleChoice,
     database_url: String,
     api_token: String,
     llm_provider: String,
@@ -76,22 +134,21 @@ struct WizardState {
     llm_api_key_env: String,
     llm_model: String,
     llm_api_key_value: String,
-    initialize_repo: bool,
-    automation_enabled: bool,
-    automation_mode: String,
+    apply_repo_setup: ToggleChoice,
+    automation_enabled: ToggleChoice,
+    automation_mode: AutomationMode,
     automation_poll_interval: String,
     automation_idle_threshold: String,
     automation_min_changed_files: String,
-    automation_require_passing_test: bool,
+    automation_require_passing_test: ToggleChoice,
     automation_ignored_paths: String,
-    enable_backend_service: bool,
-    enable_watcher_service: bool,
-    run_scan: bool,
-    scan_dry_run: bool,
-    run_doctor: bool,
+    enable_backend_service: ToggleChoice,
+    enable_watcher_service: ToggleChoice,
+    scan_choice: ScanChoice,
+    run_doctor: ToggleChoice,
 }
 
-impl WizardState {
+impl WizardDraft {
     fn new(cwd: &Path, repo_root: &Path, project: Option<String>, prefer_global: bool) -> Self {
         let global_config_path =
             discover_global_config_path().unwrap_or_else(default_global_config_path);
@@ -133,7 +190,7 @@ impl WizardState {
             shared_env_path,
             repo_root: repo_root.clone(),
             project,
-            configure_global: default_configure_global(repo_root.is_some(), prefer_global),
+            include_global: default_include_global(repo_root.is_some(), prefer_global),
             database_url: existing_config
                 .as_ref()
                 .map(|config| config.database.url.clone())
@@ -158,15 +215,19 @@ impl WizardState {
                 .map(|config| config.llm.model.clone())
                 .unwrap_or_default(),
             llm_api_key_value,
-            initialize_repo: repo_root.is_some(),
+            apply_repo_setup: if repo_root.is_some() {
+                ToggleChoice::Yes
+            } else {
+                ToggleChoice::No
+            },
             automation_enabled: existing_config
                 .as_ref()
-                .map(|config| config.automation.enabled)
-                .unwrap_or(false),
+                .map(|config| toggle_from_bool(config.automation.enabled))
+                .unwrap_or(ToggleChoice::No),
             automation_mode: existing_config
                 .as_ref()
-                .map(|config| automation_mode_to_string(&config.automation.mode))
-                .unwrap_or_else(|| "suggest".to_string()),
+                .map(|config| config.automation.mode.clone())
+                .unwrap_or(AutomationMode::Suggest),
             automation_poll_interval: existing_config
                 .as_ref()
                 .map(|config| duration_to_string(config.automation.poll_interval))
@@ -181,47 +242,43 @@ impl WizardState {
                 .unwrap_or_else(|| "2".to_string()),
             automation_require_passing_test: existing_config
                 .as_ref()
-                .map(|config| config.automation.require_passing_test)
-                .unwrap_or(false),
+                .map(|config| toggle_from_bool(config.automation.require_passing_test))
+                .unwrap_or(ToggleChoice::No),
             automation_ignored_paths: existing_config
                 .as_ref()
                 .map(|config| config.automation.ignored_paths.join(", "))
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| ".git/, target/, .mem/".to_string()),
-            enable_backend_service: false,
-            enable_watcher_service: false,
-            run_scan: false,
-            scan_dry_run: true,
-            run_doctor: false,
+            enable_backend_service: ToggleChoice::No,
+            enable_watcher_service: ToggleChoice::No,
+            scan_choice: ScanChoice::Skip,
+            run_doctor: ToggleChoice::No,
         }
     }
 
     fn repo_available(&self) -> bool {
         self.repo_root.is_some()
     }
-}
 
-fn read_project_slug(repo_root: &Path) -> Option<String> {
-    let project_path = repo_root.join(".mem").join("project.toml");
-    let content = fs::read_to_string(project_path).ok()?;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(value) = trimmed.strip_prefix("slug = ") {
-            return Some(value.trim_matches('"').to_string());
-        }
+    fn includes_global(&self) -> bool {
+        self.include_global.is_yes()
     }
-    None
-}
 
-fn default_configure_global(repo_available: bool, prefer_global: bool) -> bool {
-    if repo_available { prefer_global } else { true }
+    fn applies_repo_setup(&self) -> bool {
+        self.apply_repo_setup.is_yes() && self.repo_available()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WizardField {
-    ConfigureGlobal,
+enum FieldKey {
+    IncludeGlobal,
+    DatabaseUrl,
+    ApiToken,
+    LlmModel,
+    LlmApiKeyEnv,
+    LlmApiKeyValue,
     Project,
-    InitializeRepo,
+    ApplyRepoSetup,
     AutomationEnabled,
     AutomationMode,
     AutomationPollInterval,
@@ -229,240 +286,87 @@ enum WizardField {
     AutomationMinChangedFiles,
     AutomationRequirePassingTest,
     AutomationIgnoredPaths,
-    EnableWatcher,
-    RunScan,
-    ScanDryRun,
-    RunDoctor,
-    DatabaseUrl,
-    ApiToken,
-    LlmProvider,
-    LlmBaseUrl,
-    LlmApiKeyEnv,
-    LlmModel,
-    LlmApiKeyValue,
     EnableBackendService,
+    EnableWatcher,
+    ScanChoice,
+    RunDoctor,
+    Next,
+    Back,
     Apply,
+    Finish,
     Cancel,
 }
 
-#[derive(Clone, Debug)]
-struct VisibleField {
-    key: WizardField,
-    label: &'static str,
-    value: String,
-    kind: FieldKind,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ItemKind {
+    Text,
+    Choice,
+    Action,
+    Static,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FieldKind {
-    Toggle,
-    Text,
-    Action,
+struct StepItem {
+    key: FieldKey,
+    label: String,
+    value: String,
+    kind: ItemKind,
 }
 
 #[derive(Clone, Debug)]
 enum InputMode {
     Normal,
     Editing {
-        field: WizardField,
+        field: FieldKey,
         original: String,
         buffer: String,
     },
 }
 
-enum WizardOutcome {
-    Cancel,
-    Apply(WizardState),
+struct WizardResult {
+    title: String,
+    lines: Vec<String>,
+    success: bool,
 }
 
 struct WizardApp {
-    state: WizardState,
+    draft: WizardDraft,
+    step: Step,
     selected: usize,
     input_mode: InputMode,
     status: String,
+    result: Option<WizardResult>,
+    exit_message: Option<String>,
 }
 
 impl WizardApp {
     fn new(cwd: &Path, repo_root: &Path, project: Option<String>, prefer_global: bool) -> Self {
-        let state = WizardState::new(cwd, repo_root, project, prefer_global);
-        let status = if state.repo_available() {
-            "Repo-local setup is enabled by default. Toggle shared/global config on if you need it."
+        let draft = WizardDraft::new(cwd, repo_root, project, prefer_global);
+        let status = if draft.repo_available() {
+            "Step 1 of 5. Choose whether this run should also edit shared/global settings."
                 .to_string()
         } else {
-            "No repository detected. The wizard will only configure shared/global files."
+            "Step 1 of 4. No repository detected, so this run is shared/global setup only."
                 .to_string()
         };
         Self {
-            state,
+            draft,
+            step: Step::Welcome,
             selected: 0,
             input_mode: InputMode::Normal,
             status,
+            result: None,
+            exit_message: None,
         }
     }
 
-    fn fields(&self) -> Vec<VisibleField> {
-        let mut fields = Vec::new();
-        if self.state.repo_available() {
-            fields.push(VisibleField {
-                key: WizardField::ConfigureGlobal,
-                label: "Configure shared/global files",
-                value: bool_label(self.state.configure_global),
-                kind: FieldKind::Toggle,
-            });
-            fields.push(VisibleField {
-                key: WizardField::Project,
-                label: "Project slug",
-                value: self.state.project.clone(),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::InitializeRepo,
-                label: "Apply repo-local setup",
-                value: bool_label(self.state.initialize_repo),
-                kind: FieldKind::Toggle,
-            });
-            fields.push(VisibleField {
-                key: WizardField::AutomationEnabled,
-                label: "Automation enabled",
-                value: bool_label(self.state.automation_enabled),
-                kind: FieldKind::Toggle,
-            });
-            fields.push(VisibleField {
-                key: WizardField::AutomationMode,
-                label: "Automation mode",
-                value: self.state.automation_mode.clone(),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::AutomationPollInterval,
-                label: "Poll interval",
-                value: self.state.automation_poll_interval.clone(),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::AutomationIdleThreshold,
-                label: "Idle threshold",
-                value: self.state.automation_idle_threshold.clone(),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::AutomationMinChangedFiles,
-                label: "Min changed files",
-                value: self.state.automation_min_changed_files.clone(),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::AutomationRequirePassingTest,
-                label: "Require passing test",
-                value: bool_label(self.state.automation_require_passing_test),
-                kind: FieldKind::Toggle,
-            });
-            fields.push(VisibleField {
-                key: WizardField::AutomationIgnoredPaths,
-                label: "Ignored paths",
-                value: self.state.automation_ignored_paths.clone(),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::EnableWatcher,
-                label: "Enable watcher user service",
-                value: bool_label(self.state.enable_watcher_service),
-                kind: FieldKind::Toggle,
-            });
-            fields.push(VisibleField {
-                key: WizardField::RunScan,
-                label: "Run initial project scan",
-                value: bool_label(self.state.run_scan),
-                kind: FieldKind::Toggle,
-            });
-            fields.push(VisibleField {
-                key: WizardField::RunDoctor,
-                label: "Run doctor after setup",
-                value: bool_label(self.state.run_doctor),
-                kind: FieldKind::Toggle,
-            });
-            if self.state.run_scan {
-                fields.push(VisibleField {
-                    key: WizardField::ScanDryRun,
-                    label: "Scan dry-run only",
-                    value: bool_label(self.state.scan_dry_run),
-                    kind: FieldKind::Toggle,
-                });
-            }
+    async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+        if self.step == Step::Result {
+            return Ok(matches!(key.code, KeyCode::Enter | KeyCode::Char('q') | KeyCode::Esc));
         }
 
-        if self.state.configure_global {
-            fields.push(VisibleField {
-                key: WizardField::DatabaseUrl,
-                label: "Database URL",
-                value: mask_database_url(&self.state.database_url),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::ApiToken,
-                label: "Write API token",
-                value: secret_label(&self.state.api_token),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::LlmProvider,
-                label: "LLM provider",
-                value: self.state.llm_provider.clone(),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::LlmBaseUrl,
-                label: "LLM base URL",
-                value: self.state.llm_base_url.clone(),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::LlmApiKeyEnv,
-                label: "LLM API key env var",
-                value: self.state.llm_api_key_env.clone(),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::LlmModel,
-                label: "LLM model",
-                value: display_empty(&self.state.llm_model),
-                kind: FieldKind::Text,
-            });
-            fields.push(VisibleField {
-                key: WizardField::LlmApiKeyValue,
-                label: "LLM API key value",
-                value: secret_label(&self.state.llm_api_key_value),
-                kind: FieldKind::Text,
-            });
-            if packaged_service_available() {
-                fields.push(VisibleField {
-                    key: WizardField::EnableBackendService,
-                    label: "Enable backend system service",
-                    value: bool_label(self.state.enable_backend_service),
-                    kind: FieldKind::Toggle,
-                });
-            }
-        }
-
-        fields.push(VisibleField {
-            key: WizardField::Apply,
-            label: "Apply changes",
-            value: "run setup".to_string(),
-            kind: FieldKind::Action,
-        });
-        fields.push(VisibleField {
-            key: WizardField::Cancel,
-            label: "Cancel",
-            value: "exit without writing".to_string(),
-            kind: FieldKind::Action,
-        });
-        fields
-    }
-
-    fn handle_key(&mut self, key: KeyEvent) -> Result<Option<WizardOutcome>> {
         let input_mode = std::mem::replace(&mut self.input_mode, InputMode::Normal);
         match input_mode {
-            InputMode::Normal => self.handle_normal_key(key),
+            InputMode::Normal => self.handle_normal_key(key).await,
             InputMode::Editing {
                 field,
                 original,
@@ -471,48 +375,47 @@ impl WizardApp {
         }
     }
 
-    fn handle_normal_key(&mut self, key: KeyEvent) -> Result<Option<WizardOutcome>> {
-        let field_count = self.fields().len();
+    async fn handle_normal_key(&mut self, key: KeyEvent) -> Result<bool> {
+        let item_count = self.current_items().len();
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => return Ok(Some(WizardOutcome::Cancel)),
+            KeyCode::Char('q') | KeyCode::Esc => {
+                self.exit_message = Some("Wizard cancelled.".to_string());
+                return Ok(true);
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 self.selected = self.selected.saturating_sub(1);
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-                if self.selected + 1 < field_count {
+                if self.selected + 1 < item_count {
                     self.selected += 1;
                 }
             }
             KeyCode::BackTab => {
                 self.selected = self.selected.saturating_sub(1);
             }
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                return self.activate_selected();
-            }
+            KeyCode::Enter | KeyCode::Char(' ') => return self.activate_selected().await,
             _ => {}
         }
         self.clamp_selection();
-        Ok(None)
+        Ok(false)
     }
 
     fn handle_edit_key(
         &mut self,
         key: KeyEvent,
-        field: WizardField,
+        field: FieldKey,
         original: &str,
         buffer: &mut String,
-    ) -> Result<Option<WizardOutcome>> {
+    ) -> Result<bool> {
         match key.code {
             KeyCode::Esc => {
-                let original = original.to_string();
+                self.set_field_value(field, original.to_string());
                 self.input_mode = InputMode::Normal;
-                self.set_field_value(field, original);
             }
             KeyCode::Enter => {
-                let value = buffer.clone();
-                self.set_field_value(field, value);
+                self.set_field_value(field, buffer.clone());
                 self.input_mode = InputMode::Normal;
-                self.status = "Updated wizard field.".to_string();
+                self.status = format!("Updated {}.", field_label(field));
             }
             KeyCode::Backspace => {
                 buffer.pop();
@@ -530,7 +433,7 @@ impl WizardApp {
                         original: original.to_string(),
                         buffer: buffer.clone(),
                     };
-                    return Ok(None);
+                    return Ok(false);
                 }
                 buffer.push(ch);
                 self.set_field_value(field, buffer.clone());
@@ -548,135 +451,305 @@ impl WizardApp {
                 };
             }
         }
-        Ok(None)
+        Ok(false)
     }
 
-    fn activate_selected(&mut self) -> Result<Option<WizardOutcome>> {
-        let fields = self.fields();
-        let Some(selected) = fields.get(self.selected) else {
-            return Ok(None);
+    async fn activate_selected(&mut self) -> Result<bool> {
+        let items = self.current_items();
+        let Some(item) = items.get(self.selected) else {
+            return Ok(false);
         };
 
-        match selected.kind {
-            FieldKind::Toggle => {
-                self.toggle(selected.key);
-                self.status = format!("Updated {}.", selected.label.to_lowercase());
+        match item.kind {
+            ItemKind::Static => {}
+            ItemKind::Choice => {
+                self.cycle_choice(item.key);
+                self.status = format!("Updated {}.", field_label(item.key));
             }
-            FieldKind::Text => {
-                let current = self.raw_value(selected.key);
+            ItemKind::Text => {
+                let current = self.current_value(item.key);
                 self.input_mode = InputMode::Editing {
-                    field: selected.key,
+                    field: item.key,
                     original: current.clone(),
                     buffer: current,
                 };
-                self.status = format!("Editing {}. Enter saves, Esc cancels.", selected.label);
+                self.status = format!("Editing {}. Enter saves, Esc cancels.", field_label(item.key));
             }
-            FieldKind::Action => match selected.key {
-                WizardField::Apply => return Ok(Some(WizardOutcome::Apply(self.state.clone()))),
-                WizardField::Cancel => return Ok(Some(WizardOutcome::Cancel)),
+            ItemKind::Action => match item.key {
+                FieldKey::Next => self.go_next(),
+                FieldKey::Back => self.go_back(),
+                FieldKey::Cancel => {
+                    self.exit_message = Some("Wizard cancelled.".to_string());
+                    return Ok(true);
+                }
+                FieldKey::Apply => {
+                    self.apply().await;
+                }
+                FieldKey::Finish => return Ok(true),
                 _ => {}
             },
         }
 
         self.clamp_selection();
-        Ok(None)
+        Ok(false)
     }
 
-    fn toggle(&mut self, field: WizardField) {
+    fn go_next(&mut self) {
+        self.step = next_step(self.step, &self.draft);
+        self.selected = 0;
+        self.status = step_status(self.step, &self.draft).to_string();
+    }
+
+    fn go_back(&mut self) {
+        self.step = previous_step(self.step, &self.draft);
+        self.selected = 0;
+        self.status = step_status(self.step, &self.draft).to_string();
+    }
+
+    async fn apply(&mut self) {
+        match apply_draft(&self.draft).await {
+            Ok(result) => {
+                self.result = Some(result);
+                self.step = Step::Result;
+                self.selected = 0;
+            }
+            Err(error) => {
+                self.result = Some(WizardResult {
+                    title: "Apply failed".to_string(),
+                    lines: vec![error.to_string()],
+                    success: false,
+                });
+                self.step = Step::Result;
+                self.selected = 0;
+            }
+        }
+    }
+
+    fn current_items(&self) -> Vec<StepItem> {
+        match self.step {
+            Step::Welcome => welcome_items(&self.draft),
+            Step::Shared => shared_items(&self.draft),
+            Step::Repo => repo_items(&self.draft),
+            Step::Services => service_items(&self.draft),
+            Step::Review => review_items(),
+            Step::Result => result_items(),
+        }
+    }
+
+    fn cycle_choice(&mut self, field: FieldKey) {
         match field {
-            WizardField::ConfigureGlobal => {
-                self.state.configure_global = !self.state.configure_global;
-                if !self.state.configure_global {
-                    self.state.enable_backend_service = false;
-                }
+            FieldKey::IncludeGlobal => self.draft.include_global.toggle(),
+            FieldKey::ApplyRepoSetup => self.draft.apply_repo_setup.toggle(),
+            FieldKey::AutomationEnabled => self.draft.automation_enabled.toggle(),
+            FieldKey::AutomationRequirePassingTest => {
+                self.draft.automation_require_passing_test.toggle()
             }
-            WizardField::InitializeRepo => {
-                self.state.initialize_repo = !self.state.initialize_repo;
-            }
-            WizardField::AutomationEnabled => {
-                self.state.automation_enabled = !self.state.automation_enabled;
-            }
-            WizardField::AutomationRequirePassingTest => {
-                self.state.automation_require_passing_test =
-                    !self.state.automation_require_passing_test;
-            }
-            WizardField::EnableWatcher => {
-                self.state.enable_watcher_service = !self.state.enable_watcher_service;
-            }
-            WizardField::RunScan => {
-                self.state.run_scan = !self.state.run_scan;
-                if !self.state.run_scan {
-                    self.state.scan_dry_run = true;
-                }
-            }
-            WizardField::RunDoctor => {
-                self.state.run_doctor = !self.state.run_doctor;
-            }
-            WizardField::ScanDryRun => {
-                self.state.scan_dry_run = !self.state.scan_dry_run;
-            }
-            WizardField::EnableBackendService => {
-                self.state.enable_backend_service = !self.state.enable_backend_service;
+            FieldKey::EnableBackendService => self.draft.enable_backend_service.toggle(),
+            FieldKey::EnableWatcher => self.draft.enable_watcher_service.toggle(),
+            FieldKey::RunDoctor => self.draft.run_doctor.toggle(),
+            FieldKey::ScanChoice => self.draft.scan_choice.cycle(),
+            FieldKey::AutomationMode => {
+                self.draft.automation_mode = match self.draft.automation_mode {
+                    AutomationMode::Suggest => AutomationMode::Auto,
+                    AutomationMode::Auto => AutomationMode::Suggest,
+                };
             }
             _ => {}
         }
     }
 
-    fn raw_value(&self, field: WizardField) -> String {
+    fn current_value(&self, field: FieldKey) -> String {
         match field {
-            WizardField::Project => self.state.project.clone(),
-            WizardField::AutomationMode => self.state.automation_mode.clone(),
-            WizardField::AutomationPollInterval => self.state.automation_poll_interval.clone(),
-            WizardField::AutomationIdleThreshold => self.state.automation_idle_threshold.clone(),
-            WizardField::AutomationMinChangedFiles => {
-                self.state.automation_min_changed_files.clone()
+            FieldKey::DatabaseUrl => self.draft.database_url.clone(),
+            FieldKey::ApiToken => self.draft.api_token.clone(),
+            FieldKey::LlmModel => self.draft.llm_model.clone(),
+            FieldKey::LlmApiKeyEnv => self.draft.llm_api_key_env.clone(),
+            FieldKey::LlmApiKeyValue => self.draft.llm_api_key_value.clone(),
+            FieldKey::Project => self.draft.project.clone(),
+            FieldKey::AutomationPollInterval => self.draft.automation_poll_interval.clone(),
+            FieldKey::AutomationIdleThreshold => self.draft.automation_idle_threshold.clone(),
+            FieldKey::AutomationMinChangedFiles => {
+                self.draft.automation_min_changed_files.clone()
             }
-            WizardField::AutomationIgnoredPaths => self.state.automation_ignored_paths.clone(),
-            WizardField::DatabaseUrl => self.state.database_url.clone(),
-            WizardField::ApiToken => self.state.api_token.clone(),
-            WizardField::LlmProvider => self.state.llm_provider.clone(),
-            WizardField::LlmBaseUrl => self.state.llm_base_url.clone(),
-            WizardField::LlmApiKeyEnv => self.state.llm_api_key_env.clone(),
-            WizardField::LlmModel => self.state.llm_model.clone(),
-            WizardField::LlmApiKeyValue => self.state.llm_api_key_value.clone(),
+            FieldKey::AutomationIgnoredPaths => self.draft.automation_ignored_paths.clone(),
             _ => String::new(),
         }
     }
 
-    fn set_field_value(&mut self, field: WizardField, value: String) {
+    fn set_field_value(&mut self, field: FieldKey, value: String) {
         match field {
-            WizardField::Project => self.state.project = value,
-            WizardField::AutomationMode => self.state.automation_mode = value,
-            WizardField::AutomationPollInterval => self.state.automation_poll_interval = value,
-            WizardField::AutomationIdleThreshold => self.state.automation_idle_threshold = value,
-            WizardField::AutomationMinChangedFiles => {
-                self.state.automation_min_changed_files = value
-            }
-            WizardField::AutomationIgnoredPaths => self.state.automation_ignored_paths = value,
-            WizardField::DatabaseUrl => self.state.database_url = value,
-            WizardField::ApiToken => self.state.api_token = value,
-            WizardField::LlmProvider => self.state.llm_provider = value,
-            WizardField::LlmBaseUrl => self.state.llm_base_url = value,
-            WizardField::LlmApiKeyEnv => self.state.llm_api_key_env = value,
-            WizardField::LlmModel => self.state.llm_model = value,
-            WizardField::LlmApiKeyValue => self.state.llm_api_key_value = value,
+            FieldKey::DatabaseUrl => self.draft.database_url = value,
+            FieldKey::ApiToken => self.draft.api_token = value,
+            FieldKey::LlmModel => self.draft.llm_model = value,
+            FieldKey::LlmApiKeyEnv => self.draft.llm_api_key_env = value,
+            FieldKey::LlmApiKeyValue => self.draft.llm_api_key_value = value,
+            FieldKey::Project => self.draft.project = value,
+            FieldKey::AutomationPollInterval => self.draft.automation_poll_interval = value,
+            FieldKey::AutomationIdleThreshold => self.draft.automation_idle_threshold = value,
+            FieldKey::AutomationMinChangedFiles => self.draft.automation_min_changed_files = value,
+            FieldKey::AutomationIgnoredPaths => self.draft.automation_ignored_paths = value,
             _ => {}
         }
     }
 
     fn clamp_selection(&mut self) {
-        let field_count = self.fields().len();
-        if field_count == 0 {
+        let count = self.current_items().len();
+        if count == 0 {
             self.selected = 0;
-        } else if self.selected >= field_count {
-            self.selected = field_count - 1;
+        } else if self.selected >= count {
+            self.selected = count - 1;
         }
     }
 }
 
+fn welcome_items(draft: &WizardDraft) -> Vec<StepItem> {
+    let mut items = vec![StepItem {
+        key: FieldKey::IncludeGlobal,
+        label: "Include shared/global setup".to_string(),
+        value: draft.include_global.label().to_string(),
+        kind: if draft.repo_available() {
+            ItemKind::Choice
+        } else {
+            ItemKind::Static
+        },
+    }];
+    items.push(StepItem {
+        key: FieldKey::Next,
+        label: "Next".to_string(),
+        value: next_step_label(next_step(Step::Welcome, draft)).to_string(),
+        kind: ItemKind::Action,
+    });
+    items.push(action_item(FieldKey::Cancel, "Cancel"));
+    items
+}
+
+fn shared_items(draft: &WizardDraft) -> Vec<StepItem> {
+    vec![
+        text_item(FieldKey::DatabaseUrl, "Database URL", &mask_database_url(&draft.database_url)),
+        text_item(FieldKey::ApiToken, "Write API token", &secret_label(&draft.api_token)),
+        text_item(FieldKey::LlmModel, "LLM model", &display_empty(&draft.llm_model)),
+        text_item(
+            FieldKey::LlmApiKeyEnv,
+            "LLM API key env var",
+            &draft.llm_api_key_env,
+        ),
+        text_item(
+            FieldKey::LlmApiKeyValue,
+            "LLM API key value",
+            &secret_label(&draft.llm_api_key_value),
+        ),
+        action_item(FieldKey::Back, "Back"),
+        StepItem {
+            key: FieldKey::Next,
+            label: "Next".to_string(),
+            value: next_step_label(next_step(Step::Shared, draft)).to_string(),
+            kind: ItemKind::Action,
+        },
+        action_item(FieldKey::Cancel, "Cancel"),
+    ]
+}
+
+fn repo_items(draft: &WizardDraft) -> Vec<StepItem> {
+    vec![
+        text_item(FieldKey::Project, "Project slug", &draft.project),
+        choice_item(
+            FieldKey::ApplyRepoSetup,
+            "Apply repo-local setup",
+            draft.apply_repo_setup.label(),
+        ),
+        choice_item(
+            FieldKey::AutomationEnabled,
+            "Automation enabled",
+            draft.automation_enabled.label(),
+        ),
+        choice_item(
+            FieldKey::AutomationMode,
+            "Automation mode",
+            automation_mode_label(&draft.automation_mode),
+        ),
+        text_item(
+            FieldKey::AutomationPollInterval,
+            "Poll interval",
+            &draft.automation_poll_interval,
+        ),
+        text_item(
+            FieldKey::AutomationIdleThreshold,
+            "Idle threshold",
+            &draft.automation_idle_threshold,
+        ),
+        text_item(
+            FieldKey::AutomationMinChangedFiles,
+            "Min changed files",
+            &draft.automation_min_changed_files,
+        ),
+        choice_item(
+            FieldKey::AutomationRequirePassingTest,
+            "Require passing test",
+            draft.automation_require_passing_test.label(),
+        ),
+        text_item(
+            FieldKey::AutomationIgnoredPaths,
+            "Ignored paths",
+            &draft.automation_ignored_paths,
+        ),
+        action_item(FieldKey::Back, "Back"),
+        StepItem {
+            key: FieldKey::Next,
+            label: "Next".to_string(),
+            value: next_step_label(next_step(Step::Repo, draft)).to_string(),
+            kind: ItemKind::Action,
+        },
+        action_item(FieldKey::Cancel, "Cancel"),
+    ]
+}
+
+fn service_items(draft: &WizardDraft) -> Vec<StepItem> {
+    let mut items = Vec::new();
+    if draft.repo_available() {
+        items.push(choice_item(
+            FieldKey::EnableWatcher,
+            "Enable watcher user service",
+            draft.enable_watcher_service.label(),
+        ));
+    }
+    if draft.includes_global() && packaged_service_available() {
+        items.push(choice_item(
+            FieldKey::EnableBackendService,
+            "Enable backend system service",
+            draft.enable_backend_service.label(),
+        ));
+    }
+    items.push(choice_item(
+        FieldKey::ScanChoice,
+        "Initial scan",
+        draft.scan_choice.label(),
+    ));
+    items.push(choice_item(
+        FieldKey::RunDoctor,
+        "Run doctor after setup",
+        draft.run_doctor.label(),
+    ));
+    items.push(action_item(FieldKey::Back, "Back"));
+    items.push(action_item(FieldKey::Next, "Review"));
+    items.push(action_item(FieldKey::Cancel, "Cancel"));
+    items
+}
+
+fn review_items() -> Vec<StepItem> {
+    vec![
+        action_item(FieldKey::Back, "Back"),
+        action_item(FieldKey::Apply, "Apply"),
+        action_item(FieldKey::Cancel, "Cancel"),
+    ]
+}
+
+fn result_items() -> Vec<StepItem> {
+    vec![action_item(FieldKey::Finish, "Finish")]
+}
+
 fn draw(frame: &mut ratatui::Frame<'_>, app: &WizardApp) {
     let area = frame.area();
-    let chunks = Layout::default()
+    let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
@@ -687,36 +760,35 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &WizardApp) {
 
     let title = Paragraph::new(vec![
         Line::from(Span::styled(
-            "Memory Layer Wizard",
+            wizard_title(app.step),
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            "Repo-local setup is the default. Use the toggle below only if you also want to edit shared/global config.",
+            step_status(app.step, &app.draft),
             Style::default().fg(Color::Gray),
         )),
     ])
-    .block(Block::default().borders(Borders::ALL).title("Setup"));
-    frame.render_widget(title, chunks[0]);
+    .block(Block::default().borders(Borders::ALL).title("Wizard"));
+    frame.render_widget(title, sections[0]);
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
-        .split(chunks[1]);
+        .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
+        .split(sections[1]);
 
-    draw_form(frame, body[0], app);
-    draw_summary(frame, body[1], app);
+    draw_items(frame, body[0], app);
+    draw_context(frame, body[1], app);
 
-    let footer = footer_text(app);
-    let footer = Paragraph::new(footer)
+    let footer = Paragraph::new(footer_lines(app))
         .wrap(Wrap { trim: false })
         .block(Block::default().borders(Borders::ALL).title("Help"));
-    frame.render_widget(footer, chunks[2]);
+    frame.render_widget(footer, sections[2]);
 }
 
-fn draw_form(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
-    let fields = app.fields();
+fn draw_items(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
+    let items = app.current_items();
     let inner_height = area.height.saturating_sub(2) as usize;
     let scroll = if app.selected >= inner_height {
         app.selected + 1 - inner_height
@@ -724,18 +796,19 @@ fn draw_form(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
         0
     };
 
-    let lines = fields
+    let lines = items
         .iter()
         .enumerate()
         .skip(scroll)
         .take(inner_height)
-        .map(|(index, field)| {
-            let selected = index == app.selected;
+        .map(|(index, item)| {
+            let selected = index == app.selected && app.step != Step::Result;
             let marker = if selected { ">" } else { " " };
-            let base_style = match field.kind {
-                FieldKind::Action => Style::default().fg(Color::Yellow),
-                FieldKind::Toggle => Style::default().fg(Color::Green),
-                FieldKind::Text => Style::default().fg(Color::White),
+            let base_style = match item.kind {
+                ItemKind::Action => Style::default().fg(Color::Yellow),
+                ItemKind::Choice => Style::default().fg(Color::Green),
+                ItemKind::Text => Style::default().fg(Color::White),
+                ItemKind::Static => Style::default().fg(Color::DarkGray),
             };
             let style = if selected {
                 base_style
@@ -745,129 +818,188 @@ fn draw_form(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
             } else {
                 base_style
             };
-            let content = format!("{marker} {:<28} {}", field.label, field.value);
+            let content = format!("{marker} {:<28} {}", item.label, item.value);
             Line::from(Span::styled(content, style))
         })
         .collect::<Vec<_>>();
 
-    let form = Paragraph::new(lines)
+    let title = if app.step == Step::Result {
+        "Action"
+    } else {
+        "Current Step"
+    };
+    let widget = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
-        .block(Block::default().borders(Borders::ALL).title("Fields"));
-    frame.render_widget(form, area);
+        .block(Block::default().borders(Borders::ALL).title(title));
+    frame.render_widget(widget, area);
 }
 
-fn draw_summary(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
-    let mut lines = Vec::new();
-    lines.push(Line::from(Span::styled(
+fn draw_context(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(if app.step == Step::Result { "Result" } else { "Context" });
+
+    let lines = if app.step == Step::Result {
+        let result = app.result.as_ref().expect("result step requires result");
+        let mut lines = vec![Line::from(Span::styled(
+            &result.title,
+            Style::default()
+                .fg(if result.success { Color::Green } else { Color::Red })
+                .add_modifier(Modifier::BOLD),
+        ))];
+        lines.push(Line::from(""));
+        lines.extend(result.lines.iter().map(|line| Line::from(line.as_str())));
+        lines
+    } else {
+        review_lines(&app.draft, app.step, &app.status)
+    };
+
+    let widget = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .block(block);
+    frame.render_widget(widget, area);
+}
+
+fn footer_lines(app: &WizardApp) -> Vec<Line<'static>> {
+    if app.step == Step::Result {
+        return vec![Line::from(
+            "Enter or q closes the wizard. The result screen stays open until you exit explicitly.",
+        )];
+    }
+
+    let mut lines = vec![Line::from(
+        "Up/Down or j/k move. Enter edits or activates. Choice fields cycle through menu options.",
+    )];
+    match &app.input_mode {
+        InputMode::Normal => lines.push(Line::from(
+            "Back and Next move between steps. Apply is only available from Review.",
+        )),
+        InputMode::Editing { field, .. } => lines.push(Line::from(format!(
+            "Editing {}. Type, Enter to save, Esc to cancel.",
+            field_label(*field)
+        ))),
+    }
+    lines
+}
+
+fn review_lines(draft: &WizardDraft, step: Step, status: &str) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from(Span::styled(
         "Planned changes",
         Style::default()
             .fg(Color::LightCyan)
             .add_modifier(Modifier::BOLD),
-    )));
+    ))];
     lines.push(Line::from(""));
 
-    if let Some(repo_root) = &app.state.repo_root {
-        lines.push(Line::from(format!("Repo root: {}", repo_root.display())));
-        lines.push(Line::from(format!("Project slug: {}", app.state.project)));
-        lines.push(Line::from(format!(
-            "Repo-local files: {}",
-            if app.state.initialize_repo {
-                "create/update .mem and .agents/skills"
+    match step {
+        Step::Welcome => {
+            lines.push(Line::from(format!(
+                "Shared/global setup this run: {}",
+                draft.include_global.label()
+            )));
+            if draft.repo_available() {
+                lines.push(Line::from("Next: shared config or repo-local config."));
             } else {
-                "leave current repo files unchanged"
+                lines.push(Line::from("No repo detected. Repo-local setup will be skipped."));
             }
-        )));
-        lines.push(Line::from(format!(
-            "Automation: enabled={} mode={} min_changed_files={}",
-            yes_no(app.state.automation_enabled),
-            app.state.automation_mode,
-            app.state.automation_min_changed_files
-        )));
-        lines.push(Line::from(format!(
-            "Thresholds: poll={} idle={}",
-            app.state.automation_poll_interval, app.state.automation_idle_threshold
-        )));
-        lines.push(Line::from(format!(
-            "Watcher service: {}",
-            if app.state.enable_watcher_service {
-                "enable user service"
+        }
+        Step::Shared | Step::Review => {
+            if draft.includes_global() {
+                lines.push(Line::from(format!(
+                    "Shared config file: {}",
+                    draft.global_config_path.display()
+                )));
+                lines.push(Line::from(format!(
+                    "Shared env file: {}",
+                    draft.shared_env_path.display()
+                )));
+                lines.push(Line::from(format!(
+                    "Database URL: {}",
+                    mask_database_url(&draft.database_url)
+                )));
+                lines.push(Line::from(format!(
+                    "Write API token: {}",
+                    secret_label(&draft.api_token)
+                )));
+                lines.push(Line::from(format!(
+                    "LLM model: {}",
+                    display_empty(&draft.llm_model)
+                )));
+                lines.push(Line::from(format!(
+                    "LLM API key env/value: {} / {}",
+                    draft.llm_api_key_env,
+                    secret_label(&draft.llm_api_key_value)
+                )));
             } else {
-                "skip"
+                lines.push(Line::from("Shared/global files will be left unchanged."));
             }
-        )));
-        lines.push(Line::from(format!(
-            "Initial scan: {}",
-            if app.state.run_scan {
-                if app.state.scan_dry_run {
-                    "run dry-run after setup"
-                } else {
-                    "run write mode after setup"
-                }
-            } else {
-                "skip"
-            }
-        )));
-        lines.push(Line::from(format!(
-            "Post-setup doctor: {}",
-            if app.state.run_doctor {
-                "run after apply"
-            } else {
-                "skip"
-            }
-        )));
-    } else {
-        lines.push(Line::from("No repository detected."));
+        }
+        _ => {}
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Shared/global config",
-        Style::default()
-            .fg(Color::LightCyan)
-            .add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(format!(
-        "Mode: {}",
-        if app.state.configure_global {
-            "configure shared files"
-        } else {
-            "leave shared files unchanged"
+    if matches!(step, Step::Repo | Step::Services | Step::Review) && draft.repo_available() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Repo-local setup",
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(format!("Project slug: {}", draft.project)));
+        lines.push(Line::from(format!(
+            "Apply repo-local setup: {}",
+            draft.apply_repo_setup.label()
+        )));
+        if draft.applies_repo_setup() {
+            lines.push(Line::from(format!(
+                "Automation enabled/mode: {} / {}",
+                draft.automation_enabled.label(),
+                automation_mode_label(&draft.automation_mode)
+            )));
+            lines.push(Line::from(format!(
+                "Thresholds: poll={} idle={} min_changed_files={}",
+                draft.automation_poll_interval,
+                draft.automation_idle_threshold,
+                draft.automation_min_changed_files
+            )));
+            lines.push(Line::from(format!(
+                "Require passing test: {}",
+                draft.automation_require_passing_test.label()
+            )));
+            lines.push(Line::from(format!(
+                "Ignored paths: {}",
+                draft.automation_ignored_paths
+            )));
         }
-    )));
-    lines.push(Line::from(format!(
-        "Global config: {}",
-        app.state.global_config_path.display()
-    )));
-    lines.push(Line::from(format!(
-        "Shared env file: {}",
-        app.state.shared_env_path.display()
-    )));
+    }
 
-    if app.state.configure_global {
+    if matches!(step, Step::Services | Step::Review) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Selected actions",
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        if draft.repo_available() {
+            lines.push(Line::from(format!(
+                "Watcher user service: {}",
+                draft.enable_watcher_service.label()
+            )));
+        }
+        if draft.includes_global() && packaged_service_available() {
+            lines.push(Line::from(format!(
+                "Backend system service: {}",
+                draft.enable_backend_service.label()
+            )));
+        }
         lines.push(Line::from(format!(
-            "Database URL: {}",
-            mask_database_url(&app.state.database_url)
+            "Initial scan: {}",
+            draft.scan_choice.label()
         )));
         lines.push(Line::from(format!(
-            "API token: {}",
-            secret_label(&app.state.api_token)
-        )));
-        lines.push(Line::from(format!(
-            "LLM model: {}",
-            display_empty(&app.state.llm_model)
-        )));
-        lines.push(Line::from(format!(
-            "LLM API key: {} via {}",
-            secret_label(&app.state.llm_api_key_value),
-            app.state.llm_api_key_env
-        )));
-        lines.push(Line::from(format!(
-            "Backend service: {}",
-            if app.state.enable_backend_service {
-                "enable/start memory-layer.service"
-            } else {
-                "skip"
-            }
+            "Run doctor after setup: {}",
+            draft.run_doctor.label()
         )));
     }
 
@@ -878,181 +1010,225 @@ fn draw_summary(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
             .fg(Color::LightCyan)
             .add_modifier(Modifier::BOLD),
     )));
-    lines.push(Line::from(app.status.clone()));
-    if app.state.run_scan && !app.state.configure_global {
-        lines.push(Line::from(
-            "Scan will rely on any existing shared config and running backend.",
-        ));
-    }
-
-    let summary = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .block(Block::default().borders(Borders::ALL).title("Review"));
-    frame.render_widget(summary, area);
-}
-
-fn footer_text(app: &WizardApp) -> Vec<Line<'static>> {
-    let mut lines = vec![Line::from(
-        "Up/Down or j/k move. Enter edits or activates. Space toggles. q cancels.",
-    )];
-    match &app.input_mode {
-        InputMode::Normal => lines.push(Line::from(
-            "Selected text fields open in-place editing. Apply runs the selected actions after terminal restore.",
-        )),
-        InputMode::Editing { field, .. } => lines.push(Line::from(format!(
-            "Editing {}. Type to change it, Enter saves, Esc cancels.",
-            field_label(*field)
-        ))),
-    }
+    lines.push(Line::from(status.to_string()));
     lines
 }
 
-fn bool_label(value: bool) -> String {
-    if value {
-        "[x]".to_string()
-    } else {
-        "[ ]".to_string()
+fn next_step(current: Step, draft: &WizardDraft) -> Step {
+    match current {
+        Step::Welcome => {
+            if draft.includes_global() {
+                Step::Shared
+            } else if draft.repo_available() {
+                Step::Repo
+            } else {
+                Step::Services
+            }
+        }
+        Step::Shared => {
+            if draft.repo_available() {
+                Step::Repo
+            } else {
+                Step::Services
+            }
+        }
+        Step::Repo => Step::Services,
+        Step::Services => Step::Review,
+        Step::Review => Step::Result,
+        Step::Result => Step::Result,
     }
 }
 
-fn secret_label(value: &str) -> String {
-    if value.trim().is_empty() {
-        "<unset>".to_string()
-    } else {
-        "<configured>".to_string()
+fn previous_step(current: Step, draft: &WizardDraft) -> Step {
+    match current {
+        Step::Welcome => Step::Welcome,
+        Step::Shared => Step::Welcome,
+        Step::Repo => {
+            if draft.includes_global() {
+                Step::Shared
+            } else {
+                Step::Welcome
+            }
+        }
+        Step::Services => {
+            if draft.repo_available() {
+                Step::Repo
+            } else if draft.includes_global() {
+                Step::Shared
+            } else {
+                Step::Welcome
+            }
+        }
+        Step::Review => Step::Services,
+        Step::Result => Step::Review,
     }
 }
 
-fn display_empty(value: &str) -> String {
-    if value.trim().is_empty() {
-        "<empty>".to_string()
-    } else {
-        value.to_string()
+fn step_status(step: Step, draft: &WizardDraft) -> &'static str {
+    match step {
+        Step::Welcome => "Step 1. Choose what this run should configure.",
+        Step::Shared => "Step 2. Configure the shared database and LLM settings.",
+        Step::Repo => "Step 3. Configure repo-local project and automation settings.",
+        Step::Services => {
+            if draft.repo_available() {
+                "Step 4. Choose optional actions and services."
+            } else {
+                "Step 3. Choose optional actions and services."
+            }
+        }
+        Step::Review => {
+            if draft.repo_available() {
+                "Step 5. Review everything before writing changes."
+            } else {
+                "Step 4. Review everything before writing changes."
+            }
+        }
+        Step::Result => "Setup finished. Review the result before exiting.",
     }
 }
 
-fn field_label(field: WizardField) -> &'static str {
-    match field {
-        WizardField::ConfigureGlobal => "Configure shared/global files",
-        WizardField::Project => "Project slug",
-        WizardField::InitializeRepo => "Apply repo-local setup",
-        WizardField::AutomationEnabled => "Automation enabled",
-        WizardField::AutomationMode => "Automation mode",
-        WizardField::AutomationPollInterval => "Poll interval",
-        WizardField::AutomationIdleThreshold => "Idle threshold",
-        WizardField::AutomationMinChangedFiles => "Min changed files",
-        WizardField::AutomationRequirePassingTest => "Require passing test",
-        WizardField::AutomationIgnoredPaths => "Ignored paths",
-        WizardField::EnableWatcher => "Enable watcher user service",
-        WizardField::RunScan => "Run initial project scan",
-        WizardField::ScanDryRun => "Scan dry-run only",
-        WizardField::RunDoctor => "Run doctor after setup",
-        WizardField::DatabaseUrl => "Database URL",
-        WizardField::ApiToken => "Write API token",
-        WizardField::LlmProvider => "LLM provider",
-        WizardField::LlmBaseUrl => "LLM base URL",
-        WizardField::LlmApiKeyEnv => "LLM API key env var",
-        WizardField::LlmModel => "LLM model",
-        WizardField::LlmApiKeyValue => "LLM API key value",
-        WizardField::EnableBackendService => "Enable backend system service",
-        WizardField::Apply => "Apply changes",
-        WizardField::Cancel => "Cancel",
+fn wizard_title(step: Step) -> &'static str {
+    match step {
+        Step::Welcome => "Memory Layer Wizard: Scope",
+        Step::Shared => "Memory Layer Wizard: Shared Config",
+        Step::Repo => "Memory Layer Wizard: Repo Config",
+        Step::Services => "Memory Layer Wizard: Services",
+        Step::Review => "Memory Layer Wizard: Review",
+        Step::Result => "Memory Layer Wizard: Result",
     }
 }
 
-async fn apply(state: WizardState) -> Result<()> {
-    let mut outputs = Vec::new();
+fn next_step_label(step: Step) -> &'static str {
+    match step {
+        Step::Shared => "Shared config",
+        Step::Repo => "Repo config",
+        Step::Services => "Services",
+        Step::Review => "Review",
+        Step::Result | Step::Welcome => "Next",
+    }
+}
 
-    if state.configure_global {
-        write_global_config(&state)?;
-        outputs.push(format!(
+async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
+    let mut lines = Vec::new();
+
+    if draft.includes_global() {
+        write_global_config(draft)?;
+        lines.push(format!(
             "Updated shared config at {}",
-            state.global_config_path.display()
+            draft.global_config_path.display()
         ));
-        if !state.llm_api_key_value.trim().is_empty() {
+        if !draft.llm_api_key_value.trim().is_empty() {
             write_shared_env_file(
-                &state.shared_env_path,
-                &state.llm_api_key_env,
-                &state.llm_api_key_value,
+                &draft.shared_env_path,
+                &draft.llm_api_key_env,
+                &draft.llm_api_key_value,
             )?;
-            outputs.push(format!(
+            lines.push(format!(
                 "Updated shared env file at {}",
-                state.shared_env_path.display()
+                draft.shared_env_path.display()
             ));
         }
     } else {
-        outputs.push("Left shared/global files unchanged.".to_string());
+        lines.push("Left shared/global files unchanged.".to_string());
     }
 
-    if let Some(repo_root) = &state.repo_root {
-        if state.initialize_repo {
-            apply_repo_setup(repo_root, &state)?;
-            outputs.push(format!(
-                "Applied repo-local Memory Layer setup for project `{}` at {}.",
-                state.project,
+    if let Some(repo_root) = &draft.repo_root {
+        if draft.applies_repo_setup() {
+            apply_repo_setup(repo_root, draft)?;
+            lines.push(format!(
+                "Updated repo-local Memory Layer config for project `{}` at {}.",
+                draft.project,
                 repo_root.display()
             ));
         }
-        if state.enable_watcher_service {
-            outputs.push(enable_watch_service(repo_root, &state.project)?);
+        if draft.enable_watcher_service.is_yes() {
+            lines.extend(split_lines(enable_watch_service(repo_root, &draft.project)?));
         }
     }
 
-    if state.configure_global && state.enable_backend_service {
+    if draft.includes_global()
+        && draft.enable_backend_service.is_yes()
+        && packaged_service_available()
+    {
         run_systemctl_system(["daemon-reload"])?;
         run_systemctl_system(["enable", "--now", "memory-layer.service"])?;
-        outputs.push("Enabled memory-layer.service".to_string());
+        lines.push("Enabled memory-layer.service".to_string());
     }
 
-    if state.run_scan {
+    if !matches!(draft.scan_choice, ScanChoice::Skip) {
         let config = AppConfig::load_from_path(None).context("reload config after wizard")?;
         let client = Client::builder()
             .timeout(config.service.request_timeout)
             .build()
             .context("build http client")?;
         let api = ApiClient::new(client, config);
-        let repo_root = state
+        let repo_root = draft
             .repo_root
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("scan requested without a repository"))?;
-        let report =
-            scan::run_scan(&api, repo_root, &state.project, None, state.scan_dry_run).await?;
-        print_scan_report(&report);
+        let report = scan::run_scan(
+            &api,
+            repo_root,
+            &draft.project,
+            None,
+            matches!(draft.scan_choice, ScanChoice::DryRun),
+        )
+        .await?;
+        lines.extend(format_scan_report(&report));
     }
 
-    println!("Wizard applied.\n");
-    for output in outputs {
-        println!("{output}\n");
-    }
-
-    if state.run_doctor {
-        if let Some(repo_root) = &state.repo_root {
-            let report = run_doctor(None, repo_root, &state.project, false).await?;
-            print_doctor_report(&report);
+    if draft.run_doctor.is_yes() {
+        if let Some(repo_root) = &draft.repo_root {
+            let report = run_doctor(None, repo_root, &draft.project, false).await?;
+            lines.extend(format_doctor_report(&report));
         }
     }
 
-    wait_for_exit()?;
-
-    Ok(())
+    Ok(WizardResult {
+        title: "Wizard applied".to_string(),
+        lines,
+        success: true,
+    })
 }
 
-fn apply_repo_setup(repo_root: &Path, state: &WizardState) -> Result<()> {
-    repair_repo_bootstrap(repo_root, &state.project)?;
+fn apply_repo_setup(repo_root: &Path, draft: &WizardDraft) -> Result<()> {
+    repair_repo_bootstrap(repo_root, &draft.project)?;
     fs::write(
         repo_root.join(".mem").join("config.toml"),
-        render_local_repo_config(repo_root, state),
+        render_local_repo_config(repo_root, draft),
     )
     .with_context(|| format!("write {}", repo_root.join(".mem/config.toml").display()))?;
     fs::write(
         repo_root.join(".mem").join("project.toml"),
-        render_project_metadata(&state.project, repo_root),
+        render_project_metadata(&draft.project, repo_root),
     )
     .with_context(|| format!("write {}", repo_root.join(".mem/project.toml").display()))
 }
 
-fn render_local_repo_config(repo_root: &Path, state: &WizardState) -> String {
-    let ignored_paths = state
+fn write_global_config(draft: &WizardDraft) -> Result<()> {
+    let parent = draft
+        .global_config_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("global config path has no parent"))?;
+    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    fs::write(&draft.global_config_path, render_global_config(draft))
+        .with_context(|| format!("write {}", draft.global_config_path.display()))
+}
+
+fn render_global_config(draft: &WizardDraft) -> String {
+    format!(
+        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/memory-layer.capnp.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"{}\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\nidle_threshold = \"5m\"\nmin_changed_files = 2\nrequire_passing_test = false\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
+        draft.api_token,
+        draft.database_url,
+        draft.llm_provider,
+        draft.llm_base_url,
+        draft.llm_api_key_env,
+        draft.llm_model,
+    )
+}
+
+fn render_local_repo_config(repo_root: &Path, draft: &WizardDraft) -> String {
+    let ignored_paths = draft
         .automation_ignored_paths
         .split(',')
         .map(|value| value.trim())
@@ -1062,37 +1238,113 @@ fn render_local_repo_config(repo_root: &Path, state: &WizardState) -> String {
         .join(", ");
     format!(
         "# Repo-local overrides for this project.\n# Put shared defaults and secrets in the global config.\n\n[automation]\nenabled = {}\nmode = \"{}\"\nrepo_root = \"{}\"\npoll_interval = \"{}\"\nidle_threshold = \"{}\"\nmin_changed_files = {}\nrequire_passing_test = {}\nignored_paths = [{}]\naudit_log_path = \"{}/.mem/runtime/automation.log\"\nstate_file_path = \"{}/.mem/runtime/automation-state.json\"\n",
-        state.automation_enabled,
-        state.automation_mode.trim(),
+        draft.automation_enabled.is_yes(),
+        automation_mode_label(&draft.automation_mode),
         repo_root.display(),
-        state.automation_poll_interval.trim(),
-        state.automation_idle_threshold.trim(),
-        state.automation_min_changed_files.trim(),
-        state.automation_require_passing_test,
+        draft.automation_poll_interval.trim(),
+        draft.automation_idle_threshold.trim(),
+        draft.automation_min_changed_files.trim(),
+        draft.automation_require_passing_test.is_yes(),
         ignored_paths,
         repo_root.display(),
         repo_root.display(),
     )
 }
 
-fn duration_to_string(duration: std::time::Duration) -> String {
-    let seconds = duration.as_secs();
-    if seconds % 60 == 0 && seconds >= 60 {
-        format!("{}m", seconds / 60)
-    } else {
-        format!("{seconds}s")
+fn format_scan_report(report: &ScanReport) -> Vec<String> {
+    let mut lines = vec![format!(
+        "Scan: {} files, {} commits, {} candidates, written={}",
+        report.files_considered, report.commits_considered, report.candidate_count, report.written
+    )];
+    lines.push(format!("Scan report: {}", report.report_path));
+    if let Some(capture_id) = &report.capture_id {
+        lines.push(format!("Capture: {capture_id}"));
+    }
+    if let Some(run_id) = &report.curate_run_id {
+        lines.push(format!("Curate run: {run_id}"));
+    }
+    lines
+}
+
+fn format_doctor_report(report: &DoctorReport) -> Vec<String> {
+    let mut lines = vec![format!(
+        "Doctor: project={} repo={}",
+        report.project, report.repo_root
+    )];
+    for check in &report.checks {
+        let icon = match check.status {
+            DoctorStatus::Ok => "OK",
+            DoctorStatus::Warn => "WARN",
+            DoctorStatus::Fail => "FAIL",
+            DoctorStatus::Skipped => "SKIP",
+        };
+        let mut line = format!("[{icon}] {} - {}", check.id, check.summary);
+        if let Some(details) = &check.details {
+            line.push_str(&format!(" | {details}"));
+        }
+        lines.push(line);
+    }
+    lines
+}
+
+fn split_lines(value: String) -> Vec<String> {
+    value.lines().map(ToOwned::to_owned).collect()
+}
+
+fn text_item(key: FieldKey, label: &str, value: &str) -> StepItem {
+    StepItem {
+        key,
+        label: label.to_string(),
+        value: value.to_string(),
+        kind: ItemKind::Text,
     }
 }
 
-fn automation_mode_to_string(mode: &mem_api::AutomationMode) -> String {
-    match mode {
-        mem_api::AutomationMode::Suggest => "suggest".to_string(),
-        mem_api::AutomationMode::Auto => "auto".to_string(),
+fn choice_item(key: FieldKey, label: &str, value: &str) -> StepItem {
+    StepItem {
+        key,
+        label: label.to_string(),
+        value: value.to_string(),
+        kind: ItemKind::Choice,
     }
 }
 
-fn yes_no(value: bool) -> &'static str {
-    if value { "yes" } else { "no" }
+fn action_item(key: FieldKey, label: &str) -> StepItem {
+    StepItem {
+        key,
+        label: label.to_string(),
+        value: String::new(),
+        kind: ItemKind::Action,
+    }
+}
+
+fn field_label(field: FieldKey) -> &'static str {
+    match field {
+        FieldKey::IncludeGlobal => "Include shared/global setup",
+        FieldKey::DatabaseUrl => "Database URL",
+        FieldKey::ApiToken => "Write API token",
+        FieldKey::LlmModel => "LLM model",
+        FieldKey::LlmApiKeyEnv => "LLM API key env var",
+        FieldKey::LlmApiKeyValue => "LLM API key value",
+        FieldKey::Project => "Project slug",
+        FieldKey::ApplyRepoSetup => "Apply repo-local setup",
+        FieldKey::AutomationEnabled => "Automation enabled",
+        FieldKey::AutomationMode => "Automation mode",
+        FieldKey::AutomationPollInterval => "Poll interval",
+        FieldKey::AutomationIdleThreshold => "Idle threshold",
+        FieldKey::AutomationMinChangedFiles => "Min changed files",
+        FieldKey::AutomationRequirePassingTest => "Require passing test",
+        FieldKey::AutomationIgnoredPaths => "Ignored paths",
+        FieldKey::EnableBackendService => "Enable backend system service",
+        FieldKey::EnableWatcher => "Enable watcher user service",
+        FieldKey::ScanChoice => "Initial scan",
+        FieldKey::RunDoctor => "Run doctor after setup",
+        FieldKey::Next => "Next",
+        FieldKey::Back => "Back",
+        FieldKey::Apply => "Apply",
+        FieldKey::Finish => "Finish",
+        FieldKey::Cancel => "Cancel",
+    }
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
@@ -1108,56 +1360,88 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> Res
     terminal.show_cursor().context("show cursor")
 }
 
-fn wait_for_exit() -> Result<()> {
-    if !io::stdin().is_terminal() {
-        return Ok(());
+fn read_project_slug(repo_root: &Path) -> Option<String> {
+    let project_path = repo_root.join(".mem").join("project.toml");
+    let content = fs::read_to_string(project_path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(value) = trimmed.strip_prefix("slug = ") {
+            return Some(value.trim_matches('"').to_string());
+        }
     }
-    println!("Press Enter to close the wizard.");
-    let mut buffer = String::new();
-    io::stdin()
-        .read_line(&mut buffer)
-        .context("read exit confirmation")?;
-    Ok(())
+    None
 }
 
-fn write_global_config(state: &WizardState) -> Result<()> {
-    let parent = state
-        .global_config_path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("global config path has no parent"))?;
-    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    fs::write(&state.global_config_path, render_global_config(state))
-        .with_context(|| format!("write {}", state.global_config_path.display()))
+fn default_include_global(repo_available: bool, prefer_global: bool) -> ToggleChoice {
+    if repo_available {
+        if prefer_global {
+            ToggleChoice::Yes
+        } else {
+            ToggleChoice::No
+        }
+    } else {
+        ToggleChoice::Yes
+    }
 }
 
-fn render_global_config(state: &WizardState) -> String {
-    format!(
-        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/memory-layer.capnp.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"{}\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\nidle_threshold = \"5m\"\nmin_changed_files = 2\nrequire_passing_test = false\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
-        state.api_token,
-        state.database_url,
-        state.llm_provider,
-        state.llm_base_url,
-        state.llm_api_key_env,
-        state.llm_model,
-    )
+fn toggle_from_bool(value: bool) -> ToggleChoice {
+    if value {
+        ToggleChoice::Yes
+    } else {
+        ToggleChoice::No
+    }
+}
+
+fn duration_to_string(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds % 60 == 0 && seconds >= 60 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn automation_mode_label(mode: &AutomationMode) -> &'static str {
+    match mode {
+        AutomationMode::Suggest => "suggest",
+        AutomationMode::Auto => "auto",
+    }
+}
+
+fn display_empty(value: &str) -> String {
+    if value.trim().is_empty() {
+        "<empty>".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn secret_label(value: &str) -> String {
+    if value.trim().is_empty() {
+        "<unset>".to_string()
+    } else {
+        "<configured>".to_string()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
 
-    use super::{default_configure_global, read_project_slug};
+    use mem_api::AutomationMode;
+    use super::{Step, WizardDraft, default_include_global, next_step, read_project_slug};
 
     #[test]
     fn wizard_defaults_to_local_scope_inside_repo() {
-        assert!(!default_configure_global(true, false));
-        assert!(default_configure_global(true, true));
+        assert_eq!(default_include_global(true, false), super::ToggleChoice::No);
+        assert_eq!(default_include_global(true, true), super::ToggleChoice::Yes);
     }
 
     #[test]
     fn wizard_defaults_to_global_outside_repo() {
-        assert!(default_configure_global(false, false));
-        assert!(default_configure_global(false, true));
+        assert_eq!(default_include_global(false, false), super::ToggleChoice::Yes);
+        assert_eq!(default_include_global(false, true), super::ToggleChoice::Yes);
     }
 
     #[test]
@@ -1177,5 +1461,37 @@ mod tests {
         assert_eq!(read_project_slug(&repo_root).as_deref(), Some("homelab"));
 
         let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn wizard_skips_shared_step_when_not_selected() {
+        let draft = WizardDraft {
+            global_config_path: PathBuf::from("/tmp/global.toml"),
+            shared_env_path: PathBuf::from("/tmp/global.env"),
+            repo_root: Some(PathBuf::from("/tmp/repo")),
+            project: "repo".to_string(),
+            include_global: super::ToggleChoice::No,
+            database_url: String::new(),
+            api_token: String::new(),
+            llm_provider: String::new(),
+            llm_base_url: String::new(),
+            llm_api_key_env: String::new(),
+            llm_model: String::new(),
+            llm_api_key_value: String::new(),
+            apply_repo_setup: super::ToggleChoice::Yes,
+            automation_enabled: super::ToggleChoice::No,
+            automation_mode: AutomationMode::Suggest,
+            automation_poll_interval: "10s".to_string(),
+            automation_idle_threshold: "5m".to_string(),
+            automation_min_changed_files: "2".to_string(),
+            automation_require_passing_test: super::ToggleChoice::No,
+            automation_ignored_paths: ".git/".to_string(),
+            enable_backend_service: super::ToggleChoice::No,
+            enable_watcher_service: super::ToggleChoice::No,
+            scan_choice: super::ScanChoice::Skip,
+            run_doctor: super::ToggleChoice::No,
+        };
+
+        assert_eq!(next_step(Step::Welcome, &draft), Step::Repo);
     }
 }

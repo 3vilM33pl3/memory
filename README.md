@@ -36,11 +36,13 @@ cargo run --bin mem-cli -- wizard
 ```
 
 The wizard guides you through:
-- repo-local bootstrap
-- optional shared/global config
-- optional backend service enablement
-- optional watcher setup
-- optional initial scan
+- setup scope
+- shared/global config such as database URL, API token, and LLM model
+- repo-local project and automation config
+- optional service/actions like watcher, scan, and doctor
+- final review and apply
+
+It is a step-by-step TUI. Fixed choices use menu-style cycling/toggles, and only free-form values like URLs, model names, tokens, and path lists use text input.
 
 When you run it inside a repository, it defaults to local repo files only. Shared/global config is opt-in inside the wizard, or you can preselect it with:
 
