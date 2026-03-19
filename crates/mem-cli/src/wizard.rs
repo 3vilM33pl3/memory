@@ -23,9 +23,9 @@ use reqwest::Client;
 
 use super::{
     ApiClient, default_global_config_path, enable_watch_service, mask_database_url,
-    packaged_service_available, print_doctor_report, print_scan_report, repair_repo_bootstrap,
-    run_doctor, run_systemctl_system, shared_env_lookup, shared_env_path_for_config,
-    write_shared_env_file,
+    packaged_service_available, print_doctor_report, print_scan_report, render_project_metadata,
+    repair_repo_bootstrap, run_doctor, run_systemctl_system, shared_env_lookup,
+    shared_env_path_for_config, write_shared_env_file,
 };
 use crate::scan;
 
@@ -149,9 +149,7 @@ impl WizardState {
                 .map(|config| config.llm.model.clone())
                 .unwrap_or_default(),
             llm_api_key_value,
-            initialize_repo: repo_root
-                .as_ref()
-                .is_some_and(|root| !root.join(".mem").exists()),
+            initialize_repo: repo_root.is_some(),
             enable_backend_service: false,
             enable_watcher_service: false,
             run_scan: false,
@@ -241,7 +239,7 @@ impl WizardApp {
     fn new(cwd: &Path, repo_root: &Path, project: Option<String>, prefer_global: bool) -> Self {
         let state = WizardState::new(cwd, repo_root, project, prefer_global);
         let status = if state.repo_available() {
-            "Repo-local setup is the default. Toggle shared/global config on if you need it."
+            "Repo-local setup is enabled by default. Toggle shared/global config on if you need it."
                 .to_string()
         } else {
             "No repository detected. The wizard will only configure shared/global files."
@@ -272,7 +270,7 @@ impl WizardApp {
             });
             fields.push(VisibleField {
                 key: WizardField::InitializeRepo,
-                label: "Initialize repo-local files",
+                label: "Apply repo-local setup",
                 value: bool_label(self.state.initialize_repo),
                 kind: FieldKind::Toggle,
             });
@@ -800,7 +798,7 @@ fn field_label(field: WizardField) -> &'static str {
     match field {
         WizardField::ConfigureGlobal => "Configure shared/global files",
         WizardField::Project => "Project slug",
-        WizardField::InitializeRepo => "Initialize repo-local files",
+        WizardField::InitializeRepo => "Apply repo-local setup",
         WizardField::EnableWatcher => "Enable watcher user service",
         WizardField::RunScan => "Run initial project scan",
         WizardField::ScanDryRun => "Scan dry-run only",
@@ -843,9 +841,9 @@ async fn apply(state: WizardState) -> Result<()> {
 
     if let Some(repo_root) = &state.repo_root {
         if state.initialize_repo {
-            repair_repo_bootstrap(repo_root, &state.project)?;
+            apply_repo_setup(repo_root, &state.project)?;
             outputs.push(format!(
-                "Ensured repo-local Memory Layer files exist for project `{}` at {}.",
+                "Applied repo-local Memory Layer setup for project `{}` at {}.",
                 state.project,
                 repo_root.display()
             ));
@@ -888,6 +886,15 @@ async fn apply(state: WizardState) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn apply_repo_setup(repo_root: &Path, project: &str) -> Result<()> {
+    repair_repo_bootstrap(repo_root, project)?;
+    fs::write(
+        repo_root.join(".mem").join("project.toml"),
+        render_project_metadata(project, repo_root),
+    )
+    .with_context(|| format!("write {}", repo_root.join(".mem/project.toml").display()))
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
