@@ -22,8 +22,8 @@ use ratatui::{
 use reqwest::Client;
 
 use super::{
-    ApiClient, default_global_config_path, enable_watch_service, initialize_repo,
-    mask_database_url, packaged_service_available, print_doctor_report, print_scan_report,
+    ApiClient, default_global_config_path, enable_watch_service, mask_database_url,
+    packaged_service_available, print_doctor_report, print_scan_report, repair_repo_bootstrap,
     run_doctor, run_systemctl_system, shared_env_lookup, shared_env_path_for_config,
     write_shared_env_file,
 };
@@ -843,7 +843,12 @@ async fn apply(state: WizardState) -> Result<()> {
 
     if let Some(repo_root) = &state.repo_root {
         if state.initialize_repo {
-            outputs.push(initialize_repo(repo_root, &state.project, false, false)?);
+            repair_repo_bootstrap(repo_root, &state.project)?;
+            outputs.push(format!(
+                "Ensured repo-local Memory Layer files exist for project `{}` at {}.",
+                state.project,
+                repo_root.display()
+            ));
         }
         if state.enable_watcher_service {
             outputs.push(enable_watch_service(repo_root, &state.project)?);
