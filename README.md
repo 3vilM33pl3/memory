@@ -36,16 +36,23 @@ cargo run --bin mem-cli -- wizard
 ```
 
 The wizard guides you through:
-- global config
-- shared env file
-- optional repo bootstrap
+- repo-local bootstrap
+- optional shared/global config
 - optional backend service enablement
 - optional watcher setup
 - optional initial scan
 
+When you run it inside a repository, it defaults to local repo files only. Shared/global config is opt-in inside the wizard, or you can preselect it with:
+
+```bash
+cargo run --bin mem-cli -- wizard --global
+```
+
 Manual setup is still available below.
 
 1. Create or edit the shared global config.
+
+This is optional if you only want to bootstrap the repository first. The wizard leaves shared files alone unless you opt into them.
 
 Local install path:
 

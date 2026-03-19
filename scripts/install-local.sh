@@ -52,9 +52,9 @@ Installed:
 Next steps:
 1. In each repo, run:
    $BIN_DIR/mem-cli wizard
-2. Manual shared config path if needed:
+2. Optional: if you want to configure shared/global defaults too, open:
    $CONFIG_DIR/memory-layer.toml
-3. Manual shared env file path if needed:
+3. Optional: shared env file path:
    $ENV_FILE
 4. Start the backend from the repo root:
    $BIN_DIR/mem-service
