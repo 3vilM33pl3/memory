@@ -77,6 +77,13 @@ struct WizardState {
     llm_model: String,
     llm_api_key_value: String,
     initialize_repo: bool,
+    automation_enabled: bool,
+    automation_mode: String,
+    automation_poll_interval: String,
+    automation_idle_threshold: String,
+    automation_min_changed_files: String,
+    automation_require_passing_test: bool,
+    automation_ignored_paths: String,
     enable_backend_service: bool,
     enable_watcher_service: bool,
     run_scan: bool,
@@ -152,6 +159,35 @@ impl WizardState {
                 .unwrap_or_default(),
             llm_api_key_value,
             initialize_repo: repo_root.is_some(),
+            automation_enabled: existing_config
+                .as_ref()
+                .map(|config| config.automation.enabled)
+                .unwrap_or(false),
+            automation_mode: existing_config
+                .as_ref()
+                .map(|config| automation_mode_to_string(&config.automation.mode))
+                .unwrap_or_else(|| "suggest".to_string()),
+            automation_poll_interval: existing_config
+                .as_ref()
+                .map(|config| duration_to_string(config.automation.poll_interval))
+                .unwrap_or_else(|| "10s".to_string()),
+            automation_idle_threshold: existing_config
+                .as_ref()
+                .map(|config| duration_to_string(config.automation.idle_threshold))
+                .unwrap_or_else(|| "5m".to_string()),
+            automation_min_changed_files: existing_config
+                .as_ref()
+                .map(|config| config.automation.min_changed_files.to_string())
+                .unwrap_or_else(|| "2".to_string()),
+            automation_require_passing_test: existing_config
+                .as_ref()
+                .map(|config| config.automation.require_passing_test)
+                .unwrap_or(false),
+            automation_ignored_paths: existing_config
+                .as_ref()
+                .map(|config| config.automation.ignored_paths.join(", "))
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| ".git/, target/, .mem/".to_string()),
             enable_backend_service: false,
             enable_watcher_service: false,
             run_scan: false,
@@ -186,6 +222,13 @@ enum WizardField {
     ConfigureGlobal,
     Project,
     InitializeRepo,
+    AutomationEnabled,
+    AutomationMode,
+    AutomationPollInterval,
+    AutomationIdleThreshold,
+    AutomationMinChangedFiles,
+    AutomationRequirePassingTest,
+    AutomationIgnoredPaths,
     EnableWatcher,
     RunScan,
     ScanDryRun,
@@ -277,6 +320,48 @@ impl WizardApp {
                 label: "Apply repo-local setup",
                 value: bool_label(self.state.initialize_repo),
                 kind: FieldKind::Toggle,
+            });
+            fields.push(VisibleField {
+                key: WizardField::AutomationEnabled,
+                label: "Automation enabled",
+                value: bool_label(self.state.automation_enabled),
+                kind: FieldKind::Toggle,
+            });
+            fields.push(VisibleField {
+                key: WizardField::AutomationMode,
+                label: "Automation mode",
+                value: self.state.automation_mode.clone(),
+                kind: FieldKind::Text,
+            });
+            fields.push(VisibleField {
+                key: WizardField::AutomationPollInterval,
+                label: "Poll interval",
+                value: self.state.automation_poll_interval.clone(),
+                kind: FieldKind::Text,
+            });
+            fields.push(VisibleField {
+                key: WizardField::AutomationIdleThreshold,
+                label: "Idle threshold",
+                value: self.state.automation_idle_threshold.clone(),
+                kind: FieldKind::Text,
+            });
+            fields.push(VisibleField {
+                key: WizardField::AutomationMinChangedFiles,
+                label: "Min changed files",
+                value: self.state.automation_min_changed_files.clone(),
+                kind: FieldKind::Text,
+            });
+            fields.push(VisibleField {
+                key: WizardField::AutomationRequirePassingTest,
+                label: "Require passing test",
+                value: bool_label(self.state.automation_require_passing_test),
+                kind: FieldKind::Toggle,
+            });
+            fields.push(VisibleField {
+                key: WizardField::AutomationIgnoredPaths,
+                label: "Ignored paths",
+                value: self.state.automation_ignored_paths.clone(),
+                kind: FieldKind::Text,
             });
             fields.push(VisibleField {
                 key: WizardField::EnableWatcher,
@@ -508,6 +593,13 @@ impl WizardApp {
             WizardField::InitializeRepo => {
                 self.state.initialize_repo = !self.state.initialize_repo;
             }
+            WizardField::AutomationEnabled => {
+                self.state.automation_enabled = !self.state.automation_enabled;
+            }
+            WizardField::AutomationRequirePassingTest => {
+                self.state.automation_require_passing_test =
+                    !self.state.automation_require_passing_test;
+            }
             WizardField::EnableWatcher => {
                 self.state.enable_watcher_service = !self.state.enable_watcher_service;
             }
@@ -533,6 +625,13 @@ impl WizardApp {
     fn raw_value(&self, field: WizardField) -> String {
         match field {
             WizardField::Project => self.state.project.clone(),
+            WizardField::AutomationMode => self.state.automation_mode.clone(),
+            WizardField::AutomationPollInterval => self.state.automation_poll_interval.clone(),
+            WizardField::AutomationIdleThreshold => self.state.automation_idle_threshold.clone(),
+            WizardField::AutomationMinChangedFiles => {
+                self.state.automation_min_changed_files.clone()
+            }
+            WizardField::AutomationIgnoredPaths => self.state.automation_ignored_paths.clone(),
             WizardField::DatabaseUrl => self.state.database_url.clone(),
             WizardField::ApiToken => self.state.api_token.clone(),
             WizardField::LlmProvider => self.state.llm_provider.clone(),
@@ -547,6 +646,13 @@ impl WizardApp {
     fn set_field_value(&mut self, field: WizardField, value: String) {
         match field {
             WizardField::Project => self.state.project = value,
+            WizardField::AutomationMode => self.state.automation_mode = value,
+            WizardField::AutomationPollInterval => self.state.automation_poll_interval = value,
+            WizardField::AutomationIdleThreshold => self.state.automation_idle_threshold = value,
+            WizardField::AutomationMinChangedFiles => {
+                self.state.automation_min_changed_files = value
+            }
+            WizardField::AutomationIgnoredPaths => self.state.automation_ignored_paths = value,
             WizardField::DatabaseUrl => self.state.database_url = value,
             WizardField::ApiToken => self.state.api_token = value,
             WizardField::LlmProvider => self.state.llm_provider = value,
@@ -670,6 +776,16 @@ fn draw_summary(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
             } else {
                 "leave current repo files unchanged"
             }
+        )));
+        lines.push(Line::from(format!(
+            "Automation: enabled={} mode={} min_changed_files={}",
+            yes_no(app.state.automation_enabled),
+            app.state.automation_mode,
+            app.state.automation_min_changed_files
+        )));
+        lines.push(Line::from(format!(
+            "Thresholds: poll={} idle={}",
+            app.state.automation_poll_interval, app.state.automation_idle_threshold
         )));
         lines.push(Line::from(format!(
             "Watcher service: {}",
@@ -820,6 +936,13 @@ fn field_label(field: WizardField) -> &'static str {
         WizardField::ConfigureGlobal => "Configure shared/global files",
         WizardField::Project => "Project slug",
         WizardField::InitializeRepo => "Apply repo-local setup",
+        WizardField::AutomationEnabled => "Automation enabled",
+        WizardField::AutomationMode => "Automation mode",
+        WizardField::AutomationPollInterval => "Poll interval",
+        WizardField::AutomationIdleThreshold => "Idle threshold",
+        WizardField::AutomationMinChangedFiles => "Min changed files",
+        WizardField::AutomationRequirePassingTest => "Require passing test",
+        WizardField::AutomationIgnoredPaths => "Ignored paths",
         WizardField::EnableWatcher => "Enable watcher user service",
         WizardField::RunScan => "Run initial project scan",
         WizardField::ScanDryRun => "Scan dry-run only",
@@ -863,7 +986,7 @@ async fn apply(state: WizardState) -> Result<()> {
 
     if let Some(repo_root) = &state.repo_root {
         if state.initialize_repo {
-            apply_repo_setup(repo_root, &state.project)?;
+            apply_repo_setup(repo_root, &state)?;
             outputs.push(format!(
                 "Applied repo-local Memory Layer setup for project `{}` at {}.",
                 state.project,
@@ -914,13 +1037,62 @@ async fn apply(state: WizardState) -> Result<()> {
     Ok(())
 }
 
-fn apply_repo_setup(repo_root: &Path, project: &str) -> Result<()> {
-    repair_repo_bootstrap(repo_root, project)?;
+fn apply_repo_setup(repo_root: &Path, state: &WizardState) -> Result<()> {
+    repair_repo_bootstrap(repo_root, &state.project)?;
+    fs::write(
+        repo_root.join(".mem").join("config.toml"),
+        render_local_repo_config(repo_root, state),
+    )
+    .with_context(|| format!("write {}", repo_root.join(".mem/config.toml").display()))?;
     fs::write(
         repo_root.join(".mem").join("project.toml"),
-        render_project_metadata(project, repo_root),
+        render_project_metadata(&state.project, repo_root),
     )
     .with_context(|| format!("write {}", repo_root.join(".mem/project.toml").display()))
+}
+
+fn render_local_repo_config(repo_root: &Path, state: &WizardState) -> String {
+    let ignored_paths = state
+        .automation_ignored_paths
+        .split(',')
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("\"{value}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "# Repo-local overrides for this project.\n# Put shared defaults and secrets in the global config.\n\n[automation]\nenabled = {}\nmode = \"{}\"\nrepo_root = \"{}\"\npoll_interval = \"{}\"\nidle_threshold = \"{}\"\nmin_changed_files = {}\nrequire_passing_test = {}\nignored_paths = [{}]\naudit_log_path = \"{}/.mem/runtime/automation.log\"\nstate_file_path = \"{}/.mem/runtime/automation-state.json\"\n",
+        state.automation_enabled,
+        state.automation_mode.trim(),
+        repo_root.display(),
+        state.automation_poll_interval.trim(),
+        state.automation_idle_threshold.trim(),
+        state.automation_min_changed_files.trim(),
+        state.automation_require_passing_test,
+        ignored_paths,
+        repo_root.display(),
+        repo_root.display(),
+    )
+}
+
+fn duration_to_string(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds % 60 == 0 && seconds >= 60 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+fn automation_mode_to_string(mode: &mem_api::AutomationMode) -> String {
+    match mode {
+        mem_api::AutomationMode::Suggest => "suggest".to_string(),
+        mem_api::AutomationMode::Auto => "auto".to_string(),
+    }
+}
+
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
