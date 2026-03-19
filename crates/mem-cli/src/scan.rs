@@ -95,9 +95,23 @@ fn ensure_llm_config(config: &AppConfig) -> Result<()> {
     }
     let api_key = llm_api_key(config).unwrap_or_default();
     if api_key.trim().is_empty() {
+        let repo_env = discover_repo_env_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<repo-local env file not found>".to_string());
+        let shared_env = discover_global_config_path()
+            .map(|path| {
+                path.parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join("memory-layer.env")
+                    .display()
+                    .to_string()
+            })
+            .unwrap_or_else(|| "<shared env file not found>".to_string());
         anyhow::bail!(
-            "missing LLM API key in {} or the shared env file",
-            config.llm.api_key_env
+            "missing LLM API key {}. Checked process env, {}, and {}",
+            config.llm.api_key_env,
+            repo_env,
+            shared_env
         );
     }
     Ok(())
@@ -146,7 +160,8 @@ struct ChatMessageResponse {
 #[derive(Debug, Serialize)]
 struct ChatCompletionRequest<'a> {
     model: &'a str,
-    temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
     max_completion_tokens: u32,
     response_format: serde_json::Value,
     messages: Vec<ChatMessage<'a>>,
@@ -329,7 +344,7 @@ async fn analyze_dossier(
         .ok_or_else(|| anyhow::anyhow!("read {}", config.llm.api_key_env))?;
     let request = ChatCompletionRequest {
         model: &config.llm.model,
-        temperature: config.llm.temperature,
+        temperature: Some(config.llm.temperature),
         max_completion_tokens: config.llm.max_output_tokens,
         response_format: serde_json::json!({ "type": "json_object" }),
         messages: vec![
@@ -362,22 +377,53 @@ async fn analyze_dossier(
         "{}/chat/completions",
         config.llm.base_url.trim_end_matches('/')
     );
+    let (status, body) = send_scan_request(client, &url, &api_key, &request).await?;
+    if !status.is_success() {
+        if request_rejects_temperature(&body) {
+            let retry_request = ChatCompletionRequest {
+                temperature: None,
+                ..request
+            };
+            let (retry_status, retry_body) =
+                send_scan_request(client, &url, &api_key, &retry_request).await?;
+            if !retry_status.is_success() {
+                anyhow::bail!("llm scan request failed: {retry_status} {retry_body}");
+            }
+            return parse_scan_response(&retry_body);
+        }
+        anyhow::bail!("llm scan request failed: {status} {body}");
+    }
+    parse_scan_response(&body)
+}
+
+async fn send_scan_request(
+    client: &Client,
+    url: &str,
+    api_key: &str,
+    request: &ChatCompletionRequest<'_>,
+) -> Result<(reqwest::StatusCode, String)> {
     let response = client
         .post(url)
         .header(header::AUTHORIZATION, format!("Bearer {api_key}"))
         .header(header::CONTENT_TYPE, "application/json")
-        .json(&request)
+        .json(request)
         .send()
         .await
         .context("send llm scan request")?;
     let status = response.status();
     let body = response.text().await.context("read llm scan response")?;
-    if !status.is_success() {
-        anyhow::bail!("llm scan request failed: {status} {body}");
-    }
+    Ok((status, body))
+}
 
+fn request_rejects_temperature(body: &str) -> bool {
+    body.contains("\"param\": \"temperature\"")
+        || body.contains("Unsupported value: 'temperature'")
+        || body.contains("Unsupported parameter: 'temperature'")
+}
+
+fn parse_scan_response(body: &str) -> Result<ScanLlmResponse> {
     let parsed: ChatCompletionResponse =
-        serde_json::from_str(&body).context("parse llm chat completion response")?;
+        serde_json::from_str(body).context("parse llm chat completion response")?;
     let content = parsed
         .choices
         .first()
