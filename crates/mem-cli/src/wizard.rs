@@ -87,10 +87,15 @@ impl WizardState {
         let global_config_path =
             discover_global_config_path().unwrap_or_else(default_global_config_path);
         let shared_env_path = shared_env_path_for_config(&global_config_path);
-        let existing_config = AppConfig::load_from_path(Some(global_config_path.clone())).ok();
         let repo_available = repo_root != cwd || repo_root.join(".git").exists();
         let repo_root = repo_available.then(|| repo_root.to_path_buf());
+        let existing_config = if repo_available {
+            AppConfig::load_from_path(None).ok()
+        } else {
+            AppConfig::load_from_path(Some(global_config_path.clone())).ok()
+        };
         let project = project
+            .or_else(|| repo_root.as_deref().and_then(read_project_slug))
             .or_else(|| {
                 repo_root
                     .as_ref()
@@ -157,6 +162,18 @@ impl WizardState {
     fn repo_available(&self) -> bool {
         self.repo_root.is_some()
     }
+}
+
+fn read_project_slug(repo_root: &Path) -> Option<String> {
+    let project_path = repo_root.join(".mem").join("project.toml");
+    let content = fs::read_to_string(project_path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(value) = trimmed.strip_prefix("slug = ") {
+            return Some(value.trim_matches('"').to_string());
+        }
+    }
+    None
 }
 
 fn default_configure_global(repo_available: bool, prefer_global: bool) -> bool {
@@ -905,7 +922,9 @@ fn render_global_config(state: &WizardState) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::default_configure_global;
+    use std::fs;
+
+    use super::{default_configure_global, read_project_slug};
 
     #[test]
     fn wizard_defaults_to_local_scope_inside_repo() {
@@ -917,5 +936,24 @@ mod tests {
     fn wizard_defaults_to_global_outside_repo() {
         assert!(default_configure_global(false, false));
         assert!(default_configure_global(false, true));
+    }
+
+    #[test]
+    fn wizard_reads_existing_project_slug() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "mem-wizard-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        fs::create_dir_all(repo_root.join(".mem")).unwrap();
+        fs::write(
+            repo_root.join(".mem/project.toml"),
+            "slug = \"homelab\"\nrepo_root = \"/tmp/homelab\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(read_project_slug(&repo_root).as_deref(), Some("homelab"));
+
+        let _ = fs::remove_dir_all(repo_root);
     }
 }
