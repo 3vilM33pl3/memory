@@ -808,8 +808,8 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &WizardApp) {
     frame.render_widget(title, sections[0]);
 
     let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
         .split(sections[1]);
 
     draw_items(frame, body[0], app);
