@@ -120,6 +120,57 @@ impl ScanChoice {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LlmModelChoice {
+    Gpt5,
+    Gpt5Mini,
+    Gpt4o,
+    Gpt4oMini,
+    Custom,
+}
+
+impl LlmModelChoice {
+    fn from_model(model: &str) -> Self {
+        match model.trim() {
+            "gpt-5" => Self::Gpt5,
+            "gpt-5-mini" => Self::Gpt5Mini,
+            "gpt-4o" => Self::Gpt4o,
+            "gpt-4o-mini" => Self::Gpt4oMini,
+            _ => Self::Custom,
+        }
+    }
+
+    fn cycle(&mut self) {
+        *self = match self {
+            Self::Gpt5 => Self::Gpt5Mini,
+            Self::Gpt5Mini => Self::Gpt4o,
+            Self::Gpt4o => Self::Gpt4oMini,
+            Self::Gpt4oMini => Self::Custom,
+            Self::Custom => Self::Gpt5,
+        };
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Gpt5 => "gpt-5",
+            Self::Gpt5Mini => "gpt-5-mini",
+            Self::Gpt4o => "gpt-4o",
+            Self::Gpt4oMini => "gpt-4o-mini",
+            Self::Custom => "Custom",
+        }
+    }
+
+    fn selected_model(self) -> Option<&'static str> {
+        match self {
+            Self::Gpt5 => Some("gpt-5"),
+            Self::Gpt5Mini => Some("gpt-5-mini"),
+            Self::Gpt4o => Some("gpt-4o"),
+            Self::Gpt4oMini => Some("gpt-4o-mini"),
+            Self::Custom => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct WizardDraft {
     global_config_path: PathBuf,
@@ -132,7 +183,8 @@ struct WizardDraft {
     llm_provider: String,
     llm_base_url: String,
     llm_api_key_env: String,
-    llm_model: String,
+    llm_model_choice: LlmModelChoice,
+    llm_custom_model: String,
     llm_api_key_value: String,
     local_database_url: String,
     local_llm_api_key_value: String,
@@ -201,6 +253,11 @@ impl WizardDraft {
             .and_then(|root| read_local_env_override(root, &llm_api_key_env))
             .unwrap_or_default();
 
+        let llm_model = global_config
+            .as_ref()
+            .map(|config| config.llm.model.clone())
+            .unwrap_or_default();
+
         Self {
             global_config_path,
             shared_env_path,
@@ -226,10 +283,8 @@ impl WizardDraft {
                 .map(|config| config.llm.base_url.clone())
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             llm_api_key_env,
-            llm_model: global_config
-                .as_ref()
-                .map(|config| config.llm.model.clone())
-                .unwrap_or_default(),
+            llm_model_choice: LlmModelChoice::from_model(&llm_model),
+            llm_custom_model: llm_model,
             llm_api_key_value,
             local_database_url,
             local_llm_api_key_value,
@@ -285,6 +340,12 @@ impl WizardDraft {
     fn applies_repo_setup(&self) -> bool {
         self.apply_repo_setup.is_yes() && self.repo_available()
     }
+
+    fn effective_llm_model(&self) -> &str {
+        self.llm_model_choice
+            .selected_model()
+            .unwrap_or(self.llm_custom_model.trim())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -292,7 +353,8 @@ enum FieldKey {
     IncludeGlobal,
     DatabaseUrl,
     ApiToken,
-    LlmModel,
+    LlmModelChoice,
+    LlmCustomModel,
     LlmApiKeyEnv,
     LlmApiKeyValue,
     Project,
@@ -568,6 +630,7 @@ impl WizardApp {
             FieldKey::EnableWatcher => self.draft.enable_watcher_service.toggle(),
             FieldKey::RunDoctor => self.draft.run_doctor.toggle(),
             FieldKey::ScanChoice => self.draft.scan_choice.cycle(),
+            FieldKey::LlmModelChoice => self.draft.llm_model_choice.cycle(),
             FieldKey::AutomationMode => {
                 self.draft.automation_mode = match self.draft.automation_mode {
                     AutomationMode::Suggest => AutomationMode::Auto,
@@ -582,7 +645,7 @@ impl WizardApp {
         match field {
             FieldKey::DatabaseUrl => self.draft.database_url.clone(),
             FieldKey::ApiToken => self.draft.api_token.clone(),
-            FieldKey::LlmModel => self.draft.llm_model.clone(),
+            FieldKey::LlmCustomModel => self.draft.llm_custom_model.clone(),
             FieldKey::LlmApiKeyEnv => self.draft.llm_api_key_env.clone(),
             FieldKey::LlmApiKeyValue => self.draft.llm_api_key_value.clone(),
             FieldKey::Project => self.draft.project.clone(),
@@ -602,7 +665,7 @@ impl WizardApp {
         match field {
             FieldKey::DatabaseUrl => self.draft.database_url = value,
             FieldKey::ApiToken => self.draft.api_token = value,
-            FieldKey::LlmModel => self.draft.llm_model = value,
+            FieldKey::LlmCustomModel => self.draft.llm_custom_model = value,
             FieldKey::LlmApiKeyEnv => self.draft.llm_api_key_env = value,
             FieldKey::LlmApiKeyValue => self.draft.llm_api_key_value = value,
             FieldKey::Project => self.draft.project = value,
@@ -648,10 +711,14 @@ fn welcome_items(draft: &WizardDraft) -> Vec<StepItem> {
 }
 
 fn shared_items(draft: &WizardDraft) -> Vec<StepItem> {
-    vec![
+    let mut items = vec![
         text_item(FieldKey::DatabaseUrl, "Database URL", &mask_database_url(&draft.database_url)),
         text_item(FieldKey::ApiToken, "Write API token", &secret_label(&draft.api_token)),
-        text_item(FieldKey::LlmModel, "LLM model", &display_empty(&draft.llm_model)),
+        choice_item(
+            FieldKey::LlmModelChoice,
+            "LLM model",
+            draft.llm_model_choice.label(),
+        ),
         text_item(
             FieldKey::LlmApiKeyEnv,
             "LLM API key env var",
@@ -662,15 +729,23 @@ fn shared_items(draft: &WizardDraft) -> Vec<StepItem> {
             "LLM API key value",
             &secret_label(&draft.llm_api_key_value),
         ),
-        action_item(FieldKey::Back, "Back"),
-        StepItem {
-            key: FieldKey::Next,
-            label: "Next".to_string(),
-            value: next_step_label(next_step(Step::Shared, draft)).to_string(),
-            kind: ItemKind::Action,
-        },
-        action_item(FieldKey::Cancel, "Cancel"),
-    ]
+    ];
+    if draft.llm_model_choice == LlmModelChoice::Custom {
+        items.push(text_item(
+            FieldKey::LlmCustomModel,
+            "Custom LLM model",
+            &display_empty(&draft.llm_custom_model),
+        ));
+    }
+    items.push(action_item(FieldKey::Back, "Back"));
+    items.push(StepItem {
+        key: FieldKey::Next,
+        label: "Next".to_string(),
+        value: next_step_label(next_step(Step::Shared, draft)).to_string(),
+        kind: ItemKind::Action,
+    });
+    items.push(action_item(FieldKey::Cancel, "Cancel"));
+    items
 }
 
 fn repo_items(draft: &WizardDraft) -> Vec<StepItem> {
@@ -957,7 +1032,7 @@ fn review_lines(draft: &WizardDraft, step: Step, status: &str) -> Vec<Line<'stat
                 )));
                 lines.push(Line::from(format!(
                     "LLM model: {}",
-                    display_empty(&draft.llm_model)
+                    display_empty(draft.effective_llm_model())
                 )));
                 lines.push(Line::from(format!(
                     "LLM API key env/value: {} / {}",
@@ -1278,7 +1353,7 @@ fn render_global_config(draft: &WizardDraft) -> String {
         draft.llm_provider,
         draft.llm_base_url,
         draft.llm_api_key_env,
-        draft.llm_model,
+        draft.effective_llm_model(),
     )
 }
 
@@ -1423,7 +1498,8 @@ fn field_label(field: FieldKey) -> &'static str {
         FieldKey::IncludeGlobal => "Include shared/global setup",
         FieldKey::DatabaseUrl => "Database URL",
         FieldKey::ApiToken => "Write API token",
-        FieldKey::LlmModel => "LLM model",
+        FieldKey::LlmModelChoice => "LLM model",
+        FieldKey::LlmCustomModel => "Custom LLM model",
         FieldKey::LlmApiKeyEnv => "LLM API key env var",
         FieldKey::LlmApiKeyValue => "LLM API key value",
         FieldKey::Project => "Project slug",
@@ -1619,7 +1695,8 @@ mod tests {
             llm_provider: String::new(),
             llm_base_url: String::new(),
             llm_api_key_env: String::new(),
-            llm_model: String::new(),
+            llm_model_choice: super::LlmModelChoice::Custom,
+            llm_custom_model: String::new(),
             llm_api_key_value: String::new(),
             local_database_url: String::new(),
             local_llm_api_key_value: String::new(),
