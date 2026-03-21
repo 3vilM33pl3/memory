@@ -587,10 +587,30 @@ impl AppConfig {
             }
         }
 
-        builder
+        let config = builder
             .add_source(Environment::with_prefix("MEMORY_LAYER").separator("__"))
-            .build()?
-            .try_deserialize()
+            .build()?;
+        let mut value: serde_json::Value = config.try_deserialize()?;
+        normalize_legacy_config_keys(&mut value);
+        serde_json::from_value(value).map_err(|error| ConfigError::Foreign(Box::new(error)))
+    }
+}
+
+fn normalize_legacy_config_keys(value: &mut serde_json::Value) {
+    let Some(root) = value.as_object_mut() else {
+        return;
+    };
+    let Some(automation) = root
+        .get_mut("automation")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+
+    if automation.contains_key("capture_idle_threshold") {
+        automation.remove("idle_threshold");
+    } else if let Some(legacy) = automation.remove("idle_threshold") {
+        automation.insert("capture_idle_threshold".to_string(), legacy);
     }
 }
 
@@ -1078,6 +1098,46 @@ mod tests {
         }
 
         assert_eq!(config.database.url, "postgresql://from-process-env");
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn legacy_and_new_capture_threshold_keys_can_be_merged() {
+        let _guard = env_lock().lock().unwrap();
+        let temp_dir = unique_temp_dir("mem-api-threshold-merge");
+        let config_home = temp_dir.join("config-home");
+        let repo_dir = temp_dir.join("repo");
+        let global_dir = config_home.join("memory-layer");
+        let mem_dir = repo_dir.join(".mem");
+        fs::create_dir_all(&global_dir).unwrap();
+        fs::create_dir_all(&mem_dir).unwrap();
+
+        fs::write(
+            global_dir.join("memory-layer.toml"),
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n\n[automation]\nidle_threshold = \"5m\"\n",
+        )
+        .unwrap();
+        fs::write(
+            mem_dir.join("config.toml"),
+            "[automation]\ncapture_idle_threshold = \"10m\"\n",
+        )
+        .unwrap();
+
+        let original_dir = env::current_dir().unwrap();
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", &config_home);
+        }
+        env::set_current_dir(&repo_dir).unwrap();
+        let config = AppConfig::load_from_path(None).unwrap();
+        env::set_current_dir(original_dir).unwrap();
+        unsafe {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        assert_eq!(
+            config.automation.capture_idle_threshold,
+            Duration::from_secs(600)
+        );
         let _ = fs::remove_dir_all(temp_dir);
     }
 
