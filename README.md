@@ -1,6 +1,6 @@
 # Memory Layer
 
-Memory Layer is a local knowledge base for software projects.
+Memory Layer is a local knowledge base built for coding agents such as Codex CLI and Claude Code.
 
 It lets you save useful facts about a codebase, search them later, and view them in a terminal UI. It is designed for both humans and coding agents, so project knowledge does not get lost in chat history, terminal scrollback, or old commits.
 
