@@ -38,7 +38,7 @@ cargo run --bin mem-cli -- wizard
 The wizard guides you through:
 - setup scope
 - shared/global config such as database URL, API token, and LLM model
-- repo-local project and automation config
+- repo-local project, automation, and optional local backend endpoint config
 - optional service/actions like watcher, scan, and doctor
 - final review and apply
 
@@ -101,7 +101,16 @@ It also installs the repo-local skill under:
 
 The generated repo-local config contains project-specific overrides. It can also override shared settings like `database.url`. Repo-local secret overrides such as an LLM API key live in `.mem/memory-layer.env`. `.mem/` is ignored by git.
 
-3. Optional: edit `.mem/config.toml` for repo-specific overrides such as automation paths or repo root.
+3. Optional: edit `.mem/config.toml` for repo-specific overrides such as automation paths, repo root, or repo-local service endpoints.
+
+If you want a parallel dev backend for just this repo while keeping the shared installed backend on the defaults, add repo-local service overrides such as:
+
+```toml
+[service]
+bind_addr = "127.0.0.1:4140"
+capnp_unix_socket = "/home/olivier/Projects/memory/.mem/runtime/memory-layer.capnp.sock"
+capnp_tcp_addr = "127.0.0.1:4141"
+```
 
 Global config example:
 
@@ -136,6 +145,8 @@ cargo run --bin mem-service
 ```
 
 When `mem-service` is started with an explicit config file path, it watches that file and restarts itself in place after the file changes. That lets you update values like `service.api_token`, automation settings, or the bind address without manually killing and relaunching the backend.
+
+For a repo-local dev backend that runs alongside the shared one, set repo-local `service.*` overrides first, then run the same command from the repo root. The merged config will pick up the local endpoints automatically.
 
 5. Optional: enable the per-repo watcher as a `systemd --user` service:
 
@@ -368,7 +379,11 @@ Transport defaults:
 
 The backend starts both listeners by default. Local clients prefer the Unix socket when it exists and fall back to the TCP listener otherwise.
 
-The `doctor` command checks the repo-local `.mem/` bootstrap, merged config validity, backend reachability, LLM config needed for `scan`, and automation/runtime state. By default it reports issues and suggests exact fixes. With `--fix`, it only applies safe local repairs such as creating missing `.mem/` files or adding `/.mem` to `.gitignore`.
+Recommended multi-instance setup on one machine:
+- shared installed backend: `127.0.0.1:4040`, `127.0.0.1:4041`, `/tmp/memory-layer.capnp.sock`
+- repo-local dev backend: `127.0.0.1:4140`, `127.0.0.1:4141`, `.mem/runtime/memory-layer.capnp.sock`
+
+The `doctor` command checks the repo-local `.mem/` bootstrap, merged config validity, effective service endpoints, backend reachability, LLM config needed for `scan`, and automation/runtime state. By default it reports issues and suggests exact fixes. With `--fix`, it only applies safe local repairs such as creating missing `.mem/` files or adding `/.mem` to `.gitignore`.
 
 When `[automation].enabled = true`, `memory-watch` observes repo activity and can either:
 - `suggest` memory writes by logging candidate work without persisting

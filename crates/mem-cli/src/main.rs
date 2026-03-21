@@ -4,9 +4,12 @@ mod wizard;
 
 use std::{
     env, fs,
+    net::{SocketAddr, TcpStream},
     os::unix::fs::PermissionsExt,
+    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
@@ -631,6 +634,7 @@ async fn run_doctor(
     let mem_dir = repo_root.join(".mem");
     let project_path = mem_dir.join("project.toml");
     let root_gitignore_path = repo_root.join(".gitignore");
+    let local_service_overrides = read_local_service_overrides(repo_root);
 
     let mut init_fix_applied = false;
     if !mem_dir.exists() && fix {
@@ -940,6 +944,24 @@ async fn run_doctor(
             false,
         ));
 
+        report.push(doctor_check(
+            "config.service_endpoints",
+            DoctorStatus::Ok,
+            if local_service_overrides.is_some() {
+                "Repo-local service endpoints are configured."
+            } else {
+                "Using shared/global service endpoints."
+            },
+            Some(format!(
+                "http={} capnp_tcp={} capnp_unix={}",
+                config.service.bind_addr,
+                config.service.capnp_tcp_addr,
+                config.service.capnp_unix_socket
+            )),
+            None,
+            false,
+        ));
+
         let runtime_dir = automation_runtime_dir(&config, repo_root);
         let runtime_fix_applied = if !runtime_dir.exists() && fix {
             fs::create_dir_all(&runtime_dir)
@@ -1038,6 +1060,49 @@ async fn run_doctor(
                         false,
                     )),
                 }
+
+                let (http_status, http_details) = tcp_endpoint_status(&config.service.bind_addr);
+                report.push(doctor_check(
+                    "backend.http_endpoint",
+                    if matches!(http_status, DoctorStatus::Fail) {
+                        DoctorStatus::Fail
+                    } else {
+                        DoctorStatus::Ok
+                    },
+                    "Configured HTTP endpoint is reachable.",
+                    Some(http_details),
+                    None,
+                    false,
+                ));
+
+                let (tcp_status, tcp_details) = tcp_endpoint_status(&config.service.capnp_tcp_addr);
+                report.push(doctor_check(
+                    "backend.capnp_tcp_endpoint",
+                    if matches!(tcp_status, DoctorStatus::Fail) {
+                        DoctorStatus::Fail
+                    } else {
+                        DoctorStatus::Ok
+                    },
+                    "Configured Cap'n Proto TCP endpoint has a listener.",
+                    Some(tcp_details),
+                    None,
+                    false,
+                ));
+
+                let (unix_status, unix_details) =
+                    unix_socket_status(&config.service.capnp_unix_socket);
+                report.push(doctor_check(
+                    "backend.capnp_unix_socket",
+                    if matches!(unix_status, DoctorStatus::Fail) {
+                        DoctorStatus::Fail
+                    } else {
+                        DoctorStatus::Ok
+                    },
+                    "Configured Cap'n Proto Unix socket path is active.",
+                    Some(unix_details),
+                    None,
+                    false,
+                ));
             }
             Err(error) => {
                 report.push(doctor_check(
@@ -1054,6 +1119,46 @@ async fn run_doctor(
                     "Skipped project overview because the backend is unavailable.",
                     None,
                     None,
+                    false,
+                ));
+
+                let (http_status, http_details) = tcp_endpoint_status(&config.service.bind_addr);
+                report.push(doctor_check(
+                    "backend.http_endpoint",
+                    http_status,
+                    "Configured HTTP endpoint is not serving Memory Layer health.",
+                    Some(http_details),
+                    Some(format!(
+                        "Start the intended backend for {} or change [service].bind_addr",
+                        project
+                    )),
+                    false,
+                ));
+
+                let (tcp_status, tcp_details) = tcp_endpoint_status(&config.service.capnp_tcp_addr);
+                report.push(doctor_check(
+                    "backend.capnp_tcp_endpoint",
+                    tcp_status,
+                    "Configured Cap'n Proto TCP endpoint is not confirmed healthy.",
+                    Some(tcp_details),
+                    Some(format!(
+                        "Start the intended backend for {} or change [service].capnp_tcp_addr",
+                        project
+                    )),
+                    false,
+                ));
+
+                let (unix_status, unix_details) =
+                    unix_socket_status(&config.service.capnp_unix_socket);
+                report.push(doctor_check(
+                    "backend.capnp_unix_socket",
+                    unix_status,
+                    "Configured Cap'n Proto Unix socket is not confirmed healthy.",
+                    Some(unix_details),
+                    Some(format!(
+                        "Start the intended backend for {} or change [service].capnp_unix_socket",
+                        project
+                    )),
                     false,
                 ));
             }
@@ -1245,6 +1350,100 @@ fn automation_runtime_dir(config: &AppConfig, repo_root: &Path) -> PathBuf {
             .unwrap_or_else(|| repo_root.join(".mem").join("runtime"))
     } else {
         repo_root.join(".mem").join("runtime")
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct LocalServiceOverrides {
+    bind_addr: String,
+    capnp_tcp_addr: String,
+    capnp_unix_socket: String,
+}
+
+impl LocalServiceOverrides {
+    fn is_enabled(&self) -> bool {
+        !self.bind_addr.trim().is_empty()
+            || !self.capnp_tcp_addr.trim().is_empty()
+            || !self.capnp_unix_socket.trim().is_empty()
+    }
+}
+
+fn default_local_service_overrides(repo_root: &Path) -> LocalServiceOverrides {
+    LocalServiceOverrides {
+        bind_addr: "127.0.0.1:4140".to_string(),
+        capnp_tcp_addr: "127.0.0.1:4141".to_string(),
+        capnp_unix_socket: repo_root
+            .join(".mem")
+            .join("runtime")
+            .join("memory-layer.capnp.sock")
+            .display()
+            .to_string(),
+    }
+}
+
+fn read_local_service_overrides(repo_root: &Path) -> Option<LocalServiceOverrides> {
+    let config_path = repo_root.join(".mem").join("config.toml");
+    let content = fs::read_to_string(config_path).ok()?;
+    let mut in_service = false;
+    let mut overrides = LocalServiceOverrides::default();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_service = trimmed == "[service]";
+            continue;
+        }
+        if !in_service {
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("bind_addr = ") {
+            overrides.bind_addr = value.trim_matches('"').to_string();
+        } else if let Some(value) = trimmed.strip_prefix("capnp_tcp_addr = ") {
+            overrides.capnp_tcp_addr = value.trim_matches('"').to_string();
+        } else if let Some(value) = trimmed.strip_prefix("capnp_unix_socket = ") {
+            overrides.capnp_unix_socket = value.trim_matches('"').to_string();
+        }
+    }
+
+    overrides.is_enabled().then_some(overrides)
+}
+
+fn tcp_endpoint_status(addr: &str) -> (DoctorStatus, String) {
+    match addr.parse::<SocketAddr>() {
+        Ok(socket_addr) => match TcpStream::connect_timeout(&socket_addr, Duration::from_millis(250))
+        {
+            Ok(_) => (
+                DoctorStatus::Warn,
+                format!("listener detected on {addr}"),
+            ),
+            Err(error) if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
+            ) =>
+            {
+                (DoctorStatus::Ok, format!("no listener detected on {addr}"))
+            }
+            Err(error) => (DoctorStatus::Warn, error.to_string()),
+        },
+        Err(error) => (DoctorStatus::Fail, format!("invalid socket address: {error}")),
+    }
+}
+
+fn unix_socket_status(path: &str) -> (DoctorStatus, String) {
+    let socket_path = Path::new(path);
+    if !socket_path.exists() {
+        return (DoctorStatus::Ok, "socket path is free".to_string());
+    }
+
+    match UnixStream::connect(socket_path) {
+        Ok(_) => (
+            DoctorStatus::Warn,
+            format!("listener detected on {}", socket_path.display()),
+        ),
+        Err(error) => (
+            DoctorStatus::Warn,
+            format!("path exists but is not accepting connections: {error}"),
+        ),
     }
 }
 
@@ -1627,6 +1826,13 @@ fn render_repo_config(repo_root: &Path) -> String {
 #   {}
 # Shared LLM settings for `memctl scan` should also live there under [llm].
 
+# Uncomment [service] to run a repo-local dev backend alongside the shared one.
+# Example dev endpoints:
+# [service]
+# bind_addr = "127.0.0.1:4140"
+# capnp_unix_socket = "{repo_root}/.mem/runtime/memory-layer.capnp.sock"
+# capnp_tcp_addr = "127.0.0.1:4141"
+
 [automation]
 enabled = false
 mode = "suggest"
@@ -1687,7 +1893,7 @@ fn render_init_summary(
         "Created"
     };
     format!(
-        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} only for repo-specific overrides\n3. Start the shared backend if it is not already running:\n   mem-service\n4. Optional: run a project scan:\n   mem-cli scan --project {}\n5. Optional: enable the per-repo watcher user service:\n   mem-cli watch enable --project {}\n6. Open the TUI:\n   mem-cli tui --project {}\n7. Use the repo-local skill from {}",
+        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} only for repo-specific overrides\n3. Start the shared backend if it is not already running:\n   mem-service\n4. Optional: configure repo-local [service] overrides if you want a parallel dev backend for this repo\n5. Optional: run a project scan:\n   mem-cli scan --project {}\n6. Optional: enable the per-repo watcher user service:\n   mem-cli watch enable --project {}\n7. Open the TUI:\n   mem-cli tui --project {}\n8. Use the repo-local skill from {}",
         repo_root.display(),
         config_path.display(),
         project_path.display(),

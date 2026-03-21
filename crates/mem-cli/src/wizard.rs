@@ -22,8 +22,9 @@ use ratatui::{
 use reqwest::Client;
 
 use super::{
-    ApiClient, DoctorReport, DoctorStatus, default_global_config_path, enable_watch_service,
-    mask_database_url, packaged_service_available, render_project_metadata,
+    ApiClient, DoctorReport, DoctorStatus, default_global_config_path,
+    default_local_service_overrides, enable_watch_service, mask_database_url,
+    packaged_service_available, read_local_service_overrides, render_project_metadata,
     repair_repo_bootstrap, run_doctor, run_systemctl_system, shared_env_lookup,
     shared_env_path_for_config, write_shared_env_file,
 };
@@ -171,6 +172,28 @@ impl LlmModelChoice {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LocalServiceMode {
+    InheritShared,
+    ParallelDev,
+}
+
+impl LocalServiceMode {
+    fn cycle(&mut self) {
+        *self = match self {
+            Self::InheritShared => Self::ParallelDev,
+            Self::ParallelDev => Self::InheritShared,
+        };
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::InheritShared => "inherit shared",
+            Self::ParallelDev => "parallel dev",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct WizardDraft {
     global_config_path: PathBuf,
@@ -188,6 +211,10 @@ struct WizardDraft {
     llm_api_key_value: String,
     local_database_url: String,
     local_llm_api_key_value: String,
+    local_service_mode: LocalServiceMode,
+    local_bind_addr: String,
+    local_capnp_tcp_addr: String,
+    local_capnp_unix_socket: String,
     apply_repo_setup: ToggleChoice,
     automation_enabled: ToggleChoice,
     automation_mode: AutomationMode,
@@ -252,6 +279,10 @@ impl WizardDraft {
             .as_deref()
             .and_then(|root| read_local_env_override(root, &llm_api_key_env))
             .unwrap_or_default();
+        let local_service_overrides = repo_root
+            .as_deref()
+            .and_then(read_local_service_overrides)
+            .or_else(|| repo_root.as_deref().map(default_local_service_overrides));
 
         let llm_model = global_config
             .as_ref()
@@ -288,6 +319,27 @@ impl WizardDraft {
             llm_api_key_value,
             local_database_url,
             local_llm_api_key_value,
+            local_service_mode: if repo_root
+                .as_deref()
+                .and_then(read_local_service_overrides)
+                .is_some()
+            {
+                LocalServiceMode::ParallelDev
+            } else {
+                LocalServiceMode::InheritShared
+            },
+            local_bind_addr: local_service_overrides
+                .as_ref()
+                .map(|overrides| overrides.bind_addr.clone())
+                .unwrap_or_default(),
+            local_capnp_tcp_addr: local_service_overrides
+                .as_ref()
+                .map(|overrides| overrides.capnp_tcp_addr.clone())
+                .unwrap_or_default(),
+            local_capnp_unix_socket: local_service_overrides
+                .as_ref()
+                .map(|overrides| overrides.capnp_unix_socket.clone())
+                .unwrap_or_default(),
             apply_repo_setup: if repo_root.is_some() {
                 ToggleChoice::Yes
             } else {
@@ -341,6 +393,10 @@ impl WizardDraft {
         self.apply_repo_setup.is_yes() && self.repo_available()
     }
 
+    fn uses_local_service_overrides(&self) -> bool {
+        self.local_service_mode == LocalServiceMode::ParallelDev
+    }
+
     fn effective_llm_model(&self) -> &str {
         self.llm_model_choice
             .selected_model()
@@ -360,6 +416,10 @@ enum FieldKey {
     Project,
     LocalDatabaseUrl,
     LocalLlmApiKeyValue,
+    LocalServiceMode,
+    LocalBindAddr,
+    LocalCapnpTcpAddr,
+    LocalCapnpUnixSocket,
     ApplyRepoSetup,
     AutomationEnabled,
     AutomationMode,
@@ -622,6 +682,21 @@ impl WizardApp {
         match field {
             FieldKey::IncludeGlobal => self.draft.include_global.toggle(),
             FieldKey::ApplyRepoSetup => self.draft.apply_repo_setup.toggle(),
+            FieldKey::LocalServiceMode => {
+                self.draft.local_service_mode.cycle();
+                if self.draft.uses_local_service_overrides()
+                    && self.draft.local_bind_addr.trim().is_empty()
+                    && self.draft.local_capnp_tcp_addr.trim().is_empty()
+                    && self.draft.local_capnp_unix_socket.trim().is_empty()
+                {
+                    if let Some(repo_root) = self.draft.repo_root.as_deref() {
+                        let defaults = default_local_service_overrides(repo_root);
+                        self.draft.local_bind_addr = defaults.bind_addr;
+                        self.draft.local_capnp_tcp_addr = defaults.capnp_tcp_addr;
+                        self.draft.local_capnp_unix_socket = defaults.capnp_unix_socket;
+                    }
+                }
+            }
             FieldKey::AutomationEnabled => self.draft.automation_enabled.toggle(),
             FieldKey::AutomationRequirePassingTest => {
                 self.draft.automation_require_passing_test.toggle()
@@ -651,6 +726,9 @@ impl WizardApp {
             FieldKey::Project => self.draft.project.clone(),
             FieldKey::LocalDatabaseUrl => self.draft.local_database_url.clone(),
             FieldKey::LocalLlmApiKeyValue => self.draft.local_llm_api_key_value.clone(),
+            FieldKey::LocalBindAddr => self.draft.local_bind_addr.clone(),
+            FieldKey::LocalCapnpTcpAddr => self.draft.local_capnp_tcp_addr.clone(),
+            FieldKey::LocalCapnpUnixSocket => self.draft.local_capnp_unix_socket.clone(),
             FieldKey::AutomationPollInterval => self.draft.automation_poll_interval.clone(),
             FieldKey::AutomationIdleThreshold => self.draft.automation_idle_threshold.clone(),
             FieldKey::AutomationMinChangedFiles => {
@@ -671,6 +749,9 @@ impl WizardApp {
             FieldKey::Project => self.draft.project = value,
             FieldKey::LocalDatabaseUrl => self.draft.local_database_url = value,
             FieldKey::LocalLlmApiKeyValue => self.draft.local_llm_api_key_value = value,
+            FieldKey::LocalBindAddr => self.draft.local_bind_addr = value,
+            FieldKey::LocalCapnpTcpAddr => self.draft.local_capnp_tcp_addr = value,
+            FieldKey::LocalCapnpUnixSocket => self.draft.local_capnp_unix_socket = value,
             FieldKey::AutomationPollInterval => self.draft.automation_poll_interval = value,
             FieldKey::AutomationIdleThreshold => self.draft.automation_idle_threshold = value,
             FieldKey::AutomationMinChangedFiles => self.draft.automation_min_changed_files = value,
@@ -749,7 +830,7 @@ fn shared_items(draft: &WizardDraft) -> Vec<StepItem> {
 }
 
 fn repo_items(draft: &WizardDraft) -> Vec<StepItem> {
-    vec![
+    let mut items = vec![
         text_item(FieldKey::Project, "Project slug", &draft.project),
         choice_item(
             FieldKey::ApplyRepoSetup,
@@ -765,6 +846,11 @@ fn repo_items(draft: &WizardDraft) -> Vec<StepItem> {
             FieldKey::LocalLlmApiKeyValue,
             "Local LLM API key",
             &secret_override_label(&draft.local_llm_api_key_value),
+        ),
+        choice_item(
+            FieldKey::LocalServiceMode,
+            "Local backend endpoints",
+            draft.local_service_mode.label(),
         ),
         choice_item(
             FieldKey::AutomationEnabled,
@@ -801,15 +887,33 @@ fn repo_items(draft: &WizardDraft) -> Vec<StepItem> {
             "Ignored paths",
             &draft.automation_ignored_paths,
         ),
-        action_item(FieldKey::Back, "Back"),
-        StepItem {
-            key: FieldKey::Next,
-            label: "Next".to_string(),
-            value: next_step_label(next_step(Step::Repo, draft)).to_string(),
-            kind: ItemKind::Action,
-        },
-        action_item(FieldKey::Cancel, "Cancel"),
-    ]
+    ];
+    if draft.uses_local_service_overrides() {
+        items.push(text_item(
+            FieldKey::LocalBindAddr,
+            "Local HTTP bind",
+            &draft.local_bind_addr,
+        ));
+        items.push(text_item(
+            FieldKey::LocalCapnpTcpAddr,
+            "Local Cap'n Proto TCP",
+            &draft.local_capnp_tcp_addr,
+        ));
+        items.push(text_item(
+            FieldKey::LocalCapnpUnixSocket,
+            "Local Unix socket",
+            &draft.local_capnp_unix_socket,
+        ));
+    }
+    items.push(action_item(FieldKey::Back, "Back"));
+    items.push(StepItem {
+        key: FieldKey::Next,
+        label: "Next".to_string(),
+        value: next_step_label(next_step(Step::Repo, draft)).to_string(),
+        kind: ItemKind::Action,
+    });
+    items.push(action_item(FieldKey::Cancel, "Cancel"));
+    items
 }
 
 fn service_items(draft: &WizardDraft) -> Vec<StepItem> {
@@ -1068,6 +1172,18 @@ fn review_lines(draft: &WizardDraft, step: Step, status: &str) -> Vec<Line<'stat
                 "Local LLM API key: {}",
                 secret_override_label(&draft.local_llm_api_key_value)
             )));
+            lines.push(Line::from(format!(
+                "Local backend endpoints: {}",
+                draft.local_service_mode.label()
+            )));
+            if draft.uses_local_service_overrides() {
+                lines.push(Line::from(format!(
+                    "Service endpoints: http={} capnp_tcp={} capnp_unix={}",
+                    draft.local_bind_addr,
+                    draft.local_capnp_tcp_addr,
+                    draft.local_capnp_unix_socket
+                )));
+            }
             lines.push(Line::from(format!(
                 "Automation enabled/mode: {} / {}",
                 draft.automation_enabled.label(),
@@ -1375,6 +1491,14 @@ fn render_local_repo_config(repo_root: &Path, draft: &WizardDraft) -> String {
             draft.local_database_url.trim()
         ));
     }
+    if draft.uses_local_service_overrides() {
+        content.push_str(&format!(
+            "[service]\nbind_addr = \"{}\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"{}\"\n\n",
+            draft.local_bind_addr.trim(),
+            draft.local_capnp_unix_socket.trim(),
+            draft.local_capnp_tcp_addr.trim(),
+        ));
+    }
     content.push_str(&format!(
         "[automation]\nenabled = {}\nmode = \"{}\"\nrepo_root = \"{}\"\npoll_interval = \"{}\"\nidle_threshold = \"{}\"\nmin_changed_files = {}\nrequire_passing_test = {}\nignored_paths = [{}]\naudit_log_path = \"{}/.mem/runtime/automation.log\"\nstate_file_path = \"{}/.mem/runtime/automation-state.json\"\n",
         draft.automation_enabled.is_yes(),
@@ -1505,6 +1629,10 @@ fn field_label(field: FieldKey) -> &'static str {
         FieldKey::Project => "Project slug",
         FieldKey::LocalDatabaseUrl => "Local DB override",
         FieldKey::LocalLlmApiKeyValue => "Local LLM API key",
+        FieldKey::LocalServiceMode => "Local backend endpoints",
+        FieldKey::LocalBindAddr => "Local HTTP bind",
+        FieldKey::LocalCapnpTcpAddr => "Local Cap'n Proto TCP",
+        FieldKey::LocalCapnpUnixSocket => "Local Unix socket",
         FieldKey::ApplyRepoSetup => "Apply repo-local setup",
         FieldKey::AutomationEnabled => "Automation enabled",
         FieldKey::AutomationMode => "Automation mode",
@@ -1700,6 +1828,10 @@ mod tests {
             llm_api_key_value: String::new(),
             local_database_url: String::new(),
             local_llm_api_key_value: String::new(),
+            local_service_mode: super::LocalServiceMode::InheritShared,
+            local_bind_addr: "127.0.0.1:4140".to_string(),
+            local_capnp_tcp_addr: "127.0.0.1:4141".to_string(),
+            local_capnp_unix_socket: "/tmp/memory-layer.capnp.sock".to_string(),
             apply_repo_setup: super::ToggleChoice::Yes,
             automation_enabled: super::ToggleChoice::No,
             automation_mode: AutomationMode::Suggest,
@@ -1715,5 +1847,29 @@ mod tests {
         };
 
         assert_eq!(next_step(Step::Welcome, &draft), Step::Repo);
+    }
+
+    #[test]
+    fn wizard_uses_parallel_dev_mode_for_existing_local_service_overrides() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "mem-wizard-service-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        fs::create_dir_all(repo_root.join(".mem")).unwrap();
+        fs::create_dir_all(repo_root.join(".git")).unwrap();
+        fs::write(
+            repo_root.join(".mem/config.toml"),
+            "[service]\nbind_addr = \"127.0.0.1:4140\"\ncapnp_unix_socket = \"/tmp/dev.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4141\"\n",
+        )
+        .unwrap();
+
+        let draft = WizardDraft::new(&repo_root, &repo_root, Some("memory".to_string()), false);
+        assert_eq!(draft.local_service_mode, super::LocalServiceMode::ParallelDev);
+        assert_eq!(draft.local_bind_addr, "127.0.0.1:4140");
+        assert_eq!(draft.local_capnp_tcp_addr, "127.0.0.1:4141");
+        assert_eq!(draft.local_capnp_unix_socket, "/tmp/dev.sock");
+
+        let _ = fs::remove_dir_all(repo_root);
     }
 }
