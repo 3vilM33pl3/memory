@@ -1,6 +1,8 @@
 use std::{
+    collections::VecDeque,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
+    sync::{Arc, Mutex},
     time::SystemTime,
 };
 
@@ -39,6 +41,7 @@ struct AppState {
     api_token: String,
     config: AppConfig,
     events: broadcast::Sender<ServiceEvent>,
+    recent_activity: Arc<Mutex<VecDeque<ServiceEvent>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -174,6 +177,7 @@ async fn build_state(config: AppConfig) -> Result<AppState> {
         api_token: config.service.api_token.clone(),
         config,
         events,
+        recent_activity: Arc::new(Mutex::new(VecDeque::with_capacity(20))),
     })
 }
 
@@ -312,6 +316,7 @@ async fn process_stream_request(
                 fetch_project_overview(&state.pool, &project, &state.config.automation).await?;
             let memories = fetch_project_memories(&state.pool, &project, None, 500, 0).await?;
             responses.push(StreamResponse::ProjectSnapshot { overview, memories });
+            responses.extend(recent_activity_responses(&state.recent_activity, &project).await);
         }
         StreamRequest::SubscribeMemory { memory_id } => {
             subscriptions.memory_id = Some(memory_id);
@@ -337,15 +342,7 @@ async fn render_subscription_updates(
     let mut responses = Vec::new();
     if let Some(project) = &subscriptions.project {
         if project == &event.project {
-            responses.push(StreamResponse::Activity {
-                event: ActivityEvent {
-                    recorded_at: event.recorded_at,
-                    project: event.project.clone(),
-                    kind: event.kind.clone(),
-                    memory_id: event.memory_id,
-                    summary: event.summary.clone(),
-                },
-            });
+            responses.push(stream_activity_response(event.clone()));
             let overview =
                 fetch_project_overview(&state.pool, project, &state.config.automation).await?;
             let memories = fetch_project_memories(&state.pool, project, None, 500, 0).await?;
@@ -361,6 +358,19 @@ async fn render_subscription_updates(
     }
 
     Ok(responses)
+}
+
+async fn recent_activity_responses(
+    recent_activity: &Mutex<VecDeque<ServiceEvent>>,
+    project: &str,
+) -> Vec<StreamResponse> {
+    let history = recent_activity.lock().expect("activity history mutex poisoned");
+    history
+        .iter()
+        .filter(|event| event.project == project)
+        .cloned()
+        .map(stream_activity_response)
+        .collect()
 }
 
 async fn health_payload(state: &AppState) -> Result<serde_json::Value> {
@@ -746,13 +756,78 @@ fn notify_project_changed(
     kind: ActivityKind,
     summary: String,
 ) {
-    let _ = state.events.send(ServiceEvent {
+    let event = ServiceEvent {
         project,
         memory_id,
         kind,
         summary,
         recorded_at: chrono::Utc::now(),
-    });
+    };
+    let _ = state.events.send(event.clone());
+    let mut history = state
+        .recent_activity
+        .lock()
+        .expect("activity history mutex poisoned");
+    history.push_front(event);
+    while history.len() > 20 {
+        history.pop_back();
+    }
+}
+
+fn stream_activity_response(event: ServiceEvent) -> StreamResponse {
+    StreamResponse::Activity {
+        event: ActivityEvent {
+            recorded_at: event.recorded_at,
+            project: event.project,
+            kind: event.kind,
+            memory_id: event.memory_id,
+            summary: event.summary,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn recent_activity_responses_replays_latest_project_events() {
+        let recent_activity = Mutex::new(VecDeque::from(vec![
+            ServiceEvent {
+                project: "memory".to_string(),
+                memory_id: None,
+                kind: ActivityKind::Curate,
+                summary: "Curated memory".to_string(),
+                recorded_at: chrono::Utc::now(),
+            },
+            ServiceEvent {
+                project: "other".to_string(),
+                memory_id: None,
+                kind: ActivityKind::CaptureTask,
+                summary: "Captured task".to_string(),
+                recorded_at: chrono::Utc::now(),
+            },
+            ServiceEvent {
+                project: "memory".to_string(),
+                memory_id: None,
+                kind: ActivityKind::Reindex,
+                summary: "Reindexed entries".to_string(),
+                recorded_at: chrono::Utc::now(),
+            },
+        ]));
+
+        let responses = recent_activity_responses(&recent_activity, "memory").await;
+        assert_eq!(responses.len(), 2);
+
+        let summaries = responses
+            .into_iter()
+            .map(|response| match response {
+                StreamResponse::Activity { event } => event.summary,
+                other => panic!("unexpected response: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(summaries, vec!["Curated memory", "Reindexed entries"]);
+    }
 }
 
 fn require_token(headers: &HeaderMap, expected: &str) -> Result<(), ApiError> {
