@@ -219,9 +219,11 @@ struct WizardDraft {
     automation_enabled: ToggleChoice,
     automation_mode: AutomationMode,
     automation_poll_interval: String,
-    automation_idle_threshold: String,
+    automation_capture_idle_threshold: String,
     automation_min_changed_files: String,
     automation_require_passing_test: ToggleChoice,
+    automation_curate_after_captures: String,
+    automation_curate_on_explicit_flush: ToggleChoice,
     automation_ignored_paths: String,
     enable_backend_service: ToggleChoice,
     enable_watcher_service: ToggleChoice,
@@ -357,10 +359,10 @@ impl WizardDraft {
                 .as_ref()
                 .map(|config| duration_to_string(config.automation.poll_interval))
                 .unwrap_or_else(|| "10s".to_string()),
-            automation_idle_threshold: existing_config
+            automation_capture_idle_threshold: existing_config
                 .as_ref()
-                .map(|config| duration_to_string(config.automation.idle_threshold))
-                .unwrap_or_else(|| "5m".to_string()),
+                .map(|config| duration_to_string(config.automation.capture_idle_threshold))
+                .unwrap_or_else(|| "10m".to_string()),
             automation_min_changed_files: existing_config
                 .as_ref()
                 .map(|config| config.automation.min_changed_files.to_string())
@@ -369,6 +371,14 @@ impl WizardDraft {
                 .as_ref()
                 .map(|config| toggle_from_bool(config.automation.require_passing_test))
                 .unwrap_or(ToggleChoice::No),
+            automation_curate_after_captures: existing_config
+                .as_ref()
+                .map(|config| config.automation.curate_after_captures.to_string())
+                .unwrap_or_else(|| "3".to_string()),
+            automation_curate_on_explicit_flush: existing_config
+                .as_ref()
+                .map(|config| toggle_from_bool(config.automation.curate_on_explicit_flush))
+                .unwrap_or(ToggleChoice::Yes),
             automation_ignored_paths: existing_config
                 .as_ref()
                 .map(|config| config.automation.ignored_paths.join(", "))
@@ -424,9 +434,11 @@ enum FieldKey {
     AutomationEnabled,
     AutomationMode,
     AutomationPollInterval,
-    AutomationIdleThreshold,
+    AutomationCaptureIdleThreshold,
     AutomationMinChangedFiles,
     AutomationRequirePassingTest,
+    AutomationCurateAfterCaptures,
+    AutomationCurateOnExplicitFlush,
     AutomationIgnoredPaths,
     EnableBackendService,
     EnableWatcher,
@@ -503,7 +515,10 @@ impl WizardApp {
 
     async fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         if self.step == Step::Result {
-            return Ok(matches!(key.code, KeyCode::Enter | KeyCode::Char('q') | KeyCode::Esc));
+            return Ok(matches!(
+                key.code,
+                KeyCode::Enter | KeyCode::Char('q') | KeyCode::Esc
+            ));
         }
 
         let input_mode = std::mem::replace(&mut self.input_mode, InputMode::Normal);
@@ -615,7 +630,10 @@ impl WizardApp {
                     original: current.clone(),
                     buffer: current,
                 };
-                self.status = format!("Editing {}. Enter saves, Esc cancels.", field_label(item.key));
+                self.status = format!(
+                    "Editing {}. Enter saves, Esc cancels.",
+                    field_label(item.key)
+                );
             }
             ItemKind::Action => match item.key {
                 FieldKey::Next => self.go_next(),
@@ -701,6 +719,9 @@ impl WizardApp {
             FieldKey::AutomationRequirePassingTest => {
                 self.draft.automation_require_passing_test.toggle()
             }
+            FieldKey::AutomationCurateOnExplicitFlush => {
+                self.draft.automation_curate_on_explicit_flush.toggle()
+            }
             FieldKey::EnableBackendService => self.draft.enable_backend_service.toggle(),
             FieldKey::EnableWatcher => self.draft.enable_watcher_service.toggle(),
             FieldKey::RunDoctor => self.draft.run_doctor.toggle(),
@@ -730,9 +751,12 @@ impl WizardApp {
             FieldKey::LocalCapnpTcpAddr => self.draft.local_capnp_tcp_addr.clone(),
             FieldKey::LocalCapnpUnixSocket => self.draft.local_capnp_unix_socket.clone(),
             FieldKey::AutomationPollInterval => self.draft.automation_poll_interval.clone(),
-            FieldKey::AutomationIdleThreshold => self.draft.automation_idle_threshold.clone(),
-            FieldKey::AutomationMinChangedFiles => {
-                self.draft.automation_min_changed_files.clone()
+            FieldKey::AutomationCaptureIdleThreshold => {
+                self.draft.automation_capture_idle_threshold.clone()
+            }
+            FieldKey::AutomationMinChangedFiles => self.draft.automation_min_changed_files.clone(),
+            FieldKey::AutomationCurateAfterCaptures => {
+                self.draft.automation_curate_after_captures.clone()
             }
             FieldKey::AutomationIgnoredPaths => self.draft.automation_ignored_paths.clone(),
             _ => String::new(),
@@ -753,8 +777,13 @@ impl WizardApp {
             FieldKey::LocalCapnpTcpAddr => self.draft.local_capnp_tcp_addr = value,
             FieldKey::LocalCapnpUnixSocket => self.draft.local_capnp_unix_socket = value,
             FieldKey::AutomationPollInterval => self.draft.automation_poll_interval = value,
-            FieldKey::AutomationIdleThreshold => self.draft.automation_idle_threshold = value,
+            FieldKey::AutomationCaptureIdleThreshold => {
+                self.draft.automation_capture_idle_threshold = value
+            }
             FieldKey::AutomationMinChangedFiles => self.draft.automation_min_changed_files = value,
+            FieldKey::AutomationCurateAfterCaptures => {
+                self.draft.automation_curate_after_captures = value
+            }
             FieldKey::AutomationIgnoredPaths => self.draft.automation_ignored_paths = value,
             _ => {}
         }
@@ -793,8 +822,16 @@ fn welcome_items(draft: &WizardDraft) -> Vec<StepItem> {
 
 fn shared_items(draft: &WizardDraft) -> Vec<StepItem> {
     let mut items = vec![
-        text_item(FieldKey::DatabaseUrl, "Database URL", &mask_database_url(&draft.database_url)),
-        text_item(FieldKey::ApiToken, "Write API token", &secret_label(&draft.api_token)),
+        text_item(
+            FieldKey::DatabaseUrl,
+            "Database URL",
+            &mask_database_url(&draft.database_url),
+        ),
+        text_item(
+            FieldKey::ApiToken,
+            "Write API token",
+            &secret_label(&draft.api_token),
+        ),
         choice_item(
             FieldKey::LlmModelChoice,
             "LLM model",
@@ -868,9 +905,9 @@ fn repo_items(draft: &WizardDraft) -> Vec<StepItem> {
             &draft.automation_poll_interval,
         ),
         text_item(
-            FieldKey::AutomationIdleThreshold,
-            "Idle threshold",
-            &draft.automation_idle_threshold,
+            FieldKey::AutomationCaptureIdleThreshold,
+            "Capture idle threshold",
+            &draft.automation_capture_idle_threshold,
         ),
         text_item(
             FieldKey::AutomationMinChangedFiles,
@@ -881,6 +918,16 @@ fn repo_items(draft: &WizardDraft) -> Vec<StepItem> {
             FieldKey::AutomationRequirePassingTest,
             "Require passing test",
             draft.automation_require_passing_test.label(),
+        ),
+        text_item(
+            FieldKey::AutomationCurateAfterCaptures,
+            "Curate after captures",
+            &draft.automation_curate_after_captures,
+        ),
+        choice_item(
+            FieldKey::AutomationCurateOnExplicitFlush,
+            "Curate on explicit flush",
+            draft.automation_curate_on_explicit_flush.label(),
         ),
         text_item(
             FieldKey::AutomationIgnoredPaths,
@@ -1050,14 +1097,22 @@ fn draw_items(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
 fn draw_context(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(if app.step == Step::Result { "Result" } else { "Context" });
+        .title(if app.step == Step::Result {
+            "Result"
+        } else {
+            "Context"
+        });
 
     let lines = if app.step == Step::Result {
         let result = app.result.as_ref().expect("result step requires result");
         let mut lines = vec![Line::from(Span::styled(
             &result.title,
             Style::default()
-                .fg(if result.success { Color::Green } else { Color::Red })
+                .fg(if result.success {
+                    Color::Green
+                } else {
+                    Color::Red
+                })
                 .add_modifier(Modifier::BOLD),
         ))];
         lines.push(Line::from(""));
@@ -1113,7 +1168,9 @@ fn review_lines(draft: &WizardDraft, step: Step, status: &str) -> Vec<Line<'stat
             if draft.repo_available() {
                 lines.push(Line::from("Next: shared config or repo-local config."));
             } else {
-                lines.push(Line::from("No repo detected. Repo-local setup will be skipped."));
+                lines.push(Line::from(
+                    "No repo detected. Repo-local setup will be skipped.",
+                ));
             }
         }
         Step::Shared | Step::Review => {
@@ -1190,14 +1247,16 @@ fn review_lines(draft: &WizardDraft, step: Step, status: &str) -> Vec<Line<'stat
                 automation_mode_label(&draft.automation_mode)
             )));
             lines.push(Line::from(format!(
-                "Thresholds: poll={} idle={} min_changed_files={}",
+                "Thresholds: poll={} capture_idle={} min_changed_files={} curate_after={}",
                 draft.automation_poll_interval,
-                draft.automation_idle_threshold,
-                draft.automation_min_changed_files
+                draft.automation_capture_idle_threshold,
+                draft.automation_min_changed_files,
+                draft.automation_curate_after_captures
             )));
             lines.push(Line::from(format!(
-                "Require passing test: {}",
-                draft.automation_require_passing_test.label()
+                "Require passing test / curate on explicit flush: {} / {}",
+                draft.automation_require_passing_test.label(),
+                draft.automation_curate_on_explicit_flush.label()
             )));
             lines.push(Line::from(format!(
                 "Ignored paths: {}",
@@ -1388,7 +1447,10 @@ async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
             }
         }
         if draft.enable_watcher_service.is_yes() {
-            lines.extend(split_lines(enable_watch_service(repo_root, &draft.project)?));
+            lines.extend(split_lines(enable_watch_service(
+                repo_root,
+                &draft.project,
+            )?));
         }
     }
 
@@ -1463,7 +1525,7 @@ fn write_global_config(draft: &WizardDraft) -> Result<()> {
 
 fn render_global_config(draft: &WizardDraft) -> String {
     format!(
-        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/memory-layer.capnp.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"{}\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\nidle_threshold = \"5m\"\nmin_changed_files = 2\nrequire_passing_test = false\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
+        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/memory-layer.capnp.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"{}\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
         draft.api_token,
         draft.database_url,
         draft.llm_provider,
@@ -1500,14 +1562,16 @@ fn render_local_repo_config(repo_root: &Path, draft: &WizardDraft) -> String {
         ));
     }
     content.push_str(&format!(
-        "[automation]\nenabled = {}\nmode = \"{}\"\nrepo_root = \"{}\"\npoll_interval = \"{}\"\nidle_threshold = \"{}\"\nmin_changed_files = {}\nrequire_passing_test = {}\nignored_paths = [{}]\naudit_log_path = \"{}/.mem/runtime/automation.log\"\nstate_file_path = \"{}/.mem/runtime/automation-state.json\"\n",
+        "[automation]\nenabled = {}\nmode = \"{}\"\nrepo_root = \"{}\"\npoll_interval = \"{}\"\ncapture_idle_threshold = \"{}\"\nmin_changed_files = {}\nrequire_passing_test = {}\ncurate_after_captures = {}\ncurate_on_explicit_flush = {}\nignored_paths = [{}]\naudit_log_path = \"{}/.mem/runtime/automation.log\"\nstate_file_path = \"{}/.mem/runtime/automation-state.json\"\n",
         draft.automation_enabled.is_yes(),
         automation_mode_label(&draft.automation_mode),
         repo_root.display(),
         draft.automation_poll_interval.trim(),
-        draft.automation_idle_threshold.trim(),
+        draft.automation_capture_idle_threshold.trim(),
         draft.automation_min_changed_files.trim(),
         draft.automation_require_passing_test.is_yes(),
+        draft.automation_curate_after_captures.trim(),
+        draft.automation_curate_on_explicit_flush.is_yes(),
         ignored_paths,
         repo_root.display(),
         repo_root.display(),
@@ -1637,9 +1701,11 @@ fn field_label(field: FieldKey) -> &'static str {
         FieldKey::AutomationEnabled => "Automation enabled",
         FieldKey::AutomationMode => "Automation mode",
         FieldKey::AutomationPollInterval => "Poll interval",
-        FieldKey::AutomationIdleThreshold => "Idle threshold",
+        FieldKey::AutomationCaptureIdleThreshold => "Capture idle threshold",
         FieldKey::AutomationMinChangedFiles => "Min changed files",
         FieldKey::AutomationRequirePassingTest => "Require passing test",
+        FieldKey::AutomationCurateAfterCaptures => "Curate after captures",
+        FieldKey::AutomationCurateOnExplicitFlush => "Curate on explicit flush",
         FieldKey::AutomationIgnoredPaths => "Ignored paths",
         FieldKey::EnableBackendService => "Enable backend system service",
         FieldKey::EnableWatcher => "Enable watcher user service",
@@ -1776,8 +1842,8 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use mem_api::AutomationMode;
     use super::{Step, WizardDraft, default_include_global, next_step, read_project_slug};
+    use mem_api::AutomationMode;
 
     #[test]
     fn wizard_defaults_to_local_scope_inside_repo() {
@@ -1787,8 +1853,14 @@ mod tests {
 
     #[test]
     fn wizard_defaults_to_global_outside_repo() {
-        assert_eq!(default_include_global(false, false), super::ToggleChoice::Yes);
-        assert_eq!(default_include_global(false, true), super::ToggleChoice::Yes);
+        assert_eq!(
+            default_include_global(false, false),
+            super::ToggleChoice::Yes
+        );
+        assert_eq!(
+            default_include_global(false, true),
+            super::ToggleChoice::Yes
+        );
     }
 
     #[test]
@@ -1836,9 +1908,11 @@ mod tests {
             automation_enabled: super::ToggleChoice::No,
             automation_mode: AutomationMode::Suggest,
             automation_poll_interval: "10s".to_string(),
-            automation_idle_threshold: "5m".to_string(),
+            automation_capture_idle_threshold: "10m".to_string(),
             automation_min_changed_files: "2".to_string(),
             automation_require_passing_test: super::ToggleChoice::No,
+            automation_curate_after_captures: "3".to_string(),
+            automation_curate_on_explicit_flush: super::ToggleChoice::Yes,
             automation_ignored_paths: ".git/".to_string(),
             enable_backend_service: super::ToggleChoice::No,
             enable_watcher_service: super::ToggleChoice::No,
@@ -1865,7 +1939,10 @@ mod tests {
         .unwrap();
 
         let draft = WizardDraft::new(&repo_root, &repo_root, Some("memory".to_string()), false);
-        assert_eq!(draft.local_service_mode, super::LocalServiceMode::ParallelDev);
+        assert_eq!(
+            draft.local_service_mode,
+            super::LocalServiceMode::ParallelDev
+        );
         assert_eq!(draft.local_bind_addr, "127.0.0.1:4140");
         assert_eq!(draft.local_capnp_tcp_addr, "127.0.0.1:4141");
         assert_eq!(draft.local_capnp_unix_socket, "/tmp/dev.sock");

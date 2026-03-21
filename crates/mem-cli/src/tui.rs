@@ -606,7 +606,8 @@ impl App {
     }
 
     fn record_backend_activity(&mut self, event: ActivityEvent) {
-        self.activity_events.insert(0, ActivityEntry::Backend(event));
+        self.activity_events
+            .insert(0, ActivityEntry::Backend(event));
         self.finish_activity_insert();
     }
 
@@ -1776,7 +1777,9 @@ fn query_row(item: &QueryResult) -> Row<'static> {
 fn activity_row(item: &ActivityEntry) -> Row<'static> {
     Row::new(vec![
         Cell::from(Span::styled(
-            activity_recorded_at(item).format("%H:%M:%S UTC").to_string(),
+            activity_recorded_at(item)
+                .format("%H:%M:%S UTC")
+                .to_string(),
             Style::default().fg(Theme::TEXT),
         )),
         Cell::from(activity_entry_kind_span(item)),
@@ -1793,7 +1796,10 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
             Line::from(vec![
                 label_span("When: "),
                 Span::styled(
-                    event.recorded_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                    event
+                        .recorded_at
+                        .format("%Y-%m-%d %H:%M:%S UTC")
+                        .to_string(),
                     Style::default().fg(Theme::TEXT),
                 ),
             ]),
@@ -1812,7 +1818,8 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
             Line::from(vec![
                 label_span("Memory Id: "),
                 Span::styled(
-                    event.memory_id
+                    event
+                        .memory_id
                         .map(|value| value.to_string())
                         .unwrap_or_else(|| "n/a".to_string()),
                     Style::default().fg(Theme::MUTED),
@@ -2029,13 +2036,17 @@ fn activity_entry_kind_span(item: &ActivityEntry) -> Span<'static> {
                 } else {
                     Span::styled(
                         "query",
-                        Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Theme::ACCENT)
+                            .add_modifier(Modifier::BOLD),
                     )
                 }
             }
             QueryLogOutcome::Error(_) => Span::styled(
                 "query-error",
-                Style::default().fg(Theme::DANGER).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Theme::DANGER)
+                    .add_modifier(Modifier::BOLD),
             ),
         },
     }

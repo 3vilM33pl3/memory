@@ -762,13 +762,17 @@ pub struct AutomationConfig {
     #[serde(default = "default_poll_interval")]
     #[serde(with = "humantime_serde")]
     pub poll_interval: Duration,
-    #[serde(default = "default_idle_threshold")]
+    #[serde(default = "default_capture_idle_threshold", alias = "idle_threshold")]
     #[serde(with = "humantime_serde")]
-    pub idle_threshold: Duration,
+    pub capture_idle_threshold: Duration,
     #[serde(default = "default_min_changed_files")]
     pub min_changed_files: usize,
     #[serde(default)]
     pub require_passing_test: bool,
+    #[serde(default = "default_curate_after_captures")]
+    pub curate_after_captures: usize,
+    #[serde(default = "default_curate_on_explicit_flush")]
+    pub curate_on_explicit_flush: bool,
     #[serde(default)]
     pub ignored_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -784,9 +788,11 @@ impl Default for AutomationConfig {
             mode: AutomationMode::Suggest,
             repo_root: None,
             poll_interval: default_poll_interval(),
-            idle_threshold: default_idle_threshold(),
+            capture_idle_threshold: default_capture_idle_threshold(),
             min_changed_files: default_min_changed_files(),
             require_passing_test: false,
+            curate_after_captures: default_curate_after_captures(),
+            curate_on_explicit_flush: default_curate_on_explicit_flush(),
             ignored_paths: Vec::new(),
             audit_log_path: None,
             state_file_path: None,
@@ -838,12 +844,20 @@ fn default_poll_interval() -> Duration {
     Duration::from_secs(10)
 }
 
-fn default_idle_threshold() -> Duration {
-    Duration::from_secs(300)
+fn default_capture_idle_threshold() -> Duration {
+    Duration::from_secs(600)
 }
 
 fn default_min_changed_files() -> usize {
     2
+}
+
+fn default_curate_after_captures() -> usize {
+    3
+}
+
+fn default_curate_on_explicit_flush() -> bool {
+    true
 }
 
 #[derive(Debug, Error)]
@@ -1053,7 +1067,10 @@ mod tests {
 
         unsafe {
             env::remove_var("MEMORY_LAYER__DATABASE__URL");
-            env::set_var("MEMORY_LAYER__DATABASE__URL", "postgresql://from-process-env");
+            env::set_var(
+                "MEMORY_LAYER__DATABASE__URL",
+                "postgresql://from-process-env",
+            );
         }
         let config = AppConfig::load_from_path(Some(config_path)).unwrap();
         unsafe {

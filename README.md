@@ -304,8 +304,7 @@ The TUI opens a persistent connection to the backend. When the Cap'n Proto liste
 Tabs:
 - `Memories`: browse the stored corpus
 - `Query`: run a question and inspect the memories returned for that question
-- `Log`: inspect query prompts and the returned answers/errors
-- `Activity`: inspect streamed capture/curate/reindex/archive/delete events
+- `Activity`: inspect streamed query, capture, curate, reindex, archive, and delete events
 - `Project`: view project-level health and counts
 
 Inspect or flush automation state:
@@ -313,6 +312,7 @@ Inspect or flush automation state:
 ```bash
 cargo run --bin mem-cli -- automation status --project memory
 cargo run --bin mem-cli -- automation flush --project memory
+cargo run --bin mem-cli -- automation flush --project memory --curate
 ```
 
 TUI controls:
@@ -386,8 +386,13 @@ Recommended multi-instance setup on one machine:
 The `doctor` command checks the repo-local `.mem/` bootstrap, merged config validity, effective service endpoints, backend reachability, LLM config needed for `scan`, and automation/runtime state. By default it reports issues and suggests exact fixes. With `--fix`, it only applies safe local repairs such as creating missing `.mem/` files or adding `/.mem` to `.gitignore`.
 
 When `[automation].enabled = true`, `memory-watch` observes repo activity and can either:
-- `suggest` memory writes by logging candidate work without persisting
-- `auto` persist high-confidence work through the same remember flow
+- `suggest` candidate raw captures without persisting them
+- `auto` create raw captures during work and curate them in batches
+
+In `auto` mode the default cadence is:
+- capture after 10 minutes of stable meaningful changes
+- curate after 3 accumulated raw captures
+- curate immediately on explicit flush
 
 See:
 - `docs/architecture/hidden-memory-daemon.md`

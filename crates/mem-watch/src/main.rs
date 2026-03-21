@@ -19,7 +19,7 @@ struct Cli {
 enum WatchCommand {
     Run(RunArgs),
     Status(ProjectArgs),
-    Flush(ProjectArgs),
+    Flush(FlushArgs),
 }
 
 #[derive(Debug, Args)]
@@ -36,6 +36,16 @@ struct ProjectArgs {
     project: Option<String>,
     #[arg(long)]
     repo_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct FlushArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    repo_root: Option<PathBuf>,
+    #[arg(long)]
+    curate: bool,
 }
 
 #[tokio::main]
@@ -56,7 +66,7 @@ async fn run_loop(config: AppConfig, args: RunArgs) -> Result<()> {
     let client = Client::new();
 
     loop {
-        run_once(&config, &client, &project, &repo_root, false).await?;
+        run_once(&config, &client, &project, &repo_root, false, false).await?;
         tokio::time::sleep(config.automation.poll_interval).await;
     }
 }
@@ -69,14 +79,14 @@ async fn status(config: AppConfig, args: ProjectArgs) -> Result<()> {
     Ok(())
 }
 
-async fn flush(config: AppConfig, args: ProjectArgs) -> Result<()> {
+async fn flush(config: AppConfig, args: FlushArgs) -> Result<()> {
     let repo_root = resolve_repo_root(&config, args.repo_root)?;
     let project = resolve_project(args.project, &repo_root)?;
     let client = Client::new();
     tokio::fs::write(flush_path(&repo_root), b"flush\n")
         .await
         .ok();
-    run_once(&config, &client, &project, &repo_root, true).await
+    run_once(&config, &client, &project, &repo_root, true, args.curate).await
 }
 
 fn resolve_repo_root(config: &AppConfig, repo_root: Option<PathBuf>) -> Result<PathBuf> {

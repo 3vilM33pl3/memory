@@ -364,7 +364,9 @@ async fn recent_activity_responses(
     recent_activity: &Mutex<VecDeque<ServiceEvent>>,
     project: &str,
 ) -> Vec<StreamResponse> {
-    let history = recent_activity.lock().expect("activity history mutex poisoned");
+    let history = recent_activity
+        .lock()
+        .expect("activity history mutex poisoned");
     history
         .iter()
         .filter(|event| event.project == project)

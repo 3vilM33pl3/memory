@@ -199,7 +199,15 @@ struct AutomationArgs {
 #[derive(Debug, Subcommand)]
 enum AutomationCommand {
     Status(ProjectArgs),
-    Flush(ProjectArgs),
+    Flush(AutomationFlushArgs),
+}
+
+#[derive(Debug, Args)]
+struct AutomationFlushArgs {
+    #[command(flatten)]
+    project: ProjectArgs,
+    #[arg(long)]
+    curate: bool,
 }
 
 #[tokio::main]
@@ -417,7 +425,7 @@ async fn main() -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&to_status(&state))?);
                 }
                 AutomationCommand::Flush(args) => {
-                    let project = resolve_project_slug(Some(args.project), &cwd)?;
+                    let project = resolve_project_slug(Some(args.project.project), &cwd)?;
                     let repo_root = config
                         .automation
                         .repo_root
@@ -428,12 +436,21 @@ async fn main() -> Result<()> {
                     tokio::fs::write(flush_path(&repo_root), b"flush\n")
                         .await
                         .ok();
-                    run_once(&api.config, &api.client, &project, &repo_root, true).await?;
+                    run_once(
+                        &api.config,
+                        &api.client,
+                        &project,
+                        &repo_root,
+                        true,
+                        args.curate,
+                    )
+                    .await?;
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "project": project,
-                            "status": "flush_requested"
+                            "status": "flush_requested",
+                            "curate": args.curate
                         }))?
                     );
                 }
@@ -929,7 +946,9 @@ async fn run_doctor(
                             .as_ref()
                             .map(|path| shared_env_path_for_config(path).display().to_string())
                             .unwrap_or_else(|| {
-                                shared_env_path_for_config(&config_path).display().to_string()
+                                shared_env_path_for_config(&config_path)
+                                    .display()
+                                    .to_string()
                             }),
                     );
                     format!(
@@ -1410,22 +1429,24 @@ fn read_local_service_overrides(repo_root: &Path) -> Option<LocalServiceOverride
 
 fn tcp_endpoint_status(addr: &str) -> (DoctorStatus, String) {
     match addr.parse::<SocketAddr>() {
-        Ok(socket_addr) => match TcpStream::connect_timeout(&socket_addr, Duration::from_millis(250))
-        {
-            Ok(_) => (
-                DoctorStatus::Warn,
-                format!("listener detected on {addr}"),
-            ),
-            Err(error) if matches!(
-                error.kind(),
-                std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
-            ) =>
-            {
-                (DoctorStatus::Ok, format!("no listener detected on {addr}"))
+        Ok(socket_addr) => {
+            match TcpStream::connect_timeout(&socket_addr, Duration::from_millis(250)) {
+                Ok(_) => (DoctorStatus::Warn, format!("listener detected on {addr}")),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    (DoctorStatus::Ok, format!("no listener detected on {addr}"))
+                }
+                Err(error) => (DoctorStatus::Warn, error.to_string()),
             }
-            Err(error) => (DoctorStatus::Warn, error.to_string()),
-        },
-        Err(error) => (DoctorStatus::Fail, format!("invalid socket address: {error}")),
+        }
+        Err(error) => (
+            DoctorStatus::Fail,
+            format!("invalid socket address: {error}"),
+        ),
     }
 }
 

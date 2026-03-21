@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeSet,
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -8,7 +9,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
     AppConfig, AutomationConfig, AutomationMode, AutomationStatus, CaptureTaskRequest,
-    CurateRequest, CurateResponse, TestResult,
+    CurateRequest, CurateResponse, ProjectOverviewResponse, TestResult,
 };
 use reqwest::{Client, header::HeaderMap};
 use serde::{Deserialize, Serialize};
@@ -51,6 +52,8 @@ pub struct AutomationState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_persisted_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_captured_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_decision: Option<DecisionRecord>,
 }
 
@@ -63,6 +66,7 @@ impl AutomationState {
             enabled: config.enabled,
             current_session: SessionWindow::default(),
             last_persisted_at: None,
+            last_captured_fingerprint: None,
             last_decision: None,
         }
     }
@@ -184,10 +188,10 @@ pub fn update_session_from_repo(
         return;
     }
     let now = Utc::now();
+    let previous_fingerprint = state.current_session.fingerprint.clone();
     if state.current_session.started_at.is_none() {
         state.current_session.started_at = Some(now);
     }
-    state.current_session.last_activity_at = Some(now);
     let mut merged = BTreeSet::new();
     for file in state.current_session.changed_files.drain(..) {
         merged.insert(file);
@@ -203,27 +207,19 @@ pub fn update_session_from_repo(
     }
     state.current_session.changed_files = merged.into_iter().collect();
     state.current_session.notes = derive_notes(&state.current_session.changed_files);
-    state.current_session.fingerprint = Some(fingerprint(&state.current_session.changed_files));
+    let repo_root = PathBuf::from(&state.repo_root);
+    let next_fingerprint = fingerprint(&repo_root, &state.current_session.changed_files);
+    if previous_fingerprint.as_deref() != Some(next_fingerprint.as_str()) {
+        state.current_session.last_activity_at = Some(now);
+    }
+    state.current_session.fingerprint = Some(next_fingerprint);
 }
 
-pub fn should_flush(
+pub fn should_capture(
     state: &AutomationState,
     automation: &AutomationConfig,
     explicit_flush: bool,
-) -> bool {
-    if explicit_flush {
-        return true;
-    }
-    let Some(last_activity) = state.current_session.last_activity_at else {
-        return false;
-    };
-    let Ok(idle) = chrono::Duration::from_std(automation.idle_threshold) else {
-        return false;
-    };
-    Utc::now() - last_activity >= idle
-}
-
-pub fn should_persist(state: &AutomationState, automation: &AutomationConfig) -> (bool, String) {
+) -> (bool, String) {
     if !state.enabled {
         return (false, "automation disabled".to_string());
     }
@@ -235,7 +231,57 @@ pub fn should_persist(state: &AutomationState, automation: &AutomationConfig) ->
     if automation.require_passing_test && state.current_session.passed_tests.is_empty() {
         return (false, "passing test required".to_string());
     }
-    (true, "high confidence".to_string())
+    if state.current_session.fingerprint.is_some()
+        && state.current_session.fingerprint == state.last_captured_fingerprint
+    {
+        return (false, "duplicate fingerprint".to_string());
+    }
+    if explicit_flush {
+        return (true, "explicit flush".to_string());
+    }
+    let Some(last_activity) = state.current_session.last_activity_at else {
+        return (false, "no recent activity".to_string());
+    };
+    let Ok(idle) = chrono::Duration::from_std(automation.capture_idle_threshold) else {
+        return (false, "invalid capture idle threshold".to_string());
+    };
+    if Utc::now() - last_activity >= idle {
+        return (true, "idle threshold reached".to_string());
+    }
+    (false, "capture idle threshold not reached".to_string())
+}
+
+pub fn should_curate(
+    automation: &AutomationConfig,
+    uncurated_raw_captures: i64,
+    explicit_flush: bool,
+    force_curate: bool,
+) -> (bool, String) {
+    if uncurated_raw_captures <= 0 {
+        return (false, "no uncured captures".to_string());
+    }
+    if force_curate {
+        return (true, "forced curate".to_string());
+    }
+    if explicit_flush && automation.curate_on_explicit_flush {
+        return (true, "explicit flush".to_string());
+    }
+    if uncurated_raw_captures >= automation.curate_after_captures as i64 {
+        return (
+            true,
+            format!(
+                "batched threshold reached ({} uncured captures)",
+                uncurated_raw_captures
+            ),
+        );
+    }
+    (
+        false,
+        format!(
+            "waiting for more raw captures ({} / {})",
+            uncurated_raw_captures, automation.curate_after_captures
+        ),
+    )
 }
 
 pub async fn append_audit_log(
@@ -258,13 +304,13 @@ pub async fn append_audit_log(
     Ok(())
 }
 
-pub async fn run_remember_flow(
+pub async fn run_capture_flow(
     client: &Client,
     config: &AppConfig,
     state: &AutomationState,
-) -> Result<(serde_json::Value, CurateResponse)> {
+) -> Result<serde_json::Value> {
     let request = build_capture_request(state);
-    let capture: serde_json::Value = send_json(
+    send_json(
         client
             .post(service_url(config, "/v1/capture/task"))
             .headers(write_headers(&config.service.api_token)?)
@@ -272,20 +318,43 @@ pub async fn run_remember_flow(
             .send()
             .await?,
     )
-    .await?;
-    let curate: CurateResponse = send_json(
+    .await
+}
+
+pub async fn run_curate_flow(
+    client: &Client,
+    config: &AppConfig,
+    project: &str,
+) -> Result<CurateResponse> {
+    send_json(
         client
             .post(service_url(config, "/v1/curate"))
             .headers(write_headers(&config.service.api_token)?)
             .json(&CurateRequest {
-                project: state.project.clone(),
+                project: project.to_string(),
                 batch_size: None,
             })
             .send()
             .await?,
     )
-    .await?;
-    Ok((capture, curate))
+    .await
+}
+
+pub async fn fetch_project_overview(
+    client: &Client,
+    config: &AppConfig,
+    project: &str,
+) -> Result<ProjectOverviewResponse> {
+    send_json(
+        client
+            .get(service_url(
+                config,
+                &format!("/v1/projects/{project}/overview"),
+            ))
+            .send()
+            .await?,
+    )
+    .await
 }
 
 pub fn build_capture_request(state: &AutomationState) -> CaptureTaskRequest {
@@ -335,6 +404,7 @@ pub async fn run_once(
     project: &str,
     repo_root: &Path,
     explicit_flush: bool,
+    force_curate: bool,
 ) -> Result<()> {
     let mut state = load_state(project, repo_root, &config.automation).await?;
     let changed = detect_changed_files(repo_root, &config.automation.ignored_paths)?;
@@ -345,69 +415,154 @@ pub async fn run_once(
         let _ = tokio::fs::remove_file(flush_path(repo_root)).await;
     }
 
-    if should_flush(&state, &config.automation, flush_requested) {
-        let (persist, reason) = should_persist(&state, &config.automation);
-        if persist {
-            match config.automation.mode {
-                AutomationMode::Suggest => {
+    let (capture, capture_reason) = should_capture(&state, &config.automation, flush_requested);
+
+    if capture {
+        match config.automation.mode {
+            AutomationMode::Suggest => {
+                let decision = DecisionRecord {
+                    at: Some(Utc::now()),
+                    action: "suggested".to_string(),
+                    reason: capture_reason.clone(),
+                };
+                append_audit_log(
+                    &config.automation,
+                    repo_root,
+                    &format!(
+                        "{} suggested raw capture for {} files: {}",
+                        Utc::now().to_rfc3339(),
+                        state.current_session.changed_files.len(),
+                        capture_reason
+                    ),
+                )
+                .await?;
+                clear_session(&mut state, decision, false);
+            }
+            AutomationMode::Auto => {
+                let _capture = run_capture_flow(client, config, &state).await?;
+                state.last_captured_fingerprint = state.current_session.fingerprint.clone();
+                let overview = fetch_project_overview(client, config, project).await?;
+                let (curate, curate_reason) = should_curate(
+                    &config.automation,
+                    overview.uncurated_raw_captures,
+                    flush_requested,
+                    force_curate,
+                );
+                if curate {
+                    let curate_response = run_curate_flow(client, config, project).await?;
                     let decision = DecisionRecord {
                         at: Some(Utc::now()),
-                        action: "suggested".to_string(),
-                        reason: reason.clone(),
+                        action: "captured_curated".to_string(),
+                        reason: format!(
+                            "{}; {} ({} captures, {} memories)",
+                            capture_reason,
+                            curate_reason,
+                            curate_response.input_count,
+                            curate_response.output_count
+                        ),
                     };
                     append_audit_log(
                         &config.automation,
                         repo_root,
                         &format!(
-                            "{} suggested {} files",
+                            "{} captured raw context and curated project {}: {}",
                             Utc::now().to_rfc3339(),
-                            state.current_session.changed_files.len()
+                            project,
+                            decision.reason
+                        ),
+                    )
+                    .await?;
+                    clear_session(&mut state, decision, true);
+                } else {
+                    let decision = DecisionRecord {
+                        at: Some(Utc::now()),
+                        action: "captured".to_string(),
+                        reason: format!("{capture_reason}; {curate_reason}"),
+                    };
+                    append_audit_log(
+                        &config.automation,
+                        repo_root,
+                        &format!(
+                            "{} captured raw context for project {}: {}",
+                            Utc::now().to_rfc3339(),
+                            project,
+                            decision.reason
                         ),
                     )
                     .await?;
                     clear_session(&mut state, decision, false);
                 }
-                AutomationMode::Auto => {
-                    let (_capture, curate) = run_remember_flow(client, config, &state).await?;
-                    let decision = DecisionRecord {
-                        at: Some(Utc::now()),
-                        action: "persisted".to_string(),
-                        reason: format!(
-                            "{} ({} captures, {} memories)",
-                            reason, curate.input_count, curate.output_count
-                        ),
-                    };
-                    append_audit_log(
-                        &config.automation,
-                        repo_root,
-                        &format!(
-                            "{} persisted automation write for project {}",
-                            Utc::now().to_rfc3339(),
-                            project
-                        ),
-                    )
-                    .await?;
-                    clear_session(&mut state, decision, true);
-                }
             }
-        } else {
-            let decision = DecisionRecord {
-                at: Some(Utc::now()),
-                action: "skipped".to_string(),
-                reason: reason.clone(),
-            };
-            append_audit_log(
-                &config.automation,
-                repo_root,
-                &format!(
-                    "{} skipped automation write: {}",
-                    Utc::now().to_rfc3339(),
-                    reason
-                ),
-            )
-            .await?;
-            clear_session(&mut state, decision, false);
         }
+    } else if force_curate || (flush_requested && config.automation.curate_on_explicit_flush) {
+        if matches!(config.automation.mode, AutomationMode::Auto) {
+            let overview = fetch_project_overview(client, config, project).await?;
+            let (curate, curate_reason) = should_curate(
+                &config.automation,
+                overview.uncurated_raw_captures,
+                flush_requested,
+                force_curate,
+            );
+            if curate {
+                let curate_response = run_curate_flow(client, config, project).await?;
+                let decision = DecisionRecord {
+                    at: Some(Utc::now()),
+                    action: "curated".to_string(),
+                    reason: format!(
+                        "{} ({} captures, {} memories)",
+                        curate_reason, curate_response.input_count, curate_response.output_count
+                    ),
+                };
+                append_audit_log(
+                    &config.automation,
+                    repo_root,
+                    &format!(
+                        "{} curated accumulated raw captures for project {}: {}",
+                        Utc::now().to_rfc3339(),
+                        project,
+                        decision.reason
+                    ),
+                )
+                .await?;
+                clear_session(&mut state, decision, true);
+            } else if flush_requested || force_curate {
+                let decision = DecisionRecord {
+                    at: Some(Utc::now()),
+                    action: "skipped".to_string(),
+                    reason: curate_reason.clone(),
+                };
+                append_audit_log(
+                    &config.automation,
+                    repo_root,
+                    &format!(
+                        "{} skipped curate-only pass for project {}: {}",
+                        Utc::now().to_rfc3339(),
+                        project,
+                        curate_reason
+                    ),
+                )
+                .await?;
+                clear_session(&mut state, decision, false);
+            }
+        }
+    } else if flush_requested {
+        let decision = DecisionRecord {
+            at: Some(Utc::now()),
+            action: "skipped".to_string(),
+            reason: capture_reason.clone(),
+        };
+        append_audit_log(
+            &config.automation,
+            repo_root,
+            &format!(
+                "{} skipped automation write for project {}: {}",
+                Utc::now().to_rfc3339(),
+                project,
+                capture_reason
+            ),
+        )
+        .await?;
+        clear_session(&mut state, decision, false);
     }
 
     save_state(&state, &config.automation).await?;
@@ -441,10 +596,20 @@ fn derive_notes(files: &[String]) -> Vec<String> {
     )]
 }
 
-fn fingerprint(files: &[String]) -> String {
+fn fingerprint(repo_root: &Path, files: &[String]) -> String {
     let mut hasher = Sha256::new();
     for file in files {
         hasher.update(file.as_bytes());
+        let full_path = repo_root.join(file);
+        if let Ok(metadata) = fs::metadata(&full_path) {
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    hasher.update(duration.as_secs().to_le_bytes());
+                    hasher.update(duration.subsec_nanos().to_le_bytes());
+                }
+            }
+            hasher.update(metadata.len().to_le_bytes());
+        }
     }
     format!("{:x}", hasher.finalize())
 }
@@ -490,5 +655,60 @@ mod tests {
         let status = to_status(&state);
         assert_eq!(status.repo_root, "/tmp/memory");
         assert_eq!(status.dirty_file_count, Some(1));
+    }
+
+    #[test]
+    fn repeated_dirty_files_do_not_refresh_activity_timestamp() {
+        let mut state = AutomationState::new(
+            "memory",
+            Path::new("/tmp/memory"),
+            &AutomationConfig::default(),
+        );
+        update_session_from_repo(
+            &mut state,
+            vec!["src/main.rs".to_string()],
+            &AutomationConfig::default(),
+        );
+        let first_activity = state.current_session.last_activity_at;
+        update_session_from_repo(
+            &mut state,
+            vec!["src/main.rs".to_string()],
+            &AutomationConfig::default(),
+        );
+        assert_eq!(state.current_session.last_activity_at, first_activity);
+    }
+
+    #[test]
+    fn duplicate_fingerprint_is_not_recaptured() {
+        let mut state = AutomationState::new(
+            "memory",
+            Path::new("/tmp/memory"),
+            &AutomationConfig::default(),
+        );
+        state.enabled = true;
+        state.current_session.changed_files =
+            vec!["src/main.rs".to_string(), "README.md".to_string()];
+        state.current_session.notes = derive_notes(&state.current_session.changed_files);
+        state.current_session.fingerprint = Some(fingerprint(
+            Path::new("/tmp/memory"),
+            &state.current_session.changed_files,
+        ));
+        state.last_captured_fingerprint = state.current_session.fingerprint.clone();
+
+        let (capture, reason) = should_capture(&state, &AutomationConfig::default(), true);
+        assert!(!capture);
+        assert_eq!(reason, "duplicate fingerprint");
+    }
+
+    #[test]
+    fn curate_waits_for_threshold_without_flush() {
+        let config = AutomationConfig::default();
+        let (curate, reason) = should_curate(&config, 2, false, false);
+        assert!(!curate);
+        assert!(reason.contains("2 / 3"));
+
+        let (curate, reason) = should_curate(&config, 3, false, false);
+        assert!(curate);
+        assert!(reason.contains("batched threshold"));
     }
 }

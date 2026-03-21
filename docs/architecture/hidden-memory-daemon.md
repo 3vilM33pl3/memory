@@ -82,6 +82,10 @@ Recommended trigger conditions:
 - a passing wrapped test occurs after changes
 - an explicit flush command is issued
 
+Recommended cadence:
+- create raw captures during work when one of the trigger conditions fires
+- curate canonical memory later, either after several accumulated captures or on explicit flush
+
 Recommended conservative default:
 - only auto-persist when at least one durable note exists or the change set plus passing tests gives enough confidence
 - otherwise skip in `auto` mode or keep the candidate as a suggestion in `suggest` mode
@@ -104,11 +108,11 @@ Recommended modes:
 
 ## Persistence Path
 
-The daemon should call the existing remember pipeline rather than bypassing it:
+The daemon should call the existing capture and curate pipelines rather than bypassing them:
 1. build a capture request
-2. invoke the remember flow
-3. let the backend store the raw capture
-4. let the backend curate it into canonical memory
+2. store a raw capture through the backend
+3. optionally trigger curation when the batch threshold or explicit flush rules say it is time
+4. let the backend turn those accumulated captures into canonical memory
 
 This keeps:
 - validation centralized
