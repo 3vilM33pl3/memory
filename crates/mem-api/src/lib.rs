@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     env, fmt,
     io::Cursor,
     path::{Path, PathBuf},
@@ -7,7 +8,7 @@ use std::{
 
 use capnp::{message::ReaderOptions, serialize};
 use chrono::{DateTime, Utc};
-use config::{Config, ConfigError, Environment, File};
+use config::{Config, ConfigError, Environment, File, FileFormat};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -559,16 +560,30 @@ pub struct AppConfig {
 impl AppConfig {
     pub fn load_from_path(path: Option<PathBuf>) -> Result<Self, ConfigError> {
         let mut builder = Config::builder();
+        let mut env_files = Vec::new();
         if let Some(path) = path {
+            env_files.push(env_path_for_config(&path));
             builder = builder.add_source(File::from(path).required(false));
         } else {
             if let Some(path) = discover_global_config_path() {
+                env_files.push(env_path_for_config(&path));
                 builder = builder.add_source(File::from(path).required(false));
             } else {
                 builder = builder.add_source(File::with_name("memory-layer").required(false));
             }
             if let Some(path) = discover_repo_config_path() {
+                env_files.push(
+                    path.parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .join("memory-layer.env"),
+                );
                 builder = builder.add_source(File::from(path).required(false));
+            }
+        }
+
+        for env_file in env_files {
+            if let Some(source) = env_file_source(&env_file)? {
+                builder = builder.add_source(source);
             }
         }
 
@@ -579,6 +594,57 @@ impl AppConfig {
     }
 }
 
+fn env_file_source(
+    path: &Path,
+) -> Result<Option<config::File<config::FileSourceString, FileFormat>>, ConfigError> {
+    let values = memory_layer_env_file_values(path)?;
+    if values.is_empty() {
+        return Ok(None);
+    }
+
+    let mut lines = values
+        .into_iter()
+        .map(|(key, value)| format!("{key} = {}", serde_json::to_string(&value).unwrap()))
+        .collect::<Vec<_>>();
+    lines.sort();
+    Ok(Some(File::from_str(&lines.join("\n"), FileFormat::Toml)))
+}
+
+fn memory_layer_env_file_values(path: &Path) -> Result<HashMap<String, String>, ConfigError> {
+    let mut values = HashMap::new();
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Ok(values);
+    };
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((name, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = name.trim();
+        if !key.starts_with("MEMORY_LAYER__") {
+            continue;
+        }
+        let config_key = key["MEMORY_LAYER__".len()..]
+            .split("__")
+            .map(|segment| segment.trim().to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join(".");
+        values.insert(config_key, value.trim().to_string());
+    }
+
+    Ok(values)
+}
+
+fn env_path_for_config(path: &Path) -> PathBuf {
+    path.parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("memory-layer.env")
+}
+
 pub fn discover_repo_config_path() -> Option<PathBuf> {
     let cwd = env::current_dir().ok()?;
     find_repo_config_path(&cwd)
@@ -586,12 +652,7 @@ pub fn discover_repo_config_path() -> Option<PathBuf> {
 
 pub fn discover_repo_env_path() -> Option<PathBuf> {
     let config_path = discover_repo_config_path()?;
-    Some(
-        config_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("memory-layer.env"),
-    )
+    Some(env_path_for_config(&config_path))
 }
 
 pub fn discover_global_config_path() -> Option<PathBuf> {
@@ -847,7 +908,10 @@ impl ValidationError {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, fs};
+    use std::{
+        env, fs,
+        sync::{Mutex, OnceLock},
+    };
 
     use super::*;
 
@@ -902,6 +966,7 @@ mod tests {
 
     #[test]
     fn prefers_xdg_global_config_path_when_present() {
+        let _guard = env_lock().lock().unwrap();
         let temp_dir = unique_temp_dir("mem-api-global");
         let config_home = temp_dir.join("config-home");
         fs::create_dir_all(config_home.join("memory-layer")).unwrap();
@@ -935,6 +1000,70 @@ mod tests {
         let _ = fs::remove_dir_all(temp_dir);
     }
 
+    #[test]
+    fn shared_env_file_overrides_config_for_explicit_path() {
+        let _guard = env_lock().lock().unwrap();
+        let temp_dir = unique_temp_dir("mem-api-shared-env");
+        let config_dir = temp_dir.join("config");
+        fs::create_dir_all(&config_dir).unwrap();
+        let config_path = config_dir.join("memory-layer.toml");
+        fs::write(
+            &config_path,
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
+        )
+        .unwrap();
+        fs::write(
+            config_dir.join("memory-layer.env"),
+            "MEMORY_LAYER__DATABASE__URL=postgresql://from-env\nMEMORY_LAYER__SERVICE__API_TOKEN=from-env\nOPENAI_API_KEY=test\n",
+        )
+        .unwrap();
+
+        unsafe {
+            env::remove_var("MEMORY_LAYER__DATABASE__URL");
+            env::remove_var("MEMORY_LAYER__SERVICE__API_TOKEN");
+        }
+        let config = AppConfig::load_from_path(Some(config_path)).unwrap();
+        unsafe {
+            env::remove_var("MEMORY_LAYER__DATABASE__URL");
+            env::remove_var("MEMORY_LAYER__SERVICE__API_TOKEN");
+        }
+
+        assert_eq!(config.database.url, "postgresql://from-env");
+        assert_eq!(config.service.api_token, "from-env");
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn process_env_still_wins_over_env_file_for_explicit_path() {
+        let _guard = env_lock().lock().unwrap();
+        let temp_dir = unique_temp_dir("mem-api-env-precedence");
+        let config_dir = temp_dir.join("config");
+        fs::create_dir_all(&config_dir).unwrap();
+        let config_path = config_dir.join("memory-layer.toml");
+        fs::write(
+            &config_path,
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
+        )
+        .unwrap();
+        fs::write(
+            config_dir.join("memory-layer.env"),
+            "MEMORY_LAYER__DATABASE__URL=postgresql://from-env-file\n",
+        )
+        .unwrap();
+
+        unsafe {
+            env::remove_var("MEMORY_LAYER__DATABASE__URL");
+            env::set_var("MEMORY_LAYER__DATABASE__URL", "postgresql://from-process-env");
+        }
+        let config = AppConfig::load_from_path(Some(config_path)).unwrap();
+        unsafe {
+            env::remove_var("MEMORY_LAYER__DATABASE__URL");
+        }
+
+        assert_eq!(config.database.url, "postgresql://from-process-env");
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
     fn unique_temp_dir(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
             "{name}-{}-{}",
@@ -948,5 +1077,10 @@ mod tests {
             let _ = fs::remove_dir_all(&path);
         }
         path
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
     }
 }
