@@ -1032,7 +1032,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         TabKind::Query => vec![
             accent_span("query=? "),
             Span::styled(
-                display_filter(&app.query_text),
+                display_filter(&current_query_display(app)),
                 Style::default().fg(Theme::TEXT),
             ),
             Span::raw("  "),
@@ -1492,10 +1492,10 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             Line::from(vec![
                 label_span("Question: "),
                 Span::styled(
-                    if app.query_text.trim().is_empty() {
+                    if current_query_display(app).trim().is_empty() {
                         "<empty>".to_string()
                     } else {
-                        app.query_text.clone()
+                        current_query_display(app)
                     },
                     Style::default().fg(Theme::TEXT),
                 ),
@@ -1537,7 +1537,7 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             Line::from(vec![
                 label_span("Question: "),
                 Span::styled(
-                    display_filter(&app.query_text),
+                    display_filter(&current_query_display(app)),
                     Style::default().fg(Theme::TEXT),
                 ),
             ]),
@@ -1663,6 +1663,13 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .wrap(Wrap { trim: false })
         .block(themed_block("Returned Memory Detail"));
     frame.render_widget(detail, lower[1]);
+}
+
+fn current_query_display(app: &App) -> String {
+    match &app.input_mode {
+        InputMode::Query(value) => value.clone(),
+        _ => app.query_text.clone(),
+    }
 }
 
 fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
