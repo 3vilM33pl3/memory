@@ -1149,17 +1149,50 @@ async fn run_doctor(
                     false,
                 ));
                 match api.project_overview(project).await {
-                    Ok(overview) => report.push(doctor_check(
-                        "backend.project_overview",
-                        DoctorStatus::Ok,
-                        "Project overview endpoint is reachable.",
-                        Some(format!(
-                            "{} memories / {} raw captures",
-                            overview.memory_entries_total, overview.raw_captures_total
-                        )),
-                        None,
-                        false,
-                    )),
+                    Ok(overview) => {
+                        report.push(doctor_check(
+                            "backend.project_overview",
+                            DoctorStatus::Ok,
+                            "Project overview endpoint is reachable.",
+                            Some(format!(
+                                "{} memories / {} raw captures",
+                                overview.memory_entries_total, overview.raw_captures_total
+                            )),
+                            None,
+                            false,
+                        ));
+                        if overview
+                            .automation
+                            .as_ref()
+                            .is_some_and(|automation| automation.enabled)
+                        {
+                            let active_watchers =
+                                overview.watchers.as_ref().map(|watchers| watchers.active_count);
+                            report.push(doctor_check(
+                                "backend.watchers",
+                                if active_watchers.unwrap_or(0) > 0 {
+                                    DoctorStatus::Ok
+                                } else {
+                                    DoctorStatus::Warn
+                                },
+                                if active_watchers.unwrap_or(0) > 0 {
+                                    "At least one active watcher is visible to the backend."
+                                } else {
+                                    "Automation is enabled but no active watcher is visible."
+                                },
+                                active_watchers.map(|count| format!("{count} active watcher(s)")),
+                                if active_watchers.unwrap_or(0) > 0 {
+                                    None
+                                } else {
+                                    Some(format!(
+                                        "memctl watch enable --project {}",
+                                        project
+                                    ))
+                                },
+                                false,
+                            ));
+                        }
+                    }
                     Err(error) => report.push(doctor_check(
                         "backend.project_overview",
                         DoctorStatus::Warn,

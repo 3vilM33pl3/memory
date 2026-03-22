@@ -1,9 +1,9 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
     sync::{Arc, Mutex},
-    time::SystemTime,
+    time::{Duration as StdDuration, SystemTime},
 };
 
 use anyhow::{Context, Result};
@@ -19,7 +19,8 @@ use mem_api::{
     CaptureTaskRequest, CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse,
     MemoryEntryResponse, MemorySourceRecord, ProjectMemoriesResponse, ProjectOverviewResponse,
     QueryRequest, ReindexRequest, ReindexResponse, RelatedMemorySummary, StatsResponse,
-    StreamRequest, StreamResponse, ValidationError, read_capnp_text_frame,
+    StreamRequest, StreamResponse, ValidationError, WatcherHeartbeatRequest, WatcherPresence,
+    WatcherPresenceSummary, WatcherUnregisterRequest, read_capnp_text_frame,
     write_capnp_text_frame,
 };
 use mem_curate::{curate, store_capture};
@@ -47,6 +48,7 @@ struct AppState {
     embedder: Option<EmbeddingService>,
     events: broadcast::Sender<ServiceEvent>,
     recent_activity: Arc<Mutex<VecDeque<ServiceEvent>>>,
+    watchers: Arc<Mutex<HashMap<String, WatcherPresence>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +60,8 @@ struct ServiceEvent {
     details: Option<ActivityDetails>,
     recorded_at: chrono::DateTime<chrono::Utc>,
 }
+
+const WATCHER_STALE_AFTER_SECONDS: u64 = 90;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -185,6 +189,7 @@ async fn build_state(config: AppConfig) -> Result<AppState> {
         config,
         events,
         recent_activity: Arc::new(Mutex::new(VecDeque::with_capacity(20))),
+        watchers: Arc::new(Mutex::new(HashMap::new())),
     })
 }
 
@@ -200,6 +205,8 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/stats", get(stats))
         .route("/v1/projects/{slug}/memories", get(project_memories))
         .route("/v1/projects/{slug}/overview", get(project_overview))
+        .route("/v1/watchers/heartbeat", post(watcher_heartbeat))
+        .route("/v1/watchers/unregister", post(watcher_unregister))
         .route("/v1/archive", post(archive))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
@@ -303,8 +310,7 @@ async fn process_stream_request(
         }),
         StreamRequest::ProjectOverview { project } => {
             responses.push(StreamResponse::ProjectOverview {
-                value: fetch_project_overview(&state.pool, &project, &state.config.automation)
-                    .await?,
+                value: fetch_project_overview_with_watchers(state, &project).await?,
             });
         }
         StreamRequest::ProjectMemories { project } => {
@@ -319,8 +325,7 @@ async fn process_stream_request(
         }
         StreamRequest::SubscribeProject { project } => {
             subscriptions.project = Some(project.clone());
-            let overview =
-                fetch_project_overview(&state.pool, &project, &state.config.automation).await?;
+            let overview = fetch_project_overview_with_watchers(state, &project).await?;
             let memories = fetch_project_memories(&state.pool, &project, None, 500, 0).await?;
             responses.push(StreamResponse::ProjectSnapshot { overview, memories });
             responses.extend(recent_activity_responses(&state.recent_activity, &project).await);
@@ -350,8 +355,7 @@ async fn render_subscription_updates(
     if let Some(project) = &subscriptions.project {
         if project == &event.project {
             responses.push(stream_activity_response(event.clone()));
-            let overview =
-                fetch_project_overview(&state.pool, project, &state.config.automation).await?;
+            let overview = fetch_project_overview_with_watchers(state, project).await?;
             let memories = fetch_project_memories(&state.pool, project, None, 500, 0).await?;
             responses.push(StreamResponse::ProjectChanged { overview, memories });
         }
@@ -713,10 +717,30 @@ async fn project_overview(
     Path(slug): Path<String>,
 ) -> Result<Json<ProjectOverviewResponse>, ApiError> {
     Ok(Json(
-        fetch_project_overview(&state.pool, &slug, &state.config.automation)
+        fetch_project_overview_with_watchers(&state, &slug)
             .await
             .map_err(ApiError::sql)?,
     ))
+}
+
+async fn watcher_heartbeat(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<WatcherHeartbeatRequest>,
+) -> Result<Json<WatcherPresenceSummary>, ApiError> {
+    require_token(&headers, &state.api_token)?;
+    request.validate().map_err(ApiError::validation)?;
+    Ok(Json(register_watcher_heartbeat(&state.watchers, request)))
+}
+
+async fn watcher_unregister(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<WatcherUnregisterRequest>,
+) -> Result<Json<WatcherPresenceSummary>, ApiError> {
+    require_token(&headers, &state.api_token)?;
+    request.validate().map_err(ApiError::validation)?;
+    Ok(Json(unregister_watcher(&state.watchers, &request)))
 }
 
 async fn archive(
@@ -839,6 +863,98 @@ fn notify_project_changed(
     }
 }
 
+async fn fetch_project_overview_with_watchers(
+    state: &AppState,
+    slug: &str,
+) -> Result<ProjectOverviewResponse, sqlx::Error> {
+    let mut overview = fetch_project_overview(&state.pool, slug, &state.config.automation).await?;
+    overview.watchers = Some(watcher_summary_for_project(&state.watchers, slug));
+    Ok(overview)
+}
+
+fn register_watcher_heartbeat(
+    watchers: &Mutex<HashMap<String, WatcherPresence>>,
+    request: WatcherHeartbeatRequest,
+) -> WatcherPresenceSummary {
+    let mut registry = watchers.lock().expect("watcher registry mutex poisoned");
+    prune_stale_watchers(&mut registry);
+    let now = chrono::Utc::now();
+    registry
+        .entry(request.watcher_id.clone())
+        .and_modify(|watcher| {
+            watcher.project = request.project.clone();
+            watcher.repo_root = request.repo_root.clone();
+            watcher.hostname = request.hostname.clone();
+            watcher.pid = request.pid;
+            watcher.mode = request.mode.clone();
+            watcher.started_at = request.started_at;
+            watcher.last_heartbeat_at = now;
+        })
+        .or_insert_with(|| WatcherPresence {
+            watcher_id: request.watcher_id.clone(),
+            project: request.project.clone(),
+            repo_root: request.repo_root.clone(),
+            hostname: request.hostname.clone(),
+            pid: request.pid,
+            mode: request.mode.clone(),
+            started_at: request.started_at,
+            last_heartbeat_at: now,
+        });
+    watcher_summary_from_registry(&registry, &request.project)
+}
+
+fn unregister_watcher(
+    watchers: &Mutex<HashMap<String, WatcherPresence>>,
+    request: &WatcherUnregisterRequest,
+) -> WatcherPresenceSummary {
+    let mut registry = watchers.lock().expect("watcher registry mutex poisoned");
+    prune_stale_watchers(&mut registry);
+    registry.remove(&request.watcher_id);
+    watcher_summary_from_registry(&registry, &request.project)
+}
+
+fn watcher_summary_for_project(
+    watchers: &Mutex<HashMap<String, WatcherPresence>>,
+    project: &str,
+) -> WatcherPresenceSummary {
+    let mut registry = watchers.lock().expect("watcher registry mutex poisoned");
+    prune_stale_watchers(&mut registry);
+    watcher_summary_from_registry(&registry, project)
+}
+
+fn prune_stale_watchers(registry: &mut HashMap<String, WatcherPresence>) {
+    let stale_after = chrono::Duration::from_std(StdDuration::from_secs(
+        WATCHER_STALE_AFTER_SECONDS,
+    ))
+    .expect("valid watcher stale duration");
+    let now = chrono::Utc::now();
+    registry.retain(|_, watcher| now - watcher.last_heartbeat_at <= stale_after);
+}
+
+fn watcher_summary_from_registry(
+    registry: &HashMap<String, WatcherPresence>,
+    project: &str,
+) -> WatcherPresenceSummary {
+    let mut watchers = registry
+        .values()
+        .filter(|watcher| watcher.project == project)
+        .cloned()
+        .collect::<Vec<_>>();
+    watchers.sort_by(|left, right| {
+        right
+            .last_heartbeat_at
+            .cmp(&left.last_heartbeat_at)
+            .then_with(|| left.watcher_id.cmp(&right.watcher_id))
+    });
+    let last_heartbeat_at = watchers.first().map(|watcher| watcher.last_heartbeat_at);
+    WatcherPresenceSummary {
+        active_count: watchers.len(),
+        stale_after_seconds: WATCHER_STALE_AFTER_SECONDS,
+        last_heartbeat_at,
+        watchers,
+    }
+}
+
 fn stream_activity_response(event: ServiceEvent) -> StreamResponse {
     StreamResponse::Activity {
         event: ActivityEvent {
@@ -855,6 +971,7 @@ fn stream_activity_response(event: ServiceEvent) -> StreamResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mem_api::AutomationMode;
 
     #[tokio::test]
     async fn recent_activity_responses_replays_latest_project_events() {
@@ -896,6 +1013,82 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(summaries, vec!["Curated memory", "Reindexed entries"]);
+    }
+
+    #[test]
+    fn watcher_registry_refreshes_without_double_counting() {
+        let watchers = Mutex::new(HashMap::new());
+        let started_at = chrono::Utc::now();
+        let request = WatcherHeartbeatRequest {
+            watcher_id: "watcher-1".to_string(),
+            project: "memory".to_string(),
+            repo_root: "/repo".to_string(),
+            hostname: "host-a".to_string(),
+            pid: 111,
+            mode: AutomationMode::Suggest,
+            started_at,
+        };
+
+        let first = register_watcher_heartbeat(&watchers, request.clone());
+        let second = register_watcher_heartbeat(&watchers, request);
+
+        assert_eq!(first.active_count, 1);
+        assert_eq!(second.active_count, 1);
+        assert_eq!(second.watchers.len(), 1);
+        assert_eq!(second.watchers[0].watcher_id, "watcher-1");
+    }
+
+    #[test]
+    fn watcher_summary_filters_by_project_and_prunes_stale_entries() {
+        let now = chrono::Utc::now();
+        let mut registry = HashMap::new();
+        registry.insert(
+            "watcher-live".to_string(),
+            WatcherPresence {
+                watcher_id: "watcher-live".to_string(),
+                project: "memory".to_string(),
+                repo_root: "/repo".to_string(),
+                hostname: "host-a".to_string(),
+                pid: 111,
+                mode: AutomationMode::Suggest,
+                started_at: now,
+                last_heartbeat_at: now,
+            },
+        );
+        registry.insert(
+            "watcher-other".to_string(),
+            WatcherPresence {
+                watcher_id: "watcher-other".to_string(),
+                project: "other".to_string(),
+                repo_root: "/other".to_string(),
+                hostname: "host-b".to_string(),
+                pid: 222,
+                mode: AutomationMode::Auto,
+                started_at: now,
+                last_heartbeat_at: now,
+            },
+        );
+        registry.insert(
+            "watcher-stale".to_string(),
+            WatcherPresence {
+                watcher_id: "watcher-stale".to_string(),
+                project: "memory".to_string(),
+                repo_root: "/repo".to_string(),
+                hostname: "host-c".to_string(),
+                pid: 333,
+                mode: AutomationMode::Suggest,
+                started_at: now,
+                last_heartbeat_at: now
+                    - chrono::Duration::seconds(WATCHER_STALE_AFTER_SECONDS as i64 + 1),
+            },
+        );
+        let watchers = Mutex::new(registry);
+
+        let summary = watcher_summary_for_project(&watchers, "memory");
+
+        assert_eq!(summary.active_count, 1);
+        assert_eq!(summary.watchers.len(), 1);
+        assert_eq!(summary.watchers[0].watcher_id, "watcher-live");
     }
 }
 

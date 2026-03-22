@@ -3,8 +3,12 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use mem_api::AppConfig;
-use mem_watch::{flush_path, load_state, run_once, to_status};
+use mem_watch::{
+    build_watcher_heartbeat_request, build_watcher_unregister_request, detect_hostname,
+    flush_path, heartbeat_watcher, load_state, run_once, to_status, unregister_watcher,
+};
 use reqwest::Client;
+use uuid::Uuid;
 
 #[derive(Debug, Parser)]
 #[command(name = "memory-watch", version)]
@@ -64,11 +68,49 @@ async fn run_loop(config: AppConfig, args: RunArgs) -> Result<()> {
     let repo_root = resolve_repo_root(&config, args.repo_root)?;
     let project = resolve_project(args.project, &repo_root)?;
     let client = Client::new();
+    let state = load_state(&project, &repo_root, &config.automation).await?;
+    let watcher_id = Uuid::new_v4().to_string();
+    let hostname = detect_hostname();
+    let pid = std::process::id();
+    let started_at = chrono::Utc::now();
+
+    let heartbeat_request =
+        build_watcher_heartbeat_request(&state, &watcher_id, &hostname, pid, started_at);
+    if let Err(error) = heartbeat_watcher(&client, &config, &heartbeat_request).await {
+        eprintln!("watcher heartbeat failed: {error}");
+    }
+
+    let mut poll = tokio::time::interval(config.automation.poll_interval);
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
 
     loop {
-        run_once(&config, &client, &project, &repo_root, false, false).await?;
-        tokio::time::sleep(config.automation.poll_interval).await;
+        tokio::select! {
+            _ = poll.tick() => {
+                run_once(&config, &client, &project, &repo_root, false, false).await?;
+            }
+            _ = heartbeat.tick() => {
+                let state = load_state(&project, &repo_root, &config.automation).await?;
+                let request = build_watcher_heartbeat_request(
+                    &state,
+                    &watcher_id,
+                    &hostname,
+                    pid,
+                    started_at,
+                );
+                if let Err(error) = heartbeat_watcher(&client, &config, &request).await {
+                    eprintln!("watcher heartbeat failed: {error}");
+                }
+            }
+            _ = shutdown_signal() => {
+                let request = build_watcher_unregister_request(&project, &watcher_id);
+                if let Err(error) = unregister_watcher(&client, &config, &request).await {
+                    eprintln!("watcher unregister failed: {error}");
+                }
+                break;
+            }
+        }
     }
+    Ok(())
 }
 
 async fn status(config: AppConfig, args: ProjectArgs) -> Result<()> {
@@ -107,4 +149,22 @@ fn resolve_project(project: Option<String>, repo_root: &std::path::Path) -> Resu
         anyhow::bail!("could not determine project slug from repo root");
     };
     Ok(name.to_string())
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut terminate = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = terminate.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

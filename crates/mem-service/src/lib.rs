@@ -179,6 +179,7 @@ pub async fn fetch_project_overview(
         top_tags,
         top_files,
         automation,
+        watchers: None,
     })
 }
 
@@ -328,6 +329,7 @@ fn empty_overview(
         top_tags,
         top_files,
         automation,
+        watchers: None,
     }
 }
 

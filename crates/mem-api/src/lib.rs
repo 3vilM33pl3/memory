@@ -661,6 +661,8 @@ pub struct ProjectOverviewResponse {
     pub top_files: Vec<NamedCount>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automation: Option<AutomationStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watchers: Option<WatcherPresenceSummary>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -669,6 +671,16 @@ pub enum AutomationMode {
     #[default]
     Suggest,
     Auto,
+}
+
+impl fmt::Display for AutomationMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Suggest => "suggest",
+            Self::Auto => "auto",
+        };
+        f.write_str(value)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -686,6 +698,78 @@ pub struct AutomationStatus {
     pub pending_note_count: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_decision: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatcherPresenceSummary {
+    pub active_count: usize,
+    pub stale_after_seconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_heartbeat_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub watchers: Vec<WatcherPresence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatcherPresence {
+    pub watcher_id: String,
+    pub project: String,
+    pub repo_root: String,
+    pub hostname: String,
+    pub pid: u32,
+    pub mode: AutomationMode,
+    pub started_at: DateTime<Utc>,
+    pub last_heartbeat_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatcherHeartbeatRequest {
+    pub watcher_id: String,
+    pub project: String,
+    pub repo_root: String,
+    pub hostname: String,
+    pub pid: u32,
+    pub mode: AutomationMode,
+    pub started_at: DateTime<Utc>,
+}
+
+impl WatcherHeartbeatRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.watcher_id.trim().is_empty() {
+            return Err(ValidationError::new("watcher_id must be non-empty"));
+        }
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self.repo_root.trim().is_empty() {
+            return Err(ValidationError::new("repo_root must be non-empty"));
+        }
+        if self.hostname.trim().is_empty() {
+            return Err(ValidationError::new("hostname must be non-empty"));
+        }
+        if self.pid == 0 {
+            return Err(ValidationError::new("pid must be non-zero"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatcherUnregisterRequest {
+    pub watcher_id: String,
+    pub project: String,
+}
+
+impl WatcherUnregisterRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.watcher_id.trim().is_empty() {
+            return Err(ValidationError::new("watcher_id must be non-empty"));
+        }
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

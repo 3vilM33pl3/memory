@@ -1416,13 +1416,23 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             ),
         ),
         metric_line(
-            "Automation",
+            "Watchers",
             Span::styled(
                 app.overview
-                    .automation
+                    .watchers
                     .as_ref()
-                    .map(format_automation_status)
-                    .unwrap_or_else(|| "not configured".to_string()),
+                    .map(|watchers| {
+                        format!(
+                            "{} active / stale after {}s / last {}",
+                            watchers.active_count,
+                            watchers.stale_after_seconds,
+                            watchers
+                                .last_heartbeat_at
+                                .map(|value| value.format("%H:%M:%S UTC").to_string())
+                                .unwrap_or_else(|| "n/a".to_string())
+                        )
+                    })
+                    .unwrap_or_else(|| "no watcher presence reported".to_string()),
                 Style::default().fg(Theme::TEXT),
             ),
         ),
@@ -1506,6 +1516,18 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .block(themed_block("Top Files")),
         bottom[0],
     );
+
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(6), Constraint::Length(7)])
+        .split(bottom[1]);
+
+    frame.render_widget(
+        Paragraph::new(watcher_lines(app))
+        .style(Style::default().bg(Theme::PANEL_ALT))
+        .block(themed_block("Watchers")),
+        right[0],
+    );
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(
@@ -1528,7 +1550,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         ])
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block("Operations")),
-        bottom[1],
+        right[1],
     );
 }
 
@@ -1891,6 +1913,66 @@ fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'s
             })
             .collect()
     }
+}
+
+fn watcher_lines(app: &App) -> Vec<Line<'static>> {
+    let Some(summary) = &app.overview.watchers else {
+        return vec![Line::from(Span::styled(
+            "No watcher presence reported.",
+            Style::default().fg(Theme::MUTED),
+        ))];
+    };
+    if summary.watchers.is_empty() {
+        return vec![
+            Line::from(Span::styled(
+                format!(
+                    "0 active watcher(s). Stale after {}s.",
+                    summary.stale_after_seconds
+                ),
+                Style::default().fg(Theme::MUTED),
+            )),
+            Line::from(Span::styled(
+                "Start a watcher with `mem-cli watch enable --project <slug>` or `memory-watch run --project <slug>`.",
+                Style::default().fg(Theme::MUTED),
+            )),
+        ];
+    }
+
+    let mut lines = vec![Line::from(Span::styled(
+        format!(
+            "{} active watcher(s), stale after {}s.",
+            summary.active_count, summary.stale_after_seconds
+        ),
+        Style::default().fg(Theme::TEXT),
+    ))];
+    for watcher in summary.watchers.iter().take(6) {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{} ", watcher.hostname),
+                Style::default().fg(Theme::ACCENT),
+            ),
+            Span::styled(
+                format!("pid={} ", watcher.pid),
+                Style::default().fg(Theme::ACCENT_STRONG),
+            ),
+            Span::styled(
+                format!("{} ", watcher.mode),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::styled(
+                watcher
+                    .last_heartbeat_at
+                    .format("%H:%M:%S UTC")
+                    .to_string(),
+                Style::default().fg(Theme::MUTED),
+            ),
+        ]));
+        lines.push(Line::from(Span::styled(
+            format!("  {}", watcher.repo_root),
+            Style::default().fg(Theme::MUTED),
+        )));
+    }
+    lines
 }
 
 fn memory_row(item: &ProjectMemoryListItem) -> Row<'static> {
@@ -2557,6 +2639,7 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
         top_tags: Vec::<NamedCount>::new(),
         top_files: Vec::<NamedCount>::new(),
         automation: None,
+        watchers: None,
     }
 }
 

@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use mem_api::{
     AppConfig, AutomationConfig, AutomationMode, AutomationStatus, CaptureTaskRequest,
     CurateRequest, CurateResponse, ProjectOverviewResponse, TestResult,
+    WatcherHeartbeatRequest, WatcherPresenceSummary, WatcherUnregisterRequest,
 };
 use reqwest::{Client, header::HeaderMap};
 use serde::{Deserialize, Serialize};
@@ -355,6 +356,79 @@ pub async fn fetch_project_overview(
             .await?,
     )
     .await
+}
+
+pub async fn heartbeat_watcher(
+    client: &Client,
+    config: &AppConfig,
+    request: &WatcherHeartbeatRequest,
+) -> Result<WatcherPresenceSummary> {
+    send_json(
+        client
+            .post(service_url(config, "/v1/watchers/heartbeat"))
+            .headers(write_headers(&config.service.api_token)?)
+            .json(request)
+            .send()
+            .await?,
+    )
+    .await
+}
+
+pub async fn unregister_watcher(
+    client: &Client,
+    config: &AppConfig,
+    request: &WatcherUnregisterRequest,
+) -> Result<WatcherPresenceSummary> {
+    send_json(
+        client
+            .post(service_url(config, "/v1/watchers/unregister"))
+            .headers(write_headers(&config.service.api_token)?)
+            .json(request)
+            .send()
+            .await?,
+    )
+    .await
+}
+
+pub fn build_watcher_heartbeat_request(
+    state: &AutomationState,
+    watcher_id: &str,
+    hostname: &str,
+    pid: u32,
+    started_at: DateTime<Utc>,
+) -> WatcherHeartbeatRequest {
+    WatcherHeartbeatRequest {
+        watcher_id: watcher_id.to_string(),
+        project: state.project.clone(),
+        repo_root: state.repo_root.clone(),
+        hostname: hostname.to_string(),
+        pid,
+        mode: state.mode.clone(),
+        started_at,
+    }
+}
+
+pub fn build_watcher_unregister_request(
+    project: &str,
+    watcher_id: &str,
+) -> WatcherUnregisterRequest {
+    WatcherUnregisterRequest {
+        watcher_id: watcher_id.to_string(),
+        project: project.to_string(),
+    }
+}
+
+pub fn detect_hostname() -> String {
+    std::env::var("HOSTNAME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "unknown-host".to_string())
 }
 
 pub fn build_capture_request(state: &AutomationState) -> CaptureTaskRequest {
