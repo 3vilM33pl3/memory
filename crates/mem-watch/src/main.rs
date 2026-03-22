@@ -10,6 +10,13 @@ use mem_watch::{
 use reqwest::Client;
 use uuid::Uuid;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HeartbeatState {
+    Unknown,
+    Healthy,
+    Failing,
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "memory-watch", version)]
 struct Cli {
@@ -76,9 +83,11 @@ async fn run_loop(config: AppConfig, args: RunArgs) -> Result<()> {
 
     let heartbeat_request =
         build_watcher_heartbeat_request(&state, &watcher_id, &hostname, pid, started_at);
-    if let Err(error) = heartbeat_watcher(&client, &config, &heartbeat_request).await {
-        eprintln!("watcher heartbeat failed: {error}");
-    }
+    let mut heartbeat_state = HeartbeatState::Unknown;
+    heartbeat_state = log_heartbeat_transition(
+        heartbeat_state,
+        heartbeat_watcher(&client, &config, &heartbeat_request).await,
+    );
 
     let mut poll = tokio::time::interval(config.automation.poll_interval);
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
@@ -97,9 +106,10 @@ async fn run_loop(config: AppConfig, args: RunArgs) -> Result<()> {
                     pid,
                     started_at,
                 );
-                if let Err(error) = heartbeat_watcher(&client, &config, &request).await {
-                    eprintln!("watcher heartbeat failed: {error}");
-                }
+                heartbeat_state = log_heartbeat_transition(
+                    heartbeat_state,
+                    heartbeat_watcher(&client, &config, &request).await,
+                );
             }
             _ = shutdown_signal() => {
                 let request = build_watcher_unregister_request(&project, &watcher_id);
@@ -111,6 +121,33 @@ async fn run_loop(config: AppConfig, args: RunArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn log_heartbeat_transition(
+    previous: HeartbeatState,
+    result: Result<mem_api::WatcherPresenceSummary>,
+) -> HeartbeatState {
+    match result {
+        Ok(summary) => {
+            if previous == HeartbeatState::Failing {
+                println!(
+                    "watcher heartbeat recovered: {} active watcher(s), last heartbeat {}",
+                    summary.active_count,
+                    summary
+                        .last_heartbeat_at
+                        .map(|value| value.to_rfc3339())
+                        .unwrap_or_else(|| "n/a".to_string())
+                );
+            }
+            HeartbeatState::Healthy
+        }
+        Err(error) => {
+            if previous != HeartbeatState::Failing {
+                eprintln!("watcher heartbeat failed: {error}");
+            }
+            HeartbeatState::Failing
+        }
+    }
 }
 
 async fn status(config: AppConfig, args: ProjectArgs) -> Result<()> {
@@ -166,5 +203,32 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     {
         let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HeartbeatState, log_heartbeat_transition};
+    use mem_api::WatcherPresenceSummary;
+
+    #[test]
+    fn heartbeat_failure_enters_failing_state() {
+        let next = log_heartbeat_transition(
+            HeartbeatState::Unknown,
+            Err(anyhow::anyhow!("connect failed")),
+        );
+        assert_eq!(next, HeartbeatState::Failing);
+    }
+
+    #[test]
+    fn heartbeat_success_after_failure_recovers() {
+        let summary = WatcherPresenceSummary {
+            active_count: 1,
+            stale_after_seconds: 90,
+            last_heartbeat_at: None,
+            watchers: Vec::new(),
+        };
+        let next = log_heartbeat_transition(HeartbeatState::Failing, Ok(summary));
+        assert_eq!(next, HeartbeatState::Healthy);
     }
 }
