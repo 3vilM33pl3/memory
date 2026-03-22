@@ -150,6 +150,16 @@ Current HTTP routes include:
 - `GET /v1/projects/{slug}/memories`
 - `GET /v1/projects/{slug}/overview`
 - `POST /v1/archive`
+- `GET /ws` for browser streaming
+
+The service also serves the browser UI directly. In production or packaged installs it looks for static assets in a configured or discovered web root, and it falls back to a clear error page if the assets are missing.
+
+The live UI split is now:
+
+- TUI over the existing Cap'n Proto-framed stream
+- web UI over a JSON WebSocket on `/ws`
+
+Both consume the same logical stream message model from `mem-api`, which keeps project snapshot, memory snapshot, and activity update behavior aligned across terminal and browser clients.
 
 ## Database Model
 

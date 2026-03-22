@@ -8,11 +8,15 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/memory-layer"
 ENV_FILE="$CONFIG_DIR/memory-layer.env"
 SHARE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/memory-layer"
 SKILL_TEMPLATE_DIR="$SHARE_DIR/skill-template"
+WEB_DIR="$SHARE_DIR/web"
 
-mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$SKILL_TEMPLATE_DIR"
+mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$SKILL_TEMPLATE_DIR" "$WEB_DIR"
 
 echo "Building release binaries..."
 cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin mem-cli --bin mem-service --bin memory-watch
+echo "Building web UI..."
+npm --prefix "$ROOT_DIR/web" ci
+npm --prefix "$ROOT_DIR/web" run build
 
 install -m 0755 "$ROOT_DIR/target/release/mem-cli" "$BIN_DIR/mem-cli"
 install -m 0755 "$ROOT_DIR/target/release/mem-service" "$BIN_DIR/mem-service"
@@ -21,6 +25,9 @@ rm -rf "$SKILL_TEMPLATE_DIR"
 mkdir -p "$SKILL_TEMPLATE_DIR"
 cp -R "$ROOT_DIR/.agents/skills/memory-layer/." "$SKILL_TEMPLATE_DIR/"
 find "$SKILL_TEMPLATE_DIR" -type f -path '*/scripts/*' -exec chmod 0755 {} +
+rm -rf "$WEB_DIR"
+mkdir -p "$WEB_DIR"
+cp -R "$ROOT_DIR/web/dist/." "$WEB_DIR/"
 
 if [[ ! -f "$CONFIG_DIR/memory-layer.toml" ]]; then
   install -m 0644 "$ROOT_DIR/memory-layer.toml.example" "$CONFIG_DIR/memory-layer.toml"
@@ -48,6 +55,7 @@ Installed:
   $BIN_DIR/mem-service
   $BIN_DIR/memory-watch
   $SKILL_TEMPLATE_DIR
+  $WEB_DIR
 
 Next steps:
 1. In each repo, run:
@@ -62,5 +70,7 @@ Next steps:
    $BIN_DIR/mem-cli watch enable --project <slug>
 6. Launch the TUI:
    $BIN_DIR/mem-cli tui
+7. Open the web UI:
+   http://127.0.0.1:4040/
 
 EOF

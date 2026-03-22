@@ -15,10 +15,14 @@ mkdir -p \
   "$PKG_ROOT/etc/memory-layer" \
   "$PKG_ROOT/lib/systemd/system" \
   "$PKG_ROOT/usr/share/doc/memory-layer" \
-  "$PKG_ROOT/usr/share/memory-layer/skill-template"
+  "$PKG_ROOT/usr/share/memory-layer/skill-template" \
+  "$PKG_ROOT/usr/share/memory-layer/web"
 
 echo "Building release binaries..."
 cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin mem-cli --bin mem-service --bin memory-watch
+echo "Building web UI..."
+npm --prefix "$ROOT_DIR/web" ci
+npm --prefix "$ROOT_DIR/web" run build
 
 install -m 0755 "$ROOT_DIR/target/release/mem-cli" "$PKG_ROOT/usr/bin/mem-cli"
 install -m 0755 "$ROOT_DIR/target/release/mem-service" "$PKG_ROOT/usr/bin/mem-service"
@@ -30,6 +34,7 @@ install -m 0644 "$ROOT_DIR/memory-layer.toml.example" "$PKG_ROOT/etc/memory-laye
 install -m 0644 "$ROOT_DIR/README.md" "$PKG_ROOT/usr/share/doc/memory-layer/README.md"
 cp -R "$ROOT_DIR/.agents/skills/memory-layer/." "$PKG_ROOT/usr/share/memory-layer/skill-template/"
 find "$PKG_ROOT/usr/share/memory-layer/skill-template" -type f -path '*/scripts/*' -exec chmod 0755 {} +
+cp -R "$ROOT_DIR/web/dist/." "$PKG_ROOT/usr/share/memory-layer/web/"
 
 sed "s/^Version: .*/Version: $VERSION/" "$ROOT_DIR/packaging/debian/control" > "$PKG_ROOT/DEBIAN/control"
 install -m 0755 "$ROOT_DIR/packaging/debian/postinst" "$PKG_ROOT/DEBIAN/postinst"

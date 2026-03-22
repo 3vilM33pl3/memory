@@ -1,0 +1,312 @@
+export type MemoryStatus = "active" | "archived";
+
+export type MemoryType =
+  | "architecture"
+  | "convention"
+  | "decision"
+  | "incident"
+  | "debugging"
+  | "environment"
+  | "domain_fact";
+
+export type QueryMatchKind = "lexical" | "semantic" | "hybrid";
+
+export type SourceKind =
+  | "task_prompt"
+  | "agent_summary"
+  | "user_note"
+  | "file"
+  | "git_commit"
+  | "test"
+  | "task_title";
+
+export interface NamedCount {
+  name: string;
+  count: number;
+}
+
+export interface MemoryTypeCount {
+  memory_type: MemoryType;
+  count: number;
+}
+
+export interface SourceKindCount {
+  source_kind: SourceKind;
+  count: number;
+}
+
+export interface AutomationStatus {
+  enabled: boolean;
+  mode: string;
+  dirty_file_count: number;
+  last_activity_at: string | null;
+  last_persisted_at: string | null;
+  last_capture_at: string | null;
+  last_curation_at: string | null;
+  pending_capture_count: number;
+  last_decision: string | null;
+}
+
+export interface WatcherPresence {
+  watcher_id: string;
+  repo_root: string;
+  hostname: string;
+  pid: number;
+  mode: string;
+  started_at: string;
+  last_heartbeat_at: string;
+}
+
+export interface WatcherPresenceSummary {
+  active_count: number;
+  stale_after_seconds: number;
+  last_heartbeat_at: string | null;
+  watchers: WatcherPresence[];
+}
+
+export interface ProjectOverviewResponse {
+  project: string;
+  service_status: string;
+  database_status: string;
+  memory_entries_total: number;
+  active_memories: number;
+  archived_memories: number;
+  high_confidence_memories: number;
+  medium_confidence_memories: number;
+  low_confidence_memories: number;
+  recent_memories_7d: number;
+  recent_captures_7d: number;
+  raw_captures_total: number;
+  uncurated_raw_captures: number;
+  tasks_total: number;
+  sessions_total: number;
+  curation_runs_total: number;
+  last_memory_at: string | null;
+  last_curation_at: string | null;
+  last_capture_at: string | null;
+  oldest_uncurated_capture_age_hours: number | null;
+  top_tags: NamedCount[];
+  top_files: NamedCount[];
+  memory_type_breakdown: MemoryTypeCount[];
+  source_kind_breakdown: SourceKindCount[];
+  automation: AutomationStatus | null;
+  watchers: WatcherPresenceSummary | null;
+}
+
+export interface ProjectMemoryListItem {
+  id: string;
+  summary: string;
+  preview: string;
+  memory_type: MemoryType;
+  confidence: number;
+  status: MemoryStatus;
+  updated_at: string;
+  tags: string[];
+}
+
+export interface ProjectMemoriesResponse {
+  project: string;
+  total: number;
+  items: ProjectMemoryListItem[];
+}
+
+export interface MemorySourceRecord {
+  id: string;
+  task_id: string | null;
+  file_path: string | null;
+  git_commit: string | null;
+  source_kind: SourceKind;
+  excerpt: string | null;
+}
+
+export interface RelatedMemorySummary {
+  memory_id: string;
+  relation_type: string;
+  summary: string;
+  memory_type: MemoryType;
+  confidence: number;
+}
+
+export interface MemoryEntryResponse {
+  id: string;
+  project: string;
+  canonical_text: string;
+  summary: string;
+  memory_type: MemoryType;
+  importance: number;
+  confidence: number;
+  status: MemoryStatus;
+  tags: string[];
+  sources: MemorySourceRecord[];
+  related_memories: RelatedMemorySummary[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface QueryDiagnostics {
+  lexical_candidates: number;
+  semantic_candidates: number;
+  merged_candidates: number;
+  returned_results: number;
+  relation_augmented_candidates: number;
+  lexical_duration_ms: number;
+  semantic_duration_ms: number;
+  rerank_duration_ms: number;
+  total_duration_ms: number;
+}
+
+export interface QueryResult {
+  memory_id: string;
+  summary: string;
+  snippet: string;
+  memory_type: MemoryType;
+  score: number;
+  match_kind: QueryMatchKind;
+  score_explanation: string[];
+  debug: {
+    lexical_score: number;
+    semantic_score: number;
+    relation_score: number;
+  };
+  tags: string[];
+  sources: MemorySourceRecord[];
+}
+
+export interface QueryResponse {
+  answer: string;
+  confidence: number;
+  insufficient_evidence: boolean;
+  results: QueryResult[];
+  diagnostics: QueryDiagnostics;
+}
+
+export interface QueryRequest {
+  project: string;
+  query: string;
+  filters: Record<string, never>;
+  top_k: number;
+  min_confidence: number | null;
+}
+
+export type ActivityKind =
+  | "commit_sync"
+  | "query"
+  | "query_error"
+  | "capture_task"
+  | "curate"
+  | "reindex"
+  | "archive"
+  | "delete_memory";
+
+export type ActivityDetails =
+  | {
+      type: "commit_sync";
+      imported_count: number;
+      updated_count: number;
+      total_received: number;
+      newest_commit?: string | null;
+      oldest_commit?: string | null;
+    }
+  | {
+      type: "query";
+      query: string;
+      top_k: number;
+      result_count: number;
+      confidence: number;
+      insufficient_evidence: boolean;
+      total_duration_ms: number;
+      answer?: string | null;
+      error?: string | null;
+    }
+  | {
+      type: "capture_task";
+      session_id: string;
+      task_id: string;
+      raw_capture_id: string;
+      idempotency_key: string;
+    }
+  | {
+      type: "curate";
+      run_id: string;
+      input_count: number;
+      output_count: number;
+    }
+  | {
+      type: "reindex";
+      reindexed_entries: number;
+    }
+  | {
+      type: "archive";
+      archived_count: number;
+      max_confidence: number;
+      max_importance: number;
+    }
+  | {
+      type: "delete_memory";
+      deleted: boolean;
+      summary: string;
+    };
+
+export interface ActivityEvent {
+  project: string;
+  kind: ActivityKind;
+  summary: string;
+  details: ActivityDetails | null;
+  recorded_at: string;
+}
+
+export interface ReindexResponse {
+  project: string;
+  reindexed_entries: number;
+}
+
+export interface CurateResponse {
+  run_id: string;
+  input_count: number;
+  output_count: number;
+}
+
+export interface ArchiveResponse {
+  project: string;
+  archived_count: number;
+  max_confidence: number;
+  max_importance: number;
+}
+
+export interface DeleteMemoryResponse {
+  memory_id: string;
+  deleted: boolean;
+  summary: string;
+}
+
+export type StreamRequest =
+  | { type: "health" }
+  | { type: "project_overview"; project: string }
+  | { type: "project_memories"; project: string }
+  | { type: "memory_detail"; memory_id: string }
+  | { type: "subscribe_project"; project: string }
+  | { type: "subscribe_memory"; memory_id: string }
+  | { type: "unsubscribe_memory" }
+  | { type: "ping" };
+
+export type StreamResponse =
+  | { type: "health"; value: unknown }
+  | { type: "project_overview"; value: ProjectOverviewResponse }
+  | { type: "project_memories"; value: ProjectMemoriesResponse }
+  | { type: "memory_detail"; value: MemoryEntryResponse | null }
+  | {
+      type: "project_snapshot";
+      overview: ProjectOverviewResponse;
+      memories: ProjectMemoriesResponse;
+    }
+  | {
+      type: "project_changed";
+      overview: ProjectOverviewResponse;
+      memories: ProjectMemoriesResponse;
+    }
+  | { type: "memory_snapshot"; detail: MemoryEntryResponse | null }
+  | { type: "memory_changed"; detail: MemoryEntryResponse | null }
+  | { type: "activity"; event: ActivityEvent }
+  | { type: "ack"; message: string }
+  | { type: "pong" }
+  | { type: "error"; message: string };

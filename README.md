@@ -2,7 +2,7 @@
 
 Memory Layer is a local knowledge base built for coding agents such as Codex CLI and Claude Code.
 
-It lets you save useful facts about a codebase, search them later, and view them in a terminal UI. It is designed for both humans and coding agents, so project knowledge does not get lost in chat history, terminal scrollback, or old commits.
+It lets you save useful facts about a codebase, search them later, and view them in a terminal UI or browser. It is designed for both humans and coding agents, so project knowledge does not get lost in chat history, terminal scrollback, or old commits.
 
 ![Memory Layer TUI](docs/img/tui-overview.png)
 
@@ -11,7 +11,7 @@ It lets you save useful facts about a codebase, search them later, and view them
 - stores project memories in PostgreSQL
 - keeps memories separated per project
 - combines lexical search with optional embedding-based recall and related-memory links
-- lets you search and browse them in a TUI
+- lets you search and browse them in a TUI or browser
 - can capture useful work automatically while you code
 - can scan an existing repository and suggest durable knowledge
 - can import git commit history as searchable project evidence
@@ -21,6 +21,7 @@ It lets you save useful facts about a codebase, search them later, and view them
 - `mem-service`: the shared backend service
 - `mem-cli`: the command-line tool and TUI
 - `memory-watch`: the optional background watcher
+- web UI served by `mem-service`
 - `.agents/skills/memory-layer/`: the repo-local Codex skill installed into each project
 
 ## Fastest Install: Debian Package
@@ -47,10 +48,16 @@ mem-cli wizard
 sudo systemctl enable --now memory-layer.service
 ```
 
-5. Open the TUI:
+5. Open the UI you want:
 
 ```bash
 mem-cli tui
+```
+
+or open:
+
+```text
+http://127.0.0.1:4040/
 ```
 
 ## What You Need Before Setup
@@ -101,6 +108,7 @@ Use the global config for shared values such as:
 - `service.api_token`
 - `[llm]` settings
 - `[embeddings]` settings if you want semantic recall
+- optional `service.web_root` override if you want `mem-service` to serve web assets from a non-standard location
 
 Use `.mem/config.toml` for project-specific overrides such as:
 
@@ -148,6 +156,12 @@ Open the TUI:
 
 ```bash
 mem-cli tui
+```
+
+Open the web UI:
+
+```text
+http://127.0.0.1:4040/
 ```
 
 Check the backend:
@@ -223,6 +237,28 @@ Important notes:
 - `Query`: ask a question and inspect the memories returned
 - `Activity`: see recent queries and backend activity
 - `Project`: see health, counts, and configuration summary
+
+## Web UI
+
+The browser UI is served directly by `mem-service` and mirrors the same day-to-day surfaces as the TUI:
+
+- `Memories`
+- `Query`
+- `Activity`
+- `Project`
+
+The web UI uses:
+
+- normal HTTP endpoints for reads and actions
+- a browser WebSocket on `/ws` for live project, activity, and watcher updates
+
+By default `mem-service` looks for built web assets in:
+
+- `web/dist` when run from the repository
+- `~/.local/share/memory-layer/web` for local installs
+- `/usr/share/memory-layer/web` for Debian installs
+
+You can override that with `service.web_root`.
 
 ## Automatic Capture
 

@@ -9,3 +9,5 @@
 /.memory-layer
 /.mem
 /keys.env
+/web/node_modules
+/web/dist

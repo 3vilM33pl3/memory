@@ -1097,6 +1097,8 @@ pub struct ServiceConfig {
     pub capnp_unix_socket: String,
     #[serde(default = "default_capnp_tcp_addr")]
     pub capnp_tcp_addr: String,
+    #[serde(default)]
+    pub web_root: Option<String>,
     #[serde(default = "default_api_token")]
     pub api_token: String,
     #[serde(default = "default_request_timeout")]

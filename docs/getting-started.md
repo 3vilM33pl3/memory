@@ -29,10 +29,16 @@ mem-cli wizard
 sudo systemctl enable --now memory-layer.service
 ```
 
-6. Open the TUI:
+6. Open the UI you prefer:
 
 ```bash
 mem-cli tui
+```
+
+or in a browser:
+
+```text
+http://127.0.0.1:4040/
 ```
 
 ## What The Wizard Will Ask For
@@ -108,6 +114,12 @@ Open the TUI:
 
 ```bash
 mem-cli tui
+```
+
+Open the web UI:
+
+```text
+http://127.0.0.1:4040/
 ```
 
 Check health:
@@ -205,6 +217,23 @@ If `scan` fails, the two most common causes are:
 
 - missing `[llm].model` in config
 - missing `OPENAI_API_KEY`
+
+## Web UI Notes
+
+The browser UI is served by `mem-service` itself. In a normal install it should work automatically once the service is running.
+
+If you build from source, build the frontend first:
+
+```bash
+npm --prefix web ci
+npm --prefix web run build
+```
+
+Then start the backend:
+
+```bash
+cargo run --bin mem-service
+```
 
 ## Importing Commit History
 

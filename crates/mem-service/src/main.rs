@@ -9,10 +9,13 @@ use std::{
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{
+        Path, Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    response::{Html, IntoResponse, Response},
+    routing::{any, delete, get, post},
 };
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse,
@@ -40,7 +43,10 @@ use tokio::{
     sync::{broadcast, oneshot},
     time::Duration,
 };
-use tower_http::trace::TraceLayer;
+use tower_http::{
+    services::{ServeDir, ServeFile},
+    trace::TraceLayer,
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
@@ -49,6 +55,7 @@ struct AppState {
     pool: PgPool,
     api_token: String,
     config: AppConfig,
+    web_root: Option<PathBuf>,
     embedder: Option<EmbeddingService>,
     events: broadcast::Sender<ServiceEvent>,
     recent_activity: Arc<Mutex<VecDeque<ServiceEvent>>>,
@@ -190,6 +197,7 @@ async fn build_state(config: AppConfig) -> Result<AppState> {
     Ok(AppState {
         pool,
         api_token: config.service.api_token.clone(),
+        web_root: discover_web_root(&config),
         embedder: EmbeddingService::from_config(&config),
         config,
         events,
@@ -198,9 +206,36 @@ async fn build_state(config: AppConfig) -> Result<AppState> {
     })
 }
 
+fn discover_web_root(config: &AppConfig) -> Option<PathBuf> {
+    if let Some(root) = &config.service.web_root {
+        let path = PathBuf::from(root);
+        if path.join("index.html").is_file() {
+            return Some(path);
+        }
+    }
+
+    let candidates = vec![
+        Some(PathBuf::from("web").join("dist")),
+        std::env::var("HOME")
+            .ok()
+            .map(|home| PathBuf::from(home).join(".local/share/memory-layer/web")),
+        Some(PathBuf::from("/usr/share/memory-layer/web")),
+    ];
+
+    for candidate in candidates.into_iter().flatten() {
+        if candidate.join("index.html").is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
 fn build_http_app(state: AppState) -> Router {
-    Router::new()
+    let web_assets = state.web_root.clone();
+    let app = Router::new()
         .route("/healthz", get(healthz))
+        .route("/ws", get(websocket))
         .route("/v1/query", post(query))
         .route("/v1/commits/sync", post(sync_commits))
         .route("/v1/capture/task", post(capture_task))
@@ -217,7 +252,16 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/watchers/unregister", post(watcher_unregister))
         .route("/v1/archive", post(archive))
         .with_state(state)
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http());
+
+    if let Some(root) = web_assets {
+        let index = root.join("index.html");
+        app.fallback_service(
+            ServeDir::new(root).not_found_service(ServeFile::new(index)),
+        )
+    } else {
+        app.fallback(any(web_unavailable))
+    }
 }
 
 struct ProtoServers {
@@ -268,6 +312,111 @@ async fn run_proto_tcp(listener: TcpListener, state: AppState) -> Result<()> {
 struct ConnectionSubscriptions {
     project: Option<String>,
     memory_id: Option<Uuid>,
+}
+
+async fn websocket(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_websocket_connection(socket, state))
+}
+
+async fn handle_websocket_connection(mut socket: WebSocket, state: AppState) {
+    let mut subscriptions = ConnectionSubscriptions::default();
+    let mut events = state.events.subscribe();
+
+    loop {
+        tokio::select! {
+            incoming = socket.recv() => {
+                let Some(result) = incoming else {
+                    break;
+                };
+                match result {
+                    Ok(Message::Text(text)) => {
+                        let request = match serde_json::from_str::<StreamRequest>(&text) {
+                            Ok(request) => request,
+                            Err(error) => {
+                                if send_ws_response(
+                                    &mut socket,
+                                    StreamResponse::Error {
+                                        message: format!("parse stream request: {error}"),
+                                    },
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                                continue;
+                            }
+                        };
+                        match process_stream_request(&state, &mut subscriptions, request).await {
+                            Ok(responses) => {
+                                for response in responses {
+                                    if send_ws_response(&mut socket, response).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                if send_ws_response(
+                                    &mut socket,
+                                    StreamResponse::Error {
+                                        message: error.to_string(),
+                                    },
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Ok(Message::Ping(payload)) => {
+                        if socket.send(Message::Pong(payload)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(Message::Close(_)) => break,
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
+            event = events.recv() => {
+                let Ok(event) = event else {
+                    continue;
+                };
+                match render_subscription_updates(&state, &subscriptions, &event).await {
+                    Ok(responses) => {
+                        for response in responses {
+                            if send_ws_response(&mut socket, response).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        if send_ws_response(
+                            &mut socket,
+                            StreamResponse::Error {
+                                message: error.to_string(),
+                            },
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn send_ws_response(socket: &mut WebSocket, response: StreamResponse) -> Result<()> {
+    socket
+        .send(Message::Text(serde_json::to_string(&response)?.into()))
+        .await
+        .context("send websocket response")?;
+    Ok(())
 }
 
 async fn handle_proto_connection<S>(stream: S, state: AppState) -> Result<()>
@@ -549,6 +698,35 @@ async fn config_path_fingerprint(path: Option<&FsPath>) -> Result<ConfigFingerpr
 
 async fn healthz(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
     Ok(Json(health_payload(&state).await.map_err(ApiError::io)?))
+}
+
+async fn web_unavailable() -> impl IntoResponse {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Html(
+            r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Memory Layer Web UI unavailable</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, sans-serif; background: #0f1722; color: #e6edf5; margin: 0; }
+      main { max-width: 760px; margin: 8rem auto; padding: 2rem; background: #182233; border: 1px solid #42506a; border-radius: 18px; }
+      code { color: #ffd17d; }
+      h1 { margin-top: 0; }
+      p { line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Memory Layer Web UI is not installed</h1>
+      <p><code>mem-service</code> is running, but it could not find built web assets.</p>
+      <p>Build the frontend under <code>web/</code> or install a package that ships <code>/usr/share/memory-layer/web</code>.</p>
+    </main>
+  </body>
+</html>"#,
+        ),
+    )
 }
 
 async fn query(
@@ -1273,14 +1451,37 @@ mod tests {
 }
 
 fn require_token(headers: &HeaderMap, expected: &str) -> Result<(), ApiError> {
-    let provided = headers
-        .get("x-api-token")
-        .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| ApiError::unauthorized("missing x-api-token header"))?;
-    if provided != expected {
-        return Err(ApiError::unauthorized("invalid api token"));
+    if let Some(provided) = headers.get("x-api-token").and_then(|value| value.to_str().ok()) {
+        if provided != expected {
+            return Err(ApiError::unauthorized("invalid api token"));
+        }
+        return Ok(());
     }
-    Ok(())
+
+    if is_local_browser_request(headers) {
+        return Ok(());
+    }
+
+    Err(ApiError::unauthorized(
+        "missing x-api-token header or trusted local browser origin",
+    ))
+}
+
+fn is_local_browser_request(headers: &HeaderMap) -> bool {
+    ["origin", "referer"].iter().any(|header| {
+        headers
+            .get(*header)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| {
+                value.starts_with("http://127.0.0.1")
+                    || value.starts_with("http://localhost")
+                    || value.starts_with("http://[::1]")
+                    || value.starts_with("https://127.0.0.1")
+                    || value.starts_with("https://localhost")
+                    || value.starts_with("https://[::1]")
+            })
+            .unwrap_or(false)
+    })
 }
 
 #[derive(Debug)]
