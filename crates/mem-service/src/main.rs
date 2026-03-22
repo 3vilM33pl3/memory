@@ -783,7 +783,7 @@ async fn capture_task(
     headers: HeaderMap,
     Json(request): Json<CaptureTaskRequest>,
 ) -> Result<Json<mem_api::CaptureTaskResponse>, ApiError> {
-    require_token(&headers, &state.api_token)?;
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let task_title = request.task_title.clone();
     let project = request.project.clone();
@@ -811,7 +811,7 @@ async fn curate_memory(
     headers: HeaderMap,
     Json(request): Json<CurateRequest>,
 ) -> Result<Json<mem_api::CurateResponse>, ApiError> {
-    require_token(&headers, &state.api_token)?;
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
     let response = curate(&state.pool, &request).await.map_err(ApiError::sql)?;
@@ -843,7 +843,7 @@ async fn reindex(
     headers: HeaderMap,
     Json(request): Json<ReindexRequest>,
 ) -> Result<Json<ReindexResponse>, ApiError> {
-    require_token(&headers, &state.api_token)?;
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
     let count = rebuild_chunks(&state.pool, &request.project, state.embedder.as_ref())
@@ -915,7 +915,7 @@ async fn sync_commits(
     headers: HeaderMap,
     Json(request): Json<CommitSyncRequest>,
 ) -> Result<Json<CommitSyncResponse>, ApiError> {
-    require_token(&headers, &state.api_token)?;
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
     let response = sync_project_commits(&state.pool, &request)
@@ -1019,7 +1019,7 @@ async fn watcher_heartbeat(
     headers: HeaderMap,
     Json(request): Json<WatcherHeartbeatRequest>,
 ) -> Result<Json<WatcherPresenceSummary>, ApiError> {
-    require_token(&headers, &state.api_token)?;
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
     let (summary, changed) = register_watcher_heartbeat(&state.watchers, request);
@@ -1034,7 +1034,7 @@ async fn watcher_unregister(
     headers: HeaderMap,
     Json(request): Json<WatcherUnregisterRequest>,
 ) -> Result<Json<WatcherPresenceSummary>, ApiError> {
-    require_token(&headers, &state.api_token)?;
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
     let (summary, changed) = unregister_watcher(&state.watchers, &request);
@@ -1049,7 +1049,7 @@ async fn archive(
     headers: HeaderMap,
     Json(request): Json<ArchiveRequest>,
 ) -> Result<Json<ArchiveResponse>, ApiError> {
-    require_token(&headers, &state.api_token)?;
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
     let result = sqlx::query(
@@ -1096,7 +1096,7 @@ async fn delete_memory(
     headers: HeaderMap,
     Json(request): Json<DeleteMemoryRequest>,
 ) -> Result<Json<DeleteMemoryResponse>, ApiError> {
-    require_token(&headers, &state.api_token)?;
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
 
     let record = sqlx::query(
@@ -1450,7 +1450,7 @@ mod tests {
     }
 }
 
-fn require_token(headers: &HeaderMap, expected: &str) -> Result<(), ApiError> {
+fn require_token(headers: &HeaderMap, expected: &str, bind_addr: &str) -> Result<(), ApiError> {
     if let Some(provided) = headers.get("x-api-token").and_then(|value| value.to_str().ok()) {
         if provided != expected {
             return Err(ApiError::unauthorized("invalid api token"));
@@ -1458,7 +1458,7 @@ fn require_token(headers: &HeaderMap, expected: &str) -> Result<(), ApiError> {
         return Ok(());
     }
 
-    if is_local_browser_request(headers) {
+    if is_local_browser_request(headers, bind_addr) {
         return Ok(());
     }
 
@@ -1467,7 +1467,12 @@ fn require_token(headers: &HeaderMap, expected: &str) -> Result<(), ApiError> {
     ))
 }
 
-fn is_local_browser_request(headers: &HeaderMap) -> bool {
+fn is_local_browser_request(headers: &HeaderMap, bind_addr: &str) -> bool {
+    let configured_host = bind_addr
+        .rsplit_once(':')
+        .map(|(host, _)| host.trim_matches('[').trim_matches(']'))
+        .unwrap_or(bind_addr);
+
     ["origin", "referer"].iter().any(|header| {
         headers
             .get(*header)
@@ -1479,6 +1484,8 @@ fn is_local_browser_request(headers: &HeaderMap) -> bool {
                     || value.starts_with("https://127.0.0.1")
                     || value.starts_with("https://localhost")
                     || value.starts_with("https://[::1]")
+                    || value.starts_with(&format!("http://{configured_host}"))
+                    || value.starts_with(&format!("https://{configured_host}"))
             })
             .unwrap_or(false)
     })
