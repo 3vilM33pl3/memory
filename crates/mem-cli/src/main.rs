@@ -1920,19 +1920,52 @@ fn enable_backend_service(config_path: &Path) -> Result<String> {
     #[cfg(target_os = "macos")]
     {
         let plist_path = backend_launch_agent_path()?;
-        write_launch_agent(
-            &plist_path,
-            render_backend_launch_agent(config_path)?,
-            backend_launch_agent_label(),
-        )?;
-        bootstrap_launch_agent(&plist_path, backend_launch_agent_label())?;
+        let _ = bootout_launch_agent(&plist_path, backend_launch_agent_label());
+        if plist_path.exists() {
+            let _ = fs::remove_file(&plist_path);
+        }
+        let pid_path = backend_pid_file_path()?;
+        let stdout_path = user_memory_layer_log_dir()?.join("mem-service.stdout.log");
+        let stderr_path = user_memory_layer_log_dir()?.join("mem-service.stderr.log");
+        fs::create_dir_all(
+            pid_path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("backend pid path has no parent"))?,
+        )
+        .with_context(|| format!("create {}", pid_path.display()))?;
+        if let Some(pid) = backend_running_pid()? {
+            return Ok(format!(
+                "Backend process already running.\nPID file: {}\nPID: {}\nConfig: {}",
+                pid_path.display(),
+                pid,
+                config_path.display()
+            ));
+        }
+        let exports = shell_export_prefix()?;
+        let program_command = shell_program_invocation(&[
+            mem_service_binary_path()?.display().to_string(),
+            config_path.display().to_string(),
+        ]);
+        let shell_command = format!(
+            "{exports} nohup {program_command} >>{} 2>>{} </dev/null & echo $! > {}",
+            shell_quote_sh(&stdout_path.display().to_string()),
+            shell_quote_sh(&stderr_path.display().to_string()),
+            shell_quote_sh(&pid_path.display().to_string()),
+        );
+        let output = ProcessCommand::new("/bin/zsh")
+            .args(["-lc", &shell_command])
+            .output()
+            .context("start backend process")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("start backend process failed: {}", stderr.trim());
+        }
         Ok(format!(
-            "Installed and started backend LaunchAgent {}.\nPlist: {}\nConfig: {}\n\nManage it with:\n- mem-cli service status\n- mem-cli service disable\n- launchctl kickstart -k {}/{}",
-            backend_launch_agent_label(),
-            plist_path.display(),
+            "Started backend process.\nPID file: {}\nConfig: {}\nLogs:\n- {}\n- {}",
+            pid_path.display(),
             config_path.display(),
-            launchctl_domain_target()?,
-            backend_launch_agent_label()
+            stdout_path.display(),
+            stderr_path.display(),
         ))
     }
 
@@ -1950,13 +1983,25 @@ fn disable_backend_service() -> Result<String> {
         let plist_path = backend_launch_agent_path()?;
         let _ = bootout_launch_agent(&plist_path, backend_launch_agent_label());
         if plist_path.exists() {
-            fs::remove_file(&plist_path)
-                .with_context(|| format!("remove {}", plist_path.display()))?;
+            let _ = fs::remove_file(&plist_path);
+        }
+        let pid_path = backend_pid_file_path()?;
+        if let Some(pid) = backend_running_pid()? {
+            let output = ProcessCommand::new("kill")
+                .arg(pid.to_string())
+                .output()
+                .with_context(|| format!("kill backend pid {pid}"))?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("kill {} failed: {}", pid, stderr.trim());
+            }
+        }
+        if pid_path.exists() {
+            fs::remove_file(&pid_path).with_context(|| format!("remove {}", pid_path.display()))?;
         }
         Ok(format!(
-            "Disabled backend LaunchAgent {}.\nRemoved plist: {}",
-            backend_launch_agent_label(),
-            plist_path.display()
+            "Stopped backend process.\nRemoved pid file: {}",
+            pid_path.display()
         ))
     }
 
@@ -1970,18 +2015,19 @@ fn disable_backend_service() -> Result<String> {
 fn backend_service_status(config_path: &Path) -> Result<String> {
     #[cfg(target_os = "macos")]
     {
-        let plist_path = backend_launch_agent_path()?;
-        let status = launch_agent_status(backend_launch_agent_label())?;
+        let pid_path = backend_pid_file_path()?;
+        let pid = backend_running_pid()?;
         Ok(format!(
-            "Backend service:\n- label: {}\n- plist: {}\n- config: {}\n- installed: {}\n- loaded: {}\n- running: {}\n\nInspect with:\n- launchctl print {}/{}",
-            backend_launch_agent_label(),
-            plist_path.display(),
+            "Backend service:\n- pid file: {}\n- config: {}\n- installed: {}\n- running: {}\n- pid: {}\n\nInspect with:\n- tail -f {}",
+            pid_path.display(),
             config_path.display(),
-            yes_no(plist_path.exists()),
-            yes_no(status.loaded),
-            yes_no(status.running),
-            launchctl_domain_target()?,
-            backend_launch_agent_label()
+            yes_no(pid_path.exists()),
+            yes_no(pid.is_some()),
+            pid.map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            user_memory_layer_log_dir()?
+                .join("mem-service.stderr.log")
+                .display(),
         ))
     }
 
@@ -2235,6 +2281,14 @@ fn backend_launch_agent_path() -> Result<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
+fn backend_pid_file_path() -> Result<PathBuf> {
+    Ok(macos_app_support_dir()
+        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
+        .join("run")
+        .join("mem-service.pid"))
+}
+
+#[cfg(target_os = "macos")]
 fn watch_launch_agent_path(project: &str) -> Result<PathBuf> {
     Ok(user_launch_agents_dir()?.join(format!("{}.plist", watch_launch_agent_label(project))))
 }
@@ -2275,6 +2329,29 @@ fn launchctl_domain_target() -> Result<String> {
     }
     let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok(format!("gui/{uid}"))
+}
+
+#[cfg(target_os = "macos")]
+fn backend_running_pid() -> Result<Option<u32>> {
+    let pid_path = backend_pid_file_path()?;
+    if !pid_path.exists() {
+        return Ok(None);
+    }
+    let content =
+        fs::read_to_string(&pid_path).with_context(|| format!("read {}", pid_path.display()))?;
+    let pid = match content.trim().parse::<u32>() {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let status = ProcessCommand::new("kill")
+        .args(["-0", &pid.to_string()])
+        .output()
+        .with_context(|| format!("check backend pid {pid}"))?;
+    if status.status.success() {
+        Ok(Some(pid))
+    } else {
+        Ok(None)
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -2364,15 +2441,14 @@ fn render_backend_launch_agent(config_path: &Path) -> Result<String> {
         macos_app_support_dir().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
     let stdout_path = user_memory_layer_log_dir()?.join("mem-service.stdout.log");
     let stderr_path = user_memory_layer_log_dir()?.join("mem-service.stderr.log");
-    let env_vars = launch_agent_environment_variables()?;
+    let command = launch_agent_shell_command(&[
+        binary.display().to_string(),
+        config_path.display().to_string(),
+    ])?;
     render_launch_agent_plist(
         backend_launch_agent_label(),
         &working_directory,
-        &[
-            binary.display().to_string(),
-            config_path.display().to_string(),
-        ],
-        &env_vars,
+        &command,
         &stdout_path,
         &stderr_path,
     )
@@ -2388,32 +2464,80 @@ fn render_watch_launch_agent(repo_root: &Path, project: &str) -> Result<String> 
     let sanitized = sanitize_service_fragment(project);
     let stdout_path = log_dir.join(format!("memory-watch-{sanitized}.stdout.log"));
     let stderr_path = log_dir.join(format!("memory-watch-{sanitized}.stderr.log"));
-    let env_vars = launch_agent_environment_variables()?;
+    let command = launch_agent_shell_command(&[
+        binary.display().to_string(),
+        "--config".to_string(),
+        default_global_config_path().display().to_string(),
+        "run".to_string(),
+        "--project".to_string(),
+        project.to_string(),
+    ])?;
     render_launch_agent_plist(
         &watch_launch_agent_label(project),
         &working_directory,
-        &[
-            binary.display().to_string(),
-            "--config".to_string(),
-            default_global_config_path().display().to_string(),
-            "run".to_string(),
-            "--project".to_string(),
-            project.to_string(),
-        ],
-        &env_vars,
+        &command,
         &stdout_path,
         &stderr_path,
     )
 }
 
 #[cfg(target_os = "macos")]
+fn shell_export_prefix() -> Result<String> {
+    let env_vars = launch_agent_environment_variables()?;
+    let mut command = String::new();
+    for (key, value) in env_vars {
+        command.push_str("export ");
+        command.push_str(&key);
+        command.push('=');
+        command.push_str(&shell_quote_sh(&value));
+        command.push_str("; ");
+    }
+    Ok(command)
+}
+
+#[cfg(target_os = "macos")]
+fn shell_program_invocation(program_arguments: &[String]) -> String {
+    let mut command = String::new();
+    let mut first = true;
+    for arg in program_arguments {
+        if !first {
+            command.push(' ');
+        }
+        first = false;
+        command.push_str(&shell_quote_sh(arg));
+    }
+    command
+}
+
+#[cfg(target_os = "macos")]
+fn shell_command_for_program(program_arguments: &[String], exec_program: bool) -> Result<String> {
+    let mut command = shell_export_prefix()?;
+    if exec_program {
+        command.push_str("exec");
+        command.push(' ');
+    }
+    command.push_str(&shell_program_invocation(program_arguments));
+    Ok(command)
+}
+
+#[cfg(target_os = "macos")]
+fn launch_agent_shell_command(program_arguments: &[String]) -> Result<String> {
+    shell_command_for_program(program_arguments, true)
+}
+
+#[cfg(target_os = "macos")]
 fn launch_agent_environment_variables() -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
+    values.insert("HOME".to_string(), env::var("HOME").context("HOME is not set")?);
     values.insert(
         "PATH".to_string(),
         env::var("PATH")
             .unwrap_or_else(|_| "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string()),
     );
+    if let Ok(user) = env::var("USER") {
+        values.insert("USER".to_string(), user.clone());
+        values.insert("LOGNAME".to_string(), user);
+    }
     let env_file = user_memory_layer_env_file()?;
     if !env_file.exists() {
         return Ok(values);
@@ -2436,8 +2560,7 @@ fn launch_agent_environment_variables() -> Result<BTreeMap<String, String>> {
 fn render_launch_agent_plist(
     label: &str,
     working_directory: &Path,
-    program_arguments: &[String],
-    env_vars: &BTreeMap<String, String>,
+    shell_command: &str,
     stdout_path: &Path,
     stderr_path: &Path,
 ) -> Result<String> {
@@ -2445,6 +2568,12 @@ fn render_launch_agent_plist(
         .parent()
         .ok_or_else(|| anyhow::anyhow!("stdout log path has no parent"))?;
     fs::create_dir_all(log_dir).with_context(|| format!("create {}", log_dir.display()))?;
+    let env_vars = launch_agent_environment_variables()?;
+    let program_arguments = [
+        "/bin/zsh".to_string(),
+        "-lc".to_string(),
+        shell_command.to_string(),
+    ];
     let args_xml = program_arguments
         .iter()
         .map(|arg| format!("    <string>{}</string>", xml_escape(arg)))
@@ -2506,6 +2635,11 @@ fn xml_escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+#[cfg(target_os = "macos")]
+fn shell_quote_sh(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -3456,6 +3590,7 @@ mod tests {
 
         assert!(backend_service_available());
         assert!(plist.contains("<string>com.memory-layer.mem-service</string>"));
+        assert!(plist.contains("<string>/bin/zsh</string>"));
         assert!(plist.contains(&default_global_config_path().display().to_string()));
         assert!(plist.contains("mem-service.stdout.log"));
     }
@@ -3469,9 +3604,10 @@ mod tests {
 
         assert!(plist.contains("<string>com.memory-layer.memory-watch.homelab</string>"));
         assert!(plist.contains(&repo_root.display().to_string()));
-        assert!(plist.contains("<string>run</string>"));
-        assert!(plist.contains("<string>--project</string>"));
-        assert!(plist.contains("<string>homelab</string>"));
+        assert!(plist.contains("<string>/bin/zsh</string>"));
+        assert!(plist.contains("memory-watch"));
+        assert!(plist.contains("--project"));
+        assert!(plist.contains("homelab"));
 
         let _ = fs::remove_dir_all(repo_root);
     }
