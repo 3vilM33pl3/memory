@@ -2296,6 +2296,43 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![section_span("Operation Detail")]));
         match details {
+            ActivityDetails::Query {
+                query,
+                top_k,
+                result_count,
+                confidence,
+                insufficient_evidence,
+                total_duration_ms,
+                answer,
+                error,
+            } => {
+                lines.push(activity_kv_line("Query", query.clone()));
+                lines.push(activity_kv_line("Top K", top_k.to_string()));
+                lines.push(activity_kv_line("Results", result_count.to_string()));
+                lines.push(activity_kv_line(
+                    "Confidence",
+                    format!("{confidence:.2}"),
+                ));
+                lines.push(activity_kv_line(
+                    "Insufficient evidence",
+                    insufficient_evidence.to_string(),
+                ));
+                lines.push(activity_kv_line(
+                    "Duration",
+                    format!("{total_duration_ms} ms"),
+                ));
+                if let Some(answer) = answer {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(vec![section_span("Answer")]));
+                    lines.push(Line::from(Span::styled(
+                        answer.clone(),
+                        Style::default().fg(Theme::TEXT),
+                    )));
+                }
+                if let Some(error) = error {
+                    lines.push(activity_kv_line("Error", error.clone()));
+                }
+            }
             ActivityDetails::CaptureTask {
                 session_id,
                 task_id,
@@ -2492,6 +2529,8 @@ fn section_span(value: impl Into<String>) -> Span<'static> {
 
 fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
     let (label, color) = match kind {
+        ActivityKind::Query => ("query", Theme::ACCENT),
+        ActivityKind::QueryError => ("query-error", Theme::DANGER),
         ActivityKind::CaptureTask => ("capture", Theme::ACCENT),
         ActivityKind::Curate => ("curate", Theme::SUCCESS),
         ActivityKind::Reindex => ("reindex", Theme::ACCENT_STRONG),

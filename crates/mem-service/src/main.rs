@@ -546,10 +546,48 @@ async fn query(
     Json(request): Json<QueryRequest>,
 ) -> Result<Json<mem_api::QueryResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
-    let response = query_memory(&state.pool, &request, state.embedder.as_ref())
-        .await
-        .map_err(ApiError::io)?;
-    Ok(Json(response))
+    match query_memory(&state.pool, &request, state.embedder.as_ref()).await {
+        Ok(response) => {
+            notify_project_changed(
+                &state,
+                request.project.clone(),
+                None,
+                ActivityKind::Query,
+                format!("Query: {}", summarize_query(&request.query)),
+                Some(ActivityDetails::Query {
+                    query: request.query.clone(),
+                    top_k: request.top_k,
+                    result_count: response.results.len(),
+                    confidence: response.confidence,
+                    insufficient_evidence: response.insufficient_evidence,
+                    total_duration_ms: response.diagnostics.total_duration_ms,
+                    answer: Some(response.answer.clone()),
+                    error: None,
+                }),
+            );
+            Ok(Json(response))
+        }
+        Err(error) => {
+            notify_project_changed(
+                &state,
+                request.project.clone(),
+                None,
+                ActivityKind::QueryError,
+                format!("Query error: {}", summarize_query(&request.query)),
+                Some(ActivityDetails::Query {
+                    query: request.query.clone(),
+                    top_k: request.top_k,
+                    result_count: 0,
+                    confidence: 0.0,
+                    insufficient_evidence: true,
+                    total_duration_ms: 0,
+                    answer: None,
+                    error: Some(error.to_string()),
+                }),
+            );
+            Err(ApiError::io(error))
+        }
+    }
 }
 
 async fn capture_task(
@@ -860,6 +898,17 @@ fn notify_project_changed(
     history.push_front(event);
     while history.len() > 20 {
         history.pop_back();
+    }
+}
+
+fn summarize_query(query: &str) -> String {
+    let compact = query.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = compact.chars();
+    let summary = chars.by_ref().take(80).collect::<String>();
+    if chars.next().is_some() {
+        format!("{summary}...")
+    } else {
+        summary
     }
 }
 
