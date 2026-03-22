@@ -59,6 +59,7 @@ struct ServiceEvent {
     summary: String,
     details: Option<ActivityDetails>,
     recorded_at: chrono::DateTime<chrono::Utc>,
+    include_activity: bool,
 }
 
 const WATCHER_STALE_AFTER_SECONDS: u64 = 90;
@@ -354,7 +355,9 @@ async fn render_subscription_updates(
     let mut responses = Vec::new();
     if let Some(project) = &subscriptions.project {
         if project == &event.project {
-            responses.push(stream_activity_response(event.clone()));
+            if event.include_activity {
+                responses.push(stream_activity_response(event.clone()));
+            }
             let overview = fetch_project_overview_with_watchers(state, project).await?;
             let memories = fetch_project_memories(&state.pool, project, None, 500, 0).await?;
             responses.push(StreamResponse::ProjectChanged { overview, memories });
@@ -768,7 +771,12 @@ async fn watcher_heartbeat(
 ) -> Result<Json<WatcherPresenceSummary>, ApiError> {
     require_token(&headers, &state.api_token)?;
     request.validate().map_err(ApiError::validation)?;
-    Ok(Json(register_watcher_heartbeat(&state.watchers, request)))
+    let project = request.project.clone();
+    let (summary, changed) = register_watcher_heartbeat(&state.watchers, request);
+    if changed {
+        notify_project_refreshed(&state, project);
+    }
+    Ok(Json(summary))
 }
 
 async fn watcher_unregister(
@@ -778,7 +786,12 @@ async fn watcher_unregister(
 ) -> Result<Json<WatcherPresenceSummary>, ApiError> {
     require_token(&headers, &state.api_token)?;
     request.validate().map_err(ApiError::validation)?;
-    Ok(Json(unregister_watcher(&state.watchers, &request)))
+    let project = request.project.clone();
+    let (summary, changed) = unregister_watcher(&state.watchers, &request);
+    if changed {
+        notify_project_refreshed(&state, project);
+    }
+    Ok(Json(summary))
 }
 
 async fn archive(
@@ -889,6 +902,7 @@ fn notify_project_changed(
         summary,
         details,
         recorded_at: chrono::Utc::now(),
+        include_activity: true,
     };
     let _ = state.events.send(event.clone());
     let mut history = state
@@ -899,6 +913,19 @@ fn notify_project_changed(
     while history.len() > 20 {
         history.pop_back();
     }
+}
+
+fn notify_project_refreshed(state: &AppState, project: String) {
+    let event = ServiceEvent {
+        project,
+        memory_id: None,
+        kind: ActivityKind::Query,
+        summary: String::new(),
+        details: None,
+        recorded_at: chrono::Utc::now(),
+        include_activity: false,
+    };
+    let _ = state.events.send(event);
 }
 
 fn summarize_query(query: &str) -> String {
@@ -924,8 +951,9 @@ async fn fetch_project_overview_with_watchers(
 fn register_watcher_heartbeat(
     watchers: &Mutex<HashMap<String, WatcherPresence>>,
     request: WatcherHeartbeatRequest,
-) -> WatcherPresenceSummary {
+) -> (WatcherPresenceSummary, bool) {
     let mut registry = watchers.lock().expect("watcher registry mutex poisoned");
+    let before = watcher_summary_from_registry(&registry, &request.project);
     prune_stale_watchers(&mut registry);
     let now = chrono::Utc::now();
     registry
@@ -949,17 +977,43 @@ fn register_watcher_heartbeat(
             started_at: request.started_at,
             last_heartbeat_at: now,
         });
-    watcher_summary_from_registry(&registry, &request.project)
+    let after = watcher_summary_from_registry(&registry, &request.project);
+    let changed = before.active_count != after.active_count
+        || before
+            .watchers
+            .iter()
+            .map(|watcher| watcher.watcher_id.as_str())
+            .collect::<Vec<_>>()
+            != after
+                .watchers
+                .iter()
+                .map(|watcher| watcher.watcher_id.as_str())
+                .collect::<Vec<_>>();
+    (after, changed)
 }
 
 fn unregister_watcher(
     watchers: &Mutex<HashMap<String, WatcherPresence>>,
     request: &WatcherUnregisterRequest,
-) -> WatcherPresenceSummary {
+) -> (WatcherPresenceSummary, bool) {
     let mut registry = watchers.lock().expect("watcher registry mutex poisoned");
+    let before = watcher_summary_from_registry(&registry, &request.project);
     prune_stale_watchers(&mut registry);
-    registry.remove(&request.watcher_id);
-    watcher_summary_from_registry(&registry, &request.project)
+    let removed = registry.remove(&request.watcher_id).is_some();
+    let after = watcher_summary_from_registry(&registry, &request.project);
+    let changed = removed
+        || before.active_count != after.active_count
+        || before
+            .watchers
+            .iter()
+            .map(|watcher| watcher.watcher_id.as_str())
+            .collect::<Vec<_>>()
+            != after
+                .watchers
+                .iter()
+                .map(|watcher| watcher.watcher_id.as_str())
+                .collect::<Vec<_>>();
+    (after, changed)
 }
 
 fn watcher_summary_for_project(
@@ -1032,6 +1086,7 @@ mod tests {
                 summary: "Curated memory".to_string(),
                 details: None,
                 recorded_at: chrono::Utc::now(),
+                include_activity: true,
             },
             ServiceEvent {
                 project: "other".to_string(),
@@ -1040,6 +1095,7 @@ mod tests {
                 summary: "Captured task".to_string(),
                 details: None,
                 recorded_at: chrono::Utc::now(),
+                include_activity: true,
             },
             ServiceEvent {
                 project: "memory".to_string(),
@@ -1048,6 +1104,7 @@ mod tests {
                 summary: "Reindexed entries".to_string(),
                 details: None,
                 recorded_at: chrono::Utc::now(),
+                include_activity: true,
             },
         ]));
 
@@ -1078,13 +1135,15 @@ mod tests {
             started_at,
         };
 
-        let first = register_watcher_heartbeat(&watchers, request.clone());
-        let second = register_watcher_heartbeat(&watchers, request);
+        let (first, first_changed) = register_watcher_heartbeat(&watchers, request.clone());
+        let (second, second_changed) = register_watcher_heartbeat(&watchers, request);
 
         assert_eq!(first.active_count, 1);
         assert_eq!(second.active_count, 1);
         assert_eq!(second.watchers.len(), 1);
         assert_eq!(second.watchers[0].watcher_id, "watcher-1");
+        assert!(first_changed);
+        assert!(!second_changed);
     }
 
     #[test]
