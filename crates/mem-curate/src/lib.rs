@@ -14,14 +14,20 @@ pub async fn store_capture(
     let session_id = Uuid::new_v4();
     sqlx::query(
         r#"
-        INSERT INTO sessions (id, project_id, external_session_id, started_at, agent_name)
-        VALUES ($1, $2, $3, now(), $4)
+        INSERT INTO sessions (id, project_id, external_session_id, started_at, agent_id, agent_name)
+        VALUES ($1, $2, $3, now(), $4, $5)
         "#,
     )
     .bind(session_id)
     .bind(project_id)
-    .bind("local-session")
-    .bind("codex")
+    .bind(&request.agent_id)
+    .bind(&request.agent_id)
+    .bind(
+        request
+            .agent_name
+            .clone()
+            .unwrap_or_else(|| request.agent_id.clone()),
+    )
     .execute(&mut *tx)
     .await?;
 

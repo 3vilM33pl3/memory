@@ -118,6 +118,32 @@ In the normal multi-project setup there is:
 
 In the local development setup for this repository there can also be a parallel repo-local backend with alternate ports so it does not clash with the installed shared service.
 
+`mem-service` now has two runtime roles:
+
+- `primary`
+  The service can connect to PostgreSQL, runs migrations, owns direct query/capture/curate/reindex work, and serves as the system of record.
+- `relay`
+  The service cannot connect to PostgreSQL, so it stays up anyway, discovers a primary on the local network over UDP multicast, and proxies the normal HTTP API plus browser WebSocket traffic to that primary.
+
+Relay mode is intentionally thin. It does not maintain its own durable write queue or a local database replica. It is a network-accessible facade over a selected primary.
+
+## Agent Identity
+
+Write-capable flows now require an explicit `agent_id`.
+
+Resolution order is:
+
+1. CLI flag `--agent-id`
+2. `MEMORY_LAYER_AGENT_ID`
+3. `[agent].id` in config
+
+The value is stored on `sessions.agent_id` and carried in capture payloads. That does two things:
+
+- multiple agents can contribute raw captures to the same project without sharing the same idempotency key
+- later debugging can still trace which agent produced which raw capture session
+
+Curated memory remains project-scoped. The system does not create separate canonical memory silos per agent. Cross-agent raw evidence is meant to converge during curation.
+
 ## Core Service Boundaries
 
 `mem-service` is the system boundary for persistent state.

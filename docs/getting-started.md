@@ -127,6 +127,7 @@ Use this for values shared by many repos:
 
 - `database.url`
 - `service.api_token`
+- `[cluster]` settings if you want relay discovery on a local network
 - `[llm]` settings
 
 ### Repo-local config
@@ -136,6 +137,7 @@ Use this for project-specific overrides:
 - watcher settings
 - local backend ports
 - project-specific DB override if needed
+- repo-specific `agent.id` override if one project should write under a different agent identity
 
 ### Env files
 
@@ -144,6 +146,30 @@ Use these for secrets such as:
 ```bash
 OPENAI_API_KEY=your-api-key-here
 ```
+
+## Agent ID
+
+Each coding agent that writes memory should have a unique agent ID.
+
+You can configure it in TOML:
+
+```toml
+[agent]
+id = "codex-cli-main"
+name = "Codex CLI"
+```
+
+or with an environment variable:
+
+```bash
+export MEMORY_LAYER_AGENT_ID=codex-cli-main
+```
+
+## Primary And Relay Services
+
+If a machine can reach PostgreSQL, `mem-service` runs as a `primary`.
+
+If a machine cannot reach PostgreSQL but can see another Memory Layer service on the local network, `mem-service` can run as a `relay`. In relay mode it discovers a primary over UDP multicast and forwards the normal HTTP API and browser WebSocket traffic to it.
 
 ## Daily Use
 

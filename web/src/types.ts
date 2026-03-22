@@ -232,6 +232,7 @@ export type ActivityDetails =
       task_id: string;
       raw_capture_id: string;
       idempotency_key: string;
+      agent_id: string;
     }
   | {
       type: "curate";

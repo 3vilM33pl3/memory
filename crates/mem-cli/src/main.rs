@@ -34,6 +34,8 @@ use uuid::Uuid;
 struct Cli {
     #[arg(long, env = "MEMORY_LAYER_CONFIG")]
     config: Option<PathBuf>,
+    #[arg(long, env = "MEMORY_LAYER_AGENT_ID")]
+    agent_id: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -279,6 +281,7 @@ struct AutomationFlushArgs {
 async fn main() -> Result<()> {
     let Cli {
         config: cli_config,
+        agent_id: cli_agent_id,
         command,
     } = Cli::parse();
 
@@ -450,6 +453,7 @@ async fn main() -> Result<()> {
             let cwd = env::current_dir().context("read current directory")?;
             let repo_root = resolve_repo_root(&cwd)?;
             let project = resolve_project_slug(args.project, &cwd)?;
+            let agent = resolve_agent_identity(&config, cli_agent_id.as_deref())?;
             let api = ApiClient::new(client, config);
             let report = scan::run_scan(
                 &api,
@@ -457,6 +461,8 @@ async fn main() -> Result<()> {
                 &project,
                 args.since.as_deref(),
                 args.dry_run,
+                &agent.id,
+                agent.name.as_deref(),
             )
             .await?;
             if args.json {
@@ -466,8 +472,13 @@ async fn main() -> Result<()> {
             }
         }
         Command::CaptureTask(args) => {
-            let request: CaptureTaskRequest =
+            let mut request: CaptureTaskRequest =
                 serde_json::from_str(&fs::read_to_string(args.file).context("read payload file")?)?;
+            if request.agent_id.trim().is_empty() {
+                let agent = resolve_agent_identity(&config, cli_agent_id.as_deref())?;
+                request.agent_id = agent.id;
+                request.agent_name = request.agent_name.or(agent.name);
+            }
             let response = client
                 .post(service_url(&config, "/v1/capture/task"))
                 .headers(write_headers(&config.service.api_token)?)
@@ -479,7 +490,8 @@ async fn main() -> Result<()> {
         Command::Remember(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let project = resolve_project_slug(args.project.clone(), &cwd)?;
-            let request = build_remember_request(args, &project)?;
+            let agent = resolve_agent_identity(&config, cli_agent_id.as_deref())?;
+            let request = build_remember_request(args, &project, &agent.id, agent.name.as_deref())?;
             let api = ApiClient::new(client, config);
             let capture = api.capture_task(&request).await?;
             let curate = api.curate(&project).await?;
@@ -558,6 +570,7 @@ async fn main() -> Result<()> {
                         .map(PathBuf::from)
                         .unwrap_or(cwd);
                     let api = ApiClient::new(client.clone(), config.clone());
+                    let agent = resolve_agent_identity(&config, cli_agent_id.as_deref())?;
                     tokio::fs::write(flush_path(&repo_root), b"flush\n")
                         .await
                         .ok();
@@ -568,6 +581,8 @@ async fn main() -> Result<()> {
                         &repo_root,
                         true,
                         args.curate,
+                        &agent.id,
+                        agent.name.as_deref(),
                     )
                     .await?;
                     println!(
@@ -1133,6 +1148,34 @@ async fn run_doctor(
         ));
 
         report.push(doctor_check(
+            "config.agent_id",
+            if config.agent.id.trim().is_empty() {
+                DoctorStatus::Fail
+            } else {
+                DoctorStatus::Ok
+            },
+            if config.agent.id.trim().is_empty() {
+                "Agent id is not configured for write-capable workflows."
+            } else {
+                "Agent id is configured."
+            },
+            if config.agent.id.trim().is_empty() {
+                None
+            } else {
+                Some(config.agent.id.clone())
+            },
+            if config.agent.id.trim().is_empty() {
+                Some(format!(
+                    "Set [agent].id in {} or export MEMORY_LAYER_AGENT_ID",
+                    config_path.display()
+                ))
+            } else {
+                None
+            },
+            false,
+        ));
+
+        report.push(doctor_check(
             "config.llm_model",
             if config.llm.model.trim().is_empty() {
                 DoctorStatus::Fail
@@ -1304,12 +1347,51 @@ async fn run_doctor(
 
         match api.health().await {
             Ok(value) => {
+                let role = value.get("role").and_then(|field| field.as_str());
+                let upstream = value.get("upstream").cloned();
                 report.push(doctor_check(
                     "backend.health",
                     DoctorStatus::Ok,
                     "Backend health endpoint is reachable.",
                     Some(value.to_string()),
                     None,
+                    false,
+                ));
+                report.push(doctor_check(
+                    "backend.role",
+                    if role == Some("relay")
+                        && upstream
+                            .as_ref()
+                            .and_then(|payload| payload.as_object())
+                            .is_none()
+                    {
+                        DoctorStatus::Warn
+                    } else {
+                        DoctorStatus::Ok
+                    },
+                    match role {
+                        Some("primary") => "Backend is running in primary mode.",
+                        Some("relay") => "Backend is running in relay mode.",
+                        _ => "Backend did not report a cluster role.",
+                    },
+                    match role {
+                        Some("relay") => upstream.as_ref().map(|payload| payload.to_string()),
+                        Some(other) => Some(other.to_string()),
+                        None => None,
+                    },
+                    if role == Some("relay")
+                        && upstream
+                            .as_ref()
+                            .and_then(|payload| payload.as_object())
+                            .is_none()
+                    {
+                        Some(
+                            "Start a database-connected mem-service on the local network or fix the local database connection."
+                                .to_string(),
+                        )
+                    } else {
+                        None
+                    },
                     false,
                 ));
                 match api.project_overview(project).await {
@@ -2528,7 +2610,10 @@ fn launch_agent_shell_command(program_arguments: &[String]) -> Result<String> {
 #[cfg(target_os = "macos")]
 fn launch_agent_environment_variables() -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
-    values.insert("HOME".to_string(), env::var("HOME").context("HOME is not set")?);
+    values.insert(
+        "HOME".to_string(),
+        env::var("HOME").context("HOME is not set")?,
+    );
     values.insert(
         "PATH".to_string(),
         env::var("PATH")
@@ -3264,7 +3349,12 @@ fn resolve_project_slug(project: Option<String>, cwd: &Path) -> Result<String> {
     Ok(name.to_string())
 }
 
-fn build_remember_request(args: RememberArgs, project: &str) -> Result<CaptureTaskRequest> {
+fn build_remember_request(
+    args: RememberArgs,
+    project: &str,
+    agent_id: &str,
+    agent_name: Option<&str>,
+) -> Result<CaptureTaskRequest> {
     let mut files_changed = args.files_changed;
     if args.auto_files {
         for file in detect_changed_files()? {
@@ -3308,6 +3398,8 @@ fn build_remember_request(args: RememberArgs, project: &str) -> Result<CaptureTa
         project: project.to_string(),
         task_title: title,
         user_prompt: prompt,
+        agent_id: agent_id.to_string(),
+        agent_name: agent_name.map(|value| value.to_string()),
         agent_summary: summary,
         files_changed,
         git_diff_summary: None,
@@ -3317,6 +3409,43 @@ fn build_remember_request(args: RememberArgs, project: &str) -> Result<CaptureTa
         command_output,
         idempotency_key: None,
     })
+}
+
+#[derive(Debug, Clone)]
+struct AgentIdentity {
+    id: String,
+    name: Option<String>,
+}
+
+fn resolve_agent_identity(config: &AppConfig, cli_agent_id: Option<&str>) -> Result<AgentIdentity> {
+    if let Some(agent_id) = cli_agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(AgentIdentity {
+            id: agent_id.to_string(),
+            name: config.agent.name.clone(),
+        });
+    }
+    if let Ok(agent_id) = env::var("MEMORY_LAYER_AGENT_ID") {
+        let trimmed = agent_id.trim();
+        if !trimmed.is_empty() {
+            return Ok(AgentIdentity {
+                id: trimmed.to_string(),
+                name: config.agent.name.clone(),
+            });
+        }
+    }
+    let trimmed = config.agent.id.trim();
+    if !trimmed.is_empty() {
+        return Ok(AgentIdentity {
+            id: trimmed.to_string(),
+            name: config.agent.name.clone(),
+        });
+    }
+    anyhow::bail!(
+        "missing agent id; set --agent-id, MEMORY_LAYER_AGENT_ID, or [agent].id in config"
+    );
 }
 
 fn derive_summary(project: &str, files_changed: &[String]) -> String {
@@ -3443,10 +3572,13 @@ mod tests {
                 auto_files: false,
             },
             "memory",
+            "codex-agent",
+            Some("Codex"),
         )
         .unwrap();
 
         assert_eq!(request.task_title, "Memory update for memory");
+        assert_eq!(request.agent_id, "codex-agent");
         assert!(request.user_prompt.contains("Auto-captured"));
         assert!(request.agent_summary.contains("src/main.rs"));
     }

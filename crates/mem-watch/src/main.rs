@@ -22,6 +22,8 @@ enum HeartbeatState {
 struct Cli {
     #[arg(long, env = "MEMORY_LAYER_CONFIG")]
     config: Option<PathBuf>,
+    #[arg(long, env = "MEMORY_LAYER_AGENT_ID")]
+    agent_id: Option<String>,
     #[command(subcommand)]
     command: WatchCommand,
 }
@@ -63,15 +65,22 @@ struct FlushArgs {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = AppConfig::load_from_path(cli.config).context("load config")?;
+    let agent_id = resolve_agent_id(&config, cli.agent_id)?;
+    let agent_name = config.agent.name.clone();
 
     match cli.command {
-        WatchCommand::Run(args) => run_loop(config, args).await,
+        WatchCommand::Run(args) => run_loop(config, args, agent_id, agent_name).await,
         WatchCommand::Status(args) => status(config, args).await,
-        WatchCommand::Flush(args) => flush(config, args).await,
+        WatchCommand::Flush(args) => flush(config, args, agent_id, agent_name).await,
     }
 }
 
-async fn run_loop(config: AppConfig, args: RunArgs) -> Result<()> {
+async fn run_loop(
+    config: AppConfig,
+    args: RunArgs,
+    agent_id: String,
+    agent_name: Option<String>,
+) -> Result<()> {
     let repo_root = resolve_repo_root(&config, args.repo_root)?;
     let project = resolve_project(args.project, &repo_root)?;
     let client = Client::new();
@@ -95,7 +104,16 @@ async fn run_loop(config: AppConfig, args: RunArgs) -> Result<()> {
     loop {
         tokio::select! {
             _ = poll.tick() => {
-                run_once(&config, &client, &project, &repo_root, false, false).await?;
+                run_once(
+                    &config,
+                    &client,
+                    &project,
+                    &repo_root,
+                    false,
+                    false,
+                    &agent_id,
+                    agent_name.as_deref(),
+                ).await?;
             }
             _ = heartbeat.tick() => {
                 let state = load_state(&project, &repo_root, &config.automation).await?;
@@ -158,14 +176,29 @@ async fn status(config: AppConfig, args: ProjectArgs) -> Result<()> {
     Ok(())
 }
 
-async fn flush(config: AppConfig, args: FlushArgs) -> Result<()> {
+async fn flush(
+    config: AppConfig,
+    args: FlushArgs,
+    agent_id: String,
+    agent_name: Option<String>,
+) -> Result<()> {
     let repo_root = resolve_repo_root(&config, args.repo_root)?;
     let project = resolve_project(args.project, &repo_root)?;
     let client = Client::new();
     tokio::fs::write(flush_path(&repo_root), b"flush\n")
         .await
         .ok();
-    run_once(&config, &client, &project, &repo_root, true, args.curate).await
+    run_once(
+        &config,
+        &client,
+        &project,
+        &repo_root,
+        true,
+        args.curate,
+        &agent_id,
+        agent_name.as_deref(),
+    )
+    .await
 }
 
 fn resolve_repo_root(config: &AppConfig, repo_root: Option<PathBuf>) -> Result<PathBuf> {
@@ -186,6 +219,28 @@ fn resolve_project(project: Option<String>, repo_root: &std::path::Path) -> Resu
         anyhow::bail!("could not determine project slug from repo root");
     };
     Ok(name.to_string())
+}
+
+fn resolve_agent_id(config: &AppConfig, cli_agent_id: Option<String>) -> Result<String> {
+    if let Some(agent_id) = cli_agent_id {
+        let trimmed = agent_id.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    if let Ok(agent_id) = std::env::var("MEMORY_LAYER_AGENT_ID") {
+        let trimmed = agent_id.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    let trimmed = config.agent.id.trim();
+    if !trimmed.is_empty() {
+        return Ok(trimmed.to_string());
+    }
+    anyhow::bail!(
+        "missing agent id; set --agent-id, MEMORY_LAYER_AGENT_ID, or [agent].id in config"
+    );
 }
 
 async fn shutdown_signal() {

@@ -119,6 +119,9 @@ pub struct CaptureTaskRequest {
     pub project: String,
     pub task_title: String,
     pub user_prompt: String,
+    pub agent_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
     pub agent_summary: String,
     #[serde(default)]
     pub files_changed: Vec<String>,
@@ -146,6 +149,9 @@ impl CaptureTaskRequest {
         }
         if self.user_prompt.trim().is_empty() {
             return Err(ValidationError::new("user_prompt must be non-empty"));
+        }
+        if self.agent_id.trim().is_empty() {
+            return Err(ValidationError::new("agent_id must be non-empty"));
         }
         if self.agent_summary.trim().is_empty() {
             return Err(ValidationError::new("agent_summary must be non-empty"));
@@ -599,6 +605,7 @@ pub enum ActivityDetails {
         task_id: Uuid,
         raw_capture_id: Uuid,
         idempotency_key: String,
+        agent_id: String,
     },
     Curate {
         run_id: Uuid,
@@ -902,6 +909,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub embeddings: EmbeddingConfig,
     #[serde(default)]
+    pub cluster: ClusterConfig,
+    #[serde(default)]
+    pub agent: AgentConfig,
+    #[serde(default)]
     pub automation: AutomationConfig,
 }
 
@@ -940,7 +951,24 @@ impl AppConfig {
             .build()?;
         let mut value: serde_json::Value = config.try_deserialize()?;
         normalize_legacy_config_keys(&mut value);
-        serde_json::from_value(value).map_err(|error| ConfigError::Foreign(Box::new(error)))
+        let mut config: AppConfig =
+            serde_json::from_value(value).map_err(|error| ConfigError::Foreign(Box::new(error)))?;
+        config.apply_runtime_defaults();
+        Ok(config)
+    }
+
+    fn apply_runtime_defaults(&mut self) {
+        if self.cluster.service_id.trim().is_empty() {
+            self.cluster.service_id = format!(
+                "service-{}",
+                self.service
+                    .bind_addr
+                    .chars()
+                    .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+                    .collect::<String>()
+                    .trim_matches('-')
+            );
+        }
     }
 }
 
@@ -1114,6 +1142,48 @@ pub struct ServiceConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterConfig {
+    #[serde(default = "default_cluster_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub service_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advertise_addr: Option<String>,
+    #[serde(default = "default_cluster_discovery_multicast_addr")]
+    pub discovery_multicast_addr: String,
+    #[serde(default = "default_cluster_announce_interval")]
+    #[serde(with = "humantime_serde")]
+    pub announce_interval: Duration,
+    #[serde(default = "default_cluster_peer_ttl")]
+    #[serde(with = "humantime_serde")]
+    pub peer_ttl: Duration,
+    #[serde(default = "default_cluster_priority")]
+    pub priority: i32,
+}
+
+impl Default for ClusterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_cluster_enabled(),
+            service_id: String::new(),
+            advertise_addr: None,
+            discovery_multicast_addr: default_cluster_discovery_multicast_addr(),
+            announce_interval: default_cluster_announce_interval(),
+            peer_ttl: default_cluster_peer_ttl(),
+            priority: default_cluster_priority(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentConfig {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     pub url: String,
 }
@@ -1233,6 +1303,26 @@ impl Default for AutomationConfig {
 
 fn default_bind_addr() -> String {
     "127.0.0.1:4040".to_string()
+}
+
+fn default_cluster_enabled() -> bool {
+    true
+}
+
+fn default_cluster_discovery_multicast_addr() -> String {
+    "239.255.42.99:4042".to_string()
+}
+
+fn default_cluster_announce_interval() -> Duration {
+    Duration::from_secs(5)
+}
+
+fn default_cluster_peer_ttl() -> Duration {
+    Duration::from_secs(15)
+}
+
+fn default_cluster_priority() -> i32 {
+    100
 }
 
 fn default_api_token() -> String {
@@ -1411,6 +1501,8 @@ mod tests {
             project: String::new(),
             task_title: "task".to_string(),
             user_prompt: "prompt".to_string(),
+            agent_id: "codex-agent".to_string(),
+            agent_name: Some("Codex".to_string()),
             agent_summary: "summary".to_string(),
             files_changed: Vec::new(),
             git_diff_summary: None,

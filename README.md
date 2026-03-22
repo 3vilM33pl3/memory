@@ -9,6 +9,7 @@ It lets you save useful facts about a codebase, search them later, and view them
 ## What It Does
 
 - stores project memories in PostgreSQL
+- can run as a primary service with PostgreSQL or as a relay service that forwards to a database-connected peer on the local network
 - keeps memories separated per project
 - combines lexical search with optional embedding-based recall and related-memory links
 - lets you search and browse them in a TUI or browser
@@ -92,6 +93,7 @@ http://127.0.0.1:4040/
 ## What You Need Before Setup
 
 - a PostgreSQL database connection string
+- a unique `agent.id` for each coding agent that will write memory
 - a project folder where you want Memory Layer enabled
 - optional: an OpenAI-compatible API key if you want to use `mem-cli scan`
 
@@ -136,6 +138,7 @@ Use the global config for shared values such as:
 
 - `database.url`
 - `service.api_token`
+- `[cluster]` discovery settings if you want relay mode on a LAN
 - `[llm]` settings
 - `[embeddings]` settings if you want semantic recall
 - optional `service.web_root` override if you want `mem-service` to serve web assets from a non-standard location
@@ -145,6 +148,7 @@ Use `.mem/config.toml` for project-specific overrides such as:
 - project-local backend ports
 - watcher behavior
 - repo-local database override if needed
+- repo-local `agent.id` override if this repository should use a different agent identity
 
 Secrets can also live in env files:
 
@@ -157,6 +161,33 @@ Example:
 ```bash
 OPENAI_API_KEY=your-api-key-here
 ```
+
+### Agent IDs
+
+Every write-capable workflow now needs a unique agent ID. This lets multiple agents work on the same project without collapsing their raw captures together before curation.
+
+You can set it in config:
+
+```toml
+[agent]
+id = "codex-cli-main"
+name = "Codex CLI"
+```
+
+or with an environment variable:
+
+```bash
+export MEMORY_LAYER_AGENT_ID=codex-cli-main
+```
+
+### Primary And Relay Mode
+
+`mem-service` now has two runtime modes:
+
+- `primary`: connects to PostgreSQL, runs migrations, stores/query memories directly
+- `relay`: cannot reach PostgreSQL, discovers a primary on the local network, and proxies the normal HTTP and browser WebSocket API to it
+
+This is useful when one machine on a LAN can reach the database and another cannot. Relay mode uses UDP multicast discovery by default.
 
 ## First Run In A Project
 

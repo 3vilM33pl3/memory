@@ -1480,6 +1480,16 @@ async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
             &draft.project,
             None,
             matches!(draft.scan_choice, ScanChoice::DryRun),
+            std::env::var("MEMORY_LAYER_AGENT_ID")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    let trimmed = api.config.agent.id.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                })
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("scan requested but no agent id is configured"))?,
+            api.config.agent.name.as_deref(),
         )
         .await?;
         lines.extend(format_scan_report(&report));

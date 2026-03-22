@@ -10,8 +10,24 @@ capnp_tcp_addr = "127.0.0.1:4041"
 api_token = "dev-memory-token"
 request_timeout = "30s"
 
+[cluster]
+enabled = true
+# optional stable identifier; empty means Memory Layer derives one from bind_addr
+service_id = ""
+# set this when other machines should reach this service on a LAN address
+# advertise_addr = "10.22.6.42:4040"
+discovery_multicast_addr = "239.255.42.99:4042"
+announce_interval = "5s"
+peer_ttl = "15s"
+priority = 100
+
 [database]
 url = "postgresql://memory:<password>@localhost:5432/memory"
+
+[agent]
+id = "codex-cli-main"
+# optional display name stored alongside captures
+# name = "Codex CLI"
 
 [features]
 llm_curation = false
