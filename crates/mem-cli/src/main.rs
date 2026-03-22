@@ -23,6 +23,7 @@ use mem_api::{
 use mem_watch::{flush_path, load_state, run_once, to_status};
 use reqwest::{Client, header::HeaderMap};
 use serde::Serialize;
+use sqlx::{Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 #[derive(Debug, Parser)]
@@ -846,6 +847,95 @@ async fn run_doctor(
             },
             false,
         ));
+
+        if is_placeholder_database_url(&config.database.url) {
+            report.push(doctor_check(
+                "database.pgvector_extension",
+                DoctorStatus::Skipped,
+                "Skipped pgvector checks because the database URL is still a placeholder.",
+                None,
+                None,
+                false,
+            ));
+        } else {
+            match PgPoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(Duration::from_secs(3))
+                .connect(&config.database.url)
+                .await
+            {
+                Ok(pool) => {
+                    report.push(doctor_check(
+                        "database.connect",
+                        DoctorStatus::Ok,
+                        "Database connection succeeded.",
+                        Some(mask_database_url(&config.database.url)),
+                        None,
+                        false,
+                    ));
+
+                    match sqlx::query(
+                        "SELECT extversion FROM pg_extension WHERE extname = 'vector' LIMIT 1",
+                    )
+                    .fetch_optional(&pool)
+                    .await
+                    {
+                        Ok(Some(row)) => report.push(doctor_check(
+                            "database.pgvector_extension",
+                            DoctorStatus::Ok,
+                            "pgvector extension is enabled in the target database.",
+                            Some(format!(
+                                "vector extension version {}",
+                                row.try_get::<String, _>("extversion")
+                                    .unwrap_or_else(|_| "unknown".to_string())
+                            )),
+                            None,
+                            false,
+                        )),
+                        Ok(None) => report.push(doctor_check(
+                            "database.pgvector_extension",
+                            DoctorStatus::Fail,
+                            "pgvector extension is not enabled in the target database.",
+                            None,
+                            Some(
+                                "Install pgvector for your PostgreSQL version and run CREATE EXTENSION vector; in the target database."
+                                    .to_string(),
+                            ),
+                            false,
+                        )),
+                        Err(error) => report.push(doctor_check(
+                            "database.pgvector_extension",
+                            DoctorStatus::Fail,
+                            "Could not verify pgvector extension state.",
+                            Some(error.to_string()),
+                            Some(
+                                "Install pgvector for your PostgreSQL version and run CREATE EXTENSION vector; in the target database."
+                                    .to_string(),
+                            ),
+                            false,
+                        )),
+                    }
+                }
+                Err(error) => {
+                    report.push(doctor_check(
+                        "database.connect",
+                        DoctorStatus::Fail,
+                        "Could not connect to the configured database directly.",
+                        Some(error.to_string()),
+                        Some("Fix the database URL or credentials first.".to_string()),
+                        false,
+                    ));
+                    report.push(doctor_check(
+                        "database.pgvector_extension",
+                        DoctorStatus::Skipped,
+                        "Skipped pgvector extension check because the database connection failed.",
+                        None,
+                        None,
+                        false,
+                    ));
+                }
+            }
+        }
 
         report.push(doctor_check(
             "config.api_token",

@@ -60,6 +60,14 @@ mem-cli tui
 
 If you do not want to use `scan`, you can ignore the LLM settings.
 
+Current versions of Memory Layer store chunk embeddings with `pgvector`, so your PostgreSQL server needs the `pgvector` extension installed and enabled in the target database.
+
+On Debian or Ubuntu, that is typically:
+
+```bash
+sudo apt install postgresql-<your-version>-pgvector
+```
+
 ## Setup In Plain English
 
 The wizard is the normal way to set things up:
@@ -165,6 +173,13 @@ Scan an existing repository:
 ```bash
 mem-cli scan --project my-project --dry-run
 mem-cli scan --project my-project
+```
+
+After pgvector is installed, enable semantic recall by configuring `[embeddings]` and rebuilding chunks:
+
+```bash
+mem-cli doctor
+mem-cli reindex --project my-project
 ```
 
 ## TUI Tabs

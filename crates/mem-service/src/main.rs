@@ -175,7 +175,7 @@ async fn build_state(config: AppConfig) -> Result<AppState> {
     sqlx::migrate!("../../migrations")
         .run(&pool)
         .await
-        .context("run migrations")?;
+        .context("run migrations (pgvector extension 'vector' must be installed in PostgreSQL)")?;
     let (events, _) = broadcast::channel(128);
 
     Ok(AppState {

@@ -6,6 +6,7 @@ use mem_api::{
     AppConfig, EmbeddingConfig, MemoryRelationType, MemoryType, QueryRequest, QueryResponse,
     QueryResult, QuerySource, SourceKind, resolve_secret_value,
 };
+use pgvector::Vector;
 use reqwest::header;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
@@ -40,7 +41,7 @@ impl EmbeddingService {
         })
     }
 
-    async fn embed_texts(&self, input: &[String]) -> Result<Vec<Vec<f32>>> {
+    async fn embed_texts(&self, input: &[String]) -> Result<Vec<Vector>> {
         if input.is_empty() {
             return Ok(Vec::new());
         }
@@ -72,7 +73,10 @@ impl EmbeddingService {
             serde_json::from_str(&body).context("parse embedding response")?;
         let mut data = parsed.data;
         data.sort_by_key(|item| item.index);
-        Ok(data.into_iter().map(|item| item.embedding).collect())
+        Ok(data
+            .into_iter()
+            .map(|item| Vector::from(item.embedding))
+            .collect())
     }
 }
 
@@ -513,7 +517,7 @@ fn candidate_from_lexical_row(row: sqlx::postgres::PgRow) -> Result<CandidateRec
 async fn fetch_semantic_candidates(
     pool: &PgPool,
     request: &QueryRequest,
-    query_embedding: &[f32],
+    query_embedding: &Vector,
     candidate_limit: i64,
 ) -> Result<Vec<CandidateRecord>, sqlx::Error> {
     let memory_type_filters = request
@@ -534,7 +538,7 @@ async fn fetch_semantic_candidates(
             m.confidence,
             m.updated_at,
             mc.chunk_text,
-            mc.embedding,
+            (mc.embedding <=> $4) AS cosine_distance,
             COALESCE((
                 SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
                 FROM memory_tags mt
@@ -562,6 +566,8 @@ async fn fetch_semantic_candidates(
                       AND mt.tag = ANY($3)
                 )
           )
+        ORDER BY cosine_distance ASC, m.updated_at DESC, m.id
+        LIMIT $5
         "#,
     )
     .bind(&request.project)
@@ -571,18 +577,18 @@ async fn fetch_semantic_candidates(
         Some(memory_type_filters)
     })
     .bind(&request.filters.tags)
+    .bind(query_embedding)
+    .bind(candidate_limit)
     .fetch_all(pool)
     .await?;
 
     let mut by_memory = HashMap::<Uuid, CandidateRecord>::new();
     for row in rows {
-        let Some(embedding) = row.try_get::<Option<Vec<f32>>, _>("embedding")? else {
-            continue;
-        };
-        let similarity = cosine_similarity(query_embedding, &embedding);
-        if similarity <= 0.0 {
+        let cosine_distance: f64 = row.try_get("cosine_distance")?;
+        if !cosine_distance.is_finite() {
             continue;
         }
+        let similarity = (1.0 - cosine_distance).max(0.0);
 
         let memory_id: Uuid = row.try_get("id")?;
         let entry = by_memory.entry(memory_id).or_insert_with(|| CandidateRecord {
@@ -798,29 +804,6 @@ fn rank_candidate(
         snippet,
         final_score,
         score_explanation,
-    }
-}
-
-fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
-    if left.is_empty() || right.is_empty() || left.len() != right.len() {
-        return 0.0;
-    }
-
-    let mut dot = 0.0_f64;
-    let mut left_norm = 0.0_f64;
-    let mut right_norm = 0.0_f64;
-    for (&left_value, &right_value) in left.iter().zip(right.iter()) {
-        let left_value = left_value as f64;
-        let right_value = right_value as f64;
-        dot += left_value * right_value;
-        left_norm += left_value * left_value;
-        right_norm += right_value * right_value;
-    }
-
-    if left_norm == 0.0 || right_norm == 0.0 {
-        0.0
-    } else {
-        dot / (left_norm.sqrt() * right_norm.sqrt())
     }
 }
 
@@ -1078,14 +1061,9 @@ mod tests {
     }
 
     #[test]
-    fn cosine_similarity_requires_same_dimension() {
-        assert_eq!(cosine_similarity(&[1.0, 2.0], &[1.0]), 0.0);
-    }
-
-    #[test]
-    fn cosine_similarity_scores_parallel_vectors() {
-        let score = cosine_similarity(&[1.0, 0.0], &[0.9, 0.1]);
-        assert!(score > 0.9);
+    fn vector_wrapper_preserves_embedding_length() {
+        let vector = Vector::from(vec![1.0, 2.0, 3.0]);
+        assert_eq!(vector, Vector::from(vec![1.0, 2.0, 3.0]));
     }
 
     #[test]
