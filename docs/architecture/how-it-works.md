@@ -259,16 +259,21 @@ The current implementation is PostgreSQL-first. It uses:
 
 - `memory_entries.search_document`
 - `memory_chunks.tsv`
+- optional chunk embeddings stored on `memory_chunks`
+- `memory_relations` as a reranking signal
 - Rust-side reranking
 - deterministic answer synthesis
 
 The query flow is:
 
 1. normalize and interpret the query
-2. retrieve candidate memories and chunks from PostgreSQL
-3. rerank them in Rust
-4. build a deterministic answer from the strongest evidence
-5. return ranked results plus score explanations
+2. retrieve lexical candidates from PostgreSQL full-text search
+3. optionally retrieve semantic candidates from stored chunk embeddings
+4. merge and rerank candidates in Rust, including relation boosts when related memories cluster
+5. build a deterministic answer from the strongest evidence
+6. return ranked results plus score explanations
+
+The important design point is that semantic search is additive, not a replacement for lexical search. Exact wording still matters, but embedding similarity can now recover relevant memories when the query uses different wording from the stored canonical text.
 
 Results are still project-scoped. A query is always evaluated inside one project slug unless the interface is explicitly extended otherwise.
 

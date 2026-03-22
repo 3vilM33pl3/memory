@@ -1235,6 +1235,31 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 )));
             }
         }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("Related Memories")]));
+        if detail.related_memories.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No related memories recorded.",
+                Style::default().fg(Theme::MUTED),
+            )));
+        } else {
+            for related in &detail.related_memories {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{} ", related.relation_type),
+                        Style::default().fg(Theme::ACCENT),
+                    ),
+                    memory_type_span(&related.memory_type),
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("({:.2}) ", related.confidence),
+                        confidence_style(related.confidence),
+                    ),
+                    Span::styled(related.summary.clone(), Style::default().fg(Theme::TEXT)),
+                ]));
+            }
+        }
         lines
     } else if app.filtered_memories.is_empty() {
         vec![Line::from(Span::styled(
@@ -1648,6 +1673,30 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 detail.canonical_text.clone(),
                 Style::default().fg(Theme::TEXT),
             )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Related Memories")]));
+            if detail.related_memories.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "No related memories recorded.",
+                    Style::default().fg(Theme::MUTED),
+                )));
+            } else {
+                for related in &detail.related_memories {
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("{} ", related.relation_type),
+                            Style::default().fg(Theme::ACCENT),
+                        ),
+                        memory_type_span(&related.memory_type),
+                        Span::raw(" "),
+                        Span::styled(
+                            format!("({:.2}) ", related.confidence),
+                            confidence_style(related.confidence),
+                        ),
+                        Span::styled(related.summary.clone(), Style::default().fg(Theme::TEXT)),
+                    ]));
+                }
+            }
         }
 
         if !result.sources.is_empty() {

@@ -10,6 +10,7 @@ It lets you save useful facts about a codebase, search them later, and view them
 
 - stores project memories in PostgreSQL
 - keeps memories separated per project
+- combines lexical search with optional embedding-based recall and related-memory links
 - lets you search and browse them in a TUI
 - can capture useful work automatically while you code
 - can scan an existing repository and suggest durable knowledge
@@ -90,6 +91,7 @@ Use the global config for shared values such as:
 - `database.url`
 - `service.api_token`
 - `[llm]` settings
+- `[embeddings]` settings if you want semantic recall
 
 Use `.mem/config.toml` for project-specific overrides such as:
 

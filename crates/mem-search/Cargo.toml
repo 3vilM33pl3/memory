@@ -6,7 +6,11 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 chrono.workspace = true
 mem-api = { path = "../mem-api" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sqlx.workspace = true
 uuid.workspace = true

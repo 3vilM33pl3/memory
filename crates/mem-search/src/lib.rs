@@ -1,7 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use mem_api::{MemoryType, QueryRequest, QueryResponse, QueryResult, QuerySource, SourceKind};
+use mem_api::{
+    AppConfig, EmbeddingConfig, MemoryRelationType, MemoryType, QueryRequest, QueryResponse,
+    QueryResult, QuerySource, SourceKind, resolve_secret_value,
+};
+use reqwest::header;
+use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -9,142 +15,125 @@ const MAX_CANDIDATES: i64 = 64;
 const CHUNK_TARGET_SIZE: usize = 320;
 const CHUNK_OVERLAP: usize = 80;
 
+#[derive(Clone)]
+pub struct EmbeddingService {
+    client: reqwest::Client,
+    config: EmbeddingConfig,
+    api_key: String,
+}
+
+impl EmbeddingService {
+    pub fn from_config(config: &AppConfig) -> Option<Self> {
+        if config.embeddings.provider.trim() != "openai_compatible"
+            || config.embeddings.model.trim().is_empty()
+        {
+            return None;
+        }
+        let api_key = resolve_secret_value(&config.embeddings.api_key_env)?;
+        if api_key.trim().is_empty() {
+            return None;
+        }
+        Some(Self {
+            client: reqwest::Client::new(),
+            config: config.embeddings.clone(),
+            api_key,
+        })
+    }
+
+    async fn embed_texts(&self, input: &[String]) -> Result<Vec<Vec<f32>>> {
+        if input.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let request = EmbeddingRequest {
+            model: self.config.model.clone(),
+            input: input.to_vec(),
+        };
+        let response = self
+            .client
+            .post(format!(
+                "{}/embeddings",
+                self.config.base_url.trim_end_matches('/')
+            ))
+            .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
+            .header(header::CONTENT_TYPE, "application/json")
+            .json(&request)
+            .send()
+            .await
+            .context("send embedding request")?;
+
+        let status = response.status();
+        let body = response.text().await.context("read embedding response")?;
+        if !status.is_success() {
+            anyhow::bail!("embedding request failed: {status} {body}");
+        }
+
+        let parsed: EmbeddingResponse =
+            serde_json::from_str(&body).context("parse embedding response")?;
+        let mut data = parsed.data;
+        data.sort_by_key(|item| item.index);
+        Ok(data.into_iter().map(|item| item.embedding).collect())
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct EmbeddingRequest {
+    model: String,
+    input: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmbeddingResponse {
+    data: Vec<EmbeddingItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EmbeddingItem {
+    index: usize,
+    embedding: Vec<f32>,
+}
+
 pub async fn query_memory(
     pool: &PgPool,
     request: &QueryRequest,
-) -> Result<QueryResponse, sqlx::Error> {
+    embedder: Option<&EmbeddingService>,
+) -> Result<QueryResponse> {
     let normalized = QueryIntent::from_query(&request.query);
-    let memory_type_filters = request
-        .filters
-        .types
-        .iter()
-        .map(|value| value.to_string())
-        .collect::<Vec<_>>();
-    let lexical_like_terms = normalized
-        .lexical_terms
-        .iter()
-        .map(|term| format!("%{term}%"))
-        .collect::<Vec<_>>();
-    let path_like_terms = normalized
-        .path_terms
-        .iter()
-        .map(|term| format!("%{term}%"))
-        .collect::<Vec<_>>();
-    let tag_like_terms = normalized
-        .lexical_terms
-        .iter()
-        .map(|term| format!("%{term}%"))
-        .collect::<Vec<_>>();
     let candidate_limit = (request.top_k * 8).clamp(request.top_k, MAX_CANDIDATES);
 
-    let rows = sqlx::query(
-        r#"
-        WITH input AS (
-            SELECT websearch_to_tsquery('english', $2) AS query
-        ),
-        candidates AS (
-            SELECT
-                m.id,
-                m.summary,
-                m.memory_type,
-                m.canonical_text,
-                m.importance,
-                m.confidence,
-                m.updated_at,
-                COALESCE(ts_rank_cd(m.search_document, input.query), 0) AS entry_fts,
-                COALESCE(best_chunk.chunk_fts, 0) AS chunk_fts,
-                COALESCE(best_chunk.chunk_text, left(m.canonical_text, 320)) AS best_chunk_text,
-                COALESCE((
-                    SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
-                    FROM memory_tags mt
-                    WHERE mt.memory_entry_id = m.id
-                ), ARRAY[]::text[]) AS tags,
-                COALESCE((
-                    SELECT ARRAY_AGG(ms.file_path ORDER BY ms.file_path)
-                    FROM memory_sources ms
-                    WHERE ms.memory_entry_id = m.id
-                      AND ms.file_path IS NOT NULL
-                ), ARRAY[]::text[]) AS source_paths
-            FROM memory_entries m
-            JOIN projects p ON p.id = m.project_id
-            CROSS JOIN input
-            LEFT JOIN LATERAL (
-                SELECT
-                    mc.chunk_text,
-                    ts_rank_cd(mc.tsv, input.query) AS chunk_fts
-                FROM memory_chunks mc
-                WHERE mc.memory_entry_id = m.id
-                  AND mc.tsv @@ input.query
-                ORDER BY chunk_fts DESC, mc.id
-                LIMIT 1
-            ) best_chunk ON true
-            WHERE p.slug = $1
-              AND m.status = 'active'
-              AND ($3::text[] IS NULL OR m.memory_type = ANY($3))
-              AND (
-                    cardinality($4::text[]) = 0
-                    OR EXISTS (
-                        SELECT 1
-                        FROM memory_tags mt
-                        WHERE mt.memory_entry_id = m.id
-                          AND mt.tag = ANY($4)
-                    )
-              )
-              AND (
-                    m.search_document @@ input.query
-                    OR best_chunk.chunk_text IS NOT NULL
-                    OR (
-                        cardinality($5::text[]) > 0
-                        AND (
-                            m.summary ILIKE ANY($5)
-                            OR m.canonical_text ILIKE ANY($5)
-                        )
-                    )
-                    OR (
-                        cardinality($6::text[]) > 0
-                        AND EXISTS (
-                            SELECT 1
-                            FROM memory_sources ms
-                            WHERE ms.memory_entry_id = m.id
-                              AND ms.file_path ILIKE ANY($6)
-                        )
-                    )
-                    OR (
-                        cardinality($7::text[]) > 0
-                        AND EXISTS (
-                            SELECT 1
-                            FROM memory_tags mt
-                            WHERE mt.memory_entry_id = m.id
-                              AND mt.tag ILIKE ANY($7)
-                        )
-                    )
-                )
-        )
-        SELECT *
-        FROM candidates
-        ORDER BY GREATEST(entry_fts, chunk_fts) DESC, updated_at DESC, id DESC
-        LIMIT $8
-        "#,
-    )
-    .bind(&request.project)
-    .bind(&request.query)
-    .bind(if memory_type_filters.is_empty() {
-        None::<Vec<String>>
-    } else {
-        Some(memory_type_filters)
-    })
-    .bind(&request.filters.tags)
-    .bind(&lexical_like_terms)
-    .bind(&path_like_terms)
-    .bind(&tag_like_terms)
-    .bind(candidate_limit)
-    .fetch_all(pool)
-    .await?;
+    let lexical_candidates = fetch_lexical_candidates(pool, request, &normalized, candidate_limit)
+        .await
+        .context("fetch lexical candidates")?;
 
-    let mut ranked = rows
-        .into_iter()
-        .map(|row| rank_candidate(row, &normalized))
-        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+    let semantic_candidates = if let Some(embedder) = embedder {
+        match embedder.embed_texts(std::slice::from_ref(&request.query)).await {
+            Ok(embedding) => {
+                if let Some(query_embedding) = embedding.into_iter().next() {
+                    fetch_semantic_candidates(pool, request, &query_embedding, candidate_limit)
+                        .await
+                        .context("fetch semantic candidates")?
+                } else {
+                    Vec::new()
+                }
+            }
+            Err(_) => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+
+    let mut candidates = merge_candidates(lexical_candidates, semantic_candidates);
+    let relation_map = fetch_relation_map(
+        pool,
+        &candidates.keys().copied().collect::<Vec<_>>(),
+    )
+    .await
+    .context("fetch relation map")?;
+
+    let mut ranked = candidates
+        .drain()
+        .map(|(_, candidate)| rank_candidate(candidate, &normalized, &relation_map))
+        .collect::<Vec<_>>();
 
     ranked.sort_by(|left, right| {
         right
@@ -163,7 +152,9 @@ pub async fn query_memory(
             continue;
         }
 
-        let sources = fetch_sources(pool, candidate.memory_id).await?;
+        let sources = fetch_sources(pool, candidate.memory_id)
+            .await
+            .context("fetch query result sources")?;
         results.push(QueryResult {
             memory_id: candidate.memory_id,
             summary: candidate.summary,
@@ -186,7 +177,11 @@ pub async fn query_memory(
     })
 }
 
-pub async fn rebuild_chunks(pool: &PgPool, project: &str) -> Result<u64, sqlx::Error> {
+pub async fn rebuild_chunks(
+    pool: &PgPool,
+    project: &str,
+    embedder: Option<&EmbeddingService>,
+) -> Result<u64> {
     let rows = sqlx::query(
         r#"
         SELECT m.id, m.canonical_text, m.summary
@@ -197,7 +192,8 @@ pub async fn rebuild_chunks(pool: &PgPool, project: &str) -> Result<u64, sqlx::E
     )
     .bind(project)
     .fetch_all(pool)
-    .await?;
+    .await
+    .context("load memories for chunk rebuild")?;
 
     let mut count = 0_u64;
     for row in rows {
@@ -207,21 +203,39 @@ pub async fn rebuild_chunks(pool: &PgPool, project: &str) -> Result<u64, sqlx::E
         sqlx::query("DELETE FROM memory_chunks WHERE memory_entry_id = $1")
             .bind(memory_id)
             .execute(pool)
-            .await?;
+            .await
+            .context("delete old chunks")?;
 
-        for chunk_text in split_search_chunks(&summary, &canonical_text) {
+        let chunks = split_search_chunks(&summary, &canonical_text);
+        let embeddings = if let Some(embedder) = embedder {
+            embedder
+                .embed_texts(&chunks)
+                .await
+                .context("embed rebuilt chunks")?
+        } else {
+            Vec::new()
+        };
+
+        for (index, chunk_text) in chunks.iter().enumerate() {
+            let embedding = embeddings.get(index).cloned();
             sqlx::query(
                 r#"
-                INSERT INTO memory_chunks (id, memory_entry_id, chunk_text, search_text, tsv)
-                VALUES ($1, $2, $3, $4, to_tsvector('english', $4))
+                INSERT INTO memory_chunks
+                    (id, memory_entry_id, chunk_text, search_text, tsv, embedding, embedding_model, embedding_updated_at)
+                VALUES
+                    ($1, $2, $3, $4, to_tsvector('english', $4), $5, $6, $7)
                 "#,
             )
             .bind(Uuid::new_v4())
             .bind(memory_id)
-            .bind(&chunk_text)
+            .bind(chunk_text)
             .bind(format!("{summary}\n{chunk_text}"))
+            .bind(embedding)
+            .bind(embedder.map(|service| service.config.model.clone()))
+            .bind(embedder.map(|_| Utc::now()))
             .execute(pool)
-            .await?;
+            .await
+            .context("insert rebuilt chunk")?;
         }
         count += 1;
     }
@@ -241,7 +255,17 @@ pub fn parse_memory_type(value: &str) -> MemoryType {
     }
 }
 
-async fn fetch_sources(pool: &PgPool, memory_id: Uuid) -> Result<Vec<QuerySource>, sqlx::Error> {
+pub fn parse_relation_type(value: &str) -> MemoryRelationType {
+    match value {
+        "duplicates" => MemoryRelationType::Duplicates,
+        "supersedes" => MemoryRelationType::Supersedes,
+        "supports" => MemoryRelationType::Supports,
+        "depends_on" => MemoryRelationType::DependsOn,
+        _ => MemoryRelationType::RelatedTo,
+    }
+}
+
+async fn fetch_sources(pool: &PgPool, memory_id: Uuid) -> Result<Vec<QuerySource>> {
     let rows = sqlx::query(
         r#"
         SELECT task_id, file_path, source_kind, excerpt
@@ -252,7 +276,8 @@ async fn fetch_sources(pool: &PgPool, memory_id: Uuid) -> Result<Vec<QuerySource
     )
     .bind(memory_id)
     .fetch_all(pool)
-    .await?;
+    .await
+    .context("query sources")?;
 
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
@@ -279,7 +304,7 @@ pub fn parse_source_kind(value: &str) -> SourceKind {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct QueryIntent {
     normalized_query: String,
     lexical_terms: Vec<String>,
@@ -306,6 +331,24 @@ impl QueryIntent {
     }
 }
 
+#[derive(Debug, Clone)]
+struct CandidateRecord {
+    memory_id: Uuid,
+    summary: String,
+    memory_type: MemoryType,
+    canonical_text: String,
+    importance: i32,
+    confidence: f32,
+    updated_at: DateTime<Utc>,
+    entry_fts: f64,
+    chunk_fts: f64,
+    semantic_similarity: f64,
+    best_chunk_text: String,
+    tags: Vec<String>,
+    source_paths: Vec<String>,
+}
+
+#[derive(Debug)]
 struct RankedCandidate {
     memory_id: Uuid,
     summary: String,
@@ -318,27 +361,330 @@ struct RankedCandidate {
     score_explanation: Vec<String>,
 }
 
-fn rank_candidate(
-    row: sqlx::postgres::PgRow,
-    intent: &QueryIntent,
-) -> Result<RankedCandidate, sqlx::Error> {
-    let memory_id: Uuid = row.try_get("id")?;
-    let summary: String = row.try_get("summary")?;
-    let canonical_text: String = row.try_get("canonical_text")?;
-    let memory_type = parse_memory_type(&row.try_get::<String, _>("memory_type")?);
-    let importance: i32 = row.try_get("importance")?;
-    let confidence: f32 = row.try_get("confidence")?;
-    let updated_at: DateTime<Utc> = row.try_get("updated_at")?;
-    let entry_fts = f64::from(row.try_get::<f32, _>("entry_fts")?);
-    let chunk_fts = f64::from(row.try_get::<f32, _>("chunk_fts")?);
-    let best_chunk_text: String = row.try_get("best_chunk_text")?;
-    let tags: Vec<String> = row.try_get("tags")?;
-    let source_paths: Vec<String> = row.try_get("source_paths")?;
+async fn fetch_lexical_candidates(
+    pool: &PgPool,
+    request: &QueryRequest,
+    normalized: &QueryIntent,
+    candidate_limit: i64,
+) -> Result<Vec<CandidateRecord>, sqlx::Error> {
+    let memory_type_filters = request
+        .filters
+        .types
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
+    let lexical_like_terms = normalized
+        .lexical_terms
+        .iter()
+        .map(|term| format!("%{term}%"))
+        .collect::<Vec<_>>();
+    let path_like_terms = normalized
+        .path_terms
+        .iter()
+        .map(|term| format!("%{term}%"))
+        .collect::<Vec<_>>();
+    let tag_like_terms = normalized
+        .lexical_terms
+        .iter()
+        .map(|term| format!("%{term}%"))
+        .collect::<Vec<_>>();
 
+    let rows = sqlx::query(
+        r#"
+        WITH input AS (
+            SELECT websearch_to_tsquery('english', $2) AS query
+        )
+        SELECT
+            m.id,
+            m.summary,
+            m.memory_type,
+            m.canonical_text,
+            m.importance,
+            m.confidence,
+            m.updated_at,
+            COALESCE(ts_rank_cd(m.search_document, input.query), 0) AS entry_fts,
+            COALESCE(best_chunk.chunk_fts, 0) AS chunk_fts,
+            COALESCE(best_chunk.chunk_text, left(m.canonical_text, 320)) AS best_chunk_text,
+            COALESCE((
+                SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
+                FROM memory_tags mt
+                WHERE mt.memory_entry_id = m.id
+            ), ARRAY[]::text[]) AS tags,
+            COALESCE((
+                SELECT ARRAY_AGG(ms.file_path ORDER BY ms.file_path)
+                FROM memory_sources ms
+                WHERE ms.memory_entry_id = m.id
+                  AND ms.file_path IS NOT NULL
+            ), ARRAY[]::text[]) AS source_paths
+        FROM memory_entries m
+        JOIN projects p ON p.id = m.project_id
+        CROSS JOIN input
+        LEFT JOIN LATERAL (
+            SELECT
+                mc.chunk_text,
+                ts_rank_cd(mc.tsv, input.query) AS chunk_fts
+            FROM memory_chunks mc
+            WHERE mc.memory_entry_id = m.id
+              AND mc.tsv @@ input.query
+            ORDER BY chunk_fts DESC, mc.id
+            LIMIT 1
+        ) best_chunk ON true
+        WHERE p.slug = $1
+          AND m.status = 'active'
+          AND ($3::text[] IS NULL OR m.memory_type = ANY($3))
+          AND (
+                cardinality($4::text[]) = 0
+                OR EXISTS (
+                    SELECT 1
+                    FROM memory_tags mt
+                    WHERE mt.memory_entry_id = m.id
+                      AND mt.tag = ANY($4)
+                )
+          )
+          AND (
+                m.search_document @@ input.query
+                OR best_chunk.chunk_text IS NOT NULL
+                OR (
+                    cardinality($5::text[]) > 0
+                    AND (
+                        m.summary ILIKE ANY($5)
+                        OR m.canonical_text ILIKE ANY($5)
+                    )
+                )
+                OR (
+                    cardinality($6::text[]) > 0
+                    AND EXISTS (
+                        SELECT 1
+                        FROM memory_sources ms
+                        WHERE ms.memory_entry_id = m.id
+                          AND ms.file_path ILIKE ANY($6)
+                    )
+                )
+                OR (
+                    cardinality($7::text[]) > 0
+                    AND EXISTS (
+                        SELECT 1
+                        FROM memory_tags mt
+                        WHERE mt.memory_entry_id = m.id
+                          AND mt.tag ILIKE ANY($7)
+                    )
+                )
+            )
+        ORDER BY GREATEST(entry_fts, chunk_fts) DESC, updated_at DESC, id DESC
+        LIMIT $8
+        "#,
+    )
+    .bind(&request.project)
+    .bind(&request.query)
+    .bind(if memory_type_filters.is_empty() {
+        None::<Vec<String>>
+    } else {
+        Some(memory_type_filters)
+    })
+    .bind(&request.filters.tags)
+    .bind(&lexical_like_terms)
+    .bind(&path_like_terms)
+    .bind(&tag_like_terms)
+    .bind(candidate_limit)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter().map(candidate_from_lexical_row).collect()
+}
+
+fn candidate_from_lexical_row(row: sqlx::postgres::PgRow) -> Result<CandidateRecord, sqlx::Error> {
+    Ok(CandidateRecord {
+        memory_id: row.try_get("id")?,
+        summary: row.try_get("summary")?,
+        memory_type: parse_memory_type(&row.try_get::<String, _>("memory_type")?),
+        canonical_text: row.try_get("canonical_text")?,
+        importance: row.try_get("importance")?,
+        confidence: row.try_get("confidence")?,
+        updated_at: row.try_get("updated_at")?,
+        entry_fts: f64::from(row.try_get::<f32, _>("entry_fts")?),
+        chunk_fts: f64::from(row.try_get::<f32, _>("chunk_fts")?),
+        semantic_similarity: 0.0,
+        best_chunk_text: row.try_get("best_chunk_text")?,
+        tags: row.try_get("tags")?,
+        source_paths: row.try_get("source_paths")?,
+    })
+}
+
+async fn fetch_semantic_candidates(
+    pool: &PgPool,
+    request: &QueryRequest,
+    query_embedding: &[f32],
+    candidate_limit: i64,
+) -> Result<Vec<CandidateRecord>, sqlx::Error> {
+    let memory_type_filters = request
+        .filters
+        .types
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            m.id,
+            m.summary,
+            m.memory_type,
+            m.canonical_text,
+            m.importance,
+            m.confidence,
+            m.updated_at,
+            mc.chunk_text,
+            mc.embedding,
+            COALESCE((
+                SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
+                FROM memory_tags mt
+                WHERE mt.memory_entry_id = m.id
+            ), ARRAY[]::text[]) AS tags,
+            COALESCE((
+                SELECT ARRAY_AGG(ms.file_path ORDER BY ms.file_path)
+                FROM memory_sources ms
+                WHERE ms.memory_entry_id = m.id
+                  AND ms.file_path IS NOT NULL
+            ), ARRAY[]::text[]) AS source_paths
+        FROM memory_chunks mc
+        JOIN memory_entries m ON m.id = mc.memory_entry_id
+        JOIN projects p ON p.id = m.project_id
+        WHERE p.slug = $1
+          AND m.status = 'active'
+          AND mc.embedding IS NOT NULL
+          AND ($2::text[] IS NULL OR m.memory_type = ANY($2))
+          AND (
+                cardinality($3::text[]) = 0
+                OR EXISTS (
+                    SELECT 1
+                    FROM memory_tags mt
+                    WHERE mt.memory_entry_id = m.id
+                      AND mt.tag = ANY($3)
+                )
+          )
+        "#,
+    )
+    .bind(&request.project)
+    .bind(if memory_type_filters.is_empty() {
+        None::<Vec<String>>
+    } else {
+        Some(memory_type_filters)
+    })
+    .bind(&request.filters.tags)
+    .fetch_all(pool)
+    .await?;
+
+    let mut by_memory = HashMap::<Uuid, CandidateRecord>::new();
+    for row in rows {
+        let Some(embedding) = row.try_get::<Option<Vec<f32>>, _>("embedding")? else {
+            continue;
+        };
+        let similarity = cosine_similarity(query_embedding, &embedding);
+        if similarity <= 0.0 {
+            continue;
+        }
+
+        let memory_id: Uuid = row.try_get("id")?;
+        let entry = by_memory.entry(memory_id).or_insert_with(|| CandidateRecord {
+            memory_id,
+            summary: row.try_get("summary").unwrap_or_default(),
+            memory_type: parse_memory_type(
+                &row.try_get::<String, _>("memory_type")
+                    .unwrap_or_else(|_| "convention".to_string()),
+            ),
+            canonical_text: row.try_get("canonical_text").unwrap_or_default(),
+            importance: row.try_get("importance").unwrap_or_default(),
+            confidence: row.try_get("confidence").unwrap_or(0.0),
+            updated_at: row.try_get("updated_at").unwrap_or_else(|_| Utc::now()),
+            entry_fts: 0.0,
+            chunk_fts: 0.0,
+            semantic_similarity: similarity,
+            best_chunk_text: row.try_get("chunk_text").unwrap_or_default(),
+            tags: row.try_get("tags").unwrap_or_default(),
+            source_paths: row.try_get("source_paths").unwrap_or_default(),
+        });
+
+        if similarity > entry.semantic_similarity {
+            entry.semantic_similarity = similarity;
+            entry.best_chunk_text = row.try_get("chunk_text").unwrap_or_default();
+        }
+    }
+
+    let mut candidates = by_memory.into_values().collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .semantic_similarity
+            .total_cmp(&left.semantic_similarity)
+            .then_with(|| right.updated_at.cmp(&left.updated_at))
+    });
+    candidates.truncate(candidate_limit as usize);
+    Ok(candidates)
+}
+
+fn merge_candidates(
+    lexical: Vec<CandidateRecord>,
+    semantic: Vec<CandidateRecord>,
+) -> HashMap<Uuid, CandidateRecord> {
+    let mut merged = HashMap::new();
+    for candidate in lexical.into_iter().chain(semantic) {
+        merged
+            .entry(candidate.memory_id)
+            .and_modify(|existing: &mut CandidateRecord| {
+                existing.entry_fts = existing.entry_fts.max(candidate.entry_fts);
+                existing.chunk_fts = existing.chunk_fts.max(candidate.chunk_fts);
+                if candidate.semantic_similarity > existing.semantic_similarity {
+                    existing.semantic_similarity = candidate.semantic_similarity;
+                    existing.best_chunk_text = candidate.best_chunk_text.clone();
+                }
+                if existing.tags.is_empty() {
+                    existing.tags = candidate.tags.clone();
+                }
+                if existing.source_paths.is_empty() {
+                    existing.source_paths = candidate.source_paths.clone();
+                }
+            })
+            .or_insert(candidate);
+    }
+    merged
+}
+
+async fn fetch_relation_map(
+    pool: &PgPool,
+    candidate_ids: &[Uuid],
+) -> Result<HashMap<Uuid, Vec<MemoryRelationType>>, sqlx::Error> {
+    if candidate_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = sqlx::query(
+        r#"
+        SELECT src_memory_id, relation_type
+        FROM memory_relations
+        WHERE src_memory_id = ANY($1)
+          AND dst_memory_id = ANY($1)
+        "#,
+    )
+    .bind(candidate_ids)
+    .fetch_all(pool)
+    .await?;
+
+    let mut map = HashMap::<Uuid, Vec<MemoryRelationType>>::new();
+    for row in rows {
+        let src_memory_id: Uuid = row.try_get("src_memory_id")?;
+        let relation_type = parse_relation_type(&row.try_get::<String, _>("relation_type")?);
+        map.entry(src_memory_id).or_default().push(relation_type);
+    }
+    Ok(map)
+}
+
+fn rank_candidate(
+    candidate: CandidateRecord,
+    intent: &QueryIntent,
+    relation_map: &HashMap<Uuid, Vec<MemoryRelationType>>,
+) -> RankedCandidate {
     let query_lower = intent.normalized_query.to_lowercase();
-    let summary_lower = summary.to_lowercase();
-    let canonical_lower = canonical_text.to_lowercase();
-    let snippet_lower = best_chunk_text.to_lowercase();
+    let summary_lower = candidate.summary.to_lowercase();
+    let canonical_lower = candidate.canonical_text.to_lowercase();
+    let snippet_lower = candidate.best_chunk_text.to_lowercase();
     let combined_text = format!("{summary_lower}\n{snippet_lower}\n{canonical_lower}");
 
     let exact_phrase_matches = if intent.exact_phrases.is_empty() {
@@ -357,43 +703,73 @@ fn rank_candidate(
     };
 
     let term_overlap = lexical_overlap_ratio(&combined_text, &intent.lexical_terms);
-    let tag_match_count = tags
+    let tag_match_count = candidate
+        .tags
         .iter()
         .filter(|tag| lexical_match(tag, &intent.lexical_terms))
         .count();
-    let path_match_count = source_paths
+    let path_match_count = candidate
+        .source_paths
         .iter()
         .filter(|path| lexical_match(path, &intent.path_terms))
         .count();
 
-    let age_days = (Utc::now() - updated_at).num_days().max(0) as f64;
+    let age_days = (Utc::now() - candidate.updated_at).num_days().max(0) as f64;
     let recency_boost = 1.0 / (1.0 + (age_days / 14.0));
+    let relation_boost = relation_map
+        .get(&candidate.memory_id)
+        .map(|relations| {
+            relations
+                .iter()
+                .map(|relation| match relation {
+                    MemoryRelationType::Duplicates => 0.22,
+                    MemoryRelationType::Supersedes => 0.35,
+                    MemoryRelationType::Supports => 0.28,
+                    MemoryRelationType::RelatedTo => 0.18,
+                    MemoryRelationType::DependsOn => 0.20,
+                })
+                .sum::<f64>()
+        })
+        .unwrap_or(0.0);
 
-    let mut final_score = (chunk_fts * 4.0)
-        + (entry_fts * 2.5)
+    let mut final_score = (candidate.chunk_fts * 4.0)
+        + (candidate.entry_fts * 2.5)
         + (exact_phrase_matches as f64 * 1.4)
         + (term_overlap * 1.5)
         + (tag_match_count as f64 * 0.9)
         + (path_match_count as f64 * 1.1)
-        + (importance as f64 * 0.35)
-        + (confidence as f64 * 1.8)
-        + (recency_boost * 0.6);
+        + (candidate.semantic_similarity.max(0.0) * 4.2)
+        + (candidate.importance as f64 * 0.35)
+        + (candidate.confidence as f64 * 1.8)
+        + (recency_boost * 0.6)
+        + relation_boost;
 
-    if exact_phrase_matches == 0 && term_overlap < 0.15 && chunk_fts == 0.0 && entry_fts == 0.0 {
+    if exact_phrase_matches == 0
+        && term_overlap < 0.15
+        && candidate.chunk_fts == 0.0
+        && candidate.entry_fts == 0.0
+        && candidate.semantic_similarity < 0.25
+    {
         final_score *= 0.65;
     }
 
     let snippet = summarize_snippet(
-        &best_chunk_text,
+        &candidate.best_chunk_text,
         &intent.lexical_terms,
         &intent.exact_phrases,
     );
     let mut score_explanation = Vec::new();
-    if chunk_fts > 0.0 {
-        score_explanation.push(format!("strong chunk match {:.2}", chunk_fts));
+    if candidate.chunk_fts > 0.0 {
+        score_explanation.push(format!("strong chunk match {:.2}", candidate.chunk_fts));
     }
-    if entry_fts > 0.0 {
-        score_explanation.push(format!("entry search match {:.2}", entry_fts));
+    if candidate.entry_fts > 0.0 {
+        score_explanation.push(format!("entry search match {:.2}", candidate.entry_fts));
+    }
+    if candidate.semantic_similarity > 0.0 {
+        score_explanation.push(format!(
+            "semantic similarity {:.2}",
+            candidate.semantic_similarity
+        ));
     }
     if exact_phrase_matches > 0 {
         score_explanation.push(format!("exact phrase match x{}", exact_phrase_matches));
@@ -404,22 +780,48 @@ fn rank_candidate(
     if path_match_count > 0 {
         score_explanation.push(format!("source path match x{}", path_match_count));
     }
+    if relation_boost > 0.0 {
+        score_explanation.push(format!("relation boost {:.2}", relation_boost));
+    }
     score_explanation.push(format!("term overlap {:.0}%", term_overlap * 100.0));
-    score_explanation.push(format!("importance {}", importance));
-    score_explanation.push(format!("memory confidence {:.2}", confidence));
+    score_explanation.push(format!("importance {}", candidate.importance));
+    score_explanation.push(format!("memory confidence {:.2}", candidate.confidence));
     score_explanation.push(format!("updated {}d ago", age_days as i64));
 
-    Ok(RankedCandidate {
-        memory_id,
-        summary,
-        memory_type,
-        confidence,
-        updated_at,
-        tags,
+    RankedCandidate {
+        memory_id: candidate.memory_id,
+        summary: candidate.summary,
+        memory_type: candidate.memory_type,
+        confidence: candidate.confidence,
+        updated_at: candidate.updated_at,
+        tags: candidate.tags,
         snippet,
         final_score,
         score_explanation,
-    })
+    }
+}
+
+fn cosine_similarity(left: &[f32], right: &[f32]) -> f64 {
+    if left.is_empty() || right.is_empty() || left.len() != right.len() {
+        return 0.0;
+    }
+
+    let mut dot = 0.0_f64;
+    let mut left_norm = 0.0_f64;
+    let mut right_norm = 0.0_f64;
+    for (&left_value, &right_value) in left.iter().zip(right.iter()) {
+        let left_value = left_value as f64;
+        let right_value = right_value as f64;
+        dot += left_value * right_value;
+        left_norm += left_value * left_value;
+        right_norm += right_value * right_value;
+    }
+
+    if left_norm == 0.0 || right_norm == 0.0 {
+        0.0
+    } else {
+        dot / (left_norm.sqrt() * right_norm.sqrt())
+    }
 }
 
 fn synthesize_answer(results: &[QueryResult]) -> (String, f32, bool) {
@@ -465,7 +867,7 @@ fn synthesize_answer(results: &[QueryResult]) -> (String, f32, bool) {
 
     let answer = match summaries.as_slice() {
         [] => "I could not find enough project memory to answer confidently.".to_string(),
-        [only] => format!("{only}"),
+        [only] => only.to_string(),
         [first, second] => format!("{first} Also relevant: {second}."),
         [first, second, third, ..] => {
             format!("{first} Also relevant: {second}. Supporting detail: {third}.")
@@ -491,9 +893,7 @@ fn extract_quoted_phrases(query: &str) -> Vec<String> {
         }
 
         match (quote_char, ch) {
-            (_, '\\') => {
-                escaped = true;
-            }
+            (_, '\\') => escaped = true,
             (None, '"' | '\'') => {
                 quote_char = Some(ch);
                 current.clear();
@@ -575,7 +975,7 @@ fn summarize_snippet(text: &str, lexical_terms: &[String], phrases: &[String]) -
     format!("{}...", &trimmed[..240])
 }
 
-fn split_search_chunks(summary: &str, canonical_text: &str) -> Vec<String> {
+pub fn split_search_chunks(summary: &str, canonical_text: &str) -> Vec<String> {
     let normalized_summary = summary.split_whitespace().collect::<Vec<_>>().join(" ");
     let normalized_text = canonical_text
         .split_whitespace()
@@ -678,6 +1078,17 @@ mod tests {
     }
 
     #[test]
+    fn cosine_similarity_requires_same_dimension() {
+        assert_eq!(cosine_similarity(&[1.0, 2.0], &[1.0]), 0.0);
+    }
+
+    #[test]
+    fn cosine_similarity_scores_parallel_vectors() {
+        let score = cosine_similarity(&[1.0, 0.0], &[0.9, 0.1]);
+        assert!(score > 0.9);
+    }
+
+    #[test]
     fn synthesize_answer_prefers_multiple_strong_results() {
         let results = vec![
             QueryResult {
@@ -700,7 +1111,7 @@ mod tests {
                 score: 5.5,
                 snippet: "Secondary snippet".to_string(),
                 score_explanation: vec![
-                    "entry search match 0.90".to_string(),
+                    "semantic similarity 0.84".to_string(),
                     "term overlap 67%".to_string(),
                 ],
                 tags: vec![],

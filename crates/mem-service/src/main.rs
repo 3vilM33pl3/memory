@@ -18,11 +18,15 @@ use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse,
     CaptureTaskRequest, CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse,
     MemoryEntryResponse, MemorySourceRecord, ProjectMemoriesResponse, ProjectOverviewResponse,
-    QueryRequest, ReindexRequest, ReindexResponse, StatsResponse, StreamRequest, StreamResponse,
-    ValidationError, read_capnp_text_frame, write_capnp_text_frame,
+    QueryRequest, ReindexRequest, ReindexResponse, RelatedMemorySummary, StatsResponse,
+    StreamRequest, StreamResponse, ValidationError, read_capnp_text_frame,
+    write_capnp_text_frame,
 };
 use mem_curate::{curate, store_capture};
-use mem_search::{parse_memory_type, parse_source_kind, query_memory, rebuild_chunks};
+use mem_search::{
+    EmbeddingService, parse_memory_type, parse_relation_type, parse_source_kind, query_memory,
+    rebuild_chunks,
+};
 use mem_service::{fetch_project_memories, fetch_project_overview, parse_status_filter};
 use serde::Deserialize;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
@@ -40,6 +44,7 @@ struct AppState {
     pool: PgPool,
     api_token: String,
     config: AppConfig,
+    embedder: Option<EmbeddingService>,
     events: broadcast::Sender<ServiceEvent>,
     recent_activity: Arc<Mutex<VecDeque<ServiceEvent>>>,
 }
@@ -176,6 +181,7 @@ async fn build_state(config: AppConfig) -> Result<AppState> {
     Ok(AppState {
         pool,
         api_token: config.service.api_token.clone(),
+        embedder: EmbeddingService::from_config(&config),
         config,
         events,
         recent_activity: Arc::new(Mutex::new(VecDeque::with_capacity(20))),
@@ -438,6 +444,31 @@ async fn fetch_memory_entry(
     })
     .collect::<Result<Vec<_>, sqlx::Error>>()?;
 
+    let related_memories = sqlx::query(
+        r#"
+        SELECT mr.relation_type, m.id, m.summary, m.memory_type, m.confidence
+        FROM memory_relations mr
+        JOIN memory_entries m ON m.id = mr.dst_memory_id
+        WHERE mr.src_memory_id = $1
+        ORDER BY m.updated_at DESC, m.id
+        LIMIT 12
+        "#,
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|row| {
+        Ok(RelatedMemorySummary {
+            memory_id: row.try_get("id")?,
+            relation_type: parse_relation_type(&row.try_get::<String, _>("relation_type")?),
+            summary: row.try_get("summary")?,
+            memory_type: parse_memory_type(&row.try_get::<String, _>("memory_type")?),
+            confidence: row.try_get("confidence")?,
+        })
+    })
+    .collect::<Result<Vec<_>, sqlx::Error>>()?;
+
     Ok(Some(MemoryEntryResponse {
         id,
         project: row.try_get("slug")?,
@@ -452,6 +483,7 @@ async fn fetch_memory_entry(
         },
         tags,
         sources,
+        related_memories,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     }))
@@ -510,9 +542,9 @@ async fn query(
     Json(request): Json<QueryRequest>,
 ) -> Result<Json<mem_api::QueryResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
-    let response = query_memory(&state.pool, &request)
+    let response = query_memory(&state.pool, &request, state.embedder.as_ref())
         .await
-        .map_err(ApiError::sql)?;
+        .map_err(ApiError::io)?;
     Ok(Json(response))
 }
 
@@ -553,6 +585,11 @@ async fn curate_memory(
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
     let response = curate(&state.pool, &request).await.map_err(ApiError::sql)?;
+    if state.embedder.is_some() {
+        rebuild_chunks(&state.pool, &request.project, state.embedder.as_ref())
+            .await
+            .map_err(ApiError::io)?;
+    }
     notify_project_changed(
         &state,
         project,
@@ -579,9 +616,9 @@ async fn reindex(
     require_token(&headers, &state.api_token)?;
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
-    let count = rebuild_chunks(&state.pool, &request.project)
+    let count = rebuild_chunks(&state.pool, &request.project, state.embedder.as_ref())
         .await
-        .map_err(ApiError::sql)?;
+        .map_err(ApiError::io)?;
     notify_project_changed(
         &state,
         project,

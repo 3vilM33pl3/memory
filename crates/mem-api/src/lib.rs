@@ -41,6 +41,29 @@ impl fmt::Display for MemoryType {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryRelationType {
+    Duplicates,
+    Supersedes,
+    Supports,
+    RelatedTo,
+    DependsOn,
+}
+
+impl fmt::Display for MemoryRelationType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Duplicates => "duplicates",
+            Self::Supersedes => "supersedes",
+            Self::Supports => "supports",
+            Self::RelatedTo => "related_to",
+            Self::DependsOn => "depends_on",
+        };
+        f.write_str(value)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryStatus {
@@ -231,6 +254,15 @@ pub struct QueryResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelatedMemorySummary {
+    pub memory_id: Uuid,
+    pub relation_type: MemoryRelationType,
+    pub summary: String,
+    pub memory_type: MemoryType,
+    pub confidence: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResponse {
     pub answer: String,
     pub confidence: f32,
@@ -281,6 +313,8 @@ pub struct MemoryEntryResponse {
     pub status: MemoryStatus,
     pub tags: Vec<String>,
     pub sources: Vec<MemorySourceRecord>,
+    #[serde(default)]
+    pub related_memories: Vec<RelatedMemorySummary>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -584,6 +618,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub llm: LlmConfig,
     #[serde(default)]
+    pub embeddings: EmbeddingConfig,
+    #[serde(default)]
     pub automation: AutomationConfig,
 }
 
@@ -705,6 +741,11 @@ pub fn discover_repo_env_path() -> Option<PathBuf> {
     Some(env_path_for_config(&config_path))
 }
 
+pub fn discover_global_env_path() -> Option<PathBuf> {
+    let config_path = discover_global_config_path()?;
+    Some(env_path_for_config(&config_path))
+}
+
 pub fn discover_global_config_path() -> Option<PathBuf> {
     if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
         let candidate = PathBuf::from(config_home)
@@ -738,6 +779,29 @@ pub fn find_repo_config_path(start: &Path) -> Option<PathBuf> {
         let candidate = directory.join(".mem").join("config.toml");
         if candidate.is_file() {
             return Some(candidate);
+        }
+    }
+    None
+}
+
+pub fn resolve_secret_value(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .or_else(|| discover_repo_env_path().and_then(|path| env_lookup(&path, key)))
+        .or_else(|| discover_global_env_path().and_then(|path| env_lookup(&path, key)))
+}
+
+fn env_lookup(path: &Path, key: &str) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((name, value)) = trimmed.split_once('=') {
+            if name.trim() == key {
+                return Some(value.trim().to_string());
+            }
         }
     }
     None
@@ -797,6 +861,32 @@ impl Default for LlmConfig {
             temperature: 0.0,
             max_input_bytes: default_llm_max_input_bytes(),
             max_output_tokens: default_llm_max_output_tokens(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingConfig {
+    #[serde(default = "default_embeddings_provider")]
+    pub provider: String,
+    #[serde(default = "default_embeddings_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_embeddings_api_key_env")]
+    pub api_key_env: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default = "default_embeddings_batch_size")]
+    pub batch_size: usize,
+}
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_embeddings_provider(),
+            base_url: default_embeddings_base_url(),
+            api_key_env: default_embeddings_api_key_env(),
+            model: String::new(),
+            batch_size: default_embeddings_batch_size(),
         }
     }
 }
@@ -880,6 +970,22 @@ fn default_llm_base_url() -> String {
 
 fn default_llm_api_key_env() -> String {
     "OPENAI_API_KEY".to_string()
+}
+
+fn default_embeddings_provider() -> String {
+    "openai_compatible".to_string()
+}
+
+fn default_embeddings_base_url() -> String {
+    "https://api.openai.com/v1".to_string()
+}
+
+fn default_embeddings_api_key_env() -> String {
+    "OPENAI_API_KEY".to_string()
+}
+
+fn default_embeddings_batch_size() -> usize {
+    16
 }
 
 fn default_llm_max_input_bytes() -> usize {

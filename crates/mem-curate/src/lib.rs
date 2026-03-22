@@ -1,4 +1,4 @@
-use mem_api::{CaptureTaskResponse, CurateRequest, CurateResponse};
+use mem_api::{CaptureTaskResponse, CurateRequest, CurateResponse, MemoryRelationType};
 use mem_ingest::{extract_candidates, idempotency_key};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -216,6 +216,8 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
             .bind(memory_id)
             .execute(&mut *tx)
             .await?;
+
+            refresh_relations(&mut tx, project_id, memory_id).await?;
         }
 
         sqlx::query("UPDATE raw_captures SET curated_at = now() WHERE id = $1")
@@ -290,5 +292,254 @@ impl SourceKindSql for mem_ingest::CandidateSource {
             mem_api::SourceKind::Note => "note",
         }
         .to_string()
+    }
+}
+
+#[derive(Debug)]
+struct MemoryProfile {
+    id: Uuid,
+    canonical_text: String,
+    tags: Vec<String>,
+    files: Vec<String>,
+}
+
+async fn refresh_relations(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    project_id: Uuid,
+    memory_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM memory_relations WHERE src_memory_id = $1 OR dst_memory_id = $1")
+        .bind(memory_id)
+        .execute(&mut **tx)
+        .await?;
+
+    let current = load_memory_profile(tx, memory_id).await?;
+    let Some(current) = current else {
+        return Ok(());
+    };
+
+    let others = sqlx::query(
+        r#"
+        SELECT
+            m.id,
+            m.summary,
+            m.canonical_text,
+            COALESCE((
+                SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
+                FROM memory_tags mt
+                WHERE mt.memory_entry_id = m.id
+            ), ARRAY[]::text[]) AS tags,
+            COALESCE((
+                SELECT ARRAY_AGG(ms.file_path ORDER BY ms.file_path)
+                FROM memory_sources ms
+                WHERE ms.memory_entry_id = m.id
+                  AND ms.file_path IS NOT NULL
+            ), ARRAY[]::text[]) AS files
+        FROM memory_entries m
+        WHERE m.project_id = $1
+          AND m.id <> $2
+          AND m.status = 'active'
+        "#,
+    )
+    .bind(project_id)
+    .bind(memory_id)
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .map(|row| {
+        Ok(MemoryProfile {
+            id: row.try_get("id")?,
+            canonical_text: row.try_get("canonical_text")?,
+            tags: row.try_get("tags")?,
+            files: row.try_get("files")?,
+        })
+    })
+    .collect::<Result<Vec<_>, sqlx::Error>>()?;
+
+    for other in others {
+        if let Some(relation) = classify_relation(&current, &other) {
+            insert_relation(tx, current.id, other.id, relation.clone()).await?;
+            if matches!(
+                relation,
+                MemoryRelationType::Duplicates | MemoryRelationType::RelatedTo | MemoryRelationType::Supports
+            ) {
+                insert_relation(tx, other.id, current.id, relation).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn load_memory_profile(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_id: Uuid,
+) -> Result<Option<MemoryProfile>, sqlx::Error> {
+    sqlx::query(
+        r#"
+        SELECT
+            m.id,
+            m.summary,
+            m.canonical_text,
+            COALESCE((
+                SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
+                FROM memory_tags mt
+                WHERE mt.memory_entry_id = m.id
+            ), ARRAY[]::text[]) AS tags,
+            COALESCE((
+                SELECT ARRAY_AGG(ms.file_path ORDER BY ms.file_path)
+                FROM memory_sources ms
+                WHERE ms.memory_entry_id = m.id
+                  AND ms.file_path IS NOT NULL
+            ), ARRAY[]::text[]) AS files
+        FROM memory_entries m
+        WHERE m.id = $1
+        "#,
+    )
+    .bind(memory_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .map(|row| {
+        Ok(MemoryProfile {
+            id: row.try_get("id")?,
+            canonical_text: row.try_get("canonical_text")?,
+            tags: row.try_get("tags")?,
+            files: row.try_get("files")?,
+        })
+    })
+    .transpose()
+}
+
+async fn insert_relation(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    src_memory_id: Uuid,
+    dst_memory_id: Uuid,
+    relation_type: MemoryRelationType,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(src_memory_id)
+    .bind(relation_type.to_string())
+    .bind(dst_memory_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+fn classify_relation(current: &MemoryProfile, other: &MemoryProfile) -> Option<MemoryRelationType> {
+    let current_text = normalize_text(&current.canonical_text);
+    let other_text = normalize_text(&other.canonical_text);
+    let similarity = token_overlap_ratio(&current_text, &other_text);
+    let shared_tags = overlap_count(&current.tags, &other.tags);
+    let shared_files = overlap_count(&current.files, &other.files);
+
+    if similarity >= 0.92 {
+        return Some(MemoryRelationType::Duplicates);
+    }
+
+    if has_supersedes_language(&current.canonical_text)
+        && (similarity >= 0.45 || shared_tags > 0 || shared_files > 0)
+    {
+        return Some(MemoryRelationType::Supersedes);
+    }
+
+    if has_dependency_language(&current.canonical_text)
+        && (similarity >= 0.30 || shared_tags > 0 || shared_files > 0)
+    {
+        return Some(MemoryRelationType::DependsOn);
+    }
+
+    if shared_files > 0 || (shared_tags >= 2 && similarity >= 0.25) {
+        return Some(MemoryRelationType::Supports);
+    }
+
+    if similarity >= 0.28 || shared_tags > 0 || shared_files > 0 {
+        return Some(MemoryRelationType::RelatedTo);
+    }
+
+    None
+}
+
+fn normalize_text(text: &str) -> Vec<String> {
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '/')))
+        .filter_map(|segment| {
+            let value = segment.trim().to_ascii_lowercase();
+            (value.len() >= 3).then_some(value)
+        })
+        .collect()
+}
+
+fn token_overlap_ratio(left: &[String], right: &[String]) -> f32 {
+    if left.is_empty() || right.is_empty() {
+        return 0.0;
+    }
+    let left = left.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+    let right = right.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+    let shared = left.intersection(&right).count() as f32;
+    let total = left.union(&right).count() as f32;
+    if total == 0.0 { 0.0 } else { shared / total }
+}
+
+fn overlap_count(left: &[String], right: &[String]) -> usize {
+    let left = left.iter().map(|value| value.to_ascii_lowercase()).collect::<std::collections::BTreeSet<_>>();
+    let right = right.iter().map(|value| value.to_ascii_lowercase()).collect::<std::collections::BTreeSet<_>>();
+    left.intersection(&right).count()
+}
+
+fn has_supersedes_language(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    ["replace", "replaces", "supersede", "supersedes", "deprecate", "deprecated"]
+        .iter()
+        .any(|needle| lowered.contains(needle))
+}
+
+fn has_dependency_language(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    ["depends on", "requires", "relies on"]
+        .iter()
+        .any(|needle| lowered.contains(needle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(
+        canonical_text: &str,
+        tags: &[&str],
+        files: &[&str],
+    ) -> MemoryProfile {
+        MemoryProfile {
+            id: Uuid::new_v4(),
+            canonical_text: canonical_text.to_string(),
+            tags: tags.iter().map(|value| value.to_string()).collect(),
+            files: files.iter().map(|value| value.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn relation_classifier_detects_duplicates() {
+        let left = profile("Memory Layer stores canonical facts in PostgreSQL.", &["db"], &["src/lib.rs"]);
+        let right = profile("Memory Layer stores canonical facts in PostgreSQL.", &["db"], &["src/lib.rs"]);
+        assert_eq!(
+            classify_relation(&left, &right),
+            Some(MemoryRelationType::Duplicates)
+        );
+    }
+
+    #[test]
+    fn relation_classifier_detects_related_by_shared_provenance() {
+        let left = profile("The query path uses ranked retrieval.", &["search", "query"], &["crates/mem-search/src/lib.rs"]);
+        let right = profile("Search ranking explains why each memory matched.", &["search"], &["crates/mem-search/src/lib.rs"]);
+        assert_eq!(
+            classify_relation(&left, &right),
+            Some(MemoryRelationType::Supports)
+        );
     }
 }
