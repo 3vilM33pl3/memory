@@ -1,10 +1,14 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
-    AppConfig, EmbeddingConfig, MemoryRelationType, MemoryType, QueryRequest, QueryResponse,
-    QueryResult, QuerySource, SourceKind, resolve_secret_value,
+    AppConfig, EmbeddingConfig, MemoryRelationType, MemoryType, QueryDiagnostics, QueryMatchKind,
+    QueryRequest, QueryResponse, QueryResult, QueryResultDebug, QuerySource, SourceKind,
+    resolve_secret_value,
 };
 use pgvector::Vector;
 use reqwest::header;
@@ -102,13 +106,17 @@ pub async fn query_memory(
     request: &QueryRequest,
     embedder: Option<&EmbeddingService>,
 ) -> Result<QueryResponse> {
+    let total_started = Instant::now();
     let normalized = QueryIntent::from_query(&request.query);
     let candidate_limit = (request.top_k * 8).clamp(request.top_k, MAX_CANDIDATES);
 
+    let lexical_started = Instant::now();
     let lexical_candidates = fetch_lexical_candidates(pool, request, &normalized, candidate_limit)
         .await
         .context("fetch lexical candidates")?;
+    let lexical_duration_ms = lexical_started.elapsed().as_millis() as u64;
 
+    let semantic_started = Instant::now();
     let semantic_candidates = if let Some(embedder) = embedder {
         match embedder.embed_texts(std::slice::from_ref(&request.query)).await {
             Ok(embedding) => {
@@ -125,8 +133,13 @@ pub async fn query_memory(
     } else {
         Vec::new()
     };
+    let semantic_duration_ms = semantic_started.elapsed().as_millis() as u64;
 
+    let rerank_started = Instant::now();
+    let lexical_count = lexical_candidates.len();
+    let semantic_count = semantic_candidates.len();
     let mut candidates = merge_candidates(lexical_candidates, semantic_candidates);
+    let merged_candidate_count = candidates.len();
     let relation_map = fetch_relation_map(
         pool,
         &candidates.keys().copied().collect::<Vec<_>>(),
@@ -146,6 +159,7 @@ pub async fn query_memory(
             .then_with(|| right.updated_at.cmp(&left.updated_at))
             .then_with(|| left.memory_id.cmp(&right.memory_id))
     });
+    let rerank_duration_ms = rerank_started.elapsed().as_millis() as u64;
 
     let mut results = Vec::new();
     for candidate in ranked.into_iter().take(request.top_k as usize) {
@@ -165,11 +179,14 @@ pub async fn query_memory(
             memory_type: candidate.memory_type,
             score: candidate.final_score,
             snippet: candidate.snippet,
+            match_kind: candidate.match_kind,
             score_explanation: candidate.score_explanation,
+            debug: candidate.debug,
             tags: candidate.tags,
             sources,
         });
     }
+    let returned_results = results.len();
 
     let (answer, confidence, insufficient_evidence) = synthesize_answer(&results);
 
@@ -178,6 +195,17 @@ pub async fn query_memory(
         confidence,
         results,
         insufficient_evidence,
+        diagnostics: QueryDiagnostics {
+            lexical_candidates: lexical_count,
+            semantic_candidates: semantic_count,
+            merged_candidates: merged_candidate_count,
+            returned_results,
+            relation_augmented_candidates: relation_map.len(),
+            lexical_duration_ms,
+            semantic_duration_ms,
+            rerank_duration_ms,
+            total_duration_ms: total_started.elapsed().as_millis() as u64,
+        },
     })
 }
 
@@ -362,6 +390,8 @@ struct RankedCandidate {
     tags: Vec<String>,
     snippet: String,
     final_score: f64,
+    match_kind: QueryMatchKind,
+    debug: QueryResultDebug,
     score_explanation: Vec<String>,
 }
 
@@ -738,16 +768,27 @@ fn rank_candidate(
         })
         .unwrap_or(0.0);
 
-    let mut final_score = (candidate.chunk_fts * 4.0)
-        + (candidate.entry_fts * 2.5)
-        + (exact_phrase_matches as f64 * 1.4)
-        + (term_overlap * 1.5)
-        + (tag_match_count as f64 * 0.9)
-        + (path_match_count as f64 * 1.1)
-        + (candidate.semantic_similarity.max(0.0) * 4.2)
-        + (candidate.importance as f64 * 0.35)
-        + (candidate.confidence as f64 * 1.8)
-        + (recency_boost * 0.6)
+    let chunk_score = candidate.chunk_fts * 4.0;
+    let entry_score = candidate.entry_fts * 2.5;
+    let exact_phrase_boost = exact_phrase_matches as f64 * 1.4;
+    let overlap_boost = term_overlap * 1.5;
+    let tag_boost = tag_match_count as f64 * 0.9;
+    let path_boost = path_match_count as f64 * 1.1;
+    let semantic_boost = candidate.semantic_similarity.max(0.0) * 4.2;
+    let importance_boost = candidate.importance as f64 * 0.35;
+    let confidence_boost = candidate.confidence as f64 * 1.8;
+    let recency_score = recency_boost * 0.6;
+
+    let mut final_score = chunk_score
+        + entry_score
+        + exact_phrase_boost
+        + overlap_boost
+        + tag_boost
+        + path_boost
+        + semantic_boost
+        + importance_boost
+        + confidence_boost
+        + recency_score
         + relation_boost;
 
     if exact_phrase_matches == 0
@@ -794,6 +835,19 @@ fn rank_candidate(
     score_explanation.push(format!("memory confidence {:.2}", candidate.confidence));
     score_explanation.push(format!("updated {}d ago", age_days as i64));
 
+    let lexical_signal = candidate.chunk_fts > 0.0
+        || candidate.entry_fts > 0.0
+        || exact_phrase_matches > 0
+        || tag_match_count > 0
+        || path_match_count > 0
+        || term_overlap > 0.0;
+    let semantic_signal = candidate.semantic_similarity > 0.0;
+    let match_kind = match (lexical_signal, semantic_signal) {
+        (true, true) => QueryMatchKind::Hybrid,
+        (false, true) => QueryMatchKind::Semantic,
+        _ => QueryMatchKind::Lexical,
+    };
+
     RankedCandidate {
         memory_id: candidate.memory_id,
         summary: candidate.summary,
@@ -803,6 +857,20 @@ fn rank_candidate(
         tags: candidate.tags,
         snippet,
         final_score,
+        match_kind,
+        debug: QueryResultDebug {
+            chunk_fts: candidate.chunk_fts,
+            entry_fts: candidate.entry_fts,
+            semantic_similarity: candidate.semantic_similarity,
+            exact_phrase_matches,
+            term_overlap,
+            tag_match_count,
+            path_match_count,
+            relation_boost,
+            importance: candidate.importance,
+            memory_confidence: candidate.confidence,
+            recency_boost,
+        },
         score_explanation,
     }
 }
@@ -1075,10 +1143,12 @@ mod tests {
                 memory_type: MemoryType::Architecture,
                 score: 7.0,
                 snippet: "Primary snippet".to_string(),
+                match_kind: QueryMatchKind::Lexical,
                 score_explanation: vec![
                     "strong chunk match 1.20".to_string(),
                     "term overlap 100%".to_string(),
                 ],
+                debug: QueryResultDebug::default(),
                 tags: vec![],
                 sources: vec![],
             },
@@ -1088,10 +1158,12 @@ mod tests {
                 memory_type: MemoryType::Convention,
                 score: 5.5,
                 snippet: "Secondary snippet".to_string(),
+                match_kind: QueryMatchKind::Semantic,
                 score_explanation: vec![
                     "semantic similarity 0.84".to_string(),
                     "term overlap 67%".to_string(),
                 ],
+                debug: QueryResultDebug::default(),
                 tags: vec![],
                 sources: vec![],
             },

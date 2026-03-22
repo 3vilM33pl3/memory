@@ -2212,12 +2212,30 @@ fn print_query_response(payload: QueryResponse) {
             "sufficient"
         }
     );
+    println!(
+        "Diagnostics: lexical {} ({} ms) | semantic {} ({} ms) | merged {} | returned {} | rerank {} ms | total {} ms\n",
+        payload.diagnostics.lexical_candidates,
+        payload.diagnostics.lexical_duration_ms,
+        payload.diagnostics.semantic_candidates,
+        payload.diagnostics.semantic_duration_ms,
+        payload.diagnostics.merged_candidates,
+        payload.diagnostics.returned_results,
+        payload.diagnostics.rerank_duration_ms,
+        payload.diagnostics.total_duration_ms,
+    );
     for result in payload.results {
         println!(
-            "- {} [{}] score={:.2}",
-            result.summary, result.memory_type, result.score
+            "- {} [{} / {}] score={:.2}",
+            result.summary, result.memory_type, result.match_kind, result.score
         );
         println!("  {}", result.snippet);
+        println!(
+            "  debug: chunk {:.2} | entry {:.2} | semantic {:.2} | relation {:.2}",
+            result.debug.chunk_fts,
+            result.debug.entry_fts,
+            result.debug.semantic_similarity,
+            result.debug.relation_boost,
+        );
         if !result.score_explanation.is_empty() {
             println!("  why: {}", result.score_explanation.join(" | "));
         }

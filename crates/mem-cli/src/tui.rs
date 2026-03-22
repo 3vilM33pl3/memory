@@ -14,7 +14,8 @@ use crossterm::{
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
     NamedCount, ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse,
-    QueryFilters, QueryRequest, QueryResponse, QueryResult, StreamRequest, StreamResponse,
+    QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, StreamRequest,
+    StreamResponse,
     read_capnp_text_frame, write_capnp_text_frame,
 };
 use ratatui::{
@@ -112,6 +113,7 @@ struct App {
     table_state: TableState,
     query_text: String,
     query_response: Option<QueryResponse>,
+    query_last_duration_ms: Option<u64>,
     query_selected_detail: Option<MemoryEntryResponse>,
     query_selected_index: usize,
     query_table_state: TableState,
@@ -171,6 +173,7 @@ impl App {
             table_state,
             query_text: String::new(),
             query_response: None,
+            query_last_duration_ms: None,
             query_selected_detail: None,
             query_selected_index: 0,
             query_table_state,
@@ -520,6 +523,7 @@ impl App {
         let question = self.query_text.trim();
         if question.is_empty() {
             self.query_response = None;
+            self.query_last_duration_ms = None;
             self.query_selected_detail = None;
             self.query_selected_index = 0;
             self.query_table_state.select(None);
@@ -538,11 +542,13 @@ impl App {
         let started = Instant::now();
         match api.query(&request).await {
             Ok(response) => {
+                let elapsed_ms = started.elapsed().as_millis() as u64;
                 self.record_query_activity(
                     request.clone(),
-                    started.elapsed().as_millis() as u64,
+                    elapsed_ms,
                     QueryLogOutcome::Success(response.clone()),
                 );
+                self.query_last_duration_ms = Some(elapsed_ms);
                 self.query_response = Some(response);
                 self.query_selected_index = 0;
                 if self.query_results().is_empty() {
@@ -555,16 +561,18 @@ impl App {
                 self.status_message = format!(
                     "Query returned {} memories in {} ms.",
                     self.query_results().len(),
-                    started.elapsed().as_millis()
+                    elapsed_ms
                 );
             }
             Err(error) => {
+                let elapsed_ms = started.elapsed().as_millis() as u64;
                 self.record_query_activity(
                     request,
-                    started.elapsed().as_millis() as u64,
+                    elapsed_ms,
                     QueryLogOutcome::Error(error.to_string()),
                 );
                 self.query_response = None;
+                self.query_last_duration_ms = Some(elapsed_ms);
                 self.query_selected_detail = None;
                 self.query_table_state.select(None);
                 self.status_message = error.to_string();
@@ -1527,7 +1535,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(8), Constraint::Min(12)])
+        .constraints([Constraint::Length(11), Constraint::Min(12)])
         .split(area);
 
     let answer_text = if let Some(response) = &app.query_response {
@@ -1574,6 +1582,54 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                     Style::default().fg(Theme::TEXT),
                 ),
             ]),
+            Line::from(vec![
+                label_span("Roundtrip: "),
+                Span::styled(
+                    app.query_last_duration_ms
+                        .map(|value| format!("{value} ms"))
+                        .unwrap_or_else(|| "n/a".to_string()),
+                    Style::default().fg(Theme::TEXT),
+                ),
+                Span::raw("   "),
+                label_span("Server: "),
+                Span::styled(
+                    format!("{} ms", response.diagnostics.total_duration_ms),
+                    Style::default().fg(Theme::TEXT),
+                ),
+                Span::raw("   "),
+                label_span("Merged: "),
+                Span::styled(
+                    response.diagnostics.merged_candidates.to_string(),
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]),
+            Line::from(vec![
+                label_span("Lexical: "),
+                Span::styled(
+                    format!(
+                        "{} in {} ms",
+                        response.diagnostics.lexical_candidates,
+                        response.diagnostics.lexical_duration_ms
+                    ),
+                    Style::default().fg(Theme::TEXT),
+                ),
+                Span::raw("   "),
+                label_span("Semantic: "),
+                Span::styled(
+                    format!(
+                        "{} in {} ms",
+                        response.diagnostics.semantic_candidates,
+                        response.diagnostics.semantic_duration_ms
+                    ),
+                    Style::default().fg(Theme::TEXT),
+                ),
+                Span::raw("   "),
+                label_span("Rerank: "),
+                Span::styled(
+                    format!("{} ms", response.diagnostics.rerank_duration_ms),
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]),
         ]
     } else {
         vec![
@@ -1599,10 +1655,10 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 
     let lower = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[1]);
 
-    let header = Row::new(["Summary", "Type", "Score"]).style(
+    let header = Row::new(["Summary", "Type", "Match", "Score"]).style(
         Style::default()
             .fg(Theme::ACCENT_STRONG)
             .bg(Theme::PANEL_ALT)
@@ -1612,8 +1668,9 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(62),
+            Constraint::Percentage(52),
             Constraint::Length(14),
+            Constraint::Length(10),
             Constraint::Length(8),
         ],
     )
@@ -1641,6 +1698,9 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 label_span("Type: "),
                 memory_type_span(&result.memory_type),
                 Span::raw("   "),
+                label_span("Match: "),
+                query_match_span(&result.match_kind),
+                Span::raw("   "),
                 label_span("Score: "),
                 Span::styled(
                     format!("{:.2}", result.score),
@@ -1654,6 +1714,32 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::TEXT),
             )),
         ];
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("Search Diagnostics")]));
+        lines.push(Line::from(Span::styled(
+            format!(
+                "chunk={:.2} | entry={:.2} | semantic={:.2} | overlap={:.0}% | relation={:.2}",
+                result.debug.chunk_fts,
+                result.debug.entry_fts,
+                result.debug.semantic_similarity,
+                result.debug.term_overlap * 100.0,
+                result.debug.relation_boost
+            ),
+            Style::default().fg(Theme::TEXT),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!(
+                "phrases={} | tags={} | paths={} | importance={} | confidence={:.2} | recency={:.2}",
+                result.debug.exact_phrase_matches,
+                result.debug.tag_match_count,
+                result.debug.path_match_count,
+                result.debug.importance,
+                result.debug.memory_confidence,
+                result.debug.recency_boost
+            ),
+            Style::default().fg(Theme::MUTED),
+        )));
 
         if !result.score_explanation.is_empty() {
             lines.push(Line::from(""));
@@ -1841,6 +1927,7 @@ fn query_row(item: &QueryResult) -> Row<'static> {
             Style::default().fg(Theme::TEXT),
         )),
         Cell::from(memory_type_span(&item.memory_type)),
+        Cell::from(query_match_span(&item.match_kind)),
         Cell::from(Span::styled(
             format!("{:.2}", item.score),
             Style::default().fg(Theme::ACCENT_STRONG),
@@ -1923,6 +2010,13 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
                         Style::default().fg(Theme::TEXT),
                     ),
                 ]),
+                Line::from(vec![
+                    label_span("Roundtrip: "),
+                    Span::styled(
+                        format!("{} ms", entry.duration_ms),
+                        Style::default().fg(Theme::TEXT),
+                    ),
+                ]),
                 Line::from(""),
                 Line::from(vec![section_span("Question")]),
                 Line::from(Span::styled(
@@ -1967,6 +2061,33 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
                             Style::default().fg(Theme::TEXT),
                         ),
                     ]));
+                    lines.push(Line::from(vec![
+                        label_span("Server timings: "),
+                        Span::styled(
+                            format!(
+                                "lexical {} ms | semantic {} ms | rerank {} ms | total {} ms",
+                                response.diagnostics.lexical_duration_ms,
+                                response.diagnostics.semantic_duration_ms,
+                                response.diagnostics.rerank_duration_ms,
+                                response.diagnostics.total_duration_ms
+                            ),
+                            Style::default().fg(Theme::TEXT),
+                        ),
+                    ]));
+                    lines.push(Line::from(vec![
+                        label_span("Candidate counts: "),
+                        Span::styled(
+                            format!(
+                                "lexical {} | semantic {} | merged {} | returned {} | relation {}",
+                                response.diagnostics.lexical_candidates,
+                                response.diagnostics.semantic_candidates,
+                                response.diagnostics.merged_candidates,
+                                response.diagnostics.returned_results,
+                                response.diagnostics.relation_augmented_candidates
+                            ),
+                            Style::default().fg(Theme::TEXT),
+                        ),
+                    ]));
                     lines.push(Line::from(""));
                     lines.push(Line::from(vec![section_span("Returned Memories")]));
                     if response.results.is_empty() {
@@ -1978,16 +2099,27 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
                         for result in &response.results {
                             lines.push(Line::from(Span::styled(
                                 format!(
-                                    "{} | {} [{}] score={:.2}",
+                                    "{} | {} [{} / {}] score={:.2}",
                                     result.memory_id,
                                     result.summary,
                                     result.memory_type,
+                                    result.match_kind,
                                     result.score
                                 ),
                                 Style::default().fg(Theme::TEXT),
                             )));
                             lines.push(Line::from(Span::styled(
                                 format!("  snippet: {}", result.snippet),
+                                Style::default().fg(Theme::MUTED),
+                            )));
+                            lines.push(Line::from(Span::styled(
+                                format!(
+                                    "  debug: chunk {:.2} | entry {:.2} | semantic {:.2} | relation {:.2}",
+                                    result.debug.chunk_fts,
+                                    result.debug.entry_fts,
+                                    result.debug.semantic_similarity,
+                                    result.debug.relation_boost
+                                ),
                                 Style::default().fg(Theme::MUTED),
                             )));
                             if !result.score_explanation.is_empty() {
@@ -2259,6 +2391,18 @@ fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
         ActivityKind::Reindex => ("reindex", Theme::ACCENT_STRONG),
         ActivityKind::Archive => ("archive", Theme::WARNING),
         ActivityKind::DeleteMemory => ("delete", Theme::DANGER),
+    };
+    Span::styled(
+        label,
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn query_match_span(kind: &QueryMatchKind) -> Span<'static> {
+    let (label, color) = match kind {
+        QueryMatchKind::Lexical => ("lexical", Theme::ACCENT_STRONG),
+        QueryMatchKind::Semantic => ("semantic", Theme::SUCCESS),
+        QueryMatchKind::Hybrid => ("hybrid", Theme::ACCENT),
     };
     Span::styled(
         label,

@@ -246,11 +246,88 @@ pub struct QueryResult {
     pub score: f64,
     pub snippet: String,
     #[serde(default)]
+    pub match_kind: QueryMatchKind,
+    #[serde(default)]
     pub score_explanation: Vec<String>,
+    #[serde(default)]
+    pub debug: QueryResultDebug,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
     pub sources: Vec<QuerySource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryMatchKind {
+    Lexical,
+    Semantic,
+    Hybrid,
+}
+
+impl Default for QueryMatchKind {
+    fn default() -> Self {
+        Self::Lexical
+    }
+}
+
+impl fmt::Display for QueryMatchKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Lexical => "lexical",
+            Self::Semantic => "semantic",
+            Self::Hybrid => "hybrid",
+        };
+        f.write_str(value)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QueryResultDebug {
+    #[serde(default)]
+    pub chunk_fts: f64,
+    #[serde(default)]
+    pub entry_fts: f64,
+    #[serde(default)]
+    pub semantic_similarity: f64,
+    #[serde(default)]
+    pub exact_phrase_matches: usize,
+    #[serde(default)]
+    pub term_overlap: f64,
+    #[serde(default)]
+    pub tag_match_count: usize,
+    #[serde(default)]
+    pub path_match_count: usize,
+    #[serde(default)]
+    pub relation_boost: f64,
+    #[serde(default)]
+    pub importance: i32,
+    #[serde(default)]
+    pub memory_confidence: f32,
+    #[serde(default)]
+    pub recency_boost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QueryDiagnostics {
+    #[serde(default)]
+    pub lexical_candidates: usize,
+    #[serde(default)]
+    pub semantic_candidates: usize,
+    #[serde(default)]
+    pub merged_candidates: usize,
+    #[serde(default)]
+    pub returned_results: usize,
+    #[serde(default)]
+    pub relation_augmented_candidates: usize,
+    #[serde(default)]
+    pub lexical_duration_ms: u64,
+    #[serde(default)]
+    pub semantic_duration_ms: u64,
+    #[serde(default)]
+    pub rerank_duration_ms: u64,
+    #[serde(default)]
+    pub total_duration_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,6 +345,8 @@ pub struct QueryResponse {
     pub confidence: f32,
     pub results: Vec<QueryResult>,
     pub insufficient_evidence: bool,
+    #[serde(default)]
+    pub diagnostics: QueryDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
