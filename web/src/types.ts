@@ -164,12 +164,20 @@ export interface QueryResult {
   match_kind: QueryMatchKind;
   score_explanation: string[];
   debug: {
-    lexical_score: number;
-    semantic_score: number;
-    relation_score: number;
+    chunk_fts: number;
+    entry_fts: number;
+    semantic_similarity: number;
+    exact_phrase_matches: number;
+    term_overlap: number;
+    tag_match_count: number;
+    path_match_count: number;
+    relation_boost: number;
+    importance: number;
+    memory_confidence: number;
+    recency_boost: number;
   };
   tags: string[];
-  sources: MemorySourceRecord[];
+  sources: Partial<MemorySourceRecord>[];
 }
 
 export interface QueryResponse {

@@ -507,9 +507,11 @@ export default function App() {
                       ))}
                     </ul>
                     <div className="stats-row">
-                      <span>lexical {activeQueryResult.debug.lexical_score.toFixed(2)}</span>
-                      <span>semantic {activeQueryResult.debug.semantic_score.toFixed(2)}</span>
-                      <span>relation {activeQueryResult.debug.relation_score.toFixed(2)}</span>
+                      <span>chunk fts {formatNumber(activeQueryResult.debug.chunk_fts)}</span>
+                      <span>entry fts {formatNumber(activeQueryResult.debug.entry_fts)}</span>
+                      <span>semantic {formatNumber(activeQueryResult.debug.semantic_similarity)}</span>
+                      <span>relation {formatNumber(activeQueryResult.debug.relation_boost)}</span>
+                      <span>overlap {Math.round((activeQueryResult.debug.term_overlap ?? 0) * 100)}%</span>
                     </div>
                   </section>
                   {selectedQueryMemory ? (
@@ -676,6 +678,10 @@ function formatDateTime(value: string | null | undefined): string {
     return "n/a";
   }
   return new Date(value).toLocaleString();
+}
+
+function formatNumber(value: number | null | undefined): string {
+  return typeof value === "number" ? value.toFixed(2) : "0.00";
 }
 
 function websocketUrl(): string {
