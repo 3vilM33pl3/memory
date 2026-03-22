@@ -15,8 +15,7 @@ use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
     NamedCount, ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse,
     QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, StreamRequest,
-    StreamResponse,
-    read_capnp_text_frame, write_capnp_text_frame,
+    StreamResponse, read_capnp_text_frame, write_capnp_text_frame,
 };
 use ratatui::{
     Terminal,
@@ -1548,8 +1547,8 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 
     frame.render_widget(
         Paragraph::new(watcher_lines(app))
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block("Watchers")),
+            .style(Style::default().bg(Theme::PANEL_ALT))
+            .block(themed_block("Watchers")),
         right[0],
     );
     frame.render_widget(
@@ -1984,10 +1983,7 @@ fn watcher_lines(app: &App) -> Vec<Line<'static>> {
                 Style::default().fg(Theme::TEXT),
             ),
             Span::styled(
-                watcher
-                    .last_heartbeat_at
-                    .format("%H:%M:%S UTC")
-                    .to_string(),
+                watcher.last_heartbeat_at.format("%H:%M:%S UTC").to_string(),
                 Style::default().fg(Theme::MUTED),
             ),
         ]));
@@ -2326,10 +2322,7 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                 lines.push(activity_kv_line("Query", query.clone()));
                 lines.push(activity_kv_line("Top K", top_k.to_string()));
                 lines.push(activity_kv_line("Results", result_count.to_string()));
-                lines.push(activity_kv_line(
-                    "Confidence",
-                    format!("{confidence:.2}"),
-                ));
+                lines.push(activity_kv_line("Confidence", format!("{confidence:.2}")));
                 lines.push(activity_kv_line(
                     "Insufficient evidence",
                     insufficient_evidence.to_string(),

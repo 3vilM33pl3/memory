@@ -35,6 +35,38 @@ sudo systemctl enable --now memory-layer.service
 mem-cli tui
 ```
 
+## Easiest Path: macOS
+
+1. Install from the local Homebrew formula or your tap:
+
+```bash
+brew install --HEAD ./packaging/macos/homebrew/memory-layer.rb
+```
+
+2. Go to the project you want to use:
+
+```bash
+cd /path/to/your-project
+```
+
+3. Run the setup wizard:
+
+```bash
+mem-cli wizard
+```
+
+4. Start the backend LaunchAgent:
+
+```bash
+mem-cli service enable
+```
+
+5. Open the TUI:
+
+```bash
+mem-cli tui
+```
+
 or in a browser:
 
 ```text
@@ -67,6 +99,11 @@ Debian install:
 
 - `/etc/memory-layer/memory-layer.toml`
 - `/etc/memory-layer/memory-layer.env`
+
+macOS install:
+
+- `~/Library/Application Support/memory-layer/memory-layer.toml`
+- `~/Library/Application Support/memory-layer/memory-layer.env`
 
 Local install:
 
@@ -125,6 +162,7 @@ http://127.0.0.1:4040/
 Check health:
 
 ```bash
+mem-cli service status
 mem-cli health
 mem-cli doctor
 ```
@@ -176,7 +214,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 4. restart the backend service:
 
 ```bash
-sudo systemctl restart memory-layer.service
+mem-cli service enable
 ```
 
 5. verify the setup:

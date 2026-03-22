@@ -9,8 +9,8 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
     AppConfig, AutomationConfig, AutomationMode, AutomationStatus, CaptureTaskRequest,
-    CurateRequest, CurateResponse, ProjectOverviewResponse, TestResult,
-    WatcherHeartbeatRequest, WatcherPresenceSummary, WatcherUnregisterRequest,
+    CurateRequest, CurateResponse, ProjectOverviewResponse, TestResult, WatcherHeartbeatRequest,
+    WatcherPresenceSummary, WatcherUnregisterRequest,
 };
 use reqwest::{Client, header::HeaderMap};
 use serde::{Deserialize, Serialize};

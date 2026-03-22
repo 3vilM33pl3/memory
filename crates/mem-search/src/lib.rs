@@ -118,7 +118,10 @@ pub async fn query_memory(
 
     let semantic_started = Instant::now();
     let semantic_candidates = if let Some(embedder) = embedder {
-        match embedder.embed_texts(std::slice::from_ref(&request.query)).await {
+        match embedder
+            .embed_texts(std::slice::from_ref(&request.query))
+            .await
+        {
             Ok(embedding) => {
                 if let Some(query_embedding) = embedding.into_iter().next() {
                     fetch_semantic_candidates(pool, request, &query_embedding, candidate_limit)
@@ -140,12 +143,9 @@ pub async fn query_memory(
     let semantic_count = semantic_candidates.len();
     let mut candidates = merge_candidates(lexical_candidates, semantic_candidates);
     let merged_candidate_count = candidates.len();
-    let relation_map = fetch_relation_map(
-        pool,
-        &candidates.keys().copied().collect::<Vec<_>>(),
-    )
-    .await
-    .context("fetch relation map")?;
+    let relation_map = fetch_relation_map(pool, &candidates.keys().copied().collect::<Vec<_>>())
+        .await
+        .context("fetch relation map")?;
 
     let mut ranked = candidates
         .drain()
@@ -626,24 +626,26 @@ async fn fetch_semantic_candidates(
         let similarity = (1.0 - cosine_distance).max(0.0);
 
         let memory_id: Uuid = row.try_get("id")?;
-        let entry = by_memory.entry(memory_id).or_insert_with(|| CandidateRecord {
-            memory_id,
-            summary: row.try_get("summary").unwrap_or_default(),
-            memory_type: parse_memory_type(
-                &row.try_get::<String, _>("memory_type")
-                    .unwrap_or_else(|_| "convention".to_string()),
-            ),
-            canonical_text: row.try_get("canonical_text").unwrap_or_default(),
-            importance: row.try_get("importance").unwrap_or_default(),
-            confidence: row.try_get("confidence").unwrap_or(0.0),
-            updated_at: row.try_get("updated_at").unwrap_or_else(|_| Utc::now()),
-            entry_fts: 0.0,
-            chunk_fts: 0.0,
-            semantic_similarity: similarity,
-            best_chunk_text: row.try_get("chunk_text").unwrap_or_default(),
-            tags: row.try_get("tags").unwrap_or_default(),
-            source_paths: row.try_get("source_paths").unwrap_or_default(),
-        });
+        let entry = by_memory
+            .entry(memory_id)
+            .or_insert_with(|| CandidateRecord {
+                memory_id,
+                summary: row.try_get("summary").unwrap_or_default(),
+                memory_type: parse_memory_type(
+                    &row.try_get::<String, _>("memory_type")
+                        .unwrap_or_else(|_| "convention".to_string()),
+                ),
+                canonical_text: row.try_get("canonical_text").unwrap_or_default(),
+                importance: row.try_get("importance").unwrap_or_default(),
+                confidence: row.try_get("confidence").unwrap_or(0.0),
+                updated_at: row.try_get("updated_at").unwrap_or_else(|_| Utc::now()),
+                entry_fts: 0.0,
+                chunk_fts: 0.0,
+                semantic_similarity: similarity,
+                best_chunk_text: row.try_get("chunk_text").unwrap_or_default(),
+                tags: row.try_get("tags").unwrap_or_default(),
+                source_paths: row.try_get("source_paths").unwrap_or_default(),
+            });
 
         if similarity > entry.semantic_similarity {
             entry.semantic_similarity = similarity;

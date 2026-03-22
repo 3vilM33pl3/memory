@@ -361,7 +361,9 @@ async fn refresh_relations(
             insert_relation(tx, current.id, other.id, relation.clone()).await?;
             if matches!(
                 relation,
-                MemoryRelationType::Duplicates | MemoryRelationType::RelatedTo | MemoryRelationType::Supports
+                MemoryRelationType::Duplicates
+                    | MemoryRelationType::RelatedTo
+                    | MemoryRelationType::Supports
             ) {
                 insert_relation(tx, other.id, current.id, relation).await?;
             }
@@ -479,24 +481,43 @@ fn token_overlap_ratio(left: &[String], right: &[String]) -> f32 {
     if left.is_empty() || right.is_empty() {
         return 0.0;
     }
-    let left = left.iter().cloned().collect::<std::collections::BTreeSet<_>>();
-    let right = right.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+    let left = left
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let right = right
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
     let shared = left.intersection(&right).count() as f32;
     let total = left.union(&right).count() as f32;
     if total == 0.0 { 0.0 } else { shared / total }
 }
 
 fn overlap_count(left: &[String], right: &[String]) -> usize {
-    let left = left.iter().map(|value| value.to_ascii_lowercase()).collect::<std::collections::BTreeSet<_>>();
-    let right = right.iter().map(|value| value.to_ascii_lowercase()).collect::<std::collections::BTreeSet<_>>();
+    let left = left
+        .iter()
+        .map(|value| value.to_ascii_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
+    let right = right
+        .iter()
+        .map(|value| value.to_ascii_lowercase())
+        .collect::<std::collections::BTreeSet<_>>();
     left.intersection(&right).count()
 }
 
 fn has_supersedes_language(text: &str) -> bool {
     let lowered = text.to_ascii_lowercase();
-    ["replace", "replaces", "supersede", "supersedes", "deprecate", "deprecated"]
-        .iter()
-        .any(|needle| lowered.contains(needle))
+    [
+        "replace",
+        "replaces",
+        "supersede",
+        "supersedes",
+        "deprecate",
+        "deprecated",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
 }
 
 fn has_dependency_language(text: &str) -> bool {
@@ -510,11 +531,7 @@ fn has_dependency_language(text: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn profile(
-        canonical_text: &str,
-        tags: &[&str],
-        files: &[&str],
-    ) -> MemoryProfile {
+    fn profile(canonical_text: &str, tags: &[&str], files: &[&str]) -> MemoryProfile {
         MemoryProfile {
             id: Uuid::new_v4(),
             canonical_text: canonical_text.to_string(),
@@ -525,8 +542,16 @@ mod tests {
 
     #[test]
     fn relation_classifier_detects_duplicates() {
-        let left = profile("Memory Layer stores canonical facts in PostgreSQL.", &["db"], &["src/lib.rs"]);
-        let right = profile("Memory Layer stores canonical facts in PostgreSQL.", &["db"], &["src/lib.rs"]);
+        let left = profile(
+            "Memory Layer stores canonical facts in PostgreSQL.",
+            &["db"],
+            &["src/lib.rs"],
+        );
+        let right = profile(
+            "Memory Layer stores canonical facts in PostgreSQL.",
+            &["db"],
+            &["src/lib.rs"],
+        );
         assert_eq!(
             classify_relation(&left, &right),
             Some(MemoryRelationType::Duplicates)
@@ -535,8 +560,16 @@ mod tests {
 
     #[test]
     fn relation_classifier_detects_related_by_shared_provenance() {
-        let left = profile("The query path uses ranked retrieval.", &["search", "query"], &["crates/mem-search/src/lib.rs"]);
-        let right = profile("Search ranking explains why each memory matched.", &["search"], &["crates/mem-search/src/lib.rs"]);
+        let left = profile(
+            "The query path uses ranked retrieval.",
+            &["search", "query"],
+            &["crates/mem-search/src/lib.rs"],
+        );
+        let right = profile(
+            "Search ranking explains why each memory matched.",
+            &["search"],
+            &["crates/mem-search/src/lib.rs"],
+        );
         assert_eq!(
             classify_relation(&left, &right),
             Some(MemoryRelationType::Supports)

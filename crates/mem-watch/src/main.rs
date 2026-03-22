@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use mem_api::AppConfig;
 use mem_watch::{
-    build_watcher_heartbeat_request, build_watcher_unregister_request, detect_hostname,
-    flush_path, heartbeat_watcher, load_state, run_once, to_status, unregister_watcher,
+    build_watcher_heartbeat_request, build_watcher_unregister_request, detect_hostname, flush_path,
+    heartbeat_watcher, load_state, run_once, to_status, unregister_watcher,
 };
 use reqwest::Client;
 use uuid::Uuid;

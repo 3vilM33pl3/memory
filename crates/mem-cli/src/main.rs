@@ -4,6 +4,7 @@ mod tui;
 mod wizard;
 
 use std::{
+    collections::BTreeMap,
     env, fs,
     net::{SocketAddr, TcpStream},
     os::unix::fs::PermissionsExt,
@@ -41,6 +42,7 @@ struct Cli {
 enum Command {
     Wizard(WizardArgs),
     Init(InitArgs),
+    Service(ServiceArgs),
     Watch(WatchArgs),
     Doctor(DoctorArgs),
     Commits(CommitsArgs),
@@ -73,6 +75,19 @@ struct InitArgs {
     force: bool,
     #[arg(long)]
     print: bool,
+}
+
+#[derive(Debug, Args)]
+struct ServiceArgs {
+    #[command(subcommand)]
+    command: ServiceCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ServiceCommand {
+    Enable,
+    Disable,
+    Status,
 }
 
 #[derive(Debug, Args)]
@@ -287,6 +302,18 @@ async fn main() -> Result<()> {
             println!("{output}");
             return Ok(());
         }
+        Command::Service(args) => {
+            let config_path = cli_config
+                .clone()
+                .unwrap_or_else(default_global_config_path);
+            let output = match args.command {
+                ServiceCommand::Enable => enable_backend_service(&config_path)?,
+                ServiceCommand::Disable => disable_backend_service()?,
+                ServiceCommand::Status => backend_service_status(&config_path)?,
+            };
+            println!("{output}");
+            return Ok(());
+        }
         Command::Watch(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let repo_root = resolve_repo_root(&cwd)?;
@@ -339,6 +366,7 @@ async fn main() -> Result<()> {
     match command {
         Command::Wizard(_) => unreachable!("wizard is handled before config loading"),
         Command::Init(_) => unreachable!("init is handled before config loading"),
+        Command::Service(_) => unreachable!("service is handled before config loading"),
         Command::Watch(_) => unreachable!("watch is handled before config loading"),
         Command::Doctor(_) => unreachable!("doctor is handled before config loading"),
         Command::Commits(args) => {
@@ -348,8 +376,11 @@ async fn main() -> Result<()> {
             match args.command {
                 CommitsCommand::Sync(args) => {
                     let project = resolve_project_slug(args.project, &cwd)?;
-                    let commits =
-                        commits::collect_git_commits(&repo_root, args.since.as_deref(), args.limit)?;
+                    let commits = commits::collect_git_commits(
+                        &repo_root,
+                        args.since.as_deref(),
+                        args.limit,
+                    )?;
                     let response = api
                         .sync_commits(&CommitSyncRequest {
                             project,
@@ -622,6 +653,11 @@ fn shared_env_path_for_config(config_path: &Path) -> PathBuf {
 }
 
 fn default_global_config_path() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    if let Some(path) = macos_app_support_dir() {
+        return path.join("memory-layer.toml");
+    }
+
     if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
         PathBuf::from(config_home)
             .join("memory-layer")
@@ -636,11 +672,46 @@ fn default_global_config_path() -> PathBuf {
     }
 }
 
+fn default_shared_capnp_unix_socket() -> String {
+    #[cfg(target_os = "macos")]
+    if let Some(path) = macos_app_support_dir() {
+        return path
+            .join("run")
+            .join("memory-layer.capnp.sock")
+            .display()
+            .to_string();
+    }
+
+    "/tmp/memory-layer.capnp.sock".to_string()
+}
+
+fn backend_start_hint(config_path: &Path) -> String {
+    if backend_service_available() {
+        "mem-cli service enable".to_string()
+    } else {
+        format!("mem-service {}", config_path.display())
+    }
+}
+
+fn backend_service_available() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        mem_service_binary_path().is_ok()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        packaged_service_available()
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 fn packaged_service_available() -> bool {
     Path::new("/lib/systemd/system/memory-layer.service").is_file()
         || Path::new("/etc/systemd/system/memory-layer.service").is_file()
 }
 
+#[cfg(not(target_os = "macos"))]
 fn run_systemctl_system<const N: usize>(args: [&str; N]) -> Result<()> {
     let output = ProcessCommand::new("systemctl")
         .args(args)
@@ -1259,8 +1330,10 @@ async fn run_doctor(
                             .as_ref()
                             .is_some_and(|automation| automation.enabled)
                         {
-                            let active_watchers =
-                                overview.watchers.as_ref().map(|watchers| watchers.active_count);
+                            let active_watchers = overview
+                                .watchers
+                                .as_ref()
+                                .map(|watchers| watchers.active_count);
                             report.push(doctor_check(
                                 "backend.watchers",
                                 if active_watchers.unwrap_or(0) > 0 {
@@ -1277,10 +1350,7 @@ async fn run_doctor(
                                 if active_watchers.unwrap_or(0) > 0 {
                                     None
                                 } else {
-                                    Some(format!(
-                                        "memctl watch enable --project {}",
-                                        project
-                                    ))
+                                    Some(format!("memctl watch enable --project {}", project))
                                 },
                                 false,
                             ));
@@ -1304,10 +1374,7 @@ async fn run_doctor(
                                     if commits.total > 0 {
                                         None
                                     } else {
-                                        Some(format!(
-                                            "memctl commits sync --project {}",
-                                            project
-                                        ))
+                                        Some(format!("memctl commits sync --project {}", project))
                                     },
                                     false,
                                 )),
@@ -1381,7 +1448,7 @@ async fn run_doctor(
                     DoctorStatus::Fail,
                     "Backend health endpoint is not reachable.",
                     Some(error.to_string()),
-                    Some(format!("mem-service {}", config_path.display())),
+                    Some(backend_start_hint(&config_path)),
                     false,
                 ));
                 report.push(doctor_check(
@@ -1785,13 +1852,7 @@ fn print_doctor_report(report: &DoctorReport) {
 }
 
 fn default_global_config_path_label() -> String {
-    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
-        format!("{config_home}/memory-layer/memory-layer.toml")
-    } else if let Ok(home) = env::var("HOME") {
-        format!("{home}/.config/memory-layer/memory-layer.toml")
-    } else {
-        "/etc/memory-layer/memory-layer.toml".to_string()
-    }
+    default_global_config_path().display().to_string()
 }
 
 fn initialize_repo(
@@ -1855,59 +1916,211 @@ fn initialize_repo(
     ))
 }
 
+fn enable_backend_service(config_path: &Path) -> Result<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = backend_launch_agent_path()?;
+        write_launch_agent(
+            &plist_path,
+            render_backend_launch_agent(config_path)?,
+            backend_launch_agent_label(),
+        )?;
+        bootstrap_launch_agent(&plist_path, backend_launch_agent_label())?;
+        Ok(format!(
+            "Installed and started backend LaunchAgent {}.\nPlist: {}\nConfig: {}\n\nManage it with:\n- mem-cli service status\n- mem-cli service disable\n- launchctl kickstart -k {}/{}",
+            backend_launch_agent_label(),
+            plist_path.display(),
+            config_path.display(),
+            launchctl_domain_target()?,
+            backend_launch_agent_label()
+        ))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        run_systemctl_system(["daemon-reload"])?;
+        run_systemctl_system(["enable", "--now", "memory-layer.service"])?;
+        Ok("Enabled memory-layer.service".to_string())
+    }
+}
+
+fn disable_backend_service() -> Result<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = backend_launch_agent_path()?;
+        let _ = bootout_launch_agent(&plist_path, backend_launch_agent_label());
+        if plist_path.exists() {
+            fs::remove_file(&plist_path)
+                .with_context(|| format!("remove {}", plist_path.display()))?;
+        }
+        Ok(format!(
+            "Disabled backend LaunchAgent {}.\nRemoved plist: {}",
+            backend_launch_agent_label(),
+            plist_path.display()
+        ))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        run_systemctl_system(["disable", "--now", "memory-layer.service"])?;
+        Ok("Disabled memory-layer.service".to_string())
+    }
+}
+
+fn backend_service_status(config_path: &Path) -> Result<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = backend_launch_agent_path()?;
+        let status = launch_agent_status(backend_launch_agent_label())?;
+        Ok(format!(
+            "Backend service:\n- label: {}\n- plist: {}\n- config: {}\n- installed: {}\n- loaded: {}\n- running: {}\n\nInspect with:\n- launchctl print {}/{}",
+            backend_launch_agent_label(),
+            plist_path.display(),
+            config_path.display(),
+            yes_no(plist_path.exists()),
+            yes_no(status.loaded),
+            yes_no(status.running),
+            launchctl_domain_target()?,
+            backend_launch_agent_label()
+        ))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let is_installed = packaged_service_available();
+        let is_enabled = run_systemctl_system(["is-enabled", "memory-layer.service"]).is_ok();
+        let is_active = run_systemctl_system(["is-active", "memory-layer.service"]).is_ok();
+        Ok(format!(
+            "Backend service:\n- unit: memory-layer.service\n- config: {}\n- installed: {}\n- enabled: {}\n- active: {}\n\nInspect with:\n- systemctl status memory-layer.service",
+            config_path.display(),
+            yes_no(is_installed),
+            yes_no(is_enabled),
+            yes_no(is_active),
+        ))
+    }
+}
+
 fn enable_watch_service(repo_root: &Path, project: &str) -> Result<String> {
-    let unit_name = watch_unit_name(project);
-    let unit_dir = user_systemd_unit_dir()?;
-    let unit_path = unit_dir.join(&unit_name);
-    fs::create_dir_all(&unit_dir).with_context(|| format!("create {}", unit_dir.display()))?;
-    fs::write(&unit_path, render_watch_unit(repo_root, project)?)
-        .with_context(|| format!("write {}", unit_path.display()))?;
-    run_systemctl_user(["daemon-reload"])?;
-    run_systemctl_user(["enable", "--now", &unit_name])?;
-    Ok(format!(
-        "Installed and started user service {}.\nUnit: {}\nRepo: {}\nProject: {}\n\nManage it with:\n- mem-cli watch status --project {}\n- mem-cli watch disable --project {}\n- systemctl --user restart {}",
-        unit_name,
-        unit_path.display(),
-        repo_root.display(),
-        project,
-        project,
-        project,
-        unit_name
-    ))
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = watch_launch_agent_path(project)?;
+        write_launch_agent(
+            &plist_path,
+            render_watch_launch_agent(repo_root, project)?,
+            &watch_launch_agent_label(project),
+        )?;
+        bootstrap_launch_agent(&plist_path, &watch_launch_agent_label(project))?;
+        Ok(format!(
+            "Installed and started watcher LaunchAgent {}.\nPlist: {}\nRepo: {}\nProject: {}\n\nManage it with:\n- mem-cli watch status --project {}\n- mem-cli watch disable --project {}\n- launchctl kickstart -k {}/{}",
+            watch_launch_agent_label(project),
+            plist_path.display(),
+            repo_root.display(),
+            project,
+            project,
+            project,
+            launchctl_domain_target()?,
+            watch_launch_agent_label(project),
+        ))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let unit_name = watch_unit_name(project);
+        let unit_dir = user_systemd_unit_dir()?;
+        let unit_path = unit_dir.join(&unit_name);
+        fs::create_dir_all(&unit_dir).with_context(|| format!("create {}", unit_dir.display()))?;
+        fs::write(&unit_path, render_watch_unit(repo_root, project)?)
+            .with_context(|| format!("write {}", unit_path.display()))?;
+        run_systemctl_user(["daemon-reload"])?;
+        run_systemctl_user(["enable", "--now", &unit_name])?;
+        Ok(format!(
+            "Installed and started user service {}.\nUnit: {}\nRepo: {}\nProject: {}\n\nManage it with:\n- mem-cli watch status --project {}\n- mem-cli watch disable --project {}\n- systemctl --user restart {}",
+            unit_name,
+            unit_path.display(),
+            repo_root.display(),
+            project,
+            project,
+            project,
+            unit_name
+        ))
+    }
 }
 
 fn disable_watch_service(project: &str) -> Result<String> {
-    let unit_name = watch_unit_name(project);
-    let unit_path = user_systemd_unit_dir()?.join(&unit_name);
-    let _ = run_systemctl_user(["disable", "--now", &unit_name]);
-    if unit_path.exists() {
-        fs::remove_file(&unit_path).with_context(|| format!("remove {}", unit_path.display()))?;
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = watch_launch_agent_path(project)?;
+        let label = watch_launch_agent_label(project);
+        let _ = bootout_launch_agent(&plist_path, &label);
+        if plist_path.exists() {
+            fs::remove_file(&plist_path)
+                .with_context(|| format!("remove {}", plist_path.display()))?;
+        }
+        Ok(format!(
+            "Disabled watcher LaunchAgent {}.\nRemoved plist: {}",
+            label,
+            plist_path.display()
+        ))
     }
-    run_systemctl_user(["daemon-reload"])?;
-    Ok(format!(
-        "Disabled user service {}.\nRemoved unit: {}",
-        unit_name,
-        unit_path.display()
-    ))
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let unit_name = watch_unit_name(project);
+        let unit_path = user_systemd_unit_dir()?.join(&unit_name);
+        let _ = run_systemctl_user(["disable", "--now", &unit_name]);
+        if unit_path.exists() {
+            fs::remove_file(&unit_path)
+                .with_context(|| format!("remove {}", unit_path.display()))?;
+        }
+        run_systemctl_user(["daemon-reload"])?;
+        Ok(format!(
+            "Disabled user service {}.\nRemoved unit: {}",
+            unit_name,
+            unit_path.display()
+        ))
+    }
 }
 
 fn watch_service_status(repo_root: &Path, project: &str) -> Result<String> {
-    let unit_name = watch_unit_name(project);
-    let unit_path = user_systemd_unit_dir()?.join(&unit_name);
-    let is_enabled = run_systemctl_user(["is-enabled", &unit_name]).is_ok();
-    let is_active = run_systemctl_user(["is-active", &unit_name]).is_ok();
-    Ok(format!(
-        "Watcher service for project {}:\n- unit: {}\n- repo: {}\n- installed: {}\n- enabled: {}\n- active: {}\n\nInspect with:\n- systemctl --user status {}",
-        project,
-        unit_path.display(),
-        repo_root.display(),
-        yes_no(unit_path.exists()),
-        yes_no(is_enabled),
-        yes_no(is_active),
-        unit_name
-    ))
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = watch_launch_agent_path(project)?;
+        let label = watch_launch_agent_label(project);
+        let status = launch_agent_status(&label)?;
+        Ok(format!(
+            "Watcher service for project {}:\n- label: {}\n- plist: {}\n- repo: {}\n- installed: {}\n- loaded: {}\n- running: {}\n\nInspect with:\n- launchctl print {}/{}",
+            project,
+            label,
+            plist_path.display(),
+            repo_root.display(),
+            yes_no(plist_path.exists()),
+            yes_no(status.loaded),
+            yes_no(status.running),
+            launchctl_domain_target()?,
+            label
+        ))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let unit_name = watch_unit_name(project);
+        let unit_path = user_systemd_unit_dir()?.join(&unit_name);
+        let is_enabled = run_systemctl_user(["is-enabled", &unit_name]).is_ok();
+        let is_active = run_systemctl_user(["is-active", &unit_name]).is_ok();
+        Ok(format!(
+            "Watcher service for project {}:\n- unit: {}\n- repo: {}\n- installed: {}\n- enabled: {}\n- active: {}\n\nInspect with:\n- systemctl --user status {}",
+            project,
+            unit_path.display(),
+            repo_root.display(),
+            yes_no(unit_path.exists()),
+            yes_no(is_enabled),
+            yes_no(is_active),
+            unit_name
+        ))
+    }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn render_watch_unit(repo_root: &Path, project: &str) -> Result<String> {
     let watch_binary = memory_watch_binary_path()?;
     let env_file = user_memory_layer_env_file()?;
@@ -1923,6 +2136,7 @@ fn render_watch_unit(repo_root: &Path, project: &str) -> Result<String> {
     ))
 }
 
+#[cfg(not(target_os = "macos"))]
 fn user_systemd_unit_dir() -> Result<PathBuf> {
     if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
         return Ok(PathBuf::from(config_home).join("systemd").join("user"));
@@ -1935,16 +2149,37 @@ fn user_systemd_unit_dir() -> Result<PathBuf> {
 }
 
 fn user_memory_layer_env_file() -> Result<PathBuf> {
-    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
-        return Ok(PathBuf::from(config_home)
-            .join("memory-layer")
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(macos_app_support_dir()
+            .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
             .join("memory-layer.env"));
     }
-    let home = env::var("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home)
-        .join(".config")
-        .join("memory-layer")
-        .join("memory-layer.env"))
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
+            return Ok(PathBuf::from(config_home)
+                .join("memory-layer")
+                .join("memory-layer.env"));
+        }
+        let home = env::var("HOME").context("HOME is not set")?;
+        Ok(PathBuf::from(home)
+            .join(".config")
+            .join("memory-layer")
+            .join("memory-layer.env"))
+    }
+}
+
+fn mem_service_binary_path() -> Result<PathBuf> {
+    let current_exe = env::current_exe().context("locate current executable")?;
+    if let Some(bin_dir) = current_exe.parent() {
+        let sibling = bin_dir.join("mem-service");
+        if sibling.is_file() {
+            return Ok(sibling);
+        }
+    }
+    Ok(PathBuf::from("mem-service"))
 }
 
 fn memory_watch_binary_path() -> Result<PathBuf> {
@@ -1958,17 +2193,322 @@ fn memory_watch_binary_path() -> Result<PathBuf> {
     Ok(PathBuf::from("memory-watch"))
 }
 
+#[cfg(not(target_os = "macos"))]
 fn watch_unit_name(project: &str) -> String {
-    let sanitized = project
+    let sanitized = sanitize_service_fragment(project);
+    format!("memory-watch-{}.service", sanitized)
+}
+
+fn sanitize_service_fragment(value: &str) -> String {
+    value
         .chars()
         .map(|ch| match ch {
             'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
             _ => '-',
         })
-        .collect::<String>();
-    format!("memory-watch-{}.service", sanitized)
+        .collect::<String>()
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, Default)]
+struct LaunchAgentStatus {
+    loaded: bool,
+    running: bool,
+}
+
+#[cfg(target_os = "macos")]
+fn backend_launch_agent_label() -> &'static str {
+    "com.memory-layer.mem-service"
+}
+
+#[cfg(target_os = "macos")]
+fn watch_launch_agent_label(project: &str) -> String {
+    format!(
+        "com.memory-layer.memory-watch.{}",
+        sanitize_service_fragment(project)
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn backend_launch_agent_path() -> Result<PathBuf> {
+    Ok(user_launch_agents_dir()?.join(format!("{}.plist", backend_launch_agent_label())))
+}
+
+#[cfg(target_os = "macos")]
+fn watch_launch_agent_path(project: &str) -> Result<PathBuf> {
+    Ok(user_launch_agents_dir()?.join(format!("{}.plist", watch_launch_agent_label(project))))
+}
+
+#[cfg(target_os = "macos")]
+fn user_launch_agents_dir() -> Result<PathBuf> {
+    let home = env::var("HOME").context("HOME is not set")?;
+    Ok(PathBuf::from(home).join("Library").join("LaunchAgents"))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_app_support_dir() -> Option<PathBuf> {
+    let home = env::var("HOME").ok()?;
+    Some(
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("memory-layer"),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn user_memory_layer_log_dir() -> Result<PathBuf> {
+    Ok(macos_app_support_dir()
+        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
+        .join("logs"))
+}
+
+#[cfg(target_os = "macos")]
+fn launchctl_domain_target() -> Result<String> {
+    let output = ProcessCommand::new("id")
+        .arg("-u")
+        .output()
+        .context("run id -u")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("id -u failed: {}", stderr.trim());
+    }
+    let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(format!("gui/{uid}"))
+}
+
+#[cfg(target_os = "macos")]
+fn write_launch_agent(path: &Path, contents: String, label: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("launch agent path has no parent"))?;
+    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    fs::write(path, contents).with_context(|| format!("write {}", path.display()))?;
+    let _ = bootout_launch_agent(path, label);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn bootstrap_launch_agent(path: &Path, label: &str) -> Result<()> {
+    run_launchctl([
+        "bootstrap",
+        &launchctl_domain_target()?,
+        &path.display().to_string(),
+    ])?;
+    run_launchctl([
+        "kickstart",
+        "-k",
+        &format!("{}/{}", launchctl_domain_target()?, label),
+    ])?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn bootout_launch_agent(path: &Path, label: &str) -> Result<()> {
+    let target = format!("{}/{}", launchctl_domain_target()?, label);
+    if run_launchctl(["bootout", &target]).is_ok() {
+        return Ok(());
+    }
+    run_launchctl([
+        "bootout",
+        &launchctl_domain_target()?,
+        &path.display().to_string(),
+    ])
+}
+
+#[cfg(target_os = "macos")]
+fn launch_agent_status(label: &str) -> Result<LaunchAgentStatus> {
+    let target = format!("{}/{}", launchctl_domain_target()?, label);
+    let output = ProcessCommand::new("launchctl")
+        .args(["print", &target])
+        .output()
+        .with_context(|| format!("run launchctl print {target}"))?;
+    if !output.status.success() {
+        return Ok(LaunchAgentStatus::default());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(LaunchAgentStatus {
+        loaded: true,
+        running: stdout.contains("state = running") || stdout.contains("\"PID\" ="),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn run_launchctl<const N: usize>(args: [&str; N]) -> Result<()> {
+    let output = ProcessCommand::new("launchctl")
+        .args(args)
+        .output()
+        .with_context(|| format!("run launchctl {}", args.join(" ")))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    anyhow::bail!(
+        "launchctl {} failed: {}{}{}",
+        args.join(" "),
+        stderr.trim(),
+        if stderr.trim().is_empty() || stdout.trim().is_empty() {
+            ""
+        } else {
+            " | "
+        },
+        stdout.trim()
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn render_backend_launch_agent(config_path: &Path) -> Result<String> {
+    let binary = mem_service_binary_path()?;
+    let working_directory =
+        macos_app_support_dir().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    let stdout_path = user_memory_layer_log_dir()?.join("mem-service.stdout.log");
+    let stderr_path = user_memory_layer_log_dir()?.join("mem-service.stderr.log");
+    let env_vars = launch_agent_environment_variables()?;
+    render_launch_agent_plist(
+        backend_launch_agent_label(),
+        &working_directory,
+        &[
+            binary.display().to_string(),
+            config_path.display().to_string(),
+        ],
+        &env_vars,
+        &stdout_path,
+        &stderr_path,
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn render_watch_launch_agent(repo_root: &Path, project: &str) -> Result<String> {
+    let binary = memory_watch_binary_path()?;
+    let working_directory = repo_root
+        .canonicalize()
+        .with_context(|| format!("canonicalize {}", repo_root.display()))?;
+    let log_dir = user_memory_layer_log_dir()?;
+    let sanitized = sanitize_service_fragment(project);
+    let stdout_path = log_dir.join(format!("memory-watch-{sanitized}.stdout.log"));
+    let stderr_path = log_dir.join(format!("memory-watch-{sanitized}.stderr.log"));
+    let env_vars = launch_agent_environment_variables()?;
+    render_launch_agent_plist(
+        &watch_launch_agent_label(project),
+        &working_directory,
+        &[
+            binary.display().to_string(),
+            "--config".to_string(),
+            default_global_config_path().display().to_string(),
+            "run".to_string(),
+            "--project".to_string(),
+            project.to_string(),
+        ],
+        &env_vars,
+        &stdout_path,
+        &stderr_path,
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn launch_agent_environment_variables() -> Result<BTreeMap<String, String>> {
+    let mut values = BTreeMap::new();
+    values.insert(
+        "PATH".to_string(),
+        env::var("PATH")
+            .unwrap_or_else(|_| "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string()),
+    );
+    let env_file = user_memory_layer_env_file()?;
+    if !env_file.exists() {
+        return Ok(values);
+    }
+    let content =
+        fs::read_to_string(&env_file).with_context(|| format!("read {}", env_file.display()))?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once('=') {
+            values.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+    Ok(values)
+}
+
+#[cfg(target_os = "macos")]
+fn render_launch_agent_plist(
+    label: &str,
+    working_directory: &Path,
+    program_arguments: &[String],
+    env_vars: &BTreeMap<String, String>,
+    stdout_path: &Path,
+    stderr_path: &Path,
+) -> Result<String> {
+    let log_dir = stdout_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("stdout log path has no parent"))?;
+    fs::create_dir_all(log_dir).with_context(|| format!("create {}", log_dir.display()))?;
+    let args_xml = program_arguments
+        .iter()
+        .map(|arg| format!("    <string>{}</string>", xml_escape(arg)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let env_xml = env_vars
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "    <key>{}</key>\n    <string>{}</string>",
+                xml_escape(key),
+                xml_escape(value)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>{label}</string>
+  <key>ProgramArguments</key>
+  <array>
+{args_xml}
+  </array>
+  <key>WorkingDirectory</key>
+  <string>{working_directory}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{stdout_path}</string>
+  <key>StandardErrorPath</key>
+  <string>{stderr_path}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+{env_xml}
+  </dict>
+</dict>
+</plist>
+"#,
+        label = xml_escape(label),
+        args_xml = args_xml,
+        working_directory = xml_escape(&working_directory.display().to_string()),
+        stdout_path = xml_escape(&stdout_path.display().to_string()),
+        stderr_path = xml_escape(&stderr_path.display().to_string()),
+        env_xml = env_xml,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+#[cfg(not(target_os = "macos"))]
 fn run_systemctl_user<const N: usize>(args: [&str; N]) -> Result<()> {
     let output = ProcessCommand::new("systemctl")
         .arg("--user")
@@ -1993,10 +2533,12 @@ fn run_systemctl_user<const N: usize>(args: [&str; N]) -> Result<()> {
     )
 }
 
+#[cfg(not(target_os = "macos"))]
 fn shell_escape_path(value: &Path) -> String {
     shell_escape_str(&value.display().to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn shell_escape_str(value: &str) -> String {
     if value
         .chars()
@@ -2721,10 +3263,20 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     use super::{
-        RememberArgs, build_remember_request, initialize_repo, is_placeholder_database_url,
-        mask_database_url, render_watch_unit, repair_repo_bootstrap, resolve_project_slug,
-        resolve_repo_root, root_gitignore_contains_mem, watch_unit_name,
+        RememberArgs, backend_service_available, build_remember_request, initialize_repo,
+        is_placeholder_database_url, mask_database_url, repair_repo_bootstrap,
+        resolve_project_slug, resolve_repo_root, root_gitignore_contains_mem,
+        sanitize_service_fragment,
     };
+
+    #[cfg(target_os = "macos")]
+    use super::{
+        backend_launch_agent_label, default_global_config_path, render_backend_launch_agent,
+        render_watch_launch_agent, watch_launch_agent_label,
+    };
+
+    #[cfg(not(target_os = "macos"))]
+    use super::{render_watch_unit, watch_unit_name};
 
     #[test]
     fn project_flag_wins() {
@@ -2858,6 +3410,7 @@ mod tests {
         let _ = fs::remove_dir_all(repo_root);
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn watch_unit_name_is_project_scoped() {
         assert_eq!(watch_unit_name("homelab"), "memory-watch-homelab.service");
@@ -2867,6 +3420,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn watch_unit_uses_repo_root_and_project() {
         let repo_root = unique_temp_dir("mem-watch-unit");
@@ -2877,6 +3431,47 @@ mod tests {
         assert!(unit.contains(&format!("WorkingDirectory={}", repo_root.display())));
         assert!(unit.contains("EnvironmentFile=-"));
         assert!(unit.contains("run --project homelab"));
+
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn launch_agent_labels_are_project_scoped() {
+        assert_eq!(backend_launch_agent_label(), "com.memory-layer.mem-service");
+        assert_eq!(
+            watch_launch_agent_label("customer portal"),
+            "com.memory-layer.memory-watch.customer-portal"
+        );
+        assert_eq!(
+            sanitize_service_fragment("customer portal"),
+            "customer-portal"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn backend_launch_agent_uses_global_config_path() {
+        let plist = render_backend_launch_agent(&default_global_config_path()).unwrap();
+
+        assert!(backend_service_available());
+        assert!(plist.contains("<string>com.memory-layer.mem-service</string>"));
+        assert!(plist.contains(&default_global_config_path().display().to_string()));
+        assert!(plist.contains("mem-service.stdout.log"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn watch_launch_agent_uses_repo_root_and_project() {
+        let repo_root = unique_temp_dir("mem-watch-launch-agent");
+        fs::create_dir_all(&repo_root).unwrap();
+        let plist = render_watch_launch_agent(&repo_root, "homelab").unwrap();
+
+        assert!(plist.contains("<string>com.memory-layer.memory-watch.homelab</string>"));
+        assert!(plist.contains(&repo_root.display().to_string()));
+        assert!(plist.contains("<string>run</string>"));
+        assert!(plist.contains("<string>--project</string>"));
+        assert!(plist.contains("<string>homelab</string>"));
 
         let _ = fs::remove_dir_all(repo_root);
     }

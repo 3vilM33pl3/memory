@@ -54,6 +54,35 @@ sudo systemctl enable --now memory-layer.service
 mem-cli tui
 ```
 
+## Fastest Install: macOS
+
+For macOS, use the Homebrew formula and `launchd`.
+
+1. Install from the formula in this repo or your tap:
+
+```bash
+brew install --HEAD ./packaging/macos/homebrew/memory-layer.rb
+```
+
+2. Run the setup wizard inside the project you want to use:
+
+```bash
+cd /path/to/your-project
+mem-cli wizard
+```
+
+3. Start the shared backend LaunchAgent:
+
+```bash
+mem-cli service enable
+```
+
+4. Open the TUI:
+
+```bash
+mem-cli tui
+```
+
 or open:
 
 ```text
@@ -98,6 +127,7 @@ Memory Layer uses two configuration levels:
 
 - shared/global config:
   - `/etc/memory-layer/memory-layer.toml` for Debian installs
+  - `~/Library/Application Support/memory-layer/memory-layer.toml` for macOS installs
   - `~/.config/memory-layer/memory-layer.toml` for local installs
 - repo-local config:
   - `.mem/config.toml` inside each project
@@ -119,6 +149,7 @@ Use `.mem/config.toml` for project-specific overrides such as:
 Secrets can also live in env files:
 
 - shared: `/etc/memory-layer/memory-layer.env` or `~/.config/memory-layer/memory-layer.env`
+- shared on macOS: `~/Library/Application Support/memory-layer/memory-layer.env`
 - repo-local override: `.mem/memory-layer.env`
 
 Example:
@@ -138,6 +169,7 @@ After the wizard completes:
 Commands:
 
 ```bash
+mem-cli service status
 mem-cli health
 mem-cli watch enable --project my-project
 mem-cli tui
@@ -167,6 +199,7 @@ http://127.0.0.1:4040/
 Check the backend:
 
 ```bash
+mem-cli service status
 mem-cli health
 mem-cli doctor
 ```
@@ -221,6 +254,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 5. run:
 
 ```bash
+mem-cli service enable
 mem-cli doctor
 mem-cli reindex --project my-project
 ```

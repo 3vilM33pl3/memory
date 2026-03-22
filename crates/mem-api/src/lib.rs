@@ -1029,6 +1029,13 @@ pub fn discover_global_env_path() -> Option<PathBuf> {
 }
 
 pub fn discover_global_config_path() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    if let Some(candidate) = macos_app_support_dir().map(|dir| dir.join("memory-layer.toml")) {
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
     if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
         let candidate = PathBuf::from(config_home)
             .join("memory-layer")
@@ -1233,7 +1240,23 @@ fn default_api_token() -> String {
 }
 
 fn default_capnp_unix_socket() -> String {
+    #[cfg(target_os = "macos")]
+    if let Some(path) = macos_app_support_dir().map(|dir| dir.join("run/memory-layer.capnp.sock")) {
+        return path.display().to_string();
+    }
+
     "/tmp/memory-layer.capnp.sock".to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_app_support_dir() -> Option<PathBuf> {
+    let home = env::var("HOME").ok()?;
+    Some(
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("memory-layer"),
+    )
 }
 
 fn default_capnp_tcp_addr() -> String {
@@ -1462,6 +1485,38 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
 
         assert_eq!(find_repo_config_path(&nested).unwrap(), config_path);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn prefers_macos_application_support_global_config_path_when_present() {
+        let _guard = env_lock().lock().unwrap();
+        let temp_dir = unique_temp_dir("mem-api-macos-global");
+        let home = temp_dir.join("home");
+        let app_support = home
+            .join("Library")
+            .join("Application Support")
+            .join("memory-layer");
+        fs::create_dir_all(&app_support).unwrap();
+        let global_path = app_support.join("memory-layer.toml");
+        fs::write(&global_path, "test = true\n").unwrap();
+        let original_home = env::var("HOME").ok();
+
+        unsafe {
+            env::remove_var("XDG_CONFIG_HOME");
+            env::set_var("HOME", &home);
+        }
+        let discovered = discover_global_config_path().unwrap();
+        unsafe {
+            if let Some(value) = original_home {
+                env::set_var("HOME", value);
+            } else {
+                env::remove_var("HOME");
+            }
+        }
+
+        assert_eq!(discovered, global_path);
         let _ = fs::remove_dir_all(temp_dir);
     }
 

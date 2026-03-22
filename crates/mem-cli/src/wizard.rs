@@ -22,11 +22,11 @@ use ratatui::{
 use reqwest::Client;
 
 use super::{
-    ApiClient, DoctorReport, DoctorStatus, default_global_config_path,
-    default_local_service_overrides, enable_watch_service, mask_database_url,
-    packaged_service_available, read_local_service_overrides, render_project_metadata,
-    repair_repo_bootstrap, run_doctor, run_systemctl_system, shared_env_lookup,
-    shared_env_path_for_config, write_shared_env_file,
+    ApiClient, DoctorReport, DoctorStatus, backend_service_available, default_global_config_path,
+    default_local_service_overrides, default_shared_capnp_unix_socket, enable_backend_service,
+    enable_watch_service, mask_database_url, read_local_service_overrides, render_project_metadata,
+    repair_repo_bootstrap, run_doctor, shared_env_lookup, shared_env_path_for_config,
+    write_shared_env_file,
 };
 use crate::scan::{self, ScanReport};
 
@@ -972,10 +972,10 @@ fn service_items(draft: &WizardDraft) -> Vec<StepItem> {
             draft.enable_watcher_service.label(),
         ));
     }
-    if draft.includes_global() && packaged_service_available() {
+    if draft.includes_global() && backend_service_available() {
         items.push(choice_item(
             FieldKey::EnableBackendService,
-            "Enable backend system service",
+            "Enable backend service",
             draft.enable_backend_service.label(),
         ));
     }
@@ -1279,9 +1279,9 @@ fn review_lines(draft: &WizardDraft, step: Step, status: &str) -> Vec<Line<'stat
                 draft.enable_watcher_service.label()
             )));
         }
-        if draft.includes_global() && packaged_service_available() {
+        if draft.includes_global() && backend_service_available() {
             lines.push(Line::from(format!(
-                "Backend system service: {}",
+                "Backend service: {}",
                 draft.enable_backend_service.label()
             )));
         }
@@ -1456,11 +1456,11 @@ async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
 
     if draft.includes_global()
         && draft.enable_backend_service.is_yes()
-        && packaged_service_available()
+        && backend_service_available()
     {
-        run_systemctl_system(["daemon-reload"])?;
-        run_systemctl_system(["enable", "--now", "memory-layer.service"])?;
-        lines.push("Enabled memory-layer.service".to_string());
+        lines.extend(split_lines(enable_backend_service(
+            &draft.global_config_path,
+        )?));
     }
 
     if !matches!(draft.scan_choice, ScanChoice::Skip) {
@@ -1525,7 +1525,8 @@ fn write_global_config(draft: &WizardDraft) -> Result<()> {
 
 fn render_global_config(draft: &WizardDraft) -> String {
     format!(
-        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/memory-layer.capnp.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"{}\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[embeddings]\nprovider = \"openai_compatible\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
+        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"{}\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[embeddings]\nprovider = \"openai_compatible\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
+        default_shared_capnp_unix_socket(),
         draft.api_token,
         draft.database_url,
         draft.llm_provider,

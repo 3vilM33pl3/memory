@@ -19,11 +19,11 @@ use axum::{
 };
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse,
-    CaptureTaskRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
-    CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse,
-    MemorySourceRecord, ProjectCommitsResponse, ProjectMemoriesResponse, ProjectOverviewResponse,
-    QueryRequest, ReindexRequest, ReindexResponse, RelatedMemorySummary, StatsResponse,
-    StreamRequest, StreamResponse, ValidationError, WatcherHeartbeatRequest, WatcherPresence,
+    CaptureTaskRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest,
+    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, MemorySourceRecord,
+    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectOverviewResponse, QueryRequest,
+    ReindexRequest, ReindexResponse, RelatedMemorySummary, StatsResponse, StreamRequest,
+    StreamResponse, ValidationError, WatcherHeartbeatRequest, WatcherPresence,
     WatcherPresenceSummary, WatcherUnregisterRequest, read_capnp_text_frame,
     write_capnp_text_frame,
 };
@@ -245,7 +245,10 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/memory", delete(delete_memory))
         .route("/v1/stats", get(stats))
         .route("/v1/projects/{slug}/commits", get(project_commits))
-        .route("/v1/projects/{slug}/commits/{hash}", get(project_commit_detail))
+        .route(
+            "/v1/projects/{slug}/commits/{hash}",
+            get(project_commit_detail),
+        )
         .route("/v1/projects/{slug}/memories", get(project_memories))
         .route("/v1/projects/{slug}/overview", get(project_overview))
         .route("/v1/watchers/heartbeat", post(watcher_heartbeat))
@@ -1276,10 +1279,9 @@ fn watcher_summary_for_project(
 }
 
 fn prune_stale_watchers(registry: &mut HashMap<String, WatcherPresence>) {
-    let stale_after = chrono::Duration::from_std(StdDuration::from_secs(
-        WATCHER_STALE_AFTER_SECONDS,
-    ))
-    .expect("valid watcher stale duration");
+    let stale_after =
+        chrono::Duration::from_std(StdDuration::from_secs(WATCHER_STALE_AFTER_SECONDS))
+            .expect("valid watcher stale duration");
     let now = chrono::Utc::now();
     registry.retain(|_, watcher| now - watcher.last_heartbeat_at <= stale_after);
 }

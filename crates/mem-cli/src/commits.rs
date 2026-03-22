@@ -1,7 +1,4 @@
-use std::{
-    path::Path,
-    process::Command as ProcessCommand,
-};
+use std::{path::Path, process::Command as ProcessCommand};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -33,10 +30,7 @@ pub(crate) fn collect_git_commits(
     parse_git_log_output(&output)
 }
 
-fn git_output(
-    repo_root: &Path,
-    args: impl IntoIterator<Item = String>,
-) -> Result<String> {
+fn git_output(repo_root: &Path, args: impl IntoIterator<Item = String>) -> Result<String> {
     let output = ProcessCommand::new("git")
         .args(args)
         .current_dir(repo_root)

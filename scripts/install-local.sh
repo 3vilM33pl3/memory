@@ -4,9 +4,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_ROOT="${INSTALL_ROOT:-$HOME/.local}"
 BIN_DIR="$INSTALL_ROOT/bin"
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/memory-layer"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  CONFIG_DIR="$HOME/Library/Application Support/memory-layer"
+  SHARE_DIR="$CONFIG_DIR"
+  SERVICE_STEP="$BIN_DIR/mem-cli service enable"
+else
+  CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/memory-layer"
+  SHARE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/memory-layer"
+  SERVICE_STEP="$BIN_DIR/mem-service"
+fi
 ENV_FILE="$CONFIG_DIR/memory-layer.env"
-SHARE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/memory-layer"
 SKILL_TEMPLATE_DIR="$SHARE_DIR/skill-template"
 WEB_DIR="$SHARE_DIR/web"
 
@@ -31,6 +38,11 @@ cp -R "$ROOT_DIR/web/dist/." "$WEB_DIR/"
 
 if [[ ! -f "$CONFIG_DIR/memory-layer.toml" ]]; then
   install -m 0644 "$ROOT_DIR/memory-layer.toml.example" "$CONFIG_DIR/memory-layer.toml"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    mkdir -p "$CONFIG_DIR/run"
+    perl -0pi -e "s|capnp_unix_socket = \"/tmp/memory-layer\\.capnp\\.sock\"|capnp_unix_socket = \"$CONFIG_DIR/run/memory-layer.capnp.sock\"|" \
+      "$CONFIG_DIR/memory-layer.toml"
+  fi
   echo "Installed default config at $CONFIG_DIR/memory-layer.toml"
 else
   echo "Keeping existing config at $CONFIG_DIR/memory-layer.toml"
@@ -38,7 +50,7 @@ fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
   cat > "$ENV_FILE" <<'EOF'
-# Shared secrets and overrides for Memory Layer CLI and systemd --user watcher units.
+# Shared secrets and overrides for Memory Layer CLI and background services.
 # Example:
 # OPENAI_API_KEY=replace-me
 EOF
@@ -64,8 +76,8 @@ Next steps:
    $CONFIG_DIR/memory-layer.toml
 3. Optional: shared env file path:
    $ENV_FILE
-4. Start the backend from the repo root:
-   $BIN_DIR/mem-service
+4. Start the backend:
+   $SERVICE_STEP
 5. Optional: enable the automation watcher user service:
    $BIN_DIR/mem-cli watch enable --project <slug>
 6. Launch the TUI:
