@@ -360,6 +360,34 @@ pub enum ActivityKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ActivityDetails {
+    CaptureTask {
+        session_id: Uuid,
+        task_id: Uuid,
+        raw_capture_id: Uuid,
+        idempotency_key: String,
+    },
+    Curate {
+        run_id: Uuid,
+        input_count: i64,
+        output_count: i64,
+    },
+    Reindex {
+        reindexed_entries: u64,
+    },
+    Archive {
+        archived_count: u64,
+        max_confidence: f32,
+        max_importance: i32,
+    },
+    DeleteMemory {
+        deleted: bool,
+        summary: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityEvent {
     pub recorded_at: DateTime<Utc>,
     pub project: String,
@@ -367,6 +395,8 @@ pub struct ActivityEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_id: Option<Uuid>,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<ActivityDetails>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

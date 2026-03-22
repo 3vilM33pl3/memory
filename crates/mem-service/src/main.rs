@@ -15,11 +15,11 @@ use axum::{
     routing::{delete, get, post},
 };
 use mem_api::{
-    ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
-    CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse,
-    MemorySourceRecord, ProjectMemoriesResponse, ProjectOverviewResponse, QueryRequest,
-    ReindexRequest, ReindexResponse, StatsResponse, StreamRequest, StreamResponse, ValidationError,
-    read_capnp_text_frame, write_capnp_text_frame,
+    ActivityDetails, ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse,
+    CaptureTaskRequest, CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse,
+    MemoryEntryResponse, MemorySourceRecord, ProjectMemoriesResponse, ProjectOverviewResponse,
+    QueryRequest, ReindexRequest, ReindexResponse, StatsResponse, StreamRequest, StreamResponse,
+    ValidationError, read_capnp_text_frame, write_capnp_text_frame,
 };
 use mem_curate::{curate, store_capture};
 use mem_search::{parse_memory_type, parse_source_kind, query_memory, rebuild_chunks};
@@ -50,6 +50,7 @@ struct ServiceEvent {
     memory_id: Option<Uuid>,
     kind: ActivityKind,
     summary: String,
+    details: Option<ActivityDetails>,
     recorded_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -533,6 +534,12 @@ async fn capture_task(
         None,
         ActivityKind::CaptureTask,
         format!("Captured task: {task_title}"),
+        Some(ActivityDetails::CaptureTask {
+            session_id: response.session_id,
+            task_id: response.task_id,
+            raw_capture_id: response.raw_capture_id,
+            idempotency_key: response.idempotency_key.clone(),
+        }),
     );
     Ok(Json(response))
 }
@@ -555,6 +562,11 @@ async fn curate_memory(
             "Curated {} capture(s) into {} memory entry/entries.",
             response.input_count, response.output_count
         ),
+        Some(ActivityDetails::Curate {
+            run_id: response.run_id,
+            input_count: response.input_count,
+            output_count: response.output_count,
+        }),
     );
     Ok(Json(response))
 }
@@ -576,6 +588,9 @@ async fn reindex(
         None,
         ActivityKind::Reindex,
         format!("Reindexed {count} memory entry/entries."),
+        Some(ActivityDetails::Reindex {
+            reindexed_entries: count,
+        }),
     );
     Ok(Json(ReindexResponse {
         reindexed_entries: count,
@@ -702,6 +717,11 @@ async fn archive(
             "Archived {} low-value memory entry/entries.",
             result.rows_affected()
         ),
+        Some(ActivityDetails::Archive {
+            archived_count: result.rows_affected(),
+            max_confidence: request.max_confidence,
+            max_importance: request.max_importance,
+        }),
     );
 
     Ok(Json(ArchiveResponse {
@@ -741,6 +761,10 @@ async fn delete_memory(
         Some(memory_id),
         ActivityKind::DeleteMemory,
         format!("Deleted memory: {summary}"),
+        Some(ActivityDetails::DeleteMemory {
+            deleted: true,
+            summary: summary.clone(),
+        }),
     );
 
     Ok(Json(DeleteMemoryResponse {
@@ -757,12 +781,14 @@ fn notify_project_changed(
     memory_id: Option<Uuid>,
     kind: ActivityKind,
     summary: String,
+    details: Option<ActivityDetails>,
 ) {
     let event = ServiceEvent {
         project,
         memory_id,
         kind,
         summary,
+        details,
         recorded_at: chrono::Utc::now(),
     };
     let _ = state.events.send(event.clone());
@@ -784,6 +810,7 @@ fn stream_activity_response(event: ServiceEvent) -> StreamResponse {
             kind: event.kind,
             memory_id: event.memory_id,
             summary: event.summary,
+            details: event.details,
         },
     }
 }
@@ -800,6 +827,7 @@ mod tests {
                 memory_id: None,
                 kind: ActivityKind::Curate,
                 summary: "Curated memory".to_string(),
+                details: None,
                 recorded_at: chrono::Utc::now(),
             },
             ServiceEvent {
@@ -807,6 +835,7 @@ mod tests {
                 memory_id: None,
                 kind: ActivityKind::CaptureTask,
                 summary: "Captured task".to_string(),
+                details: None,
                 recorded_at: chrono::Utc::now(),
             },
             ServiceEvent {
@@ -814,6 +843,7 @@ mod tests {
                 memory_id: None,
                 kind: ActivityKind::Reindex,
                 summary: "Reindexed entries".to_string(),
+                details: None,
                 recorded_at: chrono::Utc::now(),
             },
         ]));

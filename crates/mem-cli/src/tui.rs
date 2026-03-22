@@ -1,4 +1,8 @@
-use std::{io, process::Command, time::Duration};
+use std::{
+    io,
+    process::Command,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -8,10 +12,10 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use mem_api::{
-    ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType, NamedCount,
-    ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse, QueryFilters,
-    QueryRequest, QueryResponse, QueryResult, StreamRequest, StreamResponse, read_capnp_text_frame,
-    write_capnp_text_frame,
+    ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
+    NamedCount, ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse,
+    QueryFilters, QueryRequest, QueryResponse, QueryResult, StreamRequest, StreamResponse,
+    read_capnp_text_frame, write_capnp_text_frame,
 };
 use ratatui::{
     Terminal,
@@ -135,10 +139,13 @@ enum ActivityEntry {
 
 struct QueryActivityEntry {
     recorded_at: DateTime<Utc>,
-    question: String,
+    project: String,
+    request: QueryRequest,
+    duration_ms: u64,
     outcome: QueryLogOutcome,
 }
 
+#[derive(Clone)]
 enum QueryLogOutcome {
     Success(QueryResponse),
     Error(String),
@@ -521,19 +528,19 @@ impl App {
         }
 
         self.status_message = format!("Running query for \"{question}\"...");
-        match api
-            .query(&QueryRequest {
-                project: self.project.clone(),
-                query: question.to_string(),
-                filters: QueryFilters::default(),
-                top_k: 8,
-                min_confidence: None,
-            })
-            .await
-        {
+        let request = QueryRequest {
+            project: self.project.clone(),
+            query: question.to_string(),
+            filters: QueryFilters::default(),
+            top_k: 8,
+            min_confidence: None,
+        };
+        let started = Instant::now();
+        match api.query(&request).await {
             Ok(response) => {
                 self.record_query_activity(
-                    question.to_string(),
+                    request.clone(),
+                    started.elapsed().as_millis() as u64,
                     QueryLogOutcome::Success(response.clone()),
                 );
                 self.query_response = Some(response);
@@ -545,12 +552,16 @@ impl App {
                     self.query_table_state.select(Some(0));
                     self.fetch_selected_query_detail(api).await;
                 }
-                self.status_message =
-                    format!("Query returned {} memories.", self.query_results().len());
+                self.status_message = format!(
+                    "Query returned {} memories in {} ms.",
+                    self.query_results().len(),
+                    started.elapsed().as_millis()
+                );
             }
             Err(error) => {
                 self.record_query_activity(
-                    question.to_string(),
+                    request,
+                    started.elapsed().as_millis() as u64,
                     QueryLogOutcome::Error(error.to_string()),
                 );
                 self.query_response = None;
@@ -593,12 +604,19 @@ impl App {
             .unwrap_or(&[])
     }
 
-    fn record_query_activity(&mut self, question: String, outcome: QueryLogOutcome) {
+    fn record_query_activity(
+        &mut self,
+        request: QueryRequest,
+        duration_ms: u64,
+        outcome: QueryLogOutcome,
+    ) {
         self.activity_events.insert(
             0,
             ActivityEntry::Query(QueryActivityEntry {
                 recorded_at: Utc::now(),
-                question,
+                project: request.project.clone(),
+                request,
+                duration_ms,
                 outcome,
             }),
         );
@@ -1799,40 +1817,7 @@ fn activity_row(item: &ActivityEntry) -> Row<'static> {
 
 fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
     match entry {
-        ActivityEntry::Backend(event) => vec![
-            Line::from(vec![
-                label_span("When: "),
-                Span::styled(
-                    event
-                        .recorded_at
-                        .format("%Y-%m-%d %H:%M:%S UTC")
-                        .to_string(),
-                    Style::default().fg(Theme::TEXT),
-                ),
-            ]),
-            Line::from(vec![
-                label_span("Project: "),
-                Span::styled(event.project.clone(), Style::default().fg(Theme::TEXT)),
-            ]),
-            Line::from(vec![label_span("Kind: "), activity_kind_span(&event.kind)]),
-            Line::from(""),
-            Line::from(vec![section_span("Summary")]),
-            Line::from(Span::styled(
-                event.summary.clone(),
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                label_span("Memory Id: "),
-                Span::styled(
-                    event
-                        .memory_id
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| "n/a".to_string()),
-                    Style::default().fg(Theme::MUTED),
-                ),
-            ]),
-        ],
+        ActivityEntry::Backend(event) => backend_activity_detail_lines(event),
         ActivityEntry::Query(entry) => {
             let mut lines = vec![
                 Line::from(vec![
@@ -1847,16 +1832,52 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
                 ]),
                 Line::from(vec![
                     label_span("Project: "),
-                    Span::styled("local query", Style::default().fg(Theme::TEXT)),
+                    Span::styled(entry.project.clone(), Style::default().fg(Theme::TEXT)),
                 ]),
                 Line::from(vec![
                     label_span("Kind: "),
-                    Span::styled("query", Style::default().fg(Theme::ACCENT)),
+                    activity_entry_kind_span(&ActivityEntry::Query(QueryActivityEntry {
+                        recorded_at: entry.recorded_at,
+                        project: entry.project.clone(),
+                        request: entry.request.clone(),
+                        duration_ms: entry.duration_ms,
+                        outcome: entry.outcome.clone(),
+                    })),
+                ]),
+                Line::from(vec![
+                    label_span("Duration: "),
+                    Span::styled(
+                        format!("{} ms", entry.duration_ms),
+                        Style::default().fg(Theme::TEXT),
+                    ),
+                    Span::raw("   "),
+                    label_span("Top K: "),
+                    Span::styled(
+                        entry.request.top_k.to_string(),
+                        Style::default().fg(Theme::TEXT),
+                    ),
+                    Span::raw("   "),
+                    label_span("Min confidence: "),
+                    Span::styled(
+                        entry
+                            .request
+                            .min_confidence
+                            .map(|value| format!("{value:.2}"))
+                            .unwrap_or_else(|| "none".to_string()),
+                        Style::default().fg(Theme::TEXT),
+                    ),
+                ]),
+                Line::from(vec![
+                    label_span("Filters: "),
+                    Span::styled(
+                        format_query_filters(&entry.request.filters),
+                        Style::default().fg(Theme::TEXT),
+                    ),
                 ]),
                 Line::from(""),
                 Line::from(vec![section_span("Question")]),
                 Line::from(Span::styled(
-                    entry.question.clone(),
+                    entry.request.query.clone(),
                     Style::default().fg(Theme::TEXT),
                 )),
                 Line::from(""),
@@ -1890,6 +1911,12 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
                                 Style::default().fg(Theme::SUCCESS)
                             },
                         ),
+                        Span::raw("   "),
+                        label_span("Results: "),
+                        Span::styled(
+                            response.results.len().to_string(),
+                            Style::default().fg(Theme::TEXT),
+                        ),
                     ]));
                     lines.push(Line::from(""));
                     lines.push(Line::from(vec![section_span("Returned Memories")]));
@@ -1902,15 +1929,28 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
                         for result in &response.results {
                             lines.push(Line::from(Span::styled(
                                 format!(
-                                    "{} [{}] score={:.2}",
-                                    result.summary, result.memory_type, result.score
+                                    "{} | {} [{}] score={:.2}",
+                                    result.memory_id,
+                                    result.summary,
+                                    result.memory_type,
+                                    result.score
                                 ),
                                 Style::default().fg(Theme::TEXT),
+                            )));
+                            lines.push(Line::from(Span::styled(
+                                format!("  snippet: {}", result.snippet),
+                                Style::default().fg(Theme::MUTED),
                             )));
                             if !result.score_explanation.is_empty() {
                                 lines.push(Line::from(Span::styled(
                                     format!("  why: {}", result.score_explanation.join(" | ")),
                                     Style::default().fg(Theme::ACCENT),
+                                )));
+                            }
+                            if !result.tags.is_empty() {
+                                lines.push(Line::from(Span::styled(
+                                    format!("  tags: {}", result.tags.join(", ")),
+                                    Style::default().fg(Theme::MUTED),
                                 )));
                             }
                         }
@@ -1930,6 +1970,141 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
     }
 }
 
+fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(vec![
+            label_span("When: "),
+            Span::styled(
+                event
+                    .recorded_at
+                    .format("%Y-%m-%d %H:%M:%S UTC")
+                    .to_string(),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Project: "),
+            Span::styled(event.project.clone(), Style::default().fg(Theme::TEXT)),
+        ]),
+        Line::from(vec![label_span("Kind: "), activity_kind_span(&event.kind)]),
+        Line::from(vec![
+            label_span("Memory Id: "),
+            Span::styled(
+                event
+                    .memory_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "n/a".to_string()),
+                Style::default().fg(Theme::MUTED),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![section_span("Summary")]),
+        Line::from(Span::styled(
+            event.summary.clone(),
+            Style::default().fg(Theme::TEXT),
+        )),
+    ];
+
+    if let Some(details) = &event.details {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("Operation Detail")]));
+        match details {
+            ActivityDetails::CaptureTask {
+                session_id,
+                task_id,
+                raw_capture_id,
+                idempotency_key,
+            } => {
+                lines.push(activity_kv_line("Session", session_id.to_string()));
+                lines.push(activity_kv_line("Task", task_id.to_string()));
+                lines.push(activity_kv_line("Raw capture", raw_capture_id.to_string()));
+                lines.push(activity_kv_line("Idempotency", idempotency_key.clone()));
+            }
+            ActivityDetails::Curate {
+                run_id,
+                input_count,
+                output_count,
+            } => {
+                lines.push(activity_kv_line("Run", run_id.to_string()));
+                lines.push(activity_kv_line("Input captures", input_count.to_string()));
+                lines.push(activity_kv_line(
+                    "Output memories",
+                    output_count.to_string(),
+                ));
+            }
+            ActivityDetails::Reindex { reindexed_entries } => {
+                lines.push(activity_kv_line(
+                    "Reindexed entries",
+                    reindexed_entries.to_string(),
+                ));
+            }
+            ActivityDetails::Archive {
+                archived_count,
+                max_confidence,
+                max_importance,
+            } => {
+                lines.push(activity_kv_line(
+                    "Archived count",
+                    archived_count.to_string(),
+                ));
+                lines.push(activity_kv_line(
+                    "Max confidence",
+                    format!("{max_confidence:.2}"),
+                ));
+                lines.push(activity_kv_line(
+                    "Max importance",
+                    max_importance.to_string(),
+                ));
+            }
+            ActivityDetails::DeleteMemory { deleted, summary } => {
+                lines.push(activity_kv_line("Deleted", deleted.to_string()));
+                lines.push(activity_kv_line("Deleted summary", summary.clone()));
+            }
+        }
+    }
+
+    lines
+}
+
+fn activity_kv_line(label: &str, value: String) -> Line<'static> {
+    Line::from(vec![
+        label_span(format!("{label}: ")),
+        Span::styled(value, Style::default().fg(Theme::TEXT)),
+    ])
+}
+
+fn format_query_filters(filters: &QueryFilters) -> String {
+    let types = if filters.types.is_empty() {
+        "types=all".to_string()
+    } else {
+        format!(
+            "types={}",
+            filters
+                .types
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    };
+    let tags = if filters.tags.is_empty() {
+        "tags=all".to_string()
+    } else {
+        format!("tags={}", filters.tags.join(","))
+    };
+    format!("{types} {tags}")
+}
+
+fn truncate_activity_text(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
 fn activity_recorded_at(item: &ActivityEntry) -> DateTime<Utc> {
     match item {
         ActivityEntry::Backend(event) => event.recorded_at,
@@ -1940,7 +2115,21 @@ fn activity_recorded_at(item: &ActivityEntry) -> DateTime<Utc> {
 fn activity_summary(item: &ActivityEntry) -> String {
     match item {
         ActivityEntry::Backend(event) => event.summary.clone(),
-        ActivityEntry::Query(entry) => format!("query: {}", entry.question),
+        ActivityEntry::Query(entry) => {
+            let preview = truncate_activity_text(&entry.request.query, 52);
+            match &entry.outcome {
+                QueryLogOutcome::Success(response) => format!(
+                    "{} | {} results | {} ms | conf {:.2}",
+                    preview,
+                    response.results.len(),
+                    entry.duration_ms,
+                    response.confidence
+                ),
+                QueryLogOutcome::Error(_) => {
+                    format!("{preview} | error | {} ms", entry.duration_ms)
+                }
+            }
+        }
     }
 }
 
