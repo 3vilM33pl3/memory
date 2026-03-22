@@ -120,6 +120,7 @@ struct App {
     activity_events: Vec<ActivityEntry>,
     activity_selected_index: usize,
     activity_table_state: TableState,
+    memory_detail_scroll: u16,
     project_scroll: u16,
     versions: ToolVersions,
     status_message: String,
@@ -180,6 +181,7 @@ impl App {
             activity_events: Vec::new(),
             activity_selected_index: 0,
             activity_table_state,
+            memory_detail_scroll: 0,
             project_scroll: 0,
             versions,
             status_message: "Press r to refresh, q to exit.".to_string(),
@@ -297,6 +299,15 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Project => {
                 self.scroll_project(-1);
+            }
+            KeyCode::PageDown if self.active_tab == TabKind::Memories => {
+                self.scroll_memory_detail(8);
+            }
+            KeyCode::PageUp if self.active_tab == TabKind::Memories => {
+                self.scroll_memory_detail(-8);
+            }
+            KeyCode::Home if self.active_tab == TabKind::Memories => {
+                self.memory_detail_scroll = 0;
             }
             KeyCode::PageDown if self.active_tab == TabKind::Project => {
                 self.scroll_project(8);
@@ -456,6 +467,7 @@ impl App {
         mut stream: Option<&mut StreamSession>,
     ) {
         self.selected_detail = None;
+        self.memory_detail_scroll = 0;
         if let Some(item) = self.filtered_memories.get(self.selected_index) {
             if let Some(stream) = stream.as_mut() {
                 if let Err(error) = stream
@@ -508,6 +520,7 @@ impl App {
             StreamResponse::MemorySnapshot { detail }
             | StreamResponse::MemoryChanged { detail } => {
                 self.selected_detail = detail;
+                self.memory_detail_scroll = 0;
             }
             StreamResponse::Activity { event } => {
                 self.record_backend_activity(event);
@@ -688,6 +701,16 @@ impl App {
             self.project_scroll.saturating_sub(delta.unsigned_abs())
         } else {
             self.project_scroll
+                .saturating_add(u16::try_from(delta).unwrap_or(0))
+        };
+    }
+
+    fn scroll_memory_detail(&mut self, delta: i16) {
+        self.memory_detail_scroll = if delta.is_negative() {
+            self.memory_detail_scroll
+                .saturating_sub(delta.unsigned_abs())
+        } else {
+            self.memory_detail_scroll
                 .saturating_add(u16::try_from(delta).unwrap_or(0))
         };
     }
@@ -1051,7 +1074,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             memory_type_span_from_label(app.filters.memory_type.label()),
             Span::raw("  "),
             Span::styled(
-                "clear=x curate=c reindex=i archive=a delete=D",
+                "detail=PgUp/PgDn Home  clear=x curate=c reindex=i archive=a delete=D",
                 Style::default().fg(Theme::MUTED),
             ),
         ],
@@ -1286,6 +1309,7 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 
     let detail = Paragraph::new(detail_text)
         .style(Style::default().bg(Theme::PANEL))
+        .scroll((app.memory_detail_scroll, 0))
         .wrap(Wrap { trim: false })
         .block(themed_block("Detail"));
     frame.render_widget(detail, chunks[1]);
