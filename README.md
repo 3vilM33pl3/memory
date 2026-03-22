@@ -14,6 +14,7 @@ It lets you save useful facts about a codebase, search them later, and view them
 - lets you search and browse them in a TUI
 - can capture useful work automatically while you code
 - can scan an existing repository and suggest durable knowledge
+- can import git commit history as searchable project evidence
 
 ## The Main Parts
 
@@ -175,6 +176,14 @@ mem-cli scan --project my-project --dry-run
 mem-cli scan --project my-project
 ```
 
+Import and inspect project commit history:
+
+```bash
+mem-cli commits sync --project my-project
+mem-cli commits list --project my-project
+mem-cli commits show --project my-project <commit-hash>
+```
+
 After pgvector is installed, enable semantic recall by configuring `[embeddings]` and rebuilding chunks:
 
 ```bash
@@ -266,6 +275,7 @@ cargo run --bin memory-watch -- run --project memory
 
 - [Getting Started](docs/getting-started.md)
 - [Scan Command](docs/cli/scan.md)
+- [Commit History](docs/cli/commits.md)
 - [How It Works](docs/architecture/how-it-works.md)
 - [Architecture Overview](docs/architecture/overview.md)
 - [Hidden Memory Daemon](docs/architecture/hidden-memory-daemon.md)

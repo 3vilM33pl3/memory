@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 
 use mem_api::{
-    MemoryStatus, MemoryTypeCount, NamedCount, ProjectMemoriesResponse, ProjectMemoryListItem,
+    CommitRecord, CommitSyncRequest, CommitSyncResponse, MemoryStatus, MemoryTypeCount, NamedCount,
+    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryListItem,
     ProjectOverviewResponse, SourceKindCount, ValidationError,
 };
 use mem_search::{parse_memory_type, parse_source_kind};
 use mem_watch::{load_state, to_status};
 use sqlx::{PgPool, Row};
+use uuid::Uuid;
 
 pub fn parse_status_filter(input: &str) -> Result<String, ValidationError> {
     match input {
@@ -180,6 +182,216 @@ pub async fn fetch_project_overview(
         top_files,
         automation,
         watchers: None,
+    })
+}
+
+pub async fn sync_project_commits(
+    pool: &PgPool,
+    request: &CommitSyncRequest,
+) -> Result<CommitSyncResponse, sqlx::Error> {
+    let project_row = sqlx::query(
+        r#"
+        INSERT INTO projects (id, slug, name, root_path)
+        VALUES (gen_random_uuid(), $1, $1, $2)
+        ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, root_path = EXCLUDED.root_path
+        RETURNING id
+        "#,
+    )
+    .bind(&request.project)
+    .bind(&request.repo_root)
+    .fetch_one(pool)
+    .await?;
+    let project_id: Uuid = project_row.try_get("id")?;
+
+    let mut imported_count = 0usize;
+    let mut updated_count = 0usize;
+    for commit in &request.commits {
+        let row = sqlx::query(
+            r#"
+            INSERT INTO project_commits (
+                project_id,
+                commit_hash,
+                short_hash,
+                subject,
+                body,
+                author_name,
+                author_email,
+                committed_at,
+                parent_hashes,
+                changed_paths,
+                imported_at,
+                search_document
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                now(),
+                to_tsvector('english', concat_ws(' ', $3, $4, $5, array_to_string($10::text[], ' ')))
+            )
+            ON CONFLICT (project_id, commit_hash) DO UPDATE
+            SET short_hash = EXCLUDED.short_hash,
+                subject = EXCLUDED.subject,
+                body = EXCLUDED.body,
+                author_name = EXCLUDED.author_name,
+                author_email = EXCLUDED.author_email,
+                committed_at = EXCLUDED.committed_at,
+                parent_hashes = EXCLUDED.parent_hashes,
+                changed_paths = EXCLUDED.changed_paths,
+                imported_at = now(),
+                search_document = EXCLUDED.search_document
+            RETURNING (xmax = 0) AS inserted
+            "#,
+        )
+        .bind(project_id)
+        .bind(&commit.hash)
+        .bind(&commit.short_hash)
+        .bind(&commit.subject)
+        .bind(&commit.body)
+        .bind(&commit.author_name)
+        .bind(&commit.author_email)
+        .bind(commit.committed_at)
+        .bind(&commit.parent_hashes)
+        .bind(&commit.changed_paths)
+        .fetch_one(pool)
+        .await?;
+        let inserted: bool = row.try_get("inserted")?;
+        if inserted {
+            imported_count += 1;
+        } else {
+            updated_count += 1;
+        }
+    }
+
+    let newest_commit = request
+        .commits
+        .iter()
+        .max_by_key(|commit| commit.committed_at)
+        .map(|commit| commit.hash.clone());
+    let oldest_commit = request
+        .commits
+        .iter()
+        .min_by_key(|commit| commit.committed_at)
+        .map(|commit| commit.hash.clone());
+
+    Ok(CommitSyncResponse {
+        project_id,
+        imported_count,
+        updated_count,
+        total_received: request.commits.len(),
+        newest_commit,
+        oldest_commit,
+    })
+}
+
+pub async fn fetch_project_commits(
+    pool: &PgPool,
+    slug: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<ProjectCommitsResponse, sqlx::Error> {
+    let total_row = sqlx::query(
+        r#"
+        SELECT COUNT(*) AS count
+        FROM project_commits pc
+        JOIN projects p ON p.id = pc.project_id
+        WHERE p.slug = $1
+        "#,
+    )
+    .bind(slug)
+    .fetch_one(pool)
+    .await?;
+    let total = total_row.try_get("count")?;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            pc.commit_hash,
+            pc.short_hash,
+            pc.subject,
+            pc.body,
+            pc.author_name,
+            pc.author_email,
+            pc.committed_at,
+            pc.parent_hashes,
+            pc.changed_paths,
+            pc.imported_at
+        FROM project_commits pc
+        JOIN projects p ON p.id = pc.project_id
+        WHERE p.slug = $1
+        ORDER BY pc.committed_at DESC, pc.commit_hash DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(slug)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(ProjectCommitsResponse {
+        project: slug.to_string(),
+        total,
+        items: rows
+            .into_iter()
+            .map(row_to_commit_record)
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+pub async fn fetch_project_commit(
+    pool: &PgPool,
+    slug: &str,
+    hash: &str,
+) -> Result<Option<CommitRecord>, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            pc.commit_hash,
+            pc.short_hash,
+            pc.subject,
+            pc.body,
+            pc.author_name,
+            pc.author_email,
+            pc.committed_at,
+            pc.parent_hashes,
+            pc.changed_paths,
+            pc.imported_at
+        FROM project_commits pc
+        JOIN projects p ON p.id = pc.project_id
+        WHERE p.slug = $1
+          AND (pc.commit_hash = $2 OR pc.short_hash = $2)
+        ORDER BY pc.committed_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(slug)
+    .bind(hash)
+    .fetch_optional(pool)
+    .await?;
+
+    row.map(row_to_commit_record).transpose()
+}
+
+fn row_to_commit_record(row: sqlx::postgres::PgRow) -> Result<CommitRecord, sqlx::Error> {
+    Ok(CommitRecord {
+        hash: row.try_get("commit_hash")?,
+        short_hash: row.try_get("short_hash")?,
+        subject: row.try_get("subject")?,
+        body: row.try_get("body")?,
+        author_name: row.try_get("author_name")?,
+        author_email: row.try_get("author_email")?,
+        committed_at: row.try_get("committed_at")?,
+        parent_hashes: row.try_get("parent_hashes")?,
+        changed_paths: row.try_get("changed_paths")?,
+        imported_at: row.try_get("imported_at")?,
     })
 }
 

@@ -1,3 +1,4 @@
+mod commits;
 mod scan;
 mod tui;
 mod wizard;
@@ -15,8 +16,9 @@ use std::{
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use mem_api::{
-    AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CurateRequest, CurateResponse,
-    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, ProjectMemoriesResponse,
+    AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CommitDetailResponse,
+    CommitSyncRequest, CommitSyncResponse, CurateRequest, CurateResponse, DeleteMemoryRequest,
+    DeleteMemoryResponse, MemoryEntryResponse, ProjectCommitsResponse, ProjectMemoriesResponse,
     ProjectOverviewResponse, QueryFilters, QueryRequest, QueryResponse, ReindexRequest,
     ReindexResponse, TestResult, discover_global_config_path, discover_repo_env_path,
 };
@@ -41,6 +43,7 @@ enum Command {
     Init(InitArgs),
     Watch(WatchArgs),
     Doctor(DoctorArgs),
+    Commits(CommitsArgs),
     Query(QueryArgs),
     Scan(ScanArgs),
     CaptureTask(CaptureTaskArgs),
@@ -115,6 +118,52 @@ struct QueryArgs {
     limit: i64,
     #[arg(long)]
     min_confidence: Option<f32>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct CommitsArgs {
+    #[command(subcommand)]
+    command: CommitsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum CommitsCommand {
+    Sync(CommitSyncArgs),
+    List(CommitListArgs),
+    Show(CommitShowArgs),
+}
+
+#[derive(Debug, Args)]
+struct CommitSyncArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    since: Option<String>,
+    #[arg(long)]
+    limit: Option<usize>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct CommitListArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long, default_value_t = 20)]
+    limit: i64,
+    #[arg(long, default_value_t = 0)]
+    offset: i64,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct CommitShowArgs {
+    commit: String,
+    #[arg(long)]
+    project: Option<String>,
     #[arg(long)]
     json: bool,
 }
@@ -292,6 +341,50 @@ async fn main() -> Result<()> {
         Command::Init(_) => unreachable!("init is handled before config loading"),
         Command::Watch(_) => unreachable!("watch is handled before config loading"),
         Command::Doctor(_) => unreachable!("doctor is handled before config loading"),
+        Command::Commits(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            let api = ApiClient::new(client, config);
+            match args.command {
+                CommitsCommand::Sync(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    let commits =
+                        commits::collect_git_commits(&repo_root, args.since.as_deref(), args.limit)?;
+                    let response = api
+                        .sync_commits(&CommitSyncRequest {
+                            project,
+                            repo_root: repo_root.display().to_string(),
+                            commits,
+                        })
+                        .await?;
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&response)?);
+                    } else {
+                        print_commit_sync_response(&response);
+                    }
+                }
+                CommitsCommand::List(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    let response = api
+                        .project_commits(&project, args.limit.clamp(1, 500), args.offset.max(0))
+                        .await?;
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&response)?);
+                    } else {
+                        print_project_commits(&response);
+                    }
+                }
+                CommitsCommand::Show(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    let response = api.project_commit(&project, &args.commit).await?;
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&response)?);
+                    } else {
+                        print_commit_detail(&response);
+                    }
+                }
+            }
+        }
         Command::Query(args) => {
             let request = QueryRequest {
                 project: args.project,
@@ -1192,6 +1285,42 @@ async fn run_doctor(
                                 false,
                             ));
                         }
+
+                        if repo_root.join(".git").exists() {
+                            match api.project_commits(project, 1, 0).await {
+                                Ok(commits) => report.push(doctor_check(
+                                    "history.commit_sync",
+                                    if commits.total > 0 {
+                                        DoctorStatus::Ok
+                                    } else {
+                                        DoctorStatus::Warn
+                                    },
+                                    if commits.total > 0 {
+                                        "Commit history has been imported for this project."
+                                    } else {
+                                        "No commit history has been imported for this project."
+                                    },
+                                    Some(format!("{} stored commit(s)", commits.total)),
+                                    if commits.total > 0 {
+                                        None
+                                    } else {
+                                        Some(format!(
+                                            "memctl commits sync --project {}",
+                                            project
+                                        ))
+                                    },
+                                    false,
+                                )),
+                                Err(error) => report.push(doctor_check(
+                                    "history.commit_sync",
+                                    DoctorStatus::Warn,
+                                    "Could not load project commit history.",
+                                    Some(error.to_string()),
+                                    Some(format!("memctl commits sync --project {}", project)),
+                                    false,
+                                )),
+                            }
+                        }
                     }
                     Err(error) => report.push(doctor_check(
                         "backend.project_overview",
@@ -1259,6 +1388,14 @@ async fn run_doctor(
                     "backend.project_overview",
                     DoctorStatus::Skipped,
                     "Skipped project overview because the backend is unavailable.",
+                    None,
+                    None,
+                    false,
+                ));
+                report.push(doctor_check(
+                    "history.commit_sync",
+                    DoctorStatus::Skipped,
+                    "Skipped commit history check because the backend is unavailable.",
                     None,
                     None,
                     false,
@@ -2118,6 +2255,41 @@ impl ApiClient {
         .await
     }
 
+    pub(crate) async fn project_commits(
+        &self,
+        project: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<ProjectCommitsResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/commits?limit={limit}&offset={offset}"),
+                ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn project_commit(
+        &self,
+        project: &str,
+        commit: &str,
+    ) -> Result<CommitDetailResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/commits/{commit}"),
+                ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
     pub(crate) async fn query(&self, request: &QueryRequest) -> Result<QueryResponse> {
         get_json(
             self.client
@@ -2136,6 +2308,21 @@ impl ApiClient {
                     &self.config,
                     &format!("/v1/memory/{memory_id}"),
                 ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn sync_commits(
+        &self,
+        request: &CommitSyncRequest,
+    ) -> Result<CommitSyncResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/commits/sync"))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .json(request)
                 .send()
                 .await?,
         )
@@ -2302,6 +2489,69 @@ fn print_scan_report(report: &scan::ScanReport) {
     }
     if let Some(run_id) = &report.curate_run_id {
         println!("Curate run: {run_id}");
+    }
+}
+
+fn print_commit_sync_response(response: &CommitSyncResponse) {
+    println!(
+        "Commit sync complete: {} imported, {} updated, {} received.",
+        response.imported_count, response.updated_count, response.total_received
+    );
+    if let Some(newest) = &response.newest_commit {
+        println!("Newest commit: {newest}");
+    }
+    if let Some(oldest) = &response.oldest_commit {
+        println!("Oldest commit: {oldest}");
+    }
+}
+
+fn print_project_commits(response: &ProjectCommitsResponse) {
+    println!(
+        "Project {} commit history (showing {} / {}):",
+        response.project,
+        response.items.len(),
+        response.total
+    );
+    for commit in &response.items {
+        println!(
+            "- {} {} ({})",
+            commit.short_hash,
+            commit.subject,
+            commit.committed_at.format("%Y-%m-%d %H:%M UTC")
+        );
+        if let Some(author) = &commit.author_name {
+            println!("  author: {author}");
+        }
+        if !commit.changed_paths.is_empty() {
+            println!("  files: {}", commit.changed_paths.join(", "));
+        }
+    }
+}
+
+fn print_commit_detail(response: &CommitDetailResponse) {
+    let commit = &response.commit;
+    println!("Project: {}", response.project);
+    println!("Commit: {} ({})", commit.hash, commit.short_hash);
+    println!("When: {}", commit.committed_at.format("%Y-%m-%d %H:%M UTC"));
+    if let Some(author) = &commit.author_name {
+        if let Some(email) = &commit.author_email {
+            println!("Author: {author} <{email}>");
+        } else {
+            println!("Author: {author}");
+        }
+    }
+    println!("Subject: {}", commit.subject);
+    if !commit.body.trim().is_empty() {
+        println!("\nBody:\n{}", commit.body);
+    }
+    if !commit.parent_hashes.is_empty() {
+        println!("\nParents: {}", commit.parent_hashes.join(", "));
+    }
+    if !commit.changed_paths.is_empty() {
+        println!("\nChanged paths:");
+        for path in &commit.changed_paths {
+            println!("- {path}");
+        }
     }
 }
 

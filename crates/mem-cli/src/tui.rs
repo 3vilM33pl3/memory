@@ -2296,6 +2296,23 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![section_span("Operation Detail")]));
         match details {
+            ActivityDetails::CommitSync {
+                imported_count,
+                updated_count,
+                total_received,
+                newest_commit,
+                oldest_commit,
+            } => {
+                lines.push(activity_kv_line("Imported", imported_count.to_string()));
+                lines.push(activity_kv_line("Updated", updated_count.to_string()));
+                lines.push(activity_kv_line("Received", total_received.to_string()));
+                if let Some(newest_commit) = newest_commit {
+                    lines.push(activity_kv_line("Newest", newest_commit.clone()));
+                }
+                if let Some(oldest_commit) = oldest_commit {
+                    lines.push(activity_kv_line("Oldest", oldest_commit.clone()));
+                }
+            }
             ActivityDetails::Query {
                 query,
                 top_k,
@@ -2529,6 +2546,7 @@ fn section_span(value: impl Into<String>) -> Span<'static> {
 
 fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
     let (label, color) = match kind {
+        ActivityKind::CommitSync => ("commit-sync", Theme::ACCENT_STRONG),
         ActivityKind::Query => ("query", Theme::ACCENT),
         ActivityKind::QueryError => ("query-error", Theme::DANGER),
         ActivityKind::CaptureTask => ("capture", Theme::ACCENT),

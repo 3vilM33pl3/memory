@@ -399,6 +399,101 @@ pub struct MemoryEntryResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitSyncItem {
+    pub hash: String,
+    pub short_hash: String,
+    pub subject: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_email: Option<String>,
+    pub committed_at: DateTime<Utc>,
+    #[serde(default)]
+    pub parent_hashes: Vec<String>,
+    #[serde(default)]
+    pub changed_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitSyncRequest {
+    pub project: String,
+    pub repo_root: String,
+    #[serde(default)]
+    pub commits: Vec<CommitSyncItem>,
+}
+
+impl CommitSyncRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self.repo_root.trim().is_empty() {
+            return Err(ValidationError::new("repo_root must be non-empty"));
+        }
+        if self.commits.is_empty() {
+            return Err(ValidationError::new("commits must be non-empty"));
+        }
+        for commit in &self.commits {
+            if commit.hash.trim().is_empty() {
+                return Err(ValidationError::new("commit hash must be non-empty"));
+            }
+            if commit.short_hash.trim().is_empty() {
+                return Err(ValidationError::new("commit short_hash must be non-empty"));
+            }
+            if commit.subject.trim().is_empty() {
+                return Err(ValidationError::new("commit subject must be non-empty"));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitSyncResponse {
+    pub project_id: Uuid,
+    pub imported_count: usize,
+    pub updated_count: usize,
+    pub total_received: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub newest_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_commit: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitRecord {
+    pub hash: String,
+    pub short_hash: String,
+    pub subject: String,
+    pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_email: Option<String>,
+    pub committed_at: DateTime<Utc>,
+    #[serde(default)]
+    pub parent_hashes: Vec<String>,
+    #[serde(default)]
+    pub changed_paths: Vec<String>,
+    pub imported_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectCommitsResponse {
+    pub project: String,
+    pub total: i64,
+    pub items: Vec<CommitRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitDetailResponse {
+    pub project: String,
+    pub commit: CommitRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsResponse {
     pub projects: i64,
     pub sessions: i64,
@@ -465,6 +560,7 @@ pub enum StreamResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityKind {
+    CommitSync,
     Query,
     QueryError,
     CaptureTask,
@@ -477,6 +573,15 @@ pub enum ActivityKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActivityDetails {
+    CommitSync {
+        imported_count: usize,
+        updated_count: usize,
+        total_received: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        newest_commit: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oldest_commit: Option<String>,
+    },
     Query {
         query: String,
         top_k: i64,
@@ -1289,6 +1394,17 @@ mod tests {
             structured_candidates: Vec::new(),
             command_output: None,
             idempotency_key: None,
+        };
+
+        assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn commit_sync_request_requires_commits() {
+        let request = CommitSyncRequest {
+            project: "memory".to_string(),
+            repo_root: "/repo".to_string(),
+            commits: Vec::new(),
         };
 
         assert!(request.validate().is_err());

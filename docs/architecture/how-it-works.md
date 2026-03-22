@@ -340,6 +340,20 @@ The system exposes several layers of observability:
 
 The overall design goal is that automatic behavior should never be magic. There should always be a way to inspect what was captured, what was curated, and why.
 
+## Commit History
+
+Commit history is stored as project-scoped evidence, not as canonical memory by default.
+
+The intended flow is:
+
+1. `mem-cli commits sync` reads local git history in the current repository.
+2. The CLI sends structured commit records to the backend.
+3. The backend stores them in `project_commits`.
+4. Those commits become searchable and inspectable project history.
+5. Canonical memory may still reference specific commits through provenance when a durable fact is curated from them.
+
+This keeps the system from polluting `memory_entries` with one memory per commit while still preserving the useful parts of commit history.
+
 ## Why The Design Looks Like This
 
 The major design decisions are pragmatic:

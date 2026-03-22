@@ -16,8 +16,9 @@ use axum::{
 };
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse,
-    CaptureTaskRequest, CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse,
-    MemoryEntryResponse, MemorySourceRecord, ProjectMemoriesResponse, ProjectOverviewResponse,
+    CaptureTaskRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
+    CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse,
+    MemorySourceRecord, ProjectCommitsResponse, ProjectMemoriesResponse, ProjectOverviewResponse,
     QueryRequest, ReindexRequest, ReindexResponse, RelatedMemorySummary, StatsResponse,
     StreamRequest, StreamResponse, ValidationError, WatcherHeartbeatRequest, WatcherPresence,
     WatcherPresenceSummary, WatcherUnregisterRequest, read_capnp_text_frame,
@@ -28,7 +29,10 @@ use mem_search::{
     EmbeddingService, parse_memory_type, parse_relation_type, parse_source_kind, query_memory,
     rebuild_chunks,
 };
-use mem_service::{fetch_project_memories, fetch_project_overview, parse_status_filter};
+use mem_service::{
+    fetch_project_commit, fetch_project_commits, fetch_project_memories, fetch_project_overview,
+    parse_status_filter, sync_project_commits,
+};
 use serde::Deserialize;
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use tokio::{
@@ -198,12 +202,15 @@ fn build_http_app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/query", post(query))
+        .route("/v1/commits/sync", post(sync_commits))
         .route("/v1/capture/task", post(capture_task))
         .route("/v1/curate", post(curate_memory))
         .route("/v1/reindex", post(reindex))
         .route("/v1/memory/{id}", get(get_memory))
         .route("/v1/memory", delete(delete_memory))
         .route("/v1/stats", get(stats))
+        .route("/v1/projects/{slug}/commits", get(project_commits))
+        .route("/v1/projects/{slug}/commits/{hash}", get(project_commit_detail))
         .route("/v1/projects/{slug}/memories", get(project_memories))
         .route("/v1/projects/{slug}/overview", get(project_overview))
         .route("/v1/watchers/heartbeat", post(watcher_heartbeat))
@@ -725,9 +732,46 @@ async fn stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, Api
     }))
 }
 
+async fn sync_commits(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CommitSyncRequest>,
+) -> Result<Json<CommitSyncResponse>, ApiError> {
+    require_token(&headers, &state.api_token)?;
+    request.validate().map_err(ApiError::validation)?;
+    let project = request.project.clone();
+    let response = sync_project_commits(&state.pool, &request)
+        .await
+        .map_err(ApiError::sql)?;
+    notify_project_changed(
+        &state,
+        project,
+        None,
+        ActivityKind::CommitSync,
+        format!(
+            "Synced {} commit(s): {} imported, {} updated.",
+            response.total_received, response.imported_count, response.updated_count
+        ),
+        Some(ActivityDetails::CommitSync {
+            imported_count: response.imported_count,
+            updated_count: response.updated_count,
+            total_received: response.total_received,
+            newest_commit: response.newest_commit.clone(),
+            oldest_commit: response.oldest_commit.clone(),
+        }),
+    );
+    Ok(Json(response))
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct ProjectMemoriesParams {
     status: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ProjectCommitsParams {
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -762,6 +806,34 @@ async fn project_overview(
             .await
             .map_err(ApiError::sql)?,
     ))
+}
+
+async fn project_commits(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(params): Query<ProjectCommitsParams>,
+) -> Result<Json<ProjectCommitsResponse>, ApiError> {
+    let limit = params.limit.unwrap_or(50).clamp(1, 500);
+    let offset = params.offset.unwrap_or(0).max(0);
+    Ok(Json(
+        fetch_project_commits(&state.pool, &slug, limit, offset)
+            .await
+            .map_err(ApiError::sql)?,
+    ))
+}
+
+async fn project_commit_detail(
+    State(state): State<AppState>,
+    Path((slug, hash)): Path<(String, String)>,
+) -> Result<Json<CommitDetailResponse>, ApiError> {
+    let commit = fetch_project_commit(&state.pool, &slug, &hash)
+        .await
+        .map_err(ApiError::sql)?
+        .ok_or_else(|| ApiError::not_found("project commit not found"))?;
+    Ok(Json(CommitDetailResponse {
+        project: slug,
+        commit,
+    }))
 }
 
 async fn watcher_heartbeat(

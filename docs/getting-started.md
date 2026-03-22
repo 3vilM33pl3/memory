@@ -206,6 +206,29 @@ If `scan` fails, the two most common causes are:
 - missing `[llm].model` in config
 - missing `OPENAI_API_KEY`
 
+## Importing Commit History
+
+Memory Layer can also store git commits as project evidence without turning every commit into canonical memory.
+
+Import recent or full history:
+
+```bash
+mem-cli commits sync --project my-project
+```
+
+Browse imported commits:
+
+```bash
+mem-cli commits list --project my-project
+mem-cli commits show --project my-project <commit-hash>
+```
+
+If `mem-cli doctor` reports that no commit history has been imported yet, the fix is:
+
+```bash
+mem-cli commits sync --project my-project
+```
+
 ## Running From Source
 
 If you are developing Memory Layer itself:
