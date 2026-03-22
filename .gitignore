@@ -8,3 +8,4 @@
 /memory-postgres-connection.txt
 /.memory-layer
 /.mem
+/keys.env
