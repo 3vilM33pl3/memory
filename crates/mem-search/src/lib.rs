@@ -504,7 +504,12 @@ async fn fetch_lexical_candidates(
                     )
                 )
             )
-        ORDER BY GREATEST(entry_fts, chunk_fts) DESC, updated_at DESC, id DESC
+        ORDER BY GREATEST(
+                COALESCE(ts_rank_cd(m.search_document, input.query), 0),
+                COALESCE(best_chunk.chunk_fts, 0)
+            ) DESC,
+            updated_at DESC,
+            id DESC
         LIMIT $8
         "#,
     )

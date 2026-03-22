@@ -1139,9 +1139,14 @@ impl ApiError {
     }
 
     fn io(error: anyhow::Error) -> Self {
+        let mut message = error.to_string();
+        for cause in error.chain().skip(1) {
+            message.push_str(": ");
+            message.push_str(&cause.to_string());
+        }
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: error.to_string(),
+            message,
         }
     }
 }
