@@ -11,3 +11,4 @@
 /keys.env
 /web/node_modules
 /web/dist
+/web/*.tsbuildinfo
