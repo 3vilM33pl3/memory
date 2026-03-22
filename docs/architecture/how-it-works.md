@@ -318,6 +318,8 @@ It:
 
 This is intentionally implemented in the CLI rather than as a special backend write path. The backend still remains the source of truth for storage and curation.
 
+For the exact current behavior, limits, dossier contents, validation rules, and troubleshooting notes, see [Scan Command](../cli/scan.md).
+
 ## Activity And Observability
 
 The system exposes several layers of observability:

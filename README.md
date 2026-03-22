@@ -222,6 +222,7 @@ cargo run --bin memory-watch -- run --project memory
 ## More Documentation
 
 - [Getting Started](docs/getting-started.md)
+- [Scan Command](docs/cli/scan.md)
 - [How It Works](docs/architecture/how-it-works.md)
 - [Architecture Overview](docs/architecture/overview.md)
 - [Hidden Memory Daemon](docs/architecture/hidden-memory-daemon.md)

@@ -153,6 +153,10 @@ mem-cli watch disable --project my-project
 
 `scan` reads a repository, sends a structured summary to the configured LLM, and writes useful durable memories back into Memory Layer.
 
+Full command documentation:
+
+- [Scan Command](cli/scan.md)
+
 Try it safely first:
 
 ```bash
