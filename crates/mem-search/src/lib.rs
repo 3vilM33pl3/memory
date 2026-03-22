@@ -329,8 +329,8 @@ fn rank_candidate(
     let importance: i32 = row.try_get("importance")?;
     let confidence: f32 = row.try_get("confidence")?;
     let updated_at: DateTime<Utc> = row.try_get("updated_at")?;
-    let entry_fts: f64 = row.try_get("entry_fts")?;
-    let chunk_fts: f64 = row.try_get("chunk_fts")?;
+    let entry_fts = f64::from(row.try_get::<f32, _>("entry_fts")?);
+    let chunk_fts = f64::from(row.try_get::<f32, _>("chunk_fts")?);
     let best_chunk_text: String = row.try_get("best_chunk_text")?;
     let tags: Vec<String> = row.try_get("tags")?;
     let source_paths: Vec<String> = row.try_get("source_paths")?;
