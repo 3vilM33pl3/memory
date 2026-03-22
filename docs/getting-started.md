@@ -149,6 +149,38 @@ Disable it later:
 mem-cli watch disable --project my-project
 ```
 
+## Upgrading An Existing Install
+
+If you already use Memory Layer and are upgrading to a newer release:
+
+1. install the new `.deb`
+2. make sure PostgreSQL has `pgvector` installed for your server version
+3. enable the extension in your target database:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+4. restart the backend service:
+
+```bash
+sudo systemctl restart memory-layer.service
+```
+
+5. verify the setup:
+
+```bash
+mem-cli doctor
+```
+
+6. rebuild embeddings for existing project memories:
+
+```bash
+mem-cli reindex --project my-project
+```
+
+If `mem-cli doctor` reports that `pgvector` is missing, install the PostgreSQL package first and rerun the check.
+
 ## Using `scan`
 
 `scan` reads a repository, sends a structured summary to the configured LLM, and writes useful durable memories back into Memory Layer.

@@ -182,6 +182,32 @@ mem-cli doctor
 mem-cli reindex --project my-project
 ```
 
+## Upgrade Existing Installs
+
+If you are upgrading from an older release, use this order:
+
+1. install the new package or binary
+2. install PostgreSQL `pgvector` for your PostgreSQL version
+3. enable the extension in the target database:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+4. start or restart `mem-service` so it can run the new migrations
+5. run:
+
+```bash
+mem-cli doctor
+mem-cli reindex --project my-project
+```
+
+Important notes:
+
+- existing memories stay in the database
+- semantic embeddings for existing chunks are rebuilt by `reindex`
+- if `vector` is not installed, `mem-service` will fail on startup migrations and `mem-cli doctor` will report the missing extension
+
 ## TUI Tabs
 
 - `Memories`: browse all stored memories for the project
