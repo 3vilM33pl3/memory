@@ -11,25 +11,33 @@ This guide is written for someone who just wants Memory Layer working with as li
 sudo dpkg -i memory-layer_<version>_amd64.deb
 ```
 
-3. Go to the project you want to use:
+3. Configure the shared/global settings once on this machine:
+
+```bash
+mem-cli wizard --global
+```
+
+This is where you set the shared database URL, API token, and a default `agent.id`.
+
+4. Go to the project you want to use:
 
 ```bash
 cd /path/to/your-project
 ```
 
-4. Run the setup wizard:
+5. Run the repo-local setup wizard:
 
 ```bash
 mem-cli wizard
 ```
 
-5. Start the backend service:
+6. Start the backend service:
 
 ```bash
 sudo systemctl enable --now memory-layer.service
 ```
 
-6. Open the UI you prefer:
+7. Open the UI you prefer:
 
 ```bash
 mem-cli tui
@@ -43,25 +51,31 @@ mem-cli tui
 brew install --HEAD ./packaging/macos/homebrew/memory-layer.rb
 ```
 
-2. Go to the project you want to use:
+2. Configure the shared/global settings once on this machine:
+
+```bash
+mem-cli wizard --global
+```
+
+3. Go to the project you want to use:
 
 ```bash
 cd /path/to/your-project
 ```
 
-3. Run the setup wizard:
+4. Run the repo-local setup wizard:
 
 ```bash
 mem-cli wizard
 ```
 
-4. Start the backend LaunchAgent:
+5. Start the backend LaunchAgent:
 
 ```bash
 mem-cli service enable
 ```
 
-5. Open the TUI:
+6. Open the TUI:
 
 ```bash
 mem-cli tui
@@ -77,11 +91,19 @@ http://127.0.0.1:4040/
 
 The wizard can set up:
 
-- the PostgreSQL database URL
-- the write API token
+- shared/global settings when that scope is enabled:
+  - the PostgreSQL database URL
+  - the write API token
+  - the default `agent.id`
 - optional LLM settings for `scan`
 - repo-local `.mem/` files
 - optional watcher setup
+
+Important detail:
+
+- inside a repository, `mem-cli wizard` is local-first by default
+- use `mem-cli wizard --global` when you want to edit the shared/global config
+- or enable `shared/global setup` in the first wizard step
 
 ## The Few Things You Need
 
@@ -89,6 +111,7 @@ Before you run the wizard, it helps to have:
 
 - a PostgreSQL connection string
 - an API token string you want the local tools to use
+- a unique agent ID for this coding agent, for example `codex-cli-main`
 - optional: an OpenAI-compatible API key if you want `mem-cli scan`
 
 ## File Locations
@@ -165,6 +188,8 @@ or with an environment variable:
 export MEMORY_LAYER_AGENT_ID=codex-cli-main
 ```
 
+If you do not configure this, write-capable commands such as `remember`, `scan`, and `memory-watch` will fail.
+
 ## Primary And Relay Services
 
 If a machine can reach PostgreSQL, `mem-service` runs as a `primary`.
@@ -240,7 +265,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 4. restart the backend service:
 
 ```bash
-mem-cli service enable
+sudo systemctl restart memory-layer.service
 ```
 
 5. verify the setup:

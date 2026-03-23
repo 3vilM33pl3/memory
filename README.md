@@ -36,20 +36,28 @@ If you just want to use the tool, this is the easiest path.
 sudo dpkg -i memory-layer_<version>_amd64.deb
 ```
 
-3. Run the setup wizard inside the project you want to use:
+3. Configure the shared/global settings once on this machine:
+
+```bash
+mem-cli wizard --global
+```
+
+This is where you set the shared database URL, API token, and a default `agent.id`.
+
+4. Run the repo-local wizard inside the project you want to use:
 
 ```bash
 cd /path/to/your-project
 mem-cli wizard
 ```
 
-4. Start the shared backend:
+5. Start the shared backend:
 
 ```bash
 sudo systemctl enable --now memory-layer.service
 ```
 
-5. Open the UI you want:
+6. Open the UI you want:
 
 ```bash
 mem-cli tui
@@ -65,20 +73,26 @@ For macOS, use the Homebrew formula and `launchd`.
 brew install --HEAD ./packaging/macos/homebrew/memory-layer.rb
 ```
 
-2. Run the setup wizard inside the project you want to use:
+2. Configure the shared/global settings once on this machine:
+
+```bash
+mem-cli wizard --global
+```
+
+3. Run the repo-local wizard inside the project you want to use:
 
 ```bash
 cd /path/to/your-project
 mem-cli wizard
 ```
 
-3. Start the shared backend LaunchAgent:
+4. Start the shared backend LaunchAgent:
 
 ```bash
 mem-cli service enable
 ```
 
-4. Open the TUI:
+5. Open the TUI:
 
 ```bash
 mem-cli tui
@@ -115,10 +129,26 @@ The wizard is the normal way to set things up:
 mem-cli wizard
 ```
 
+Important detail:
+
+- inside a repository, the wizard is local-first by default
+- use `mem-cli wizard --global` when you want to edit the shared/global config
+- or enable `shared/global setup` in the first wizard step
+
+A simple pattern is:
+
+```bash
+mem-cli wizard --global
+cd /path/to/your-project
+mem-cli wizard
+```
+
 It walks you through:
 
-- the database connection
-- the write API token used by the local tools
+- shared/global settings when that scope is enabled:
+  - the database connection
+  - the write API token used by the local tools
+  - the default `agent.id`
 - optional LLM settings for repository scanning
 - repo-local setup in `.mem/`
 - optional background watcher setup
@@ -180,6 +210,8 @@ or with an environment variable:
 export MEMORY_LAYER_AGENT_ID=codex-cli-main
 ```
 
+If you skip this, write-capable commands such as `remember`, `scan`, and `memory-watch` will fail until an agent ID is configured.
+
 ### Primary And Relay Mode
 
 `mem-service` now has two runtime modes:
@@ -191,13 +223,13 @@ This is useful when one machine on a LAN can reach the database and another cann
 
 ## First Run In A Project
 
-After the wizard completes:
+After the shared/global wizard and the repo-local wizard complete:
 
 1. start the backend if it is not already running
 2. optionally enable the watcher
 3. open the TUI
 
-Commands:
+Typical commands:
 
 ```bash
 mem-cli service status
@@ -205,6 +237,8 @@ mem-cli health
 mem-cli watch enable --project my-project
 mem-cli tui
 ```
+
+If this machine was already configured globally, you only need the repo-local `mem-cli wizard` step in each new project.
 
 If you are developing Memory Layer itself from this repository, you can also run it from source:
 
