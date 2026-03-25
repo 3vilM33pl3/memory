@@ -1294,7 +1294,7 @@ async fn capture_task(
             task_id: response.task_id,
             raw_capture_id: response.raw_capture_id,
             idempotency_key: response.idempotency_key.clone(),
-            agent_id: request.agent_id.clone(),
+            writer_id: request.writer_id.clone(),
         }),
     );
     Ok(Json(response))

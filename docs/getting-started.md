@@ -17,7 +17,7 @@ sudo dpkg -i memory-layer_<version>_amd64.deb
 mem-cli wizard --global
 ```
 
-This is where you set the shared database URL, API token, and a default `agent.id`.
+This is where you set the shared database URL, API token, and a default `writer.id`.
 
 4. Go to the project you want to use:
 
@@ -94,7 +94,7 @@ The wizard can set up:
 - shared/global settings when that scope is enabled:
   - the PostgreSQL database URL
   - the write API token
-  - the default `agent.id`
+  - the default `writer.id`
 - optional LLM settings for `scan`
 - repo-local `.mem/` files
 - optional watcher setup
@@ -111,7 +111,7 @@ Before you run the wizard, it helps to have:
 
 - a PostgreSQL connection string
 - an API token string you want the local tools to use
-- a unique agent ID for this coding agent, for example `codex-cli-main`
+- a unique writer ID for this coding agent or tool, for example `codex-cli-main`
 - optional: an OpenAI-compatible API key if you want `mem-cli scan`
 
 ## File Locations
@@ -160,7 +160,7 @@ Use this for project-specific overrides:
 - watcher settings
 - local backend ports
 - project-specific DB override if needed
-- repo-specific `agent.id` override if one project should write under a different agent identity
+- repo-specific `writer.id` override if one project should write under a different writer identity
 
 ### Env files
 
@@ -170,14 +170,14 @@ Use these for secrets such as:
 OPENAI_API_KEY=your-api-key-here
 ```
 
-## Agent ID
+## Writer ID
 
-Each coding agent that writes memory should have a unique agent ID.
+Each coding agent or tool that writes memory should have a unique writer ID.
 
 You can configure it in TOML:
 
 ```toml
-[agent]
+[writer]
 id = "codex-cli-main"
 name = "Codex CLI"
 ```
@@ -185,7 +185,7 @@ name = "Codex CLI"
 or with an environment variable:
 
 ```bash
-export MEMORY_LAYER_AGENT_ID=codex-cli-main
+export MEMORY_LAYER_WRITER_ID=codex-cli-main
 ```
 
 If you do not configure this, write-capable commands such as `remember`, `scan`, and `memory-watch` will fail.

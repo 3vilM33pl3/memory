@@ -667,12 +667,12 @@ mod tests {
         .await?;
         tx.execute(
             sqlx::query(
-                "INSERT INTO sessions (id, project_id, external_session_id, started_at, agent_id, agent_name) VALUES ($1, $2, $3, now(), $4, $5)",
+                "INSERT INTO sessions (id, project_id, external_session_id, started_at, writer_id, writer_name) VALUES ($1, $2, $3, now(), $4, $5)",
             )
             .bind(session_id)
             .bind(project_id)
             .bind("test-session")
-            .bind("codex-agent")
+            .bind("codex-writer")
             .bind("codex"),
         )
         .await?;

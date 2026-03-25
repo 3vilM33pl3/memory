@@ -34,8 +34,12 @@ use uuid::Uuid;
 struct Cli {
     #[arg(long, env = "MEMORY_LAYER_CONFIG")]
     config: Option<PathBuf>,
-    #[arg(long, env = "MEMORY_LAYER_AGENT_ID")]
-    agent_id: Option<String>,
+    #[arg(
+        long = "writer-id",
+        visible_alias = "agent-id",
+        env = "MEMORY_LAYER_WRITER_ID"
+    )]
+    writer_id: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -281,7 +285,7 @@ struct AutomationFlushArgs {
 async fn main() -> Result<()> {
     let Cli {
         config: cli_config,
-        agent_id: cli_agent_id,
+        writer_id: cli_writer_id,
         command,
     } = Cli::parse();
 
@@ -453,7 +457,7 @@ async fn main() -> Result<()> {
             let cwd = env::current_dir().context("read current directory")?;
             let repo_root = resolve_repo_root(&cwd)?;
             let project = resolve_project_slug(args.project, &cwd)?;
-            let agent = resolve_agent_identity(&config, cli_agent_id.as_deref())?;
+            let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
             let api = ApiClient::new(client, config);
             let report = scan::run_scan(
                 &api,
@@ -461,8 +465,8 @@ async fn main() -> Result<()> {
                 &project,
                 args.since.as_deref(),
                 args.dry_run,
-                &agent.id,
-                agent.name.as_deref(),
+                &writer.id,
+                writer.name.as_deref(),
             )
             .await?;
             if args.json {
@@ -474,10 +478,10 @@ async fn main() -> Result<()> {
         Command::CaptureTask(args) => {
             let mut request: CaptureTaskRequest =
                 serde_json::from_str(&fs::read_to_string(args.file).context("read payload file")?)?;
-            if request.agent_id.trim().is_empty() {
-                let agent = resolve_agent_identity(&config, cli_agent_id.as_deref())?;
-                request.agent_id = agent.id;
-                request.agent_name = request.agent_name.or(agent.name);
+            if request.writer_id.trim().is_empty() {
+                let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
+                request.writer_id = writer.id;
+                request.writer_name = request.writer_name.or(writer.name);
             }
             let response = client
                 .post(service_url(&config, "/v1/capture/task"))
@@ -490,8 +494,9 @@ async fn main() -> Result<()> {
         Command::Remember(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let project = resolve_project_slug(args.project.clone(), &cwd)?;
-            let agent = resolve_agent_identity(&config, cli_agent_id.as_deref())?;
-            let request = build_remember_request(args, &project, &agent.id, agent.name.as_deref())?;
+            let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
+            let request =
+                build_remember_request(args, &project, &writer.id, writer.name.as_deref())?;
             let api = ApiClient::new(client, config);
             let capture = api.capture_task(&request).await?;
             let curate = api.curate(&project).await?;
@@ -570,7 +575,7 @@ async fn main() -> Result<()> {
                         .map(PathBuf::from)
                         .unwrap_or(cwd);
                     let api = ApiClient::new(client.clone(), config.clone());
-                    let agent = resolve_agent_identity(&config, cli_agent_id.as_deref())?;
+                    let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
                     tokio::fs::write(flush_path(&repo_root), b"flush\n")
                         .await
                         .ok();
@@ -581,8 +586,8 @@ async fn main() -> Result<()> {
                         &repo_root,
                         true,
                         args.curate,
-                        &agent.id,
-                        agent.name.as_deref(),
+                        &writer.id,
+                        writer.name.as_deref(),
                     )
                     .await?;
                     println!(
@@ -1148,25 +1153,25 @@ async fn run_doctor(
         ));
 
         report.push(doctor_check(
-            "config.agent_id",
-            if config.agent.id.trim().is_empty() {
+            "config.writer_id",
+            if config.writer.id.trim().is_empty() {
                 DoctorStatus::Fail
             } else {
                 DoctorStatus::Ok
             },
-            if config.agent.id.trim().is_empty() {
-                "Agent id is not configured for write-capable workflows."
+            if config.writer.id.trim().is_empty() {
+                "Writer id is not configured for write-capable workflows."
             } else {
-                "Agent id is configured."
+                "Writer id is configured."
             },
-            if config.agent.id.trim().is_empty() {
+            if config.writer.id.trim().is_empty() {
                 None
             } else {
-                Some(config.agent.id.clone())
+                Some(config.writer.id.clone())
             },
-            if config.agent.id.trim().is_empty() {
+            if config.writer.id.trim().is_empty() {
                 Some(format!(
-                    "Set [agent].id in {} or export MEMORY_LAYER_AGENT_ID",
+                    "Set [writer].id in {} or export MEMORY_LAYER_WRITER_ID",
                     config_path.display()
                 ))
             } else {
@@ -3352,8 +3357,8 @@ fn resolve_project_slug(project: Option<String>, cwd: &Path) -> Result<String> {
 fn build_remember_request(
     args: RememberArgs,
     project: &str,
-    agent_id: &str,
-    agent_name: Option<&str>,
+    writer_id: &str,
+    writer_name: Option<&str>,
 ) -> Result<CaptureTaskRequest> {
     let mut files_changed = args.files_changed;
     if args.auto_files {
@@ -3398,8 +3403,8 @@ fn build_remember_request(
         project: project.to_string(),
         task_title: title,
         user_prompt: prompt,
-        agent_id: agent_id.to_string(),
-        agent_name: agent_name.map(|value| value.to_string()),
+        writer_id: writer_id.to_string(),
+        writer_name: writer_name.map(|value| value.to_string()),
         agent_summary: summary,
         files_changed,
         git_diff_summary: None,
@@ -3412,39 +3417,51 @@ fn build_remember_request(
 }
 
 #[derive(Debug, Clone)]
-struct AgentIdentity {
+struct WriterIdentity {
     id: String,
     name: Option<String>,
 }
 
-fn resolve_agent_identity(config: &AppConfig, cli_agent_id: Option<&str>) -> Result<AgentIdentity> {
-    if let Some(agent_id) = cli_agent_id
+fn resolve_writer_identity(
+    config: &AppConfig,
+    cli_writer_id: Option<&str>,
+) -> Result<WriterIdentity> {
+    if let Some(writer_id) = cli_writer_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        return Ok(AgentIdentity {
-            id: agent_id.to_string(),
-            name: config.agent.name.clone(),
+        return Ok(WriterIdentity {
+            id: writer_id.to_string(),
+            name: config.writer.name.clone(),
         });
     }
-    if let Ok(agent_id) = env::var("MEMORY_LAYER_AGENT_ID") {
-        let trimmed = agent_id.trim();
+    if let Ok(writer_id) = env::var("MEMORY_LAYER_WRITER_ID") {
+        let trimmed = writer_id.trim();
         if !trimmed.is_empty() {
-            return Ok(AgentIdentity {
+            return Ok(WriterIdentity {
                 id: trimmed.to_string(),
-                name: config.agent.name.clone(),
+                name: config.writer.name.clone(),
             });
         }
     }
-    let trimmed = config.agent.id.trim();
+    if let Ok(writer_id) = env::var("MEMORY_LAYER_AGENT_ID") {
+        let trimmed = writer_id.trim();
+        if !trimmed.is_empty() {
+            return Ok(WriterIdentity {
+                id: trimmed.to_string(),
+                name: config.writer.name.clone(),
+            });
+        }
+    }
+    let trimmed = config.writer.id.trim();
     if !trimmed.is_empty() {
-        return Ok(AgentIdentity {
+        return Ok(WriterIdentity {
             id: trimmed.to_string(),
-            name: config.agent.name.clone(),
+            name: config.writer.name.clone(),
         });
     }
     anyhow::bail!(
-        "missing agent id; set --agent-id, MEMORY_LAYER_AGENT_ID, or [agent].id in config"
+        "missing writer id; set --writer-id, MEMORY_LAYER_WRITER_ID, MEMORY_LAYER_AGENT_ID, or [writer].id in config"
     );
 }
 
@@ -3572,13 +3589,13 @@ mod tests {
                 auto_files: false,
             },
             "memory",
-            "codex-agent",
+            "codex-writer",
             Some("Codex"),
         )
         .unwrap();
 
         assert_eq!(request.task_title, "Memory update for memory");
-        assert_eq!(request.agent_id, "codex-agent");
+        assert_eq!(request.writer_id, "codex-writer");
         assert!(request.user_prompt.contains("Auto-captured"));
         assert!(request.agent_summary.contains("src/main.rs"));
     }

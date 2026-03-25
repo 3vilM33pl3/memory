@@ -45,8 +45,8 @@ pub(crate) async fn run_scan(
     project: &str,
     since: Option<&str>,
     dry_run: bool,
-    agent_id: &str,
-    agent_name: Option<&str>,
+    writer_id: &str,
+    writer_name: Option<&str>,
 ) -> Result<ScanReport> {
     ensure_llm_config(&api.config)?;
     let dossier = build_dossier(repo_root, project, since, api.config.llm.max_input_bytes)?;
@@ -58,8 +58,8 @@ pub(crate) async fn run_scan(
         &dossier,
         &summary,
         &candidates,
-        agent_id,
-        agent_name,
+        writer_id,
+        writer_name,
     )?;
     let report_path =
         write_scan_report(repo_root, project, &dossier, &summary, &candidates, dry_run)?;
@@ -597,8 +597,8 @@ fn build_capture_request(
     dossier: &ScanDossier,
     summary: &str,
     candidates: &[CaptureCandidateInput],
-    agent_id: &str,
-    agent_name: Option<&str>,
+    writer_id: &str,
+    writer_name: Option<&str>,
 ) -> Result<CaptureTaskRequest> {
     let file_paths = dossier
         .files
@@ -639,8 +639,8 @@ fn build_capture_request(
         user_prompt: format!(
             "Scan the repository and extract durable architecture, functionality, workflow, and setup memory for project {project}."
         ),
-        agent_id: agent_id.to_string(),
-        agent_name: agent_name.map(|value| value.to_string()),
+        writer_id: writer_id.to_string(),
+        writer_name: writer_name.map(|value| value.to_string()),
         agent_summary: summary.to_string(),
         files_changed: file_paths,
         git_diff_summary,

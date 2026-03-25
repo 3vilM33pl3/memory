@@ -127,22 +127,22 @@ In the local development setup for this repository there can also be a parallel 
 
 Relay mode is intentionally thin. It does not maintain its own durable write queue or a local database replica. It is a network-accessible facade over a selected primary.
 
-## Agent Identity
+## Writer Identity
 
-Write-capable flows now require an explicit `agent_id`.
+Write-capable flows now require an explicit `writer_id`.
 
 Resolution order is:
 
-1. CLI flag `--agent-id`
-2. `MEMORY_LAYER_AGENT_ID`
-3. `[agent].id` in config
+1. CLI flag `--writer-id`
+2. `MEMORY_LAYER_WRITER_ID`
+3. `[writer].id` in config
 
-The value is stored on `sessions.agent_id` and carried in capture payloads. That does two things:
+The value is stored on `sessions.writer_id` and carried in capture payloads. That does two things:
 
-- multiple agents can contribute raw captures to the same project without sharing the same idempotency key
-- later debugging can still trace which agent produced which raw capture session
+- multiple writers can contribute raw captures to the same project without sharing the same idempotency key
+- later debugging can still trace which writer produced which raw capture session
 
-Curated memory remains project-scoped. The system does not create separate canonical memory silos per agent. Cross-agent raw evidence is meant to converge during curation.
+Curated memory remains project-scoped. The system does not create separate canonical memory silos per writer. Cross-writer raw evidence is meant to converge during curation.
 
 ## Core Service Boundaries
 

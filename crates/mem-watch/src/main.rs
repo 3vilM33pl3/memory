@@ -22,8 +22,12 @@ enum HeartbeatState {
 struct Cli {
     #[arg(long, env = "MEMORY_LAYER_CONFIG")]
     config: Option<PathBuf>,
-    #[arg(long, env = "MEMORY_LAYER_AGENT_ID")]
-    agent_id: Option<String>,
+    #[arg(
+        long = "writer-id",
+        visible_alias = "agent-id",
+        env = "MEMORY_LAYER_WRITER_ID"
+    )]
+    writer_id: Option<String>,
     #[command(subcommand)]
     command: WatchCommand,
 }
@@ -65,21 +69,21 @@ struct FlushArgs {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = AppConfig::load_from_path(cli.config).context("load config")?;
-    let agent_id = resolve_agent_id(&config, cli.agent_id)?;
-    let agent_name = config.agent.name.clone();
+    let writer_id = resolve_writer_id(&config, cli.writer_id)?;
+    let writer_name = config.writer.name.clone();
 
     match cli.command {
-        WatchCommand::Run(args) => run_loop(config, args, agent_id, agent_name).await,
+        WatchCommand::Run(args) => run_loop(config, args, writer_id, writer_name).await,
         WatchCommand::Status(args) => status(config, args).await,
-        WatchCommand::Flush(args) => flush(config, args, agent_id, agent_name).await,
+        WatchCommand::Flush(args) => flush(config, args, writer_id, writer_name).await,
     }
 }
 
 async fn run_loop(
     config: AppConfig,
     args: RunArgs,
-    agent_id: String,
-    agent_name: Option<String>,
+    writer_id: String,
+    writer_name: Option<String>,
 ) -> Result<()> {
     let repo_root = resolve_repo_root(&config, args.repo_root)?;
     let project = resolve_project(args.project, &repo_root)?;
@@ -111,8 +115,8 @@ async fn run_loop(
                     &repo_root,
                     false,
                     false,
-                    &agent_id,
-                    agent_name.as_deref(),
+                    &writer_id,
+                    writer_name.as_deref(),
                 ).await?;
             }
             _ = heartbeat.tick() => {
@@ -179,8 +183,8 @@ async fn status(config: AppConfig, args: ProjectArgs) -> Result<()> {
 async fn flush(
     config: AppConfig,
     args: FlushArgs,
-    agent_id: String,
-    agent_name: Option<String>,
+    writer_id: String,
+    writer_name: Option<String>,
 ) -> Result<()> {
     let repo_root = resolve_repo_root(&config, args.repo_root)?;
     let project = resolve_project(args.project, &repo_root)?;
@@ -195,8 +199,8 @@ async fn flush(
         &repo_root,
         true,
         args.curate,
-        &agent_id,
-        agent_name.as_deref(),
+        &writer_id,
+        writer_name.as_deref(),
     )
     .await
 }
@@ -221,25 +225,31 @@ fn resolve_project(project: Option<String>, repo_root: &std::path::Path) -> Resu
     Ok(name.to_string())
 }
 
-fn resolve_agent_id(config: &AppConfig, cli_agent_id: Option<String>) -> Result<String> {
-    if let Some(agent_id) = cli_agent_id {
-        let trimmed = agent_id.trim();
+fn resolve_writer_id(config: &AppConfig, cli_writer_id: Option<String>) -> Result<String> {
+    if let Some(writer_id) = cli_writer_id {
+        let trimmed = writer_id.trim();
         if !trimmed.is_empty() {
             return Ok(trimmed.to_string());
         }
     }
-    if let Ok(agent_id) = std::env::var("MEMORY_LAYER_AGENT_ID") {
-        let trimmed = agent_id.trim();
+    if let Ok(writer_id) = std::env::var("MEMORY_LAYER_WRITER_ID") {
+        let trimmed = writer_id.trim();
         if !trimmed.is_empty() {
             return Ok(trimmed.to_string());
         }
     }
-    let trimmed = config.agent.id.trim();
+    if let Ok(writer_id) = std::env::var("MEMORY_LAYER_AGENT_ID") {
+        let trimmed = writer_id.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    let trimmed = config.writer.id.trim();
     if !trimmed.is_empty() {
         return Ok(trimmed.to_string());
     }
     anyhow::bail!(
-        "missing agent id; set --agent-id, MEMORY_LAYER_AGENT_ID, or [agent].id in config"
+        "missing writer id; set --writer-id, MEMORY_LAYER_WRITER_ID, MEMORY_LAYER_AGENT_ID, or [writer].id in config"
     );
 }
 

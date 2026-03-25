@@ -27,7 +27,7 @@ pub fn idempotency_key(request: &CaptureTaskRequest) -> String {
 
     let mut hasher = Sha256::new();
     hasher.update(request.project.as_bytes());
-    hasher.update(request.agent_id.as_bytes());
+    hasher.update(request.writer_id.as_bytes());
     hasher.update(request.task_title.as_bytes());
     hasher.update(request.user_prompt.as_bytes());
     hasher.update(request.agent_summary.as_bytes());
@@ -264,8 +264,8 @@ mod tests {
             project: "memory".to_string(),
             task_title: "Add memory service".to_string(),
             user_prompt: "Implement the backend service".to_string(),
-            agent_id: "codex-agent".to_string(),
-            agent_name: Some("Codex".to_string()),
+            writer_id: "codex-writer".to_string(),
+            writer_name: Some("Codex".to_string()),
             agent_summary: "Added the backend service and migrations".to_string(),
             files_changed: vec!["crates/mem-service/src/main.rs".to_string()],
             git_diff_summary: None,

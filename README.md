@@ -42,7 +42,7 @@ sudo dpkg -i memory-layer_<version>_amd64.deb
 mem-cli wizard --global
 ```
 
-This is where you set the shared database URL, API token, and a default `agent.id`.
+This is where you set the shared database URL, API token, and a default `writer.id`.
 
 4. Run the repo-local wizard inside the project you want to use:
 
@@ -107,7 +107,7 @@ http://127.0.0.1:4040/
 ## What You Need Before Setup
 
 - a PostgreSQL database connection string
-- a unique `agent.id` for each coding agent that will write memory
+- a unique `writer.id` for each coding agent or tool that will write memory
 - a project folder where you want Memory Layer enabled
 - optional: an OpenAI-compatible API key if you want to use `mem-cli scan`
 
@@ -148,7 +148,7 @@ It walks you through:
 - shared/global settings when that scope is enabled:
   - the database connection
   - the write API token used by the local tools
-  - the default `agent.id`
+  - the default `writer.id`
 - optional LLM settings for repository scanning
 - repo-local setup in `.mem/`
 - optional background watcher setup
@@ -178,7 +178,7 @@ Use `.mem/config.toml` for project-specific overrides such as:
 - project-local backend ports
 - watcher behavior
 - repo-local database override if needed
-- repo-local `agent.id` override if this repository should use a different agent identity
+- repo-local `writer.id` override if this repository should use a different writer identity
 
 Secrets can also live in env files:
 
@@ -192,14 +192,14 @@ Example:
 OPENAI_API_KEY=your-api-key-here
 ```
 
-### Agent IDs
+### Writer IDs
 
-Every write-capable workflow now needs a unique agent ID. This lets multiple agents work on the same project without collapsing their raw captures together before curation.
+Every write-capable workflow now needs a unique writer ID. This lets multiple writers work on the same project without collapsing their raw captures together before curation.
 
 You can set it in config:
 
 ```toml
-[agent]
+[writer]
 id = "codex-cli-main"
 name = "Codex CLI"
 ```
@@ -207,10 +207,10 @@ name = "Codex CLI"
 or with an environment variable:
 
 ```bash
-export MEMORY_LAYER_AGENT_ID=codex-cli-main
+export MEMORY_LAYER_WRITER_ID=codex-cli-main
 ```
 
-If you skip this, write-capable commands such as `remember`, `scan`, and `memory-watch` will fail until an agent ID is configured.
+If you skip this, write-capable commands such as `remember`, `scan`, and `memory-watch` will fail until a writer ID is configured.
 
 ### Primary And Relay Mode
 

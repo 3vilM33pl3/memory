@@ -119,9 +119,10 @@ pub struct CaptureTaskRequest {
     pub project: String,
     pub task_title: String,
     pub user_prompt: String,
-    pub agent_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<String>,
+    #[serde(alias = "agent_id")]
+    pub writer_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "agent_name")]
+    pub writer_name: Option<String>,
     pub agent_summary: String,
     #[serde(default)]
     pub files_changed: Vec<String>,
@@ -150,8 +151,8 @@ impl CaptureTaskRequest {
         if self.user_prompt.trim().is_empty() {
             return Err(ValidationError::new("user_prompt must be non-empty"));
         }
-        if self.agent_id.trim().is_empty() {
-            return Err(ValidationError::new("agent_id must be non-empty"));
+        if self.writer_id.trim().is_empty() {
+            return Err(ValidationError::new("writer_id must be non-empty"));
         }
         if self.agent_summary.trim().is_empty() {
             return Err(ValidationError::new("agent_summary must be non-empty"));
@@ -605,7 +606,8 @@ pub enum ActivityDetails {
         task_id: Uuid,
         raw_capture_id: Uuid,
         idempotency_key: String,
-        agent_id: String,
+        #[serde(alias = "agent_id")]
+        writer_id: String,
     },
     Curate {
         run_id: Uuid,
@@ -910,8 +912,8 @@ pub struct AppConfig {
     pub embeddings: EmbeddingConfig,
     #[serde(default)]
     pub cluster: ClusterConfig,
-    #[serde(default)]
-    pub agent: AgentConfig,
+    #[serde(default, alias = "agent")]
+    pub writer: WriterConfig,
     #[serde(default)]
     pub automation: AutomationConfig,
 }
@@ -1176,7 +1178,7 @@ impl Default for ClusterConfig {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AgentConfig {
+pub struct WriterConfig {
     #[serde(default)]
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1501,8 +1503,8 @@ mod tests {
             project: String::new(),
             task_title: "task".to_string(),
             user_prompt: "prompt".to_string(),
-            agent_id: "codex-agent".to_string(),
-            agent_name: Some("Codex".to_string()),
+            writer_id: "codex-writer".to_string(),
+            writer_name: Some("Codex".to_string()),
             agent_summary: "summary".to_string(),
             files_changed: Vec::new(),
             git_diff_summary: None,

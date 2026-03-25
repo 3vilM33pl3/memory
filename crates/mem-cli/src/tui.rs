@@ -2348,13 +2348,13 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                 task_id,
                 raw_capture_id,
                 idempotency_key,
-                agent_id,
+                writer_id,
             } => {
                 lines.push(activity_kv_line("Session", session_id.to_string()));
                 lines.push(activity_kv_line("Task", task_id.to_string()));
                 lines.push(activity_kv_line("Raw capture", raw_capture_id.to_string()));
                 lines.push(activity_kv_line("Idempotency", idempotency_key.clone()));
-                lines.push(activity_kv_line("Agent", agent_id.clone()));
+                lines.push(activity_kv_line("Writer", writer_id.clone()));
             }
             ActivityDetails::Curate {
                 run_id,

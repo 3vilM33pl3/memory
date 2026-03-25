@@ -309,10 +309,10 @@ pub async fn run_capture_flow(
     client: &Client,
     config: &AppConfig,
     state: &AutomationState,
-    agent_id: &str,
-    agent_name: Option<&str>,
+    writer_id: &str,
+    writer_name: Option<&str>,
 ) -> Result<serde_json::Value> {
-    let request = build_capture_request(state, agent_id, agent_name);
+    let request = build_capture_request(state, writer_id, writer_name);
     send_json(
         client
             .post(service_url(config, "/v1/capture/task"))
@@ -435,8 +435,8 @@ pub fn detect_hostname() -> String {
 
 pub fn build_capture_request(
     state: &AutomationState,
-    agent_id: &str,
-    agent_name: Option<&str>,
+    writer_id: &str,
+    writer_name: Option<&str>,
 ) -> CaptureTaskRequest {
     let files = state.current_session.changed_files.clone();
     let summary = if files.is_empty() {
@@ -458,8 +458,8 @@ pub fn build_capture_request(
             "Automatically persisted meaningful repository work in project {}.",
             state.project
         ),
-        agent_id: agent_id.to_string(),
-        agent_name: agent_name.map(|value| value.to_string()),
+        writer_id: writer_id.to_string(),
+        writer_name: writer_name.map(|value| value.to_string()),
         agent_summary: summary,
         files_changed: files,
         git_diff_summary: None,
@@ -487,8 +487,8 @@ pub async fn run_once(
     repo_root: &Path,
     explicit_flush: bool,
     force_curate: bool,
-    agent_id: &str,
-    agent_name: Option<&str>,
+    writer_id: &str,
+    writer_name: Option<&str>,
 ) -> Result<()> {
     let mut state = load_state(project, repo_root, &config.automation).await?;
     let changed = detect_changed_files(repo_root, &config.automation.ignored_paths)?;
@@ -524,7 +524,7 @@ pub async fn run_once(
             }
             AutomationMode::Auto => {
                 let _capture =
-                    run_capture_flow(client, config, &state, agent_id, agent_name).await?;
+                    run_capture_flow(client, config, &state, writer_id, writer_name).await?;
                 state.last_captured_fingerprint = state.current_session.fingerprint.clone();
                 let overview = fetch_project_overview(client, config, project).await?;
                 let (curate, curate_reason) = should_curate(
