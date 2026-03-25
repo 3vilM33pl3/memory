@@ -301,6 +301,14 @@ mem-cli reindex --project my-project
 
 If `mem-cli doctor` reports that `pgvector` is missing, install the PostgreSQL package first and rerun the check.
 
+On Debian, upgrades should preserve local edits to:
+
+- `/etc/memory-layer/memory-layer.env`
+- `/etc/memory-layer/memory-layer.toml`
+
+Those files are treated as package-managed configuration files rather than being overwritten
+with package defaults on every upgrade.
+
 ## Using `scan`
 
 `scan` reads a repository, sends a structured summary to the configured LLM, and writes useful durable memories back into Memory Layer.
