@@ -1,5 +1,11 @@
 # Memory Layer Implementation Plan
 
+## Table of Contents
+
+- [Summary](#summary)
+- [Delivery order](#delivery-order)
+- [Acceptance](#acceptance)
+
 ## Summary
 
 Build the project as a Rust monorepo with:

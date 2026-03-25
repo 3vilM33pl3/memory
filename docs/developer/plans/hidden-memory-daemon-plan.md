@@ -1,5 +1,12 @@
 # Hidden Memory Daemon Plan
 
+## Table of Contents
+
+- [Summary](#summary)
+- [Key Changes](#key-changes)
+- [Test Plan](#test-plan)
+- [Assumptions](#assumptions)
+
 ## Summary
 
 Add a local companion daemon that observes repository activity and automatically persists durable memory through the existing remember pipeline when confidence is high enough. It must be conservative, inspectable, and disabled by default.
