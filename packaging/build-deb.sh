@@ -37,6 +37,7 @@ find "$PKG_ROOT/usr/share/memory-layer/skill-template" -type f -path '*/scripts/
 cp -R "$ROOT_DIR/web/dist/." "$PKG_ROOT/usr/share/memory-layer/web/"
 
 sed "s/^Version: .*/Version: $VERSION/" "$ROOT_DIR/packaging/debian/control" > "$PKG_ROOT/DEBIAN/control"
+install -m 0644 "$ROOT_DIR/packaging/debian/conffiles" "$PKG_ROOT/DEBIAN/conffiles"
 install -m 0755 "$ROOT_DIR/packaging/debian/postinst" "$PKG_ROOT/DEBIAN/postinst"
 install -m 0755 "$ROOT_DIR/packaging/debian/prerm" "$PKG_ROOT/DEBIAN/prerm"
 
