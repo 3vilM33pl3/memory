@@ -1306,6 +1306,7 @@ dependencies = [
  "chrono",
  "config",
  "humantime-serde",
+ "mem-platform",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1323,6 +1324,7 @@ dependencies = [
  "clap",
  "crossterm",
  "mem-api",
+ "mem-platform",
  "mem-watch",
  "ratatui",
  "reqwest",
@@ -1356,6 +1358,10 @@ dependencies = [
  "serde_json",
  "sha2",
 ]
+
+[[package]]
+name = "mem-platform"
+version = "0.1.5"
 
 [[package]]
 name = "mem-search"

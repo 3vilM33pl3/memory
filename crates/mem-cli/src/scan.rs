@@ -8,8 +8,9 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::Utc;
 use mem_api::{
-    AppConfig, CaptureCandidateInput, CaptureCandidateSourceInput, CaptureTaskRequest, MemoryType,
-    SourceKind, discover_global_config_path, discover_repo_env_path,
+    AgentProjectConfig, AppConfig, CaptureCandidateInput, CaptureCandidateSourceInput,
+    CaptureTaskRequest, MemoryType, SourceKind, discover_global_config_path,
+    discover_repo_env_path, load_repo_agent_settings,
 };
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
@@ -233,15 +234,16 @@ fn build_dossier(
 }
 
 fn collect_repo_files(repo_root: &Path, budget: usize) -> Result<Vec<RepoFileContext>> {
+    let settings = load_repo_agent_settings(repo_root).unwrap_or_default();
     let tracked = git_output(repo_root, ["ls-files"])
         .map(|output| output.lines().map(ToOwned::to_owned).collect::<Vec<_>>())
         .unwrap_or_default();
 
     let mut scored = tracked
         .into_iter()
-        .filter(|path| !is_ignored_path(path))
+        .filter(|path| !is_ignored_path(path, &settings))
         .filter_map(|path| {
-            let score = file_score(&path);
+            let score = file_score(&path, &settings);
             (score > 0).then_some((path, score))
         })
         .collect::<Vec<_>>();
@@ -705,15 +707,16 @@ where
     String::from_utf8(output.stdout).context("decode git output")
 }
 
-fn is_ignored_path(path: &str) -> bool {
+fn is_ignored_path(path: &str, settings: &AgentProjectConfig) -> bool {
     path.starts_with(".git/")
         || path.starts_with("target/")
         || path.starts_with(".mem/")
         || path.starts_with("node_modules/")
         || path.contains("/node_modules/")
+        || matches_path_prefix(path, &settings.capture.ignore_paths)
 }
 
-fn file_score(path: &str) -> i32 {
+fn file_score(path: &str, settings: &AgentProjectConfig) -> i32 {
     let file_name = Path::new(path)
         .file_name()
         .and_then(|name| name.to_str())
@@ -726,6 +729,9 @@ fn file_score(path: &str) -> i32 {
     }
 
     let mut score = 0;
+    if matches_path_prefix(path, &settings.capture.include_paths) {
+        score += 140;
+    }
     if file_name.starts_with("README") {
         score += 120;
     }
@@ -766,6 +772,16 @@ fn file_score(path: &str) -> i32 {
         score += 35;
     }
     score
+}
+
+fn matches_path_prefix(path: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|pattern| {
+        let trimmed = pattern.trim().trim_start_matches("./");
+        !trimmed.is_empty()
+            && (path == trimmed
+                || path.starts_with(trimmed.trim_end_matches('/'))
+                || path.starts_with(&format!("{}/", trimmed.trim_end_matches('/'))))
+    })
 }
 
 fn trim_text(text: &str, max_bytes: usize) -> String {
@@ -834,7 +850,25 @@ mod tests {
 
     #[test]
     fn file_score_prioritizes_readme_and_docs() {
-        assert!(file_score("README.md") > file_score("src/main.rs"));
-        assert!(file_score("docs/architecture.md") > file_score("scripts/build.sh"));
+        let settings = AgentProjectConfig::default();
+        assert!(file_score("README.md", &settings) > file_score("src/main.rs", &settings));
+        assert!(
+            file_score("docs/architecture.md", &settings)
+                > file_score("scripts/build.sh", &settings)
+        );
+    }
+
+    #[test]
+    fn file_score_respects_agent_include_and_ignore_paths() {
+        let settings = AgentProjectConfig {
+            capture: mem_api::AgentCaptureConfig {
+                include_paths: vec!["ops/".to_string()],
+                ignore_paths: vec!["docs/private/".to_string()],
+            },
+            ..AgentProjectConfig::default()
+        };
+
+        assert!(file_score("ops/runbook.md", &settings) > file_score("misc.txt", &settings));
+        assert!(is_ignored_path("docs/private/secrets.md", &settings));
     }
 }

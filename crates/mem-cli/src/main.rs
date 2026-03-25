@@ -3,12 +3,13 @@ mod scan;
 mod tui;
 mod wizard;
 
+#[cfg(target_os = "macos")]
+use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::os::unix::{fs::PermissionsExt, net::UnixStream};
 use std::{
-    collections::BTreeMap,
     env, fs,
     net::{SocketAddr, TcpStream},
-    os::unix::fs::PermissionsExt,
-    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
     time::Duration,
@@ -23,6 +24,7 @@ use mem_api::{
     ProjectOverviewResponse, QueryFilters, QueryRequest, QueryResponse, ReindexRequest,
     ReindexResponse, TestResult, discover_global_config_path, discover_repo_env_path,
 };
+use mem_platform as platform;
 use mem_watch::{flush_path, load_state, run_once, to_status};
 use reqwest::{Client, header::HeaderMap};
 use serde::Serialize;
@@ -645,8 +647,7 @@ fn write_shared_env_file(path: &Path, key: &str, value: &str) -> Result<()> {
         content.push('\n');
     }
     fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .with_context(|| format!("chmod {}", path.display()))
+    set_private_file_permissions(path)
 }
 
 fn shared_env_lookup(path: &Path, key: &str) -> Option<String> {
@@ -673,36 +674,11 @@ fn shared_env_path_for_config(config_path: &Path) -> PathBuf {
 }
 
 fn default_global_config_path() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    if let Some(path) = macos_app_support_dir() {
-        return path.join("memory-layer.toml");
-    }
-
-    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
-        PathBuf::from(config_home)
-            .join("memory-layer")
-            .join("memory-layer.toml")
-    } else if let Ok(home) = env::var("HOME") {
-        PathBuf::from(home)
-            .join(".config")
-            .join("memory-layer")
-            .join("memory-layer.toml")
-    } else {
-        PathBuf::from("/etc/memory-layer/memory-layer.toml")
-    }
+    platform::preferred_global_config_path()
 }
 
 fn default_shared_capnp_unix_socket() -> String {
-    #[cfg(target_os = "macos")]
-    if let Some(path) = macos_app_support_dir() {
-        return path
-            .join("run")
-            .join("memory-layer.capnp.sock")
-            .display()
-            .to_string();
-    }
-
-    "/tmp/memory-layer.capnp.sock".to_string()
+    platform::default_shared_capnp_unix_socket()
 }
 
 fn backend_start_hint(config_path: &Path) -> String {
@@ -714,21 +690,12 @@ fn backend_start_hint(config_path: &Path) -> String {
 }
 
 fn backend_service_available() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        mem_service_binary_path().is_ok()
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        packaged_service_available()
-    }
+    platform::backend_service_available()
 }
 
 #[cfg(not(target_os = "macos"))]
 fn packaged_service_available() -> bool {
-    Path::new("/lib/systemd/system/memory-layer.service").is_file()
-        || Path::new("/etc/systemd/system/memory-layer.service").is_file()
+    platform::packaged_system_service_available()
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1720,6 +1687,7 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
     let config_path = mem_dir.join("config.toml");
     let project_path = mem_dir.join("project.toml");
     let local_gitignore_path = mem_dir.join(".gitignore");
+    let agent_config_path = repo_root.join(".agents").join("memory-layer.toml");
     let skill_dir = repo_root
         .join(".agents")
         .join("skills")
@@ -1735,6 +1703,16 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
     }
     if !local_gitignore_path.exists() {
         fs::write(&local_gitignore_path, "runtime/\n").context("write .mem/.gitignore")?;
+    }
+    if !agent_config_path.exists() {
+        if let Some(parent) = agent_config_path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        fs::write(
+            &agent_config_path,
+            render_agent_project_config(project, repo_root),
+        )
+        .context("write .agents/memory-layer.toml")?;
     }
     if !skill_dir.exists() {
         let skill_template_dir = discover_skill_template_dir().ok_or_else(|| {
@@ -1865,20 +1843,32 @@ fn tcp_endpoint_status(addr: &str) -> (DoctorStatus, String) {
 }
 
 fn unix_socket_status(path: &str) -> (DoctorStatus, String) {
-    let socket_path = Path::new(path);
-    if !socket_path.exists() {
-        return (DoctorStatus::Ok, "socket path is free".to_string());
+    #[cfg(unix)]
+    {
+        let socket_path = Path::new(path);
+        if !socket_path.exists() {
+            return (DoctorStatus::Ok, "socket path is free".to_string());
+        }
+
+        match UnixStream::connect(socket_path) {
+            Ok(_) => (
+                DoctorStatus::Warn,
+                format!("listener detected on {}", socket_path.display()),
+            ),
+            Err(error) => (
+                DoctorStatus::Warn,
+                format!("path exists but is not accepting connections: {error}"),
+            ),
+        }
     }
 
-    match UnixStream::connect(socket_path) {
-        Ok(_) => (
-            DoctorStatus::Warn,
-            format!("listener detected on {}", socket_path.display()),
-        ),
-        Err(error) => (
-            DoctorStatus::Warn,
-            format!("path exists but is not accepting connections: {error}"),
-        ),
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        (
+            DoctorStatus::Skipped,
+            "unix socket checks are not available on this platform".to_string(),
+        )
     }
 }
 
@@ -1954,6 +1944,7 @@ fn initialize_repo(
     let project_path = mem_dir.join("project.toml");
     let local_gitignore_path = mem_dir.join(".gitignore");
     let root_gitignore_path = repo_root.join(".gitignore");
+    let agent_config_path = repo_root.join(".agents").join("memory-layer.toml");
     let skill_dir = repo_root
         .join(".agents")
         .join("skills")
@@ -1962,7 +1953,7 @@ fn initialize_repo(
         .ok_or_else(|| anyhow::anyhow!("could not locate packaged memory-layer skill template"))?;
 
     if !force {
-        for path in [&config_path, &project_path] {
+        for path in [&config_path, &project_path, &agent_config_path] {
             if path.exists() {
                 anyhow::bail!(
                     "{} already exists; rerun with --force to overwrite generated files",
@@ -1980,6 +1971,7 @@ fn initialize_repo(
 
     let config_contents = render_repo_config(repo_root);
     let project_contents = render_project_metadata(project, repo_root);
+    let agent_project_contents = render_agent_project_config(project, repo_root);
     let mem_gitignore_contents = "runtime/\n";
     let root_gitignore_line = "/.mem\n";
 
@@ -1987,6 +1979,11 @@ fn initialize_repo(
         fs::create_dir_all(&runtime_dir).context("create .mem/runtime")?;
         fs::write(&config_path, config_contents).context("write .mem/config.toml")?;
         fs::write(&project_path, project_contents).context("write .mem/project.toml")?;
+        if let Some(parent) = agent_config_path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        fs::write(&agent_config_path, agent_project_contents)
+            .context("write .agents/memory-layer.toml")?;
         fs::write(&local_gitignore_path, mem_gitignore_contents)
             .context("write .mem/.gitignore")?;
         copy_skill_template(&skill_template_dir, &skill_dir, force)?;
@@ -1998,14 +1995,16 @@ fn initialize_repo(
         project,
         &config_path,
         &project_path,
+        &agent_config_path,
         &skill_dir,
         print_only,
     ))
 }
 
-fn enable_backend_service(config_path: &Path) -> Result<String> {
+fn enable_backend_service(_config_path: &Path) -> Result<String> {
     #[cfg(target_os = "macos")]
     {
+        let config_path = _config_path;
         let plist_path = backend_launch_agent_path()?;
         let _ = bootout_launch_agent(&plist_path, backend_launch_agent_label());
         if plist_path.exists() {
@@ -2282,64 +2281,28 @@ fn user_systemd_unit_dir() -> Result<PathBuf> {
 }
 
 fn user_memory_layer_env_file() -> Result<PathBuf> {
-    #[cfg(target_os = "macos")]
-    {
-        return Ok(macos_app_support_dir()
-            .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
-            .join("memory-layer.env"));
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
-            return Ok(PathBuf::from(config_home)
-                .join("memory-layer")
-                .join("memory-layer.env"));
-        }
-        let home = env::var("HOME").context("HOME is not set")?;
-        Ok(PathBuf::from(home)
-            .join(".config")
-            .join("memory-layer")
-            .join("memory-layer.env"))
-    }
+    platform::preferred_user_env_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))
 }
 
+#[cfg(target_os = "macos")]
 fn mem_service_binary_path() -> Result<PathBuf> {
-    let current_exe = env::current_exe().context("locate current executable")?;
-    if let Some(bin_dir) = current_exe.parent() {
-        let sibling = bin_dir.join("mem-service");
-        if sibling.is_file() {
-            return Ok(sibling);
-        }
-    }
-    Ok(PathBuf::from("mem-service"))
+    Ok(platform::current_exe_sibling_binary("mem-service")
+        .unwrap_or_else(|| PathBuf::from("mem-service")))
 }
 
 fn memory_watch_binary_path() -> Result<PathBuf> {
-    let current_exe = env::current_exe().context("locate current executable")?;
-    if let Some(bin_dir) = current_exe.parent() {
-        let sibling = bin_dir.join("memory-watch");
-        if sibling.is_file() {
-            return Ok(sibling);
-        }
-    }
-    Ok(PathBuf::from("memory-watch"))
+    Ok(platform::current_exe_sibling_binary("memory-watch")
+        .unwrap_or_else(|| PathBuf::from("memory-watch")))
 }
 
 #[cfg(not(target_os = "macos"))]
 fn watch_unit_name(project: &str) -> String {
-    let sanitized = sanitize_service_fragment(project);
-    format!("memory-watch-{}.service", sanitized)
+    platform::watch_service_unit_name(project)
 }
 
+#[cfg(target_os = "macos")]
 fn sanitize_service_fragment(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| match ch {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
-            _ => '-',
-        })
-        .collect::<String>()
+    platform::sanitize_service_fragment(value)
 }
 
 #[cfg(target_os = "macos")]
@@ -2351,57 +2314,42 @@ struct LaunchAgentStatus {
 
 #[cfg(target_os = "macos")]
 fn backend_launch_agent_label() -> &'static str {
-    "com.memory-layer.mem-service"
+    platform::backend_launch_agent_label()
 }
 
 #[cfg(target_os = "macos")]
 fn watch_launch_agent_label(project: &str) -> String {
-    format!(
-        "com.memory-layer.memory-watch.{}",
-        sanitize_service_fragment(project)
-    )
+    platform::watch_launch_agent_label(project)
 }
 
 #[cfg(target_os = "macos")]
 fn backend_launch_agent_path() -> Result<PathBuf> {
-    Ok(user_launch_agents_dir()?.join(format!("{}.plist", backend_launch_agent_label())))
+    platform::backend_launch_agent_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))
 }
 
 #[cfg(target_os = "macos")]
 fn backend_pid_file_path() -> Result<PathBuf> {
-    Ok(macos_app_support_dir()
-        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
-        .join("run")
-        .join("mem-service.pid"))
+    platform::backend_pid_file_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))
 }
 
 #[cfg(target_os = "macos")]
 fn watch_launch_agent_path(project: &str) -> Result<PathBuf> {
-    Ok(user_launch_agents_dir()?.join(format!("{}.plist", watch_launch_agent_label(project))))
+    platform::watch_launch_agent_path(project).ok_or_else(|| anyhow::anyhow!("HOME is not set"))
 }
 
 #[cfg(target_os = "macos")]
 fn user_launch_agents_dir() -> Result<PathBuf> {
-    let home = env::var("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join("Library").join("LaunchAgents"))
+    platform::user_launch_agents_dir().ok_or_else(|| anyhow::anyhow!("HOME is not set"))
 }
 
 #[cfg(target_os = "macos")]
 fn macos_app_support_dir() -> Option<PathBuf> {
-    let home = env::var("HOME").ok()?;
-    Some(
-        PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("memory-layer"),
-    )
+    platform::macos_app_support_dir()
 }
 
 #[cfg(target_os = "macos")]
 fn user_memory_layer_log_dir() -> Result<PathBuf> {
-    Ok(macos_app_support_dir()
-        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
-        .join("logs"))
+    platform::user_memory_layer_log_dir().ok_or_else(|| anyhow::anyhow!("HOME is not set"))
 }
 
 #[cfg(target_os = "macos")]
@@ -2858,10 +2806,31 @@ fn copy_directory_tree(src: &Path, dest: &Path) -> Result<()> {
             } else {
                 0o644
             };
-            fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))
-                .with_context(|| format!("chmod {}", dest_path.display()))?;
+            set_copied_file_permissions(&dest_path, mode)?;
         }
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_file_permissions(path: &Path) -> Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("chmod {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_private_file_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_copied_file_permissions(path: &Path, mode: u32) -> Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        .with_context(|| format!("chmod {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_copied_file_permissions(_path: &Path, _mode: u32) -> Result<()> {
     Ok(())
 }
 
@@ -2905,6 +2874,29 @@ repo_root = "{}"
     )
 }
 
+pub(crate) fn render_agent_project_config(project: &str, repo_root: &Path) -> String {
+    format!(
+        r#"# Project-owned memory behavior.
+# Less technical users should customize Memory Layer here.
+
+[project]
+slug = "{project}"
+repo_root = "{}"
+
+[capture]
+include_paths = ["README.md", "docs/", "src/", "crates/", "scripts/", "packaging/"]
+ignore_paths = [".git/", "target/", ".mem/", "node_modules/"]
+
+[analysis]
+analyzers = ["rust", "typescript", "python"]
+
+[retrieval]
+graph_enabled = false
+"#,
+        repo_root.display()
+    )
+}
+
 fn ensure_root_gitignore_entry(path: &Path, line: &str) -> Result<()> {
     let mut content = if path.exists() {
         fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
@@ -2931,6 +2923,7 @@ fn render_init_summary(
     project: &str,
     config_path: &Path,
     project_path: &Path,
+    agent_config_path: &Path,
     skill_path: &Path,
     print_only: bool,
 ) -> String {
@@ -2940,14 +2933,16 @@ fn render_init_summary(
         "Created"
     };
     format!(
-        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} only for repo-specific overrides\n3. Start the shared backend if it is not already running:\n   mem-service\n4. Optional: configure repo-local [service] overrides if you want a parallel dev backend for this repo\n5. Optional: run a project scan:\n   mem-cli scan --project {}\n6. Optional: enable the per-repo watcher user service:\n   mem-cli watch enable --project {}\n7. Open the TUI:\n   mem-cli tui --project {}\n8. Use the repo-local skill from {}",
+        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} for repo-specific runtime overrides\n3. Use {} to customize project memory behavior\n4. Start the shared backend if it is not already running:\n   mem-service\n5. Optional: configure repo-local [service] overrides if you want a parallel dev backend for this repo\n6. Optional: run a project scan:\n   mem-cli scan --project {}\n7. Optional: enable the per-repo watcher user service:\n   mem-cli watch enable --project {}\n8. Open the TUI:\n   mem-cli tui --project {}\n9. Use the repo-local skill from {}",
         repo_root.display(),
         config_path.display(),
         project_path.display(),
+        agent_config_path.display(),
         config_path.parent().unwrap_or(repo_root).display(),
         skill_path.display(),
         default_global_config_path_label(),
         config_path.display(),
+        agent_config_path.display(),
         project,
         project,
         project,
@@ -3543,16 +3538,16 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     use super::{
-        RememberArgs, backend_service_available, build_remember_request, initialize_repo,
-        is_placeholder_database_url, mask_database_url, repair_repo_bootstrap,
+        RememberArgs, build_remember_request, initialize_repo, is_placeholder_database_url,
+        mask_database_url, render_agent_project_config, repair_repo_bootstrap,
         resolve_project_slug, resolve_repo_root, root_gitignore_contains_mem,
-        sanitize_service_fragment,
     };
 
     #[cfg(target_os = "macos")]
     use super::{
-        backend_launch_agent_label, default_global_config_path, render_backend_launch_agent,
-        render_watch_launch_agent, watch_launch_agent_label,
+        backend_launch_agent_label, backend_service_available, default_global_config_path,
+        render_backend_launch_agent, render_watch_launch_agent, sanitize_service_fragment,
+        watch_launch_agent_label,
     };
 
     #[cfg(not(target_os = "macos"))]
@@ -3606,6 +3601,7 @@ mod tests {
         let summary = initialize_repo(&repo_root, "memory", false, true).unwrap();
 
         assert!(summary.contains(".mem/config.toml"));
+        assert!(summary.contains(".agents/memory-layer.toml"));
         assert!(summary.contains(".agents/skills/memory-layer"));
         assert!(summary.contains("mem-cli watch enable --project memory"));
         assert!(summary.contains("mem-service"));
@@ -3620,6 +3616,7 @@ mod tests {
 
         assert!(repo_root.join(".mem/config.toml").is_file());
         assert!(repo_root.join(".mem/project.toml").is_file());
+        assert!(repo_root.join(".agents/memory-layer.toml").is_file());
         assert!(repo_root.join(".mem/runtime").is_dir());
         assert!(
             repo_root
@@ -3682,6 +3679,7 @@ mod tests {
 
         assert!(repo_root.join(".mem/config.toml").is_file());
         assert!(repo_root.join(".mem/project.toml").is_file());
+        assert!(repo_root.join(".agents/memory-layer.toml").is_file());
         assert!(repo_root.join(".mem/runtime").is_dir());
         assert!(
             repo_root
@@ -3691,6 +3689,16 @@ mod tests {
         assert!(root_gitignore_contains_mem(&repo_root).unwrap());
 
         let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn agent_project_config_mentions_project_customization() {
+        let repo_root = PathBuf::from("/tmp/memory");
+        let content = render_agent_project_config("memory", &repo_root);
+
+        assert!(content.contains("[capture]"));
+        assert!(content.contains("include_paths"));
+        assert!(content.contains("graph_enabled = false"));
     }
 
     #[cfg(not(target_os = "macos"))]

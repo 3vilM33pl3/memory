@@ -160,6 +160,7 @@ Inside each project:
 - `.mem/project.toml`
 - `.mem/memory-layer.env`
 - `.mem/runtime/`
+- `.agents/memory-layer.toml`
 
 ## What To Put Where
 
@@ -180,6 +181,14 @@ Use this for project-specific overrides:
 - local backend ports
 - project-specific DB override if needed
 - repo-specific `writer.id` override if one project should write under a different writer identity
+
+### Project memory behavior
+
+Use `.agents/memory-layer.toml` for project-owned behavior that should be easy to adapt without digging through service config:
+
+- include and ignore path hints for repository scans
+- enabled analyzers
+- future graph and plugin controls
 
 ### Env files
 

@@ -24,9 +24,9 @@ use reqwest::Client;
 use super::{
     ApiClient, DoctorReport, DoctorStatus, backend_service_available, default_global_config_path,
     default_local_service_overrides, default_shared_capnp_unix_socket, enable_backend_service,
-    enable_watch_service, mask_database_url, read_local_service_overrides, render_project_metadata,
-    repair_repo_bootstrap, run_doctor, shared_env_lookup, shared_env_path_for_config,
-    write_shared_env_file,
+    enable_watch_service, mask_database_url, read_local_service_overrides,
+    render_agent_project_config, render_project_metadata, repair_repo_bootstrap, run_doctor,
+    shared_env_lookup, shared_env_path_for_config, write_shared_env_file,
 };
 use crate::scan::{self, ScanReport};
 
@@ -1525,7 +1525,17 @@ fn apply_repo_setup(repo_root: &Path, draft: &WizardDraft) -> Result<()> {
         repo_root.join(".mem").join("project.toml"),
         render_project_metadata(&draft.project, repo_root),
     )
-    .with_context(|| format!("write {}", repo_root.join(".mem/project.toml").display()))
+    .with_context(|| format!("write {}", repo_root.join(".mem/project.toml").display()))?;
+    fs::write(
+        repo_root.join(".agents").join("memory-layer.toml"),
+        render_agent_project_config(&draft.project, repo_root),
+    )
+    .with_context(|| {
+        format!(
+            "write {}",
+            repo_root.join(".agents/memory-layer.toml").display()
+        )
+    })
 }
 
 fn write_global_config(draft: &WizardDraft) -> Result<()> {

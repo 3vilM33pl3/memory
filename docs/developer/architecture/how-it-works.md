@@ -84,8 +84,10 @@ Outside the crates:
 
 - `migrations/`
   PostgreSQL schema.
+- `.agents/memory-layer.toml`
+  Project-owned memory behavior. This is the intended customization layer for scan/analyzer/retrieval behavior.
 - `.agents/skills/memory-layer/`
-  The repo-local Codex skill and helper scripts.
+  The repo-local Codex skill and helper scripts. This is generated/runtime scaffolding, not the main user-edited memory config.
 - `packaging/debian/`
   Debian and systemd assets.
 
@@ -126,6 +128,7 @@ The repo-local bootstrap creates:
 - `.mem/config.toml`
 - `.mem/project.toml`
 - `.mem/runtime/`
+- `.agents/memory-layer.toml`
 - `.agents/skills/memory-layer/`
 
 This is deliberately repo-local because Memory Layer is project-scoped. The same backend and database may serve many repos, but each repo still needs its own slug, local overrides, and skill installation.

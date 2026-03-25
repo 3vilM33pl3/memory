@@ -58,6 +58,11 @@ For the full onboarding flow, prerequisites, upgrade path, and troubleshooting, 
 - can scan a repository for durable project knowledge
 - can import git commit history as searchable evidence
 
+Project-local customization now has two layers:
+
+- `.mem/` for runtime overrides and generated state
+- `.agents/memory-layer.toml` for project-owned memory behavior such as include/ignore paths and future analyzers/plugins
+
 ## Documentation
 
 ### User Docs

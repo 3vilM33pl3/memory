@@ -9,6 +9,7 @@ use std::{
 use capnp::{message::ReaderOptions, serialize};
 use chrono::{DateTime, Utc};
 use config::{Config, ConfigError, Environment, File, FileFormat};
+use mem_platform::{default_shared_capnp_unix_socket, discover_existing_global_config_path};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -1059,38 +1060,7 @@ pub fn discover_global_env_path() -> Option<PathBuf> {
 }
 
 pub fn discover_global_config_path() -> Option<PathBuf> {
-    #[cfg(target_os = "macos")]
-    if let Some(candidate) = macos_app_support_dir().map(|dir| dir.join("memory-layer.toml")) {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-
-    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
-        let candidate = PathBuf::from(config_home)
-            .join("memory-layer")
-            .join("memory-layer.toml");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-
-    if let Ok(home) = env::var("HOME") {
-        let candidate = PathBuf::from(home)
-            .join(".config")
-            .join("memory-layer")
-            .join("memory-layer.toml");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-
-    let system_candidate = PathBuf::from("/etc/memory-layer/memory-layer.toml");
-    if system_candidate.is_file() {
-        return Some(system_candidate);
-    }
-
-    None
+    discover_existing_global_config_path()
 }
 
 pub fn find_repo_config_path(start: &Path) -> Option<PathBuf> {
@@ -1101,6 +1071,78 @@ pub fn find_repo_config_path(start: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentProjectConfig {
+    #[serde(default)]
+    pub capture: AgentCaptureConfig,
+    #[serde(default)]
+    pub analysis: AgentAnalysisConfig,
+    #[serde(default)]
+    pub retrieval: AgentRetrievalConfig,
+}
+
+impl Default for AgentProjectConfig {
+    fn default() -> Self {
+        Self {
+            capture: AgentCaptureConfig::default(),
+            analysis: AgentAnalysisConfig::default(),
+            retrieval: AgentRetrievalConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentCaptureConfig {
+    #[serde(default)]
+    pub include_paths: Vec<String>,
+    #[serde(default)]
+    pub ignore_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentAnalysisConfig {
+    #[serde(default = "default_agent_analyzers")]
+    pub analyzers: Vec<String>,
+}
+
+impl Default for AgentAnalysisConfig {
+    fn default() -> Self {
+        Self {
+            analyzers: default_agent_analyzers(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentRetrievalConfig {
+    #[serde(default)]
+    pub graph_enabled: bool,
+}
+
+fn default_agent_analyzers() -> Vec<String> {
+    vec![
+        "rust".to_string(),
+        "typescript".to_string(),
+        "python".to_string(),
+    ]
+}
+
+pub fn repo_agent_settings_path(repo_root: &Path) -> PathBuf {
+    repo_root.join(".agents").join("memory-layer.toml")
+}
+
+pub fn load_repo_agent_settings(repo_root: &Path) -> Result<AgentProjectConfig, ConfigError> {
+    let path = repo_agent_settings_path(repo_root);
+    if !path.exists() {
+        return Ok(AgentProjectConfig::default());
+    }
+
+    let config = Config::builder()
+        .add_source(File::from(path).format(FileFormat::Toml).required(false))
+        .build()?;
+    config.try_deserialize()
 }
 
 pub fn resolve_secret_value(key: &str) -> Option<String> {
@@ -1332,23 +1374,7 @@ fn default_api_token() -> String {
 }
 
 fn default_capnp_unix_socket() -> String {
-    #[cfg(target_os = "macos")]
-    if let Some(path) = macos_app_support_dir().map(|dir| dir.join("run/memory-layer.capnp.sock")) {
-        return path.display().to_string();
-    }
-
-    "/tmp/memory-layer.capnp.sock".to_string()
-}
-
-#[cfg(target_os = "macos")]
-fn macos_app_support_dir() -> Option<PathBuf> {
-    let home = env::var("HOME").ok()?;
-    Some(
-        PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("memory-layer"),
-    )
+    default_shared_capnp_unix_socket()
 }
 
 fn default_capnp_tcp_addr() -> String {
@@ -1579,6 +1605,25 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
 
         assert_eq!(find_repo_config_path(&nested).unwrap(), config_path);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn loads_repo_agent_settings_from_agents_directory() {
+        let temp_dir = unique_temp_dir("mem-api-agent-settings");
+        let agents_dir = temp_dir.join(".agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(
+            agents_dir.join("memory-layer.toml"),
+            "[capture]\ninclude_paths = [\"ops/\"]\nignore_paths = [\"tmp/\"]\n\n[analysis]\nanalyzers = [\"rust\"]\n\n[retrieval]\ngraph_enabled = true\n",
+        )
+        .unwrap();
+
+        let settings = load_repo_agent_settings(&temp_dir).unwrap();
+
+        assert_eq!(settings.capture.include_paths, vec!["ops/"]);
+        assert_eq!(settings.analysis.analyzers, vec!["rust"]);
+        assert!(settings.retrieval.graph_enabled);
         let _ = fs::remove_dir_all(temp_dir);
     }
 
