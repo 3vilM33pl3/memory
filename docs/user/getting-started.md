@@ -177,7 +177,8 @@ Inside each project:
 Use this for values shared by many repos:
 
 - `database.url`
-- `[cluster]` settings if you want relay discovery on a local network
+- `service.api_token`
+- `[cluster]` settings for backend relay discovery on a local network
 - `[llm]` settings
 
 The shared service API token normally lives in the adjacent `memory-layer.env` file and is provisioned automatically during setup.
@@ -256,6 +257,15 @@ Use an explicit writer ID only when you want a custom stable label shared across
 If a machine can reach PostgreSQL, `mem-service` runs as a `primary`.
 
 If a machine cannot reach PostgreSQL but can see another Memory Layer service on the local network, `mem-service` can run as a `relay`. In relay mode it discovers a primary over UDP multicast and forwards the normal HTTP API and browser WebSocket traffic to it.
+
+Relay discovery is controlled from shared config:
+
+```toml
+[cluster]
+enabled = true
+```
+
+The wizard exposes this as a shared setup option, and `mem-cli service enable` can offer to turn it on after a database-connect failure.
 
 ## Daily Use
 

@@ -218,6 +218,7 @@ struct WizardDraft {
     local_bind_addr: String,
     local_capnp_tcp_addr: String,
     local_capnp_unix_socket: String,
+    relay_discovery_enabled: ToggleChoice,
     apply_repo_setup: ToggleChoice,
     automation_enabled: ToggleChoice,
     automation_mode: AutomationMode,
@@ -348,6 +349,10 @@ impl WizardDraft {
                 .as_ref()
                 .map(|overrides| overrides.capnp_unix_socket.clone())
                 .unwrap_or_default(),
+            relay_discovery_enabled: global_config
+                .as_ref()
+                .map(|config| toggle_from_bool(config.cluster.enabled))
+                .unwrap_or(ToggleChoice::Yes),
             apply_repo_setup: if repo_root.is_some() {
                 ToggleChoice::Yes
             } else {
@@ -436,6 +441,7 @@ enum FieldKey {
     LocalBindAddr,
     LocalCapnpTcpAddr,
     LocalCapnpUnixSocket,
+    RelayDiscoveryEnabled,
     ApplyRepoSetup,
     AutomationEnabled,
     AutomationMode,
@@ -729,6 +735,7 @@ impl WizardApp {
                     }
                 }
             }
+            FieldKey::RelayDiscoveryEnabled => self.draft.relay_discovery_enabled.toggle(),
             FieldKey::AutomationEnabled => self.draft.automation_enabled.toggle(),
             FieldKey::AutomationRequirePassingTest => {
                 self.draft.automation_require_passing_test.toggle()
@@ -860,6 +867,11 @@ fn shared_items(draft: &WizardDraft) -> Vec<StepItem> {
             FieldKey::LlmApiKeyValue,
             "LLM API key value",
             &secret_label(&draft.llm_api_key_value),
+        ),
+        choice_item(
+            FieldKey::RelayDiscoveryEnabled,
+            "Relay discovery fallback",
+            draft.relay_discovery_enabled.label(),
         ),
     ];
     if draft.llm_model_choice == LlmModelChoice::Custom {
@@ -1214,6 +1226,10 @@ fn review_lines(draft: &WizardDraft, step: Step, status: &str) -> Vec<Line<'stat
                     draft.llm_api_key_env,
                     secret_label(&draft.llm_api_key_value)
                 )));
+                lines.push(Line::from(format!(
+                    "Relay discovery fallback: {}",
+                    draft.relay_discovery_enabled.label()
+                )));
             } else {
                 lines.push(Line::from("Shared/global files will be left unchanged."));
             }
@@ -1521,7 +1537,7 @@ async fn apply_draft(draft: &WizardDraft, dry_run: bool) -> Result<WizardResult>
         let backend_output = if dry_run {
             super::preview_enable_backend_service(&draft.global_config_path)
         } else {
-            enable_backend_service(&draft.global_config_path)?
+            enable_backend_service(&draft.global_config_path).await?
         };
         lines.extend(split_lines(backend_output));
     }
@@ -1629,9 +1645,10 @@ fn write_global_config(draft: &WizardDraft) -> Result<()> {
 
 fn render_global_config(draft: &WizardDraft) -> String {
     format!(
-        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\n# service API token is provisioned automatically into memory-layer.env\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n# Optional shared writer label. If omitted, Memory Layer derives a writer id automatically.\n# [writer]\n# id = \"codex-cli-main\"\n# name = \"Codex CLI\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[embeddings]\nprovider = \"openai_compatible\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
+        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\n# service API token is provisioned automatically into memory-layer.env\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[cluster]\nenabled = {}\n# advertise_addr = \"192.168.1.50:4040\"\n# discovery_multicast_addr = \"239.255.42.99:4042\"\n# announce_interval = \"5s\"\n# peer_ttl = \"15s\"\n# priority = 100\n\n# Optional shared writer label. If omitted, Memory Layer derives a writer id automatically.\n# [writer]\n# id = \"codex-cli-main\"\n# name = \"Codex CLI\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[embeddings]\nprovider = \"openai_compatible\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
         default_shared_capnp_unix_socket(),
         draft.database_url,
+        draft.relay_discovery_enabled.is_yes(),
         draft.llm_provider,
         draft.llm_base_url,
         draft.llm_api_key_env,
@@ -1802,6 +1819,7 @@ fn field_label(field: FieldKey) -> &'static str {
         FieldKey::LocalBindAddr => "Local HTTP bind",
         FieldKey::LocalCapnpTcpAddr => "Local Cap'n Proto TCP",
         FieldKey::LocalCapnpUnixSocket => "Local Unix socket",
+        FieldKey::RelayDiscoveryEnabled => "Relay discovery fallback",
         FieldKey::ApplyRepoSetup => "Apply repo-local setup",
         FieldKey::AutomationEnabled => "Automation enabled",
         FieldKey::AutomationMode => "Automation mode",
@@ -2004,6 +2022,7 @@ mod tests {
             local_bind_addr: "127.0.0.1:4140".to_string(),
             local_capnp_tcp_addr: "127.0.0.1:4141".to_string(),
             local_capnp_unix_socket: "/tmp/memory-layer.capnp.sock".to_string(),
+            relay_discovery_enabled: super::ToggleChoice::Yes,
             apply_repo_setup: super::ToggleChoice::Yes,
             automation_enabled: super::ToggleChoice::No,
             automation_mode: AutomationMode::Suggest,
@@ -2021,6 +2040,52 @@ mod tests {
         };
 
         assert_eq!(next_step(Step::Welcome, &draft), Step::Repo);
+    }
+
+    #[test]
+    fn render_global_config_includes_cluster_section() {
+        let draft = WizardDraft {
+            global_config_path: PathBuf::from("/tmp/global.toml"),
+            shared_env_path: PathBuf::from("/tmp/global.env"),
+            repo_root: None,
+            project: "memory".to_string(),
+            include_global: super::ToggleChoice::Yes,
+            database_url: "postgresql://memory:secret@localhost:5432/memory".to_string(),
+            api_token: "token".to_string(),
+            llm_provider: "openai_compatible".to_string(),
+            llm_base_url: "https://api.openai.com/v1".to_string(),
+            llm_api_key_env: "OPENAI_API_KEY".to_string(),
+            llm_model_choice: super::LlmModelChoice::Gpt5,
+            llm_custom_model: String::new(),
+            llm_api_key_value: String::new(),
+            local_database_url: String::new(),
+            local_llm_api_key_value: String::new(),
+            local_service_mode: super::LocalServiceMode::InheritShared,
+            local_bind_addr: String::new(),
+            local_capnp_tcp_addr: String::new(),
+            local_capnp_unix_socket: String::new(),
+            relay_discovery_enabled: super::ToggleChoice::Yes,
+            apply_repo_setup: super::ToggleChoice::No,
+            automation_enabled: super::ToggleChoice::No,
+            automation_mode: AutomationMode::Suggest,
+            automation_poll_interval: "10s".to_string(),
+            automation_capture_idle_threshold: "10m".to_string(),
+            automation_min_changed_files: "2".to_string(),
+            automation_require_passing_test: super::ToggleChoice::No,
+            automation_curate_after_captures: "3".to_string(),
+            automation_curate_on_explicit_flush: super::ToggleChoice::Yes,
+            automation_ignored_paths: ".git/".to_string(),
+            enable_backend_service: super::ToggleChoice::No,
+            enable_watcher_service: super::ToggleChoice::No,
+            scan_choice: super::ScanChoice::Skip,
+            run_doctor: super::ToggleChoice::No,
+        };
+
+        let rendered = super::render_global_config(&draft);
+
+        assert!(rendered.contains("[cluster]"));
+        assert!(rendered.contains("enabled = true"));
+        assert!(rendered.contains("# advertise_addr = "));
     }
 
     #[test]
@@ -2082,6 +2147,7 @@ mod tests {
             automation_curate_after_captures: "3".to_string(),
             automation_curate_on_explicit_flush: super::ToggleChoice::Yes,
             automation_ignored_paths: ".git/".to_string(),
+            relay_discovery_enabled: super::ToggleChoice::Yes,
             enable_backend_service: super::ToggleChoice::No,
             enable_watcher_service: super::ToggleChoice::No,
             scan_choice: super::ScanChoice::Skip,

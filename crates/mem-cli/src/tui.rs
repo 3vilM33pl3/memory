@@ -36,7 +36,9 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::{ApiClient, SourceKindString, resume};
+use crate::{
+    ApiClient, SourceKindString, enable_relay_discovery_and_restart_backend, resume,
+};
 
 struct Theme;
 
@@ -60,7 +62,13 @@ impl Theme {
 pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> Result<()> {
     let (background_tx, mut background_rx) = mpsc::unbounded_channel();
     let mut terminal = setup_terminal()?;
-    let mut app = App::new(project, repo_root, detect_tool_versions(), background_tx);
+    let mut app = App::new(
+        project,
+        repo_root,
+        detect_tool_versions(),
+        api.config.cluster.enabled,
+        background_tx,
+    );
     start_agent_snapshot_worker(app.background_tx.clone());
     terminal.draw(|frame| draw(frame, &app))?;
     app.refresh(&api, RefreshMode::Startup).await;
@@ -195,6 +203,7 @@ struct App {
     ui_status: UiStatus,
     status_message: String,
     health_ok: bool,
+    relay_discovery_enabled: bool,
     filters: Filters,
     input_mode: InputMode,
     startup_resume_autoselect_pending: bool,
@@ -257,6 +266,7 @@ impl App {
         project: String,
         repo_root: PathBuf,
         versions: ToolVersions,
+        relay_discovery_enabled: bool,
         background_tx: mpsc::UnboundedSender<BackgroundEvent>,
     ) -> Self {
         let mut table_state = TableState::default();
@@ -309,6 +319,7 @@ impl App {
             ui_status: UiStatus::Loading,
             status_message: "Loading project data...".to_string(),
             health_ok: false,
+            relay_discovery_enabled,
             filters: Filters::default(),
             input_mode: InputMode::Normal,
             startup_resume_autoselect_pending: true,
@@ -344,14 +355,22 @@ impl App {
             Err(_) => {
                 had_error = true;
                 self.mark_service_unavailable();
+                self.status_message = if self.relay_discovery_enabled {
+                    "Backend unavailable. Relay discovery is enabled; press r to retry after another Memory Layer backend becomes reachable.".to_string()
+                } else {
+                    "Backend unavailable. Press b to enable relay discovery fallback or r to retry."
+                        .to_string()
+                };
             }
         }
 
         match overview_result {
             Ok(overview) => self.overview = overview,
             Err(error) => {
-                had_error = true;
-                self.status_message = error.to_string();
+                if self.health_ok {
+                    had_error = true;
+                    self.status_message = error.to_string();
+                }
             }
         }
 
@@ -378,7 +397,9 @@ impl App {
                 self.total_memories = 0;
                 self.selected_detail = None;
                 self.table_state.select(None);
-                self.status_message = error.to_string();
+                if self.health_ok {
+                    self.status_message = error.to_string();
+                }
             }
         }
 
@@ -627,6 +648,22 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Resume => {
                 self.scroll_resume(-1);
+            }
+            KeyCode::Char('b')
+                if key.modifiers.is_empty() && !self.health_ok && !self.relay_discovery_enabled =>
+            {
+                self.status_message =
+                    "Enabling relay discovery fallback and restarting backend...".to_string();
+                match enable_relay_discovery_and_restart_backend().await {
+                    Ok(message) => {
+                        self.relay_discovery_enabled = true;
+                        self.status_message = message;
+                        self.refresh(api, RefreshMode::Full).await;
+                    }
+                    Err(error) => {
+                        self.status_message = error.to_string();
+                    }
+                }
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Memories => {
                 self.move_selection(1, api, stream).await;
@@ -1719,14 +1756,18 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     }));
     frame.render_widget(filter_bar, chunks[1]);
 
-    match app.active_tab {
-        TabKind::Resume => draw_resume_tab(frame, app, chunks[2]),
-        TabKind::Memories => draw_memories_tab(frame, app, chunks[2]),
-        TabKind::Agents => draw_agents_tab(frame, app, chunks[2]),
-        TabKind::Query => draw_query_tab(frame, app, chunks[2]),
-        TabKind::Activity => draw_activity_tab(frame, app, chunks[2]),
-        TabKind::Project => draw_project_tab(frame, app, chunks[2]),
-        TabKind::Watchers => draw_watchers_tab(frame, app, chunks[2]),
+    if app.health_ok {
+        match app.active_tab {
+            TabKind::Resume => draw_resume_tab(frame, app, chunks[2]),
+            TabKind::Memories => draw_memories_tab(frame, app, chunks[2]),
+            TabKind::Agents => draw_agents_tab(frame, app, chunks[2]),
+            TabKind::Query => draw_query_tab(frame, app, chunks[2]),
+            TabKind::Activity => draw_activity_tab(frame, app, chunks[2]),
+            TabKind::Project => draw_project_tab(frame, app, chunks[2]),
+            TabKind::Watchers => draw_watchers_tab(frame, app, chunks[2]),
+        }
+    } else {
+        draw_backend_recovery(frame, app, chunks[2]);
     }
 
     let footer_chunks = Layout::default()
@@ -1826,6 +1867,37 @@ fn component_status_line<'a>(
         ));
     }
     Line::from(spans)
+}
+
+fn draw_backend_recovery(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Memory Layer backend is unavailable.",
+            Style::default()
+                .fg(Theme::DANGER)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from("The TUI could not reach /healthz on the configured backend."),
+    ];
+    if app.relay_discovery_enabled {
+        lines.push(Line::from(
+            "Relay discovery fallback is already enabled in shared config.",
+        ));
+        lines.push(Line::from(
+            "If another Memory Layer backend is running on the local network, press r to retry.",
+        ));
+    } else {
+        lines.push(Line::from(
+            "Press b to enable relay discovery fallback and restart the shared backend.",
+        ));
+    }
+    lines.push(Line::from("Press r to retry or q to quit."));
+
+    let widget = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .block(themed_block("Backend Recovery"));
+    frame.render_widget(widget, area);
 }
 
 fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
@@ -4744,6 +4816,7 @@ mod tests {
                 mem_service: "0.4.3".to_string(),
                 memory_watch: "0.4.3".to_string(),
             },
+            false,
             tx,
         );
         app.ui_status = UiStatus::Error;

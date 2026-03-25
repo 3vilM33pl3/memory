@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::os::unix::{fs::PermissionsExt, net::UnixStream};
 use std::{
     env, fs,
-    io::Read,
+    io::{self, IsTerminal, Read, Write},
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
@@ -1209,7 +1209,7 @@ async fn main() -> Result<()> {
                         if token_result.changed {
                             println!("{}", token_result.summary_line());
                         }
-                        println!("{}", enable_backend_service(&config_path)?);
+                        println!("{}", enable_backend_service(&config_path).await?);
                     }
                 }
                 ServiceCommand::Disable(args) => {
@@ -2540,6 +2540,7 @@ async fn run_doctor(
             false,
         ));
 
+        let mut database_connect_error = None;
         if is_placeholder_database_url(&config.database.url) {
             report.push(doctor_check(
                 "database.pgvector_extension",
@@ -2609,12 +2610,23 @@ async fn run_doctor(
                     }
                 }
                 Err(error) => {
+                    database_connect_error = Some(error.to_string());
                     report.push(doctor_check(
                         "database.connect",
                         DoctorStatus::Fail,
                         "Could not connect to the configured database directly.",
                         Some(error.to_string()),
-                        Some("Fix the database URL or credentials first.".to_string()),
+                        Some(if config.cluster.enabled {
+                            "Fix the database URL or credentials first, or start another database-connected Memory Layer backend on the local network for relay discovery.".to_string()
+                        } else {
+                            format!(
+                                "Fix the database URL or credentials first, or enable relay discovery by setting [cluster].enabled = true in {}.",
+                                global_config_path
+                                    .as_ref()
+                                    .unwrap_or(&config_path)
+                                    .display()
+                            )
+                        }),
                         false,
                     ));
                     report.push(doctor_check(
@@ -2782,6 +2794,39 @@ async fn run_doctor(
                 config.service.capnp_unix_socket
             )),
             None,
+            false,
+        ));
+        report.push(doctor_check(
+            "config.relay_discovery",
+            if config.cluster.enabled {
+                DoctorStatus::Ok
+            } else if database_connect_error.is_some() {
+                DoctorStatus::Warn
+            } else {
+                DoctorStatus::Ok
+            },
+            if config.cluster.enabled {
+                "Relay discovery is enabled for backend failover."
+            } else {
+                "Relay discovery is disabled."
+            },
+            Some(format!(
+                "enabled={} multicast={} priority={}",
+                config.cluster.enabled,
+                config.cluster.discovery_multicast_addr,
+                config.cluster.priority
+            )),
+            if config.cluster.enabled {
+                None
+            } else {
+                Some(format!(
+                    "Set [cluster].enabled = true in {} to allow this backend to discover and proxy to another Memory Layer backend when PostgreSQL is unavailable.",
+                    global_config_path
+                        .as_ref()
+                        .unwrap_or(&config_path)
+                        .display()
+                ))
+            },
             false,
         ));
 
@@ -3037,7 +3082,18 @@ async fn run_doctor(
                     DoctorStatus::Fail,
                     "Backend health endpoint is not reachable.",
                     Some(error.to_string()),
-                    Some(backend_start_hint(&config_path)),
+                    Some(if database_connect_error.is_some() && !config.cluster.enabled {
+                        format!(
+                            "{} or enable relay discovery in {} and rerun `mem-cli service enable`",
+                            backend_start_hint(&config_path),
+                            global_config_path
+                                .as_ref()
+                                .unwrap_or(&config_path)
+                                .display()
+                        )
+                    } else {
+                        backend_start_hint(&config_path)
+                    }),
                     false,
                 ));
                 report.push(doctor_check(
@@ -3565,10 +3621,50 @@ fn initialize_repo(
     ))
 }
 
-fn enable_backend_service(_config_path: &Path) -> Result<String> {
+async fn enable_backend_service(config_path: &Path) -> Result<String> {
+    let config = AppConfig::load_from_path(Some(config_path.to_path_buf()))
+        .context("load config for backend service enable")?;
+    let startup_output = start_backend_service_once(config_path)?;
+    match wait_for_backend_health(config_path).await {
+        Ok(health) => Ok(format!(
+            "{startup_output}\n\n{}",
+            format_backend_health_summary(&health)
+        )),
+        Err(start_error) => {
+            let database_error = check_database_connectivity(&config).await.err();
+            if !config.cluster.enabled && database_error.is_some() {
+                let database_error = database_error.expect("checked is_some");
+                if io::stdin().is_terminal()
+                    && io::stdout().is_terminal()
+                    && prompt_yes_no(&format!(
+                        "Backend could not reach PostgreSQL ({database_error}). Enable relay discovery in {} and retry?",
+                        config_path.display()
+                    ))?
+                {
+                    set_cluster_enabled_in_shared_config(config_path, true)?;
+                    let _ = disable_backend_service();
+                    let retry_output = start_backend_service_once(config_path)?;
+                    let health = wait_for_backend_health(config_path).await?;
+                    return Ok(format!(
+                        "Enabled relay discovery in {}.\n{}\n\n{}",
+                        config_path.display(),
+                        retry_output,
+                        format_backend_health_summary(&health)
+                    ));
+                }
+                anyhow::bail!(
+                    "Backend did not become healthy after startup.\nLikely cause: {database_error}\nRecovery: enable relay discovery by setting [cluster].enabled = true in {} and rerun `mem-cli service enable`.",
+                    config_path.display()
+                );
+            }
+            Err(start_error)
+        }
+    }
+}
+
+fn start_backend_service_once(config_path: &Path) -> Result<String> {
     #[cfg(target_os = "macos")]
     {
-        let config_path = _config_path;
         let plist_path = backend_launch_agent_path()?;
         let _ = bootout_launch_agent(&plist_path, backend_launch_agent_label());
         if plist_path.exists() {
@@ -3650,6 +3746,13 @@ fn preview_enable_backend_service(config_path: &Path) -> String {
             config_path.display()
         )
     }
+}
+
+pub(crate) async fn enable_relay_discovery_and_restart_backend() -> Result<String> {
+    let config_path = discover_global_config_path().unwrap_or_else(default_global_config_path);
+    set_cluster_enabled_in_shared_config(&config_path, true)?;
+    let _ = disable_backend_service();
+    enable_backend_service(&config_path).await
 }
 
 fn disable_backend_service() -> Result<String> {
@@ -3744,6 +3847,135 @@ fn backend_service_status(config_path: &Path) -> Result<String> {
             yes_no(is_active),
         ))
     }
+}
+
+async fn wait_for_backend_health(config_path: &Path) -> Result<serde_json::Value> {
+    let config = AppConfig::load_from_path(Some(config_path.to_path_buf()))
+        .context("reload config after backend startup")?;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .context("build backend startup http client")?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut last_error = None;
+    while tokio::time::Instant::now() < deadline {
+        match client.get(service_url(&config, "/healthz")).send().await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    return response
+                        .json()
+                        .await
+                        .context("parse backend health response");
+                }
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                last_error = Some(anyhow::anyhow!("health endpoint returned {status} {body}"));
+            }
+            Err(error) => last_error = Some(error.into()),
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("backend health endpoint did not respond")))
+}
+
+async fn check_database_connectivity(config: &AppConfig) -> Result<()> {
+    PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(3))
+        .connect(&config.database.url)
+        .await
+        .map(|pool| drop(pool))
+        .context("connect postgres")
+}
+
+fn format_backend_health_summary(health: &serde_json::Value) -> String {
+    let role = health
+        .get("role")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+    let status = health
+        .get("status")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+    let database = health
+        .get("database")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown");
+    let mut lines = vec![
+        "Backend health:".to_string(),
+        format!("- role: {role}"),
+        format!("- status: {status}"),
+        format!("- database: {database}"),
+    ];
+    if let Some(upstream) = health.get("upstream") {
+        lines.push(format!("- upstream: {upstream}"));
+    }
+    lines.join("\n")
+}
+
+fn prompt_yes_no(prompt: &str) -> Result<bool> {
+    print!("{prompt} [y/N]: ");
+    io::stdout().flush().context("flush prompt")?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).context("read prompt")?;
+    Ok(matches!(
+        input.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+fn set_cluster_enabled_in_shared_config(path: &Path, enabled: bool) -> Result<()> {
+    let mut content = if path.exists() {
+        fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
+    } else {
+        String::new()
+    };
+    let mut lines = content.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
+    let mut cluster_header = None;
+    let mut enabled_line = None;
+    let mut in_cluster = false;
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_cluster = trimmed == "[cluster]";
+            if in_cluster {
+                cluster_header = Some(index);
+            }
+            continue;
+        }
+        if in_cluster && trimmed.starts_with("enabled = ") {
+            enabled_line = Some(index);
+            break;
+        }
+    }
+
+    let enabled_value = format!("enabled = {enabled}");
+    if let Some(index) = enabled_line {
+        lines[index] = enabled_value;
+    } else if let Some(index) = cluster_header {
+        lines.insert(index + 1, enabled_value);
+    } else {
+        if !lines.is_empty() && !lines.last().is_some_and(|line| line.trim().is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push("[cluster]".to_string());
+        lines.push(enabled_value);
+        lines.push("# advertise_addr = \"192.168.1.50:4040\"".to_string());
+        lines.push("# discovery_multicast_addr = \"239.255.42.99:4042\"".to_string());
+        lines.push("# announce_interval = \"5s\"".to_string());
+        lines.push("# peer_ttl = \"15s\"".to_string());
+        lines.push("# priority = 100".to_string());
+    }
+
+    content = lines.join("\n");
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    fs::write(path, content).with_context(|| format!("write {}", path.display()))
 }
 
 fn enable_watch_service(repo_root: &Path, project: &str) -> Result<String> {
@@ -6770,7 +7002,6 @@ mod tests {
     fn backend_launch_agent_uses_global_config_path() {
         let plist = render_backend_launch_agent(&default_global_config_path()).unwrap();
 
-        assert!(backend_service_available());
         assert!(plist.contains("<string>com.memory-layer.mem-service</string>"));
         assert!(plist.contains("<string>/bin/zsh</string>"));
         assert!(plist.contains(&default_global_config_path().display().to_string()));
@@ -6827,6 +7058,22 @@ mod tests {
     }
 
     #[test]
+    fn cluster_enabled_is_added_when_missing() {
+        let dir = unique_temp_dir("mem-cluster-config");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory-layer.toml");
+        fs::write(&path, "[service]\nbind_addr = \"127.0.0.1:4040\"\n").unwrap();
+
+        super::set_cluster_enabled_in_shared_config(&path, true).unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[cluster]"));
+        assert!(content.contains("enabled = true"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn ensure_shared_service_api_token_rotates_placeholder() {
         let dir = unique_temp_dir("mem-token-rotate");
         fs::create_dir_all(&dir).unwrap();
@@ -6845,6 +7092,25 @@ mod tests {
         assert!(matches!(result.action, ServiceApiTokenAction::Rotated));
         assert!(token.starts_with("ml_"));
         assert!(content.contains("OPENAI_API_KEY=test-key"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn cluster_enabled_is_updated_in_existing_section() {
+        let dir = unique_temp_dir("mem-cluster-existing");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory-layer.toml");
+        fs::write(
+            &path,
+            "[cluster]\nenabled = false\npriority = 50\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\n",
+        )
+        .unwrap();
+
+        super::set_cluster_enabled_in_shared_config(&path, true).unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[cluster]\nenabled = true\npriority = 50"));
 
         let _ = fs::remove_dir_all(dir);
     }
