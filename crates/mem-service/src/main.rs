@@ -58,6 +58,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 struct AppState {
     role: ServiceRole,
+    instance_id: String,
     pool: Option<PgPool>,
     api_token: String,
     config: AppConfig,
@@ -257,6 +258,7 @@ async fn build_state(config: AppConfig) -> Result<AppState> {
 
     Ok(AppState {
         role,
+        instance_id: Uuid::new_v4().to_string(),
         pool,
         api_token: config.service.api_token.clone(),
         web_root: discover_web_root(&config),
@@ -906,6 +908,7 @@ async fn health_payload(state: &AppState) -> Result<serde_json::Value> {
             "status": "ok",
             "role": "primary",
             "database": "up",
+            "instance_id": state.instance_id,
             "service_id": state.config.cluster.service_id,
             "version": env!("CARGO_PKG_VERSION")
         }))
@@ -915,6 +918,7 @@ async fn health_payload(state: &AppState) -> Result<serde_json::Value> {
             "status": if upstream.is_some() { "ok" } else { "degraded" },
             "role": "relay",
             "database": "down",
+            "instance_id": state.instance_id,
             "service_id": state.config.cluster.service_id,
             "version": env!("CARGO_PKG_VERSION"),
             "upstream": upstream

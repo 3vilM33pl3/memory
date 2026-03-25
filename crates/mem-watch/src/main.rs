@@ -5,7 +5,8 @@ use clap::{Args, Parser, Subcommand};
 use mem_api::AppConfig;
 use mem_watch::{
     build_watcher_heartbeat_request, build_watcher_unregister_request, detect_hostname, flush_path,
-    heartbeat_watcher, load_state, run_once, to_status, unregister_watcher,
+    fetch_service_instance_id, heartbeat_watcher, load_state, run_once, to_status,
+    unregister_watcher,
 };
 use reqwest::Client;
 use uuid::Uuid;
@@ -15,6 +16,11 @@ enum HeartbeatState {
     Unknown,
     Healthy,
     Failing,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct BackendInstanceState {
+    current: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -97,6 +103,9 @@ async fn run_loop(
     let heartbeat_request =
         build_watcher_heartbeat_request(&state, &watcher_id, &hostname, pid, started_at);
     let mut heartbeat_state = HeartbeatState::Unknown;
+    let mut backend_instance = BackendInstanceState {
+        current: fetch_service_instance_id(&client, &config).await.ok().flatten(),
+    };
     heartbeat_state = log_heartbeat_transition(
         heartbeat_state,
         heartbeat_watcher(&client, &config, &heartbeat_request).await,
@@ -132,6 +141,10 @@ async fn run_loop(
                     heartbeat_state,
                     heartbeat_watcher(&client, &config, &request).await,
                 );
+                update_backend_instance_state(
+                    &mut backend_instance,
+                    fetch_service_instance_id(&client, &config).await?,
+                )?;
             }
             _ = shutdown_signal() => {
                 let request = build_watcher_unregister_request(&project, &watcher_id);
@@ -141,6 +154,24 @@ async fn run_loop(
                 break;
             }
         }
+    }
+    Ok(())
+}
+
+fn update_backend_instance_state(
+    state: &mut BackendInstanceState,
+    current: Option<String>,
+) -> Result<()> {
+    match (&state.current, current) {
+        (Some(previous), Some(current)) if previous != &current => {
+            anyhow::bail!(
+                "backend service restarted (instance changed from {previous} to {current}); exiting watcher for clean restart"
+            );
+        }
+        (None, Some(current)) => {
+            state.current = Some(current);
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -273,7 +304,10 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::{HeartbeatState, log_heartbeat_transition};
+    use super::{
+        BackendInstanceState, HeartbeatState, log_heartbeat_transition,
+        update_backend_instance_state,
+    };
     use mem_api::WatcherPresenceSummary;
 
     #[test]
@@ -295,5 +329,24 @@ mod tests {
         };
         let next = log_heartbeat_transition(HeartbeatState::Failing, Ok(summary));
         assert_eq!(next, HeartbeatState::Healthy);
+    }
+
+    #[test]
+    fn backend_instance_change_requests_watcher_restart() {
+        let mut state = BackendInstanceState {
+            current: Some("old-instance".to_string()),
+        };
+        let error = update_backend_instance_state(&mut state, Some("new-instance".to_string()))
+            .expect_err("instance change should force restart");
+        assert!(error
+            .to_string()
+            .contains("backend service restarted"));
+    }
+
+    #[test]
+    fn backend_instance_is_seeded_when_first_seen() {
+        let mut state = BackendInstanceState::default();
+        update_backend_instance_state(&mut state, Some("instance-a".to_string())).unwrap();
+        assert_eq!(state.current.as_deref(), Some("instance-a"));
     }
 }

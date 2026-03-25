@@ -1,6 +1,8 @@
 [Unit]
 Description=Memory Layer Watcher
 After=network.target memory-layer.service
+Requires=memory-layer.service
+PartOf=memory-layer.service
 
 [Service]
 Type=simple

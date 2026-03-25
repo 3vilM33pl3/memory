@@ -257,6 +257,8 @@ If you want Memory Layer to capture useful work in the background:
 mem-cli watch enable --project my-project
 ```
 
+When the backend service restarts, service-managed watchers will restart too so they reconnect cleanly to the new backend instance.
+
 Check it:
 
 ```bash

@@ -360,6 +360,21 @@ pub async fn fetch_project_overview(
     .await
 }
 
+#[derive(Debug, Deserialize)]
+struct ServiceHealthResponse {
+    #[serde(default)]
+    instance_id: Option<String>,
+}
+
+pub async fn fetch_service_instance_id(
+    client: &Client,
+    config: &AppConfig,
+) -> Result<Option<String>> {
+    let response = client.get(service_url(config, "/healthz")).send().await?;
+    let health: ServiceHealthResponse = send_json(response).await?;
+    Ok(health.instance_id.filter(|value| !value.trim().is_empty()))
+}
+
 pub async fn heartbeat_watcher(
     client: &Client,
     config: &AppConfig,
