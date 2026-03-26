@@ -121,6 +121,7 @@ struct App {
     activity_table_state: TableState,
     memory_detail_scroll: u16,
     project_scroll: u16,
+    watcher_scroll: u16,
     versions: ToolVersions,
     status_message: String,
     health_ok: bool,
@@ -182,6 +183,7 @@ impl App {
             activity_table_state,
             memory_detail_scroll: 0,
             project_scroll: 0,
+            watcher_scroll: 0,
             versions,
             status_message: "Press r to refresh, q to exit.".to_string(),
             health_ok: false,
@@ -299,6 +301,12 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Project => {
                 self.scroll_project(-1);
             }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Watchers => {
+                self.scroll_watchers(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Watchers => {
+                self.scroll_watchers(-1);
+            }
             KeyCode::PageDown if self.active_tab == TabKind::Memories => {
                 self.scroll_memory_detail(8);
             }
@@ -316,6 +324,15 @@ impl App {
             }
             KeyCode::Home if self.active_tab == TabKind::Project => {
                 self.project_scroll = 0;
+            }
+            KeyCode::PageDown if self.active_tab == TabKind::Watchers => {
+                self.scroll_watchers(8);
+            }
+            KeyCode::PageUp if self.active_tab == TabKind::Watchers => {
+                self.scroll_watchers(-8);
+            }
+            KeyCode::Home if self.active_tab == TabKind::Watchers => {
+                self.watcher_scroll = 0;
             }
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.input_mode = InputMode::Search(self.filters.text.clone());
@@ -704,6 +721,15 @@ impl App {
         };
     }
 
+    fn scroll_watchers(&mut self, delta: i16) {
+        self.watcher_scroll = if delta.is_negative() {
+            self.watcher_scroll.saturating_sub(delta.unsigned_abs())
+        } else {
+            self.watcher_scroll
+                .saturating_add(u16::try_from(delta).unwrap_or(0))
+        };
+    }
+
     fn scroll_memory_detail(&mut self, delta: i16) {
         self.memory_detail_scroll = if delta.is_negative() {
             self.memory_detail_scroll
@@ -838,6 +864,7 @@ enum TabKind {
     Query,
     Activity,
     Project,
+    Watchers,
 }
 
 impl TabKind {
@@ -846,12 +873,19 @@ impl TabKind {
             Self::Memories => Self::Query,
             Self::Query => Self::Activity,
             Self::Activity => Self::Project,
-            Self::Project => Self::Memories,
+            Self::Project => Self::Watchers,
+            Self::Watchers => Self::Memories,
         }
     }
 
     fn prev(self) -> Self {
-        self.next()
+        match self {
+            Self::Memories => Self::Watchers,
+            Self::Query => Self::Memories,
+            Self::Activity => Self::Query,
+            Self::Project => Self::Activity,
+            Self::Watchers => Self::Project,
+        }
     }
 
     fn index(self) -> usize {
@@ -860,6 +894,7 @@ impl TabKind {
             Self::Query => 1,
             Self::Activity => 2,
             Self::Project => 3,
+            Self::Watchers => 4,
         }
     }
 }
@@ -1033,7 +1068,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         ])
         .split(frame.area());
 
-    let titles = ["Memories", "Query", "Activity", "Project"]
+    let titles = ["Memories", "Query", "Activity", "Project", "Watchers"]
         .into_iter()
         .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
         .collect::<Vec<_>>();
@@ -1107,6 +1142,14 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             accent_span("jump "),
             Span::styled("Home", Style::default().fg(Theme::TEXT)),
         ],
+        TabKind::Watchers => vec![
+            accent_span("scroll "),
+            Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+            accent_span("page "),
+            Span::styled("PgUp/PgDn  ", Style::default().fg(Theme::TEXT)),
+            accent_span("jump "),
+            Span::styled("Home", Style::default().fg(Theme::TEXT)),
+        ],
     })])
     .style(Style::default().bg(Theme::PANEL_ALT))
     .block(themed_block(match &app.input_mode {
@@ -1140,6 +1183,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         TabKind::Query => draw_query_tab(frame, app, chunks[2]),
         TabKind::Activity => draw_activity_tab(frame, app, chunks[2]),
         TabKind::Project => draw_project_tab(frame, app, chunks[2]),
+        TabKind::Watchers => draw_watchers_tab(frame, app, chunks[2]),
     }
 
     let footer = Paragraph::new(app.status_message.clone())
@@ -1320,7 +1364,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .constraints([
             Constraint::Length(12),
             Constraint::Length(8),
-            Constraint::Min(8),
+            Constraint::Min(7),
         ])
         .split(area);
 
@@ -1440,24 +1484,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         ),
         metric_line(
             "Watchers",
-            Span::styled(
-                app.overview
-                    .watchers
-                    .as_ref()
-                    .map(|watchers| {
-                        format!(
-                            "{} active / stale after {}s / last {}",
-                            watchers.active_count,
-                            watchers.stale_after_seconds,
-                            watchers
-                                .last_heartbeat_at
-                                .map(|value| value.format("%H:%M:%S UTC").to_string())
-                                .unwrap_or_else(|| "n/a".to_string())
-                        )
-                    })
-                    .unwrap_or_else(|| "no watcher presence reported".to_string()),
-                Style::default().fg(Theme::TEXT),
-            ),
+            Span::styled(watcher_summary_text(app), Style::default().fg(Theme::TEXT)),
         ),
     ])
     .scroll((app.project_scroll, 0))
@@ -1523,9 +1550,10 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     );
 
     let bottom = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(8), Constraint::Length(7)])
         .split(chunks[2]);
+
     frame.render_widget(
         Paragraph::new(lines_for_named_counts(
             app.overview
@@ -1538,18 +1566,6 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block("Top Files")),
         bottom[0],
-    );
-
-    let right = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(6), Constraint::Length(7)])
-        .split(bottom[1]);
-
-    frame.render_widget(
-        Paragraph::new(watcher_lines(app))
-            .style(Style::default().bg(Theme::PANEL_ALT))
-            .block(themed_block("Watchers")),
-        right[0],
     );
     frame.render_widget(
         Paragraph::new(vec![
@@ -1573,8 +1589,42 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         ])
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block("Operations")),
-        right[1],
+        bottom[1],
     );
+}
+
+fn draw_watchers_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(5), Constraint::Min(10)])
+        .split(area);
+
+    let summary = Paragraph::new(vec![
+        metric_line(
+            "Watchers",
+            Span::styled(watcher_summary_text(app), Style::default().fg(Theme::TEXT)),
+        ),
+        metric_line(
+            "Guidance",
+            Span::styled(
+                "Use `mem-cli watch enable --project <slug>` or `memory-watch run --project <slug>`.",
+                Style::default().fg(Theme::MUTED),
+            ),
+        ),
+    ])
+    .style(Style::default().bg(Theme::PANEL))
+    .block(themed_block("Watcher Summary"));
+    frame.render_widget(summary, chunks[0]);
+
+    let detail = Paragraph::new(watcher_detail_lines(app))
+        .scroll((app.watcher_scroll, 0))
+        .wrap(Wrap { trim: false })
+        .style(Style::default().bg(Theme::PANEL_ALT))
+        .block(themed_block(format!(
+            "Watchers (scroll {})",
+            app.watcher_scroll
+        )));
+    frame.render_widget(detail, chunks[1]);
 }
 
 fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
@@ -1938,12 +1988,35 @@ fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'s
     }
 }
 
-fn watcher_lines(app: &App) -> Vec<Line<'static>> {
+fn watcher_summary_text(app: &App) -> String {
     let Some(summary) = &app.overview.watchers else {
-        return vec![Line::from(Span::styled(
-            "No watcher presence reported.",
-            Style::default().fg(Theme::MUTED),
-        ))];
+        return "no watcher presence reported".to_string();
+    };
+
+    format!(
+        "{} active / stale after {}s / last {}",
+        summary.active_count,
+        summary.stale_after_seconds,
+        summary
+            .last_heartbeat_at
+            .map(|value| value.format("%H:%M:%S UTC").to_string())
+            .unwrap_or_else(|| "n/a".to_string())
+    )
+}
+
+fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
+    let Some(summary) = &app.overview.watchers else {
+        return vec![
+            Line::from(Span::styled(
+                "No watcher presence reported.",
+                Style::default().fg(Theme::MUTED),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Start a watcher with `mem-cli watch enable --project <slug>` or `memory-watch run --project <slug>`.",
+                Style::default().fg(Theme::MUTED),
+            )),
+        ];
     };
     if summary.watchers.is_empty() {
         return vec![
@@ -1968,7 +2041,17 @@ fn watcher_lines(app: &App) -> Vec<Line<'static>> {
         ),
         Style::default().fg(Theme::TEXT),
     ))];
-    for watcher in summary.watchers.iter().take(6) {
+    if let Some(last_heartbeat) = summary.last_heartbeat_at {
+        lines.push(Line::from(vec![
+            label_span("Last heartbeat: "),
+            Span::styled(
+                last_heartbeat.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]));
+    }
+    lines.push(Line::from(""));
+    for watcher in &summary.watchers {
         lines.push(Line::from(vec![
             Span::styled(
                 format!("{} ", watcher.hostname),
@@ -1988,9 +2071,14 @@ fn watcher_lines(app: &App) -> Vec<Line<'static>> {
             ),
         ]));
         lines.push(Line::from(Span::styled(
-            format!("  {}", watcher.repo_root),
+            format!("  repo: {}", watcher.repo_root),
             Style::default().fg(Theme::MUTED),
         )));
+        lines.push(Line::from(Span::styled(
+            format!("  watcher: {}", watcher.watcher_id),
+            Style::default().fg(Theme::MUTED),
+        )));
+        lines.push(Line::from(""));
     }
     lines
 }
