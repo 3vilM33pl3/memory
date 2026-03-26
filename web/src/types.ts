@@ -85,6 +85,12 @@ export interface ProjectOverviewResponse {
   last_curation_at: string | null;
   last_capture_at: string | null;
   oldest_uncurated_capture_age_hours: number | null;
+  embedding_chunks_total: number;
+  fresh_embedding_chunks: number;
+  stale_embedding_chunks: number;
+  missing_embedding_chunks: number;
+  active_embedding_provider: string | null;
+  active_embedding_model: string | null;
   top_tags: NamedCount[];
   top_files: NamedCount[];
   memory_type_breakdown: MemoryTypeCount[];
@@ -153,6 +159,11 @@ export interface QueryDiagnostics {
   semantic_duration_ms: number;
   rerank_duration_ms: number;
   total_duration_ms: number;
+  semantic_status: string;
+}
+
+export interface ReembedResponse {
+  reembedded_chunks: number;
 }
 
 export interface QueryResult {

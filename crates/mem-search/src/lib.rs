@@ -27,6 +27,21 @@ pub struct EmbeddingService {
     api_key: String,
 }
 
+#[derive(Debug, Clone)]
+struct EmbeddingSpace {
+    provider: String,
+    base_url: String,
+    model: String,
+    space_key: String,
+}
+
+#[derive(Debug, Clone)]
+struct EmbeddingBatch {
+    space: EmbeddingSpace,
+    dimension: i32,
+    vectors: Vec<Vector>,
+}
+
 impl EmbeddingService {
     pub fn from_config(config: &AppConfig) -> Option<Self> {
         if config.embeddings.provider.trim() != "openai_compatible"
@@ -45,9 +60,13 @@ impl EmbeddingService {
         })
     }
 
-    async fn embed_texts(&self, input: &[String]) -> Result<Vec<Vector>> {
+    async fn embed_texts(&self, input: &[String]) -> Result<EmbeddingBatch> {
         if input.is_empty() {
-            return Ok(Vec::new());
+            return Ok(EmbeddingBatch {
+                space: self.embedding_space(),
+                dimension: 0,
+                vectors: Vec::new(),
+            });
         }
 
         let request = EmbeddingRequest {
@@ -77,10 +96,27 @@ impl EmbeddingService {
             serde_json::from_str(&body).context("parse embedding response")?;
         let mut data = parsed.data;
         data.sort_by_key(|item| item.index);
-        Ok(data
-            .into_iter()
-            .map(|item| Vector::from(item.embedding))
-            .collect())
+        let vectors =
+            data.into_iter().map(|item| Vector::from(item.embedding)).collect::<Vec<_>>();
+        let dimension = vectors.first().map(vector_dimension).unwrap_or(0);
+        Ok(EmbeddingBatch {
+            space: self.embedding_space(),
+            dimension,
+            vectors,
+        })
+    }
+
+    fn embedding_space(&self) -> EmbeddingSpace {
+        let base_url = self.config.base_url.trim_end_matches('/').to_string();
+        let provider = self.config.provider.trim().to_string();
+        let model = self.config.model.trim().to_string();
+        let space_key = format!("{provider}|{base_url}|{model}");
+        EmbeddingSpace {
+            provider,
+            base_url,
+            model,
+            space_key,
+        }
     }
 }
 
@@ -117,24 +153,37 @@ pub async fn query_memory(
     let lexical_duration_ms = lexical_started.elapsed().as_millis() as u64;
 
     let semantic_started = Instant::now();
-    let semantic_candidates = if let Some(embedder) = embedder {
+    let (semantic_candidates, semantic_status) = if let Some(embedder) = embedder {
         match embedder
             .embed_texts(std::slice::from_ref(&request.query))
             .await
         {
-            Ok(embedding) => {
-                if let Some(query_embedding) = embedding.into_iter().next() {
-                    fetch_semantic_candidates(pool, request, &query_embedding, candidate_limit)
+            Ok(embedding_batch) => {
+                if let Some(query_embedding) = embedding_batch.vectors.into_iter().next() {
+                    let candidates = fetch_semantic_candidates(
+                        pool,
+                        request,
+                        &embedding_batch.space,
+                        embedding_batch.dimension,
+                        &query_embedding,
+                        candidate_limit,
+                    )
                         .await
-                        .context("fetch semantic candidates")?
+                        .context("fetch semantic candidates")?;
+                    let semantic_status = if candidates.is_empty() {
+                        "no_fresh_embeddings".to_string()
+                    } else {
+                        "ok".to_string()
+                    };
+                    (candidates, semantic_status)
                 } else {
-                    Vec::new()
+                    (Vec::new(), "embedding_probe_empty".to_string())
                 }
             }
-            Err(_) => Vec::new(),
+            Err(_) => (Vec::new(), "embedding_error".to_string()),
         }
     } else {
-        Vec::new()
+        (Vec::new(), "disabled".to_string())
     };
     let semantic_duration_ms = semantic_started.elapsed().as_millis() as u64;
 
@@ -205,6 +254,7 @@ pub async fn query_memory(
             semantic_duration_ms,
             rerank_duration_ms,
             total_duration_ms: total_started.elapsed().as_millis() as u64,
+            semantic_status,
         },
     })
 }
@@ -239,23 +289,50 @@ pub async fn rebuild_chunks(
             .context("delete old chunks")?;
 
         let chunks = split_search_chunks(&summary, &canonical_text);
-        let embeddings = if let Some(embedder) = embedder {
+        let embedding_batch = if let Some(embedder) = embedder {
             embedder
                 .embed_texts(&chunks)
                 .await
                 .context("embed rebuilt chunks")?
         } else {
-            Vec::new()
+            EmbeddingBatch {
+                space: EmbeddingSpace {
+                    provider: String::new(),
+                    base_url: String::new(),
+                    model: String::new(),
+                    space_key: String::new(),
+                },
+                dimension: 0,
+                vectors: Vec::new(),
+            }
         };
 
         for (index, chunk_text) in chunks.iter().enumerate() {
-            let embedding = embeddings.get(index).cloned();
+            let embedding = embedding_batch.vectors.get(index).cloned();
+            let embedding_updated_at = if embedding.is_some() {
+                Some(Utc::now())
+            } else {
+                None
+            };
             sqlx::query(
                 r#"
                 INSERT INTO memory_chunks
-                    (id, memory_entry_id, chunk_text, search_text, tsv, embedding, embedding_model, embedding_updated_at)
+                    (
+                        id,
+                        memory_entry_id,
+                        chunk_text,
+                        search_text,
+                        tsv,
+                        embedding,
+                        embedding_provider,
+                        embedding_base_url,
+                        embedding_model,
+                        embedding_dimension,
+                        embedding_space,
+                        embedding_updated_at
+                    )
                 VALUES
-                    ($1, $2, $3, $4, to_tsvector('english', $4), $5, $6, $7)
+                    ($1, $2, $3, $4, to_tsvector('english', $4), $5, $6, $7, $8, $9, $10, $11)
                 "#,
             )
             .bind(Uuid::new_v4())
@@ -263,8 +340,32 @@ pub async fn rebuild_chunks(
             .bind(chunk_text)
             .bind(format!("{summary}\n{chunk_text}"))
             .bind(embedding)
-            .bind(embedder.map(|service| service.config.model.clone()))
-            .bind(embedder.map(|_| Utc::now()))
+            .bind(if embedding_batch.space.provider.is_empty() {
+                None::<String>
+            } else {
+                Some(embedding_batch.space.provider.clone())
+            })
+            .bind(if embedding_batch.space.base_url.is_empty() {
+                None::<String>
+            } else {
+                Some(embedding_batch.space.base_url.clone())
+            })
+            .bind(if embedding_batch.space.model.is_empty() {
+                None::<String>
+            } else {
+                Some(embedding_batch.space.model.clone())
+            })
+            .bind(if embedding_batch.dimension > 0 {
+                Some(embedding_batch.dimension)
+            } else {
+                None::<i32>
+            })
+            .bind(if embedding_batch.space.space_key.is_empty() {
+                None::<String>
+            } else {
+                Some(embedding_batch.space.space_key.clone())
+            })
+            .bind(embedding_updated_at)
             .execute(pool)
             .await
             .context("insert rebuilt chunk")?;
@@ -272,6 +373,94 @@ pub async fn rebuild_chunks(
         count += 1;
     }
     Ok(count)
+}
+
+pub async fn reembed_project_chunks(
+    pool: &PgPool,
+    project: &str,
+    embedder: &EmbeddingService,
+) -> Result<u64> {
+    let target_space = embedder.embedding_space();
+    let rows = sqlx::query(
+        r#"
+        SELECT mc.id, mc.search_text
+        FROM memory_chunks mc
+        JOIN memory_entries m ON m.id = mc.memory_entry_id
+        JOIN projects p ON p.id = m.project_id
+        WHERE p.slug = $1
+          AND m.status = 'active'
+          AND (
+                mc.embedding IS NULL
+                OR mc.embedding_space IS DISTINCT FROM $2
+                OR mc.embedding_provider IS NULL
+                OR mc.embedding_base_url IS NULL
+                OR mc.embedding_model IS NULL
+                OR mc.embedding_dimension IS NULL
+              )
+        ORDER BY mc.id
+        "#,
+    )
+    .bind(project)
+    .bind(&target_space.space_key)
+    .fetch_all(pool)
+    .await
+    .context("load stale chunks for re-embedding")?;
+
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    let mut reembedded_chunks = 0u64;
+    for batch in rows.chunks(embedder.config.batch_size.max(1)) {
+        let chunk_ids = batch
+            .iter()
+            .map(|row| row.try_get::<Uuid, _>("id"))
+            .collect::<Result<Vec<_>, _>>()
+            .context("decode stale chunk ids")?;
+        let texts = batch
+            .iter()
+            .map(|row| row.try_get::<String, _>("search_text"))
+            .collect::<Result<Vec<_>, _>>()
+            .context("decode stale chunk texts")?;
+        let embeddings = embedder
+            .embed_texts(&texts)
+            .await
+            .context("embed stale chunks")?;
+
+        for (index, chunk_id) in chunk_ids.iter().enumerate() {
+            let embedding = embeddings
+                .vectors
+                .get(index)
+                .cloned()
+                .context("missing embedding for stale chunk batch item")?;
+            sqlx::query(
+                r#"
+                UPDATE memory_chunks
+                SET embedding = $2,
+                    embedding_provider = $3,
+                    embedding_base_url = $4,
+                    embedding_model = $5,
+                    embedding_dimension = $6,
+                    embedding_space = $7,
+                    embedding_updated_at = now()
+                WHERE id = $1
+                "#,
+            )
+            .bind(chunk_id)
+            .bind(embedding)
+            .bind(&embeddings.space.provider)
+            .bind(&embeddings.space.base_url)
+            .bind(&embeddings.space.model)
+            .bind(embeddings.dimension)
+            .bind(&embeddings.space.space_key)
+            .execute(pool)
+            .await
+            .context("update chunk embedding")?;
+            reembedded_chunks += 1;
+        }
+    }
+
+    Ok(reembedded_chunks)
 }
 
 pub fn parse_memory_type(value: &str) -> MemoryType {
@@ -552,6 +741,8 @@ fn candidate_from_lexical_row(row: sqlx::postgres::PgRow) -> Result<CandidateRec
 async fn fetch_semantic_candidates(
     pool: &PgPool,
     request: &QueryRequest,
+    embedding_space: &EmbeddingSpace,
+    embedding_dimension: i32,
     query_embedding: &Vector,
     candidate_limit: i64,
 ) -> Result<Vec<CandidateRecord>, sqlx::Error> {
@@ -591,6 +782,8 @@ async fn fetch_semantic_candidates(
         WHERE p.slug = $1
           AND m.status = 'active'
           AND mc.embedding IS NOT NULL
+          AND mc.embedding_space = $4
+          AND mc.embedding_dimension = $5
           AND ($2::text[] IS NULL OR m.memory_type = ANY($2))
           AND (
                 cardinality($3::text[]) = 0
@@ -602,7 +795,7 @@ async fn fetch_semantic_candidates(
                 )
           )
         ORDER BY cosine_distance ASC, m.updated_at DESC, m.id
-        LIMIT $5
+        LIMIT $6
         "#,
     )
     .bind(&request.project)
@@ -612,6 +805,8 @@ async fn fetch_semantic_candidates(
         Some(memory_type_filters)
     })
     .bind(&request.filters.tags)
+    .bind(&embedding_space.space_key)
+    .bind(embedding_dimension)
     .bind(query_embedding)
     .bind(candidate_limit)
     .fetch_all(pool)
@@ -662,6 +857,10 @@ async fn fetch_semantic_candidates(
     });
     candidates.truncate(candidate_limit as usize);
     Ok(candidates)
+}
+
+fn vector_dimension(vector: &Vector) -> i32 {
+    vector.as_slice().len() as i32
 }
 
 fn merge_candidates(

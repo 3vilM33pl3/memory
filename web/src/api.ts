@@ -7,6 +7,7 @@ import type {
   ProjectOverviewResponse,
   QueryRequest,
   QueryResponse,
+  ReembedResponse,
   ReindexResponse,
 } from "./types";
 
@@ -56,6 +57,16 @@ export async function curate(project: string): Promise<CurateResponse> {
 export async function reindex(project: string): Promise<ReindexResponse> {
   return parseJson(
     await fetch("/v1/reindex", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project }),
+    }),
+  );
+}
+
+export async function reembed(project: string): Promise<ReembedResponse> {
+  return parseJson(
+    await fetch("/v1/reembed", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ project }),

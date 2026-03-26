@@ -23,16 +23,17 @@ use mem_api::{
     CaptureTaskRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest,
     DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, MemorySourceRecord,
     ProjectCommitsResponse, ProjectMemoriesResponse, ProjectOverviewResponse, QueryRequest,
-    ReindexRequest, ReindexResponse, RelatedMemorySummary, StatsResponse, StreamRequest,
-    StreamResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
-    WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
+    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
+    StatsResponse, StreamRequest, StreamResponse, ValidationError, WatcherHealth,
+    WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary, WatcherRestartRequest,
+    WatcherRestartResponse,
     WatcherUnregisterRequest, read_capnp_text_frame, write_capnp_text_frame,
 };
 use mem_curate::{curate, store_capture};
 use mem_platform::restart_local_watcher_service;
 use mem_search::{
     EmbeddingService, parse_memory_type, parse_relation_type, parse_source_kind, query_memory,
-    rebuild_chunks,
+    rebuild_chunks, reembed_project_chunks,
 };
 use mem_service::{
     fetch_project_commit, fetch_project_commits, fetch_project_memories, fetch_project_overview,
@@ -338,6 +339,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/capture/task", post(capture_task))
         .route("/v1/curate", post(curate_memory))
         .route("/v1/reindex", post(reindex))
+        .route("/v1/reembed", post(reembed))
         .route("/v1/memory/{id}", get(get_memory))
         .route("/v1/memory", delete(delete_memory))
         .route("/v1/stats", get(stats))
@@ -1392,6 +1394,42 @@ async fn reindex(
     }))
 }
 
+async fn reembed(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ReembedRequest>,
+) -> Result<Json<ReembedResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/reembed", &request, true).await?,
+        ));
+    }
+    let Some(embedder) = state.embedder.as_ref() else {
+        return Err(ApiError::validation(ValidationError::new(
+            "embeddings are not configured; cannot re-embed",
+        )));
+    };
+    let project = request.project.clone();
+    let count = reembed_project_chunks(state.pool()?, &request.project, embedder)
+        .await
+        .map_err(ApiError::io)?;
+    notify_project_changed(
+        &state,
+        project,
+        None,
+        ActivityKind::Reembed,
+        format!("Re-embedded {count} chunk(s)."),
+        Some(ActivityDetails::Reembed {
+            reembedded_chunks: count,
+        }),
+    );
+    Ok(Json(ReembedResponse {
+        reembedded_chunks: count,
+    }))
+}
+
 async fn get_memory(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -1850,7 +1888,13 @@ async fn fetch_project_overview_with_watchers(
         .pool
         .as_ref()
         .expect("project overview requires a primary database pool");
-    let mut overview = fetch_project_overview(pool, slug, &state.config.automation).await?;
+    let mut overview = fetch_project_overview(
+        pool,
+        slug,
+        &state.config.automation,
+        &state.config.embeddings,
+    )
+    .await?;
     overview.watchers = Some(watcher_summary_for_project(&state.watchers, slug));
     Ok(overview)
 }

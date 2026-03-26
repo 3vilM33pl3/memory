@@ -101,7 +101,8 @@ pub async fn fetch_project_memories(
 pub async fn fetch_project_overview(
     pool: &PgPool,
     slug: &str,
-    config: &mem_api::AutomationConfig,
+    automation: &mem_api::AutomationConfig,
+    embeddings: &mem_api::EmbeddingConfig,
 ) -> Result<ProjectOverviewResponse, sqlx::Error> {
     let row = sqlx::query(
         r#"
@@ -142,7 +143,8 @@ pub async fn fetch_project_overview(
     let source_kind_breakdown = fetch_source_kind_breakdown(pool, slug).await?;
     let top_tags = fetch_top_tags(pool, slug).await?;
     let top_files = fetch_top_files(pool, slug).await?;
-    let automation = load_automation_status(slug, config).await;
+    let automation = load_automation_status(slug, automation).await;
+    let embedding_health = fetch_embedding_health(pool, slug, embeddings).await?;
 
     let Some(row) = row else {
         return Ok(empty_overview(
@@ -151,6 +153,7 @@ pub async fn fetch_project_overview(
             source_kind_breakdown,
             top_tags,
             top_files,
+            embeddings,
             automation,
         ));
     };
@@ -176,6 +179,12 @@ pub async fn fetch_project_overview(
         last_capture_at: row.try_get("last_capture_at")?,
         last_curation_at: row.try_get("last_curation_at")?,
         oldest_uncurated_capture_age_hours: row.try_get("oldest_uncurated_capture_age_hours")?,
+        embedding_chunks_total: embedding_health.embedding_chunks_total,
+        fresh_embedding_chunks: embedding_health.fresh_embedding_chunks,
+        stale_embedding_chunks: embedding_health.stale_embedding_chunks,
+        missing_embedding_chunks: embedding_health.missing_embedding_chunks,
+        active_embedding_provider: embedding_health.active_embedding_provider,
+        active_embedding_model: embedding_health.active_embedding_model,
         memory_type_breakdown,
         source_kind_breakdown,
         top_tags,
@@ -513,6 +522,7 @@ fn empty_overview(
     source_kind_breakdown: Vec<SourceKindCount>,
     top_tags: Vec<NamedCount>,
     top_files: Vec<NamedCount>,
+    embeddings: &mem_api::EmbeddingConfig,
     automation: Option<mem_api::AutomationStatus>,
 ) -> ProjectOverviewResponse {
     ProjectOverviewResponse {
@@ -536,6 +546,24 @@ fn empty_overview(
         last_capture_at: None,
         last_curation_at: None,
         oldest_uncurated_capture_age_hours: None,
+        embedding_chunks_total: 0,
+        fresh_embedding_chunks: 0,
+        stale_embedding_chunks: 0,
+        missing_embedding_chunks: 0,
+        active_embedding_provider: if embeddings.provider.trim().is_empty()
+            || embeddings.model.trim().is_empty()
+        {
+            None
+        } else {
+            Some(embeddings.provider.clone())
+        },
+        active_embedding_model: if embeddings.provider.trim().is_empty()
+            || embeddings.model.trim().is_empty()
+        {
+            None
+        } else {
+            Some(embeddings.model.clone())
+        },
         memory_type_breakdown,
         source_kind_breakdown,
         top_tags,
@@ -543,6 +571,81 @@ fn empty_overview(
         automation,
         watchers: None,
     }
+}
+
+#[derive(Default)]
+struct EmbeddingHealth {
+    embedding_chunks_total: i64,
+    fresh_embedding_chunks: i64,
+    stale_embedding_chunks: i64,
+    missing_embedding_chunks: i64,
+    active_embedding_provider: Option<String>,
+    active_embedding_model: Option<String>,
+}
+
+async fn fetch_embedding_health(
+    pool: &PgPool,
+    slug: &str,
+    config: &mem_api::EmbeddingConfig,
+) -> Result<EmbeddingHealth, sqlx::Error> {
+    let active_provider = config.provider.trim();
+    let active_model = config.model.trim();
+    let active_base_url = config.base_url.trim_end_matches('/');
+    let active_space = if active_provider.is_empty() || active_model.is_empty() {
+        None
+    } else {
+        Some(format!("{active_provider}|{active_base_url}|{active_model}"))
+    };
+
+    let row = sqlx::query(
+        r#"
+        SELECT
+            COUNT(mc.id) AS embedding_chunks_total,
+            COUNT(mc.id) FILTER (
+                WHERE mc.embedding IS NOT NULL
+                  AND $2::text IS NOT NULL
+                  AND mc.embedding_space = $2
+                  AND mc.embedding_dimension IS NOT NULL
+            ) AS fresh_embedding_chunks,
+            COUNT(mc.id) FILTER (
+                WHERE mc.embedding IS NULL
+            ) AS missing_embedding_chunks,
+            COUNT(mc.id) FILTER (
+                WHERE mc.embedding IS NOT NULL
+                  AND (
+                    $2::text IS NULL
+                    OR mc.embedding_space IS DISTINCT FROM $2
+                    OR mc.embedding_dimension IS NULL
+                  )
+            ) AS stale_embedding_chunks
+        FROM memory_chunks mc
+        JOIN memory_entries m ON m.id = mc.memory_entry_id
+        JOIN projects p ON p.id = m.project_id
+        WHERE p.slug = $1
+          AND m.status = 'active'
+        "#,
+    )
+    .bind(slug)
+    .bind(active_space.as_deref())
+    .fetch_one(pool)
+    .await?;
+
+    Ok(EmbeddingHealth {
+        embedding_chunks_total: row.try_get("embedding_chunks_total")?,
+        fresh_embedding_chunks: row.try_get("fresh_embedding_chunks")?,
+        stale_embedding_chunks: row.try_get("stale_embedding_chunks")?,
+        missing_embedding_chunks: row.try_get("missing_embedding_chunks")?,
+        active_embedding_provider: if active_space.is_some() {
+            Some(active_provider.to_string())
+        } else {
+            None
+        },
+        active_embedding_model: if active_space.is_some() {
+            Some(active_model.to_string())
+        } else {
+            None
+        },
+    })
 }
 
 async fn load_automation_status(
@@ -592,9 +695,14 @@ mod tests {
         let slug = format!("test-{}", Uuid::new_v4());
         seed_project(&pool, &slug).await.unwrap();
 
-        let overview = fetch_project_overview(&pool, &slug, &mem_api::AutomationConfig::default())
-            .await
-            .unwrap();
+        let overview = fetch_project_overview(
+            &pool,
+            &slug,
+            &mem_api::AutomationConfig::default(),
+            &mem_api::EmbeddingConfig::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(overview.project, slug);
         assert_eq!(overview.memory_entries_total, 1);
         assert_eq!(overview.active_memories, 1);

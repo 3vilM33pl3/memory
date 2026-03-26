@@ -21,8 +21,9 @@ use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CommitDetailResponse,
     CommitSyncRequest, CommitSyncResponse, CurateRequest, CurateResponse, DeleteMemoryRequest,
     DeleteMemoryResponse, MemoryEntryResponse, ProjectCommitsResponse, ProjectMemoriesResponse,
-    ProjectOverviewResponse, QueryFilters, QueryRequest, QueryResponse, ReindexRequest,
-    ReindexResponse, TestResult, discover_global_config_path, discover_repo_env_path,
+    ProjectOverviewResponse, QueryFilters, QueryRequest, QueryResponse, ReembedRequest,
+    ReembedResponse, ReindexRequest, ReindexResponse, TestResult, discover_global_config_path,
+    discover_repo_env_path,
 };
 use mem_platform as platform;
 use mem_watch::{flush_path, load_state, run_once, to_status};
@@ -60,6 +61,7 @@ enum Command {
     Remember(RememberArgs),
     Curate(CurateArgs),
     Reindex(ProjectArgs),
+    Reembed(ProjectArgs),
     Health,
     Stats,
     Archive(ArchiveArgs),
@@ -527,6 +529,17 @@ async fn main() -> Result<()> {
                 .post(service_url(&config, "/v1/reindex"))
                 .headers(write_headers(&config.service.api_token)?)
                 .json(&ReindexRequest {
+                    project: args.project,
+                })
+                .send()
+                .await?;
+            print_json_response(response).await?;
+        }
+        Command::Reembed(args) => {
+            let response = client
+                .post(service_url(&config, "/v1/reembed"))
+                .headers(write_headers(&config.service.api_token)?)
+                .json(&ReembedRequest {
                     project: args.project,
                 })
                 .send()
@@ -3127,6 +3140,20 @@ impl ApiClient {
                 .post(service_url(&self.config, "/v1/reindex"))
                 .headers(write_headers(&self.config.service.api_token)?)
                 .json(&ReindexRequest {
+                    project: project.to_string(),
+                })
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn reembed(&self, project: &str) -> Result<ReembedResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/reembed"))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .json(&ReembedRequest {
                     project: project.to_string(),
                 })
                 .send()

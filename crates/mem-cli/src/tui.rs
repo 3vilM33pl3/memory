@@ -389,6 +389,12 @@ impl App {
                     format!("Reindexed {} memory entries.", response.reindexed_entries);
                 self.refresh(api).await;
             }
+            KeyCode::Char('e') if key.modifiers.is_empty() => {
+                let response = api.reembed(&self.project).await?;
+                self.status_message =
+                    format!("Re-embedded {} stale or missing chunks.", response.reembedded_chunks);
+                self.refresh(api).await;
+            }
             KeyCode::Char('a') if key.modifiers.is_empty() => {
                 let response = api.archive_low_value(&self.project).await?;
                 self.status_message = format!(
@@ -1108,7 +1114,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             memory_type_span_from_label(app.filters.memory_type.label()),
             Span::raw("  "),
             Span::styled(
-                "detail=PgUp/PgDn Home  clear=x curate=c reindex=i archive=a delete=D",
+                "detail=PgUp/PgDn Home  clear=x curate=c reindex=i reembed=e archive=a delete=D",
                 Style::default().fg(Theme::MUTED),
             ),
         ],
@@ -1130,7 +1136,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             accent_span("activity "),
             Span::styled("j/k move  ", Style::default().fg(Theme::TEXT)),
             Span::styled(
-                "shows queries and backend capture/curate/reindex/archive/delete events",
+                "shows queries and backend capture/curate/reindex/reembed/archive/delete events",
                 Style::default().fg(Theme::MUTED),
             ),
         ],
@@ -1582,6 +1588,10 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::TEXT),
             )),
             Line::from(Span::styled(
+                "e re-embed stale or missing vectors",
+                Style::default().fg(Theme::TEXT),
+            )),
+            Line::from(Span::styled(
                 "a archive low-value memories",
                 Style::default().fg(Theme::TEXT),
             )),
@@ -1959,7 +1969,7 @@ fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         activity_detail_lines(entry)
     } else {
         vec![Line::from(Span::styled(
-            "No activity yet. Keep the TUI open while queries, captures, curations, reindexing, archiving, or deletions happen for this project.",
+            "No activity yet. Keep the TUI open while queries, captures, curations, reindexing, re-embedding, archiving, or deletions happen for this project.",
             Style::default().fg(Theme::MUTED),
         ))]
     };
@@ -2498,6 +2508,12 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                     reindexed_entries.to_string(),
                 ));
             }
+            ActivityDetails::Reembed { reembedded_chunks } => {
+                lines.push(activity_kv_line(
+                    "Re-embedded chunks",
+                    reembedded_chunks.to_string(),
+                ));
+            }
             ActivityDetails::Archive {
                 archived_count,
                 max_confidence,
@@ -2698,6 +2714,7 @@ fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
         ActivityKind::CaptureTask => ("capture", Theme::ACCENT),
         ActivityKind::Curate => ("curate", Theme::SUCCESS),
         ActivityKind::Reindex => ("reindex", Theme::ACCENT_STRONG),
+        ActivityKind::Reembed => ("reembed", Theme::ACCENT_STRONG),
         ActivityKind::Archive => ("archive", Theme::WARNING),
         ActivityKind::DeleteMemory => ("delete", Theme::DANGER),
         ActivityKind::WatcherHealth => ("watcher-health", Theme::WARNING),
@@ -2871,6 +2888,12 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
         high_confidence_memories: 0,
         medium_confidence_memories: 0,
         low_confidence_memories: 0,
+        embedding_chunks_total: 0,
+        fresh_embedding_chunks: 0,
+        stale_embedding_chunks: 0,
+        missing_embedding_chunks: 0,
+        active_embedding_provider: None,
+        active_embedding_model: None,
         last_memory_at: None,
         last_capture_at: None,
         last_curation_at: None,

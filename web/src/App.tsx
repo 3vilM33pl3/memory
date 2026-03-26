@@ -7,6 +7,7 @@ import {
   getMemory,
   getMemories,
   getOverview,
+  reembed,
   reindex,
   runQuery,
 } from "./api";
@@ -42,6 +43,12 @@ const EMPTY_OVERVIEW: ProjectOverviewResponse = {
   recent_captures_7d: 0,
   raw_captures_total: 0,
   uncurated_raw_captures: 0,
+  embedding_chunks_total: 0,
+  fresh_embedding_chunks: 0,
+  stale_embedding_chunks: 0,
+  missing_embedding_chunks: 0,
+  active_embedding_provider: null,
+  active_embedding_model: null,
   tasks_total: 0,
   sessions_total: 0,
   curation_runs_total: 0,
@@ -230,7 +237,7 @@ export default function App() {
     }
   }
 
-  async function runProjectAction(action: "curate" | "reindex" | "archive") {
+  async function runProjectAction(action: "curate" | "reindex" | "reembed" | "archive") {
     try {
       if (action === "curate") {
         const response = await curate(project);
@@ -238,6 +245,9 @@ export default function App() {
       } else if (action === "reindex") {
         const response = await reindex(project);
         setStatusMessage(`Reindexed ${response.reindexed_entries} memories.`);
+      } else if (action === "reembed") {
+        const response = await reembed(project);
+        setStatusMessage(`Re-embedded ${response.reembedded_chunks} stale or missing chunks.`);
       } else {
         const response = await archiveProject(project);
         setStatusMessage(`Archived ${response.archived_count} low-value memories.`);
@@ -570,6 +580,7 @@ export default function App() {
             <button onClick={() => void refreshProject(project)} type="button">Refresh</button>
             <button onClick={() => void runProjectAction("curate")} type="button">Curate</button>
             <button onClick={() => void runProjectAction("reindex")} type="button">Reindex</button>
+            <button onClick={() => void runProjectAction("reembed")} type="button">Re-embed</button>
             <button onClick={() => void runProjectAction("archive")} type="button">Archive</button>
           </div>
           <section className="project-grid">
@@ -580,6 +591,8 @@ export default function App() {
               <Metric label="Confidence bins" value={`${overview.high_confidence_memories} high / ${overview.medium_confidence_memories} medium / ${overview.low_confidence_memories} low`} />
               <Metric label="Recent 7d" value={`${overview.recent_memories_7d} memories / ${overview.recent_captures_7d} captures`} />
               <Metric label="Raw captures" value={`${overview.raw_captures_total} total / ${overview.uncurated_raw_captures} uncurated`} />
+              <Metric label="Embeddings" value={`${overview.embedding_chunks_total} total / ${overview.fresh_embedding_chunks} fresh / ${overview.stale_embedding_chunks} stale / ${overview.missing_embedding_chunks} missing`} />
+              <Metric label="Active embedding" value={overview.active_embedding_model ? `${overview.active_embedding_provider} / ${overview.active_embedding_model}` : "disabled"} />
               <Metric label="Tasks / Sessions / Runs" value={`${overview.tasks_total} / ${overview.sessions_total} / ${overview.curation_runs_total}`} />
               <Metric label="Last memory" value={formatDateTime(overview.last_memory_at)} />
               <Metric label="Last curation" value={formatDateTime(overview.last_curation_at)} />
