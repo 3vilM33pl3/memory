@@ -336,6 +336,8 @@ pub struct QueryDiagnostics {
     pub rerank_duration_ms: u64,
     #[serde(default)]
     pub total_duration_ms: u64,
+    #[serde(default)]
+    pub semantic_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -575,6 +577,7 @@ pub enum ActivityKind {
     CaptureTask,
     Curate,
     Reindex,
+    Reembed,
     Archive,
     DeleteMemory,
 }
@@ -627,6 +630,9 @@ pub enum ActivityDetails {
     },
     Reindex {
         reindexed_entries: u64,
+    },
+    Reembed {
+        reembedded_chunks: u64,
     },
     Archive {
         archived_count: u64,
@@ -724,6 +730,25 @@ pub struct ReindexResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReembedRequest {
+    pub project: String,
+}
+
+impl ReembedRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReembedResponse {
+    pub reembedded_chunks: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMemoryListItem {
     pub id: Uuid,
     pub summary: String,
@@ -790,6 +815,18 @@ pub struct ProjectOverviewResponse {
     pub last_curation_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_uncurated_capture_age_hours: Option<i64>,
+    #[serde(default)]
+    pub embedding_chunks_total: i64,
+    #[serde(default)]
+    pub fresh_embedding_chunks: i64,
+    #[serde(default)]
+    pub stale_embedding_chunks: i64,
+    #[serde(default)]
+    pub missing_embedding_chunks: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_embedding_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_embedding_model: Option<String>,
     #[serde(default)]
     pub memory_type_breakdown: Vec<MemoryTypeCount>,
     #[serde(default)]
