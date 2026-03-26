@@ -2,7 +2,7 @@
 
 Memory Layer is a local knowledge base for coding agents such as Codex CLI and Claude Code.
 
-It captures durable project knowledge, stores it in PostgreSQL, and makes it searchable in a TUI or browser so important context does not disappear into chat history, terminal scrollback, or old commits. 
+It captures durable project knowledge, stores it in PostgreSQL / pgvector, as embeddings and makes it searchable in a TUI or browser so important context does not disappear into chat history, terminal scrollback, or old commits. 
 
 It uses an army of (distributed) watchers to track projects and assist the LMMs and developers working on it. 
 
