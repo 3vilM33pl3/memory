@@ -23,7 +23,7 @@ use mem_api::{
     DeleteMemoryResponse, MemoryEntryResponse, ProjectCommitsResponse, ProjectMemoriesResponse,
     ProjectOverviewResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters,
     QueryRequest, QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
-    TestResult, discover_global_config_path, discover_repo_env_path,
+    TestResult, discover_global_config_path, discover_repo_env_path, read_repo_project_slug,
 };
 use mem_platform as platform;
 use mem_watch::{flush_path, load_state, run_once, to_status};
@@ -3438,7 +3438,10 @@ fn print_index_status(status: &Option<scan::RepoIndexStatus>, project: &str) {
     println!("Repository index status for {}\n", status.project);
     println!(
         "Files: {} selected / {} tracked | Commits: {} | Evidence bundles: {}",
-        status.files_indexed, status.tracked_files, status.commits_indexed, status.evidence_bundle_count,
+        status.files_indexed,
+        status.tracked_files,
+        status.commits_indexed,
+        status.evidence_bundle_count,
     );
     println!(
         "Coverage: rust {} | ts/js {} | python {} | docs {} | config {} | other {}",
@@ -3574,7 +3577,11 @@ fn resolve_project_slug(project: Option<String>, cwd: &Path) -> Result<String> {
     if let Some(project) = project {
         return Ok(project);
     }
-    let Some(name) = cwd.file_name().and_then(|value| value.to_str()) else {
+    let repo_root = resolve_repo_root(cwd)?;
+    if let Some(project) = read_repo_project_slug(&repo_root) {
+        return Ok(project);
+    }
+    let Some(name) = repo_root.file_name().and_then(|value| value.to_str()) else {
         anyhow::bail!("could not determine project slug from current directory");
     };
     Ok(name.to_string())
@@ -3797,6 +3804,21 @@ mod tests {
     fn project_defaults_to_cwd_name() {
         let cwd = PathBuf::from("/tmp/memory");
         assert_eq!(resolve_project_slug(None, &cwd).unwrap(), "memory");
+    }
+
+    #[test]
+    fn project_defaults_to_repo_metadata_when_present() {
+        let repo_root = unique_temp_dir("mem-cli-project-slug");
+        fs::create_dir_all(repo_root.join(".mem")).unwrap();
+        fs::write(
+            repo_root.join(".mem").join("project.toml"),
+            "slug = \"sctp\"\nrepo_root = \"/tmp/sctp-conformance\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(resolve_project_slug(None, &repo_root).unwrap(), "sctp");
+
+        let _ = fs::remove_dir_all(repo_root);
     }
 
     #[test]

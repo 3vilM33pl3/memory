@@ -10,7 +10,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use mem_api::{AppConfig, AutomationMode, discover_global_config_path};
+use mem_api::{AppConfig, AutomationMode, discover_global_config_path, read_repo_project_slug};
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -1761,15 +1761,7 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> Res
 }
 
 fn read_project_slug(repo_root: &Path) -> Option<String> {
-    let project_path = repo_root.join(".mem").join("project.toml");
-    let content = fs::read_to_string(project_path).ok()?;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(value) = trimmed.strip_prefix("slug = ") {
-            return Some(value.trim_matches('"').to_string());
-        }
-    }
-    None
+    read_repo_project_slug(repo_root)
 }
 
 fn read_local_database_override(repo_root: &Path) -> Option<String> {

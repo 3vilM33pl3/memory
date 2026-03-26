@@ -1251,6 +1251,24 @@ pub fn repo_agent_settings_path(repo_root: &Path) -> PathBuf {
     repo_root.join(".agents").join("memory-layer.toml")
 }
 
+pub fn read_repo_project_slug(repo_root: &Path) -> Option<String> {
+    let project_path = repo_root.join(".mem").join("project.toml");
+    let content = std::fs::read_to_string(project_path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("slug = ") {
+            let slug = value.trim().trim_matches('"').trim();
+            if !slug.is_empty() {
+                return Some(slug.to_string());
+            }
+        }
+    }
+    None
+}
+
 pub fn load_repo_agent_settings(repo_root: &Path) -> Result<AgentProjectConfig, ConfigError> {
     let path = repo_agent_settings_path(repo_root);
     if !path.exists() {
@@ -1842,6 +1860,21 @@ mod tests {
 
         assert_eq!(config.database.url, "postgresql://from-process-env");
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn read_repo_project_slug_uses_project_metadata() {
+        let repo_root = unique_temp_dir("mem-api-project-slug");
+        fs::create_dir_all(repo_root.join(".mem")).unwrap();
+        fs::write(
+            repo_root.join(".mem").join("project.toml"),
+            "slug = \"sctp\"\nrepo_root = \"/tmp/sctp-conformance\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(read_repo_project_slug(&repo_root).as_deref(), Some("sctp"));
+
+        let _ = fs::remove_dir_all(repo_root);
     }
 
     #[test]

@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
-use mem_api::AppConfig;
+use mem_api::{AppConfig, read_repo_project_slug};
 use mem_watch::{
-    build_watcher_heartbeat_request, build_watcher_unregister_request, detect_hostname, flush_path,
-    fetch_service_instance_id, heartbeat_watcher, load_state, run_once, to_status,
+    build_watcher_heartbeat_request, build_watcher_unregister_request, detect_hostname,
+    fetch_service_instance_id, flush_path, heartbeat_watcher, load_state, run_once, to_status,
     unregister_watcher,
 };
 use reqwest::Client;
@@ -113,7 +113,10 @@ async fn run_loop(
     );
     let mut heartbeat_state = HeartbeatState::Unknown;
     let mut backend_instance = BackendInstanceState {
-        current: fetch_service_instance_id(&client, &config).await.ok().flatten(),
+        current: fetch_service_instance_id(&client, &config)
+            .await
+            .ok()
+            .flatten(),
     };
     heartbeat_state = log_heartbeat_transition(
         heartbeat_state,
@@ -261,6 +264,9 @@ fn resolve_project(project: Option<String>, repo_root: &std::path::Path) -> Resu
     if let Some(project) = project {
         return Ok(project);
     }
+    if let Some(project) = read_repo_project_slug(repo_root) {
+        return Ok(project);
+    }
     let Some(name) = repo_root.file_name().and_then(|value| value.to_str()) else {
         anyhow::bail!("could not determine project slug from repo root");
     };
@@ -326,10 +332,11 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        BackendInstanceState, HeartbeatState, log_heartbeat_transition,
+        BackendInstanceState, HeartbeatState, log_heartbeat_transition, resolve_project,
         update_backend_instance_state,
     };
     use mem_api::WatcherPresenceSummary;
+    use std::fs;
 
     #[test]
     fn heartbeat_failure_enters_failing_state() {
@@ -360,9 +367,7 @@ mod tests {
         };
         let error = update_backend_instance_state(&mut state, Some("new-instance".to_string()))
             .expect_err("instance change should force restart");
-        assert!(error
-            .to_string()
-            .contains("backend service restarted"));
+        assert!(error.to_string().contains("backend service restarted"));
     }
 
     #[test]
@@ -370,5 +375,35 @@ mod tests {
         let mut state = BackendInstanceState::default();
         update_backend_instance_state(&mut state, Some("instance-a".to_string())).unwrap();
         assert_eq!(state.current.as_deref(), Some("instance-a"));
+    }
+
+    #[test]
+    fn resolve_project_uses_repo_metadata_when_present() {
+        let repo_root = unique_temp_dir("mem-watch-project-slug");
+        fs::create_dir_all(repo_root.join(".mem")).unwrap();
+        fs::write(
+            repo_root.join(".mem").join("project.toml"),
+            "slug = \"sctp\"\nrepo_root = \"/tmp/sctp-conformance\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(resolve_project(None, &repo_root).unwrap(), "sctp");
+
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    fn unique_temp_dir(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        if path.exists() {
+            let _ = fs::remove_dir_all(&path);
+        }
+        path
     }
 }
