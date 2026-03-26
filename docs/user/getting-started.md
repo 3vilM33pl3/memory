@@ -258,6 +258,8 @@ Search project memory:
 mem-cli query --project my-project --question "How is deployment handled here?"
 ```
 
+For semantic-search maintenance commands such as `reindex`, `reembed`, and `prune-embeddings`, see [Embedding Operations](cli/embeddings.md).
+
 ## Optional Background Watcher
 
 If you want Memory Layer to capture useful work in the background:
@@ -323,6 +325,8 @@ mem-cli prune-embeddings --project my-project
 ```
 
 only when you want to delete non-active embedding spaces explicitly.
+
+For the command-level explanation of when to use each of those operations, see [Embedding Operations](cli/embeddings.md).
 
 If `mem-cli doctor` reports that `pgvector` is missing, install the PostgreSQL package first and rerun the check.
 

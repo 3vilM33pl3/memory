@@ -22,8 +22,9 @@ The fastest path is:
 1. Install the package.
 2. Run `mem-cli wizard --global` once per machine.
 3. Run `mem-cli wizard` inside each repository.
-4. Start `mem-service`.
-5. Open the TUI or web UI.
+4. Make sure a default `writer.id` is configured for write-capable commands.
+5. Start `mem-service`.
+6. Open the TUI or web UI.
 
 Debian:
 
@@ -49,6 +50,8 @@ mem-cli tui
 
 For the full onboarding flow, prerequisites, upgrade path, and troubleshooting, use [Getting Started](docs/user/getting-started.md).
 
+For semantic-search maintenance and model switching, use [Embedding Operations](docs/user/cli/embeddings.md).
+
 ## What It Does
 
 - stores project memory in PostgreSQL with pgvector-backed chunk embeddings
@@ -73,6 +76,7 @@ Project-local customization now has two layers:
 
 - [User Documentation Index](docs/user/README.md)
 - [Getting Started](docs/user/getting-started.md)
+- [Embedding Operations](docs/user/cli/embeddings.md)
 - [Scan Command](docs/user/cli/scan.md)
 - [Commit History](docs/user/cli/commits.md)
 
