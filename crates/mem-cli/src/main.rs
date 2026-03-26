@@ -2260,7 +2260,7 @@ fn render_watch_unit(repo_root: &Path, project: &str) -> Result<String> {
         .canonicalize()
         .with_context(|| format!("canonicalize {}", repo_root.display()))?;
     Ok(format!(
-        "[Unit]\nDescription=Memory Layer Watcher ({project})\nAfter=default.target\n\n[Service]\nType=simple\nEnvironmentFile=-{}\nWorkingDirectory={}\nExecStart={} run --project {}\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Memory Layer Watcher ({project})\nAfter=default.target\n\n[Service]\nType=simple\nEnvironmentFile=-{}\nEnvironment=MEMORY_LAYER_WATCH_SERVICE_MANAGED=1\nWorkingDirectory={}\nExecStart={} run --project {}\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
         shell_escape_path(&env_file),
         working_directory.display(),
         shell_escape_path(&watch_binary),
@@ -2507,6 +2507,7 @@ fn render_watch_launch_agent(repo_root: &Path, project: &str) -> Result<String> 
         "--project".to_string(),
         project.to_string(),
     ])?;
+    let command = format!("export MEMORY_LAYER_WATCH_SERVICE_MANAGED=1; {command}");
     render_launch_agent_plist(
         &watch_launch_agent_label(project),
         &working_directory,

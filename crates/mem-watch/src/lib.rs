@@ -411,6 +411,8 @@ pub fn build_watcher_heartbeat_request(
     state: &AutomationState,
     watcher_id: &str,
     hostname: &str,
+    host_service_id: &str,
+    managed_by_service: bool,
     pid: u32,
     started_at: DateTime<Utc>,
 ) -> WatcherHeartbeatRequest {
@@ -419,8 +421,10 @@ pub fn build_watcher_heartbeat_request(
         project: state.project.clone(),
         repo_root: state.repo_root.clone(),
         hostname: hostname.to_string(),
+        host_service_id: host_service_id.to_string(),
         pid,
         mode: state.mode.clone(),
+        managed_by_service,
         started_at,
     }
 }

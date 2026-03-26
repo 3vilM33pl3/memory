@@ -1362,6 +1362,9 @@ dependencies = [
 [[package]]
 name = "mem-platform"
 version = "0.1.5"
+dependencies = [
+ "anyhow",
+]
 
 [[package]]
 name = "mem-search"
@@ -1390,6 +1393,7 @@ dependencies = [
  "futures-util",
  "mem-api",
  "mem-curate",
+ "mem-platform",
  "mem-search",
  "mem-watch",
  "reqwest",

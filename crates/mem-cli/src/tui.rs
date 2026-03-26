@@ -15,7 +15,7 @@ use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
     NamedCount, ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse,
     QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, StreamRequest,
-    StreamResponse, read_capnp_text_frame, write_capnp_text_frame,
+    StreamResponse, WatcherHealth, read_capnp_text_frame, write_capnp_text_frame,
 };
 use ratatui::{
     Terminal,
@@ -1994,8 +1994,9 @@ fn watcher_summary_text(app: &App) -> String {
     };
 
     format!(
-        "{} active / stale after {}s / last {}",
+        "{} healthy / {} unhealthy / stale after {}s / last {}",
         summary.active_count,
+        summary.unhealthy_count,
         summary.stale_after_seconds,
         summary
             .last_heartbeat_at
@@ -2022,8 +2023,8 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
         return vec![
             Line::from(Span::styled(
                 format!(
-                    "0 active watcher(s). Stale after {}s.",
-                    summary.stale_after_seconds
+                    "0 healthy watcher(s), {} unhealthy. Stale after {}s.",
+                    summary.unhealthy_count, summary.stale_after_seconds
                 ),
                 Style::default().fg(Theme::MUTED),
             )),
@@ -2041,6 +2042,12 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
         ),
         Style::default().fg(Theme::TEXT),
     ))];
+    if summary.unhealthy_count > 0 {
+        lines.push(Line::from(Span::styled(
+            format!("{} watcher(s) currently unhealthy.", summary.unhealthy_count),
+            Style::default().fg(Theme::WARNING),
+        )));
+    }
     if let Some(last_heartbeat) = summary.last_heartbeat_at {
         lines.push(Line::from(vec![
             label_span("Last heartbeat: "),
@@ -2070,6 +2077,18 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
                 Style::default().fg(Theme::MUTED),
             ),
         ]));
+        lines.push(Line::from(vec![
+            label_span("  status: "),
+            watcher_health_span(&watcher.health),
+            Span::styled(
+                if watcher.managed_by_service {
+                    " managed".to_string()
+                } else {
+                    " manual".to_string()
+                },
+                Style::default().fg(Theme::MUTED),
+            ),
+        ]));
         lines.push(Line::from(Span::styled(
             format!("  repo: {}", watcher.repo_root),
             Style::default().fg(Theme::MUTED),
@@ -2078,6 +2097,23 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
             format!("  watcher: {}", watcher.watcher_id),
             Style::default().fg(Theme::MUTED),
         )));
+        lines.push(Line::from(Span::styled(
+            format!("  host service: {}", watcher.host_service_id),
+            Style::default().fg(Theme::MUTED),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!("  restart attempts: {}", watcher.restart_attempt_count),
+            Style::default().fg(Theme::MUTED),
+        )));
+        if let Some(last_restart) = watcher.last_restart_attempt_at {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  last restart attempt: {}",
+                    last_restart.format("%Y-%m-%d %H:%M:%S UTC")
+                ),
+                Style::default().fg(Theme::MUTED),
+            )));
+        }
         lines.push(Line::from(""));
     }
     lines
@@ -2484,6 +2520,33 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                 lines.push(activity_kv_line("Deleted", deleted.to_string()));
                 lines.push(activity_kv_line("Deleted summary", summary.clone()));
             }
+            ActivityDetails::WatcherHealth {
+                watcher_id,
+                hostname,
+                health,
+                managed_by_service,
+                restart_attempt_count,
+                message,
+            } => {
+                lines.push(activity_kv_line("Watcher", watcher_id.clone()));
+                lines.push(activity_kv_line("Hostname", hostname.clone()));
+                lines.push(Line::from(vec![
+                    label_span("Health: "),
+                    watcher_health_span(health),
+                ]));
+                lines.push(activity_kv_line(
+                    "Managed by service",
+                    managed_by_service.to_string(),
+                ));
+                lines.push(activity_kv_line(
+                    "Restart attempts",
+                    restart_attempt_count.to_string(),
+                ));
+                lines.push(activity_kv_line(
+                    "Message",
+                    message.clone().unwrap_or_else(|| "n/a".to_string()),
+                ));
+            }
         }
     }
 
@@ -2637,6 +2700,20 @@ fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
         ActivityKind::Reindex => ("reindex", Theme::ACCENT_STRONG),
         ActivityKind::Archive => ("archive", Theme::WARNING),
         ActivityKind::DeleteMemory => ("delete", Theme::DANGER),
+        ActivityKind::WatcherHealth => ("watcher-health", Theme::WARNING),
+    };
+    Span::styled(
+        label,
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn watcher_health_span(health: &WatcherHealth) -> Span<'static> {
+    let (label, color) = match health {
+        WatcherHealth::Healthy => ("healthy", Theme::SUCCESS),
+        WatcherHealth::Stale => ("stale", Theme::WARNING),
+        WatcherHealth::Restarting => ("restarting", Theme::ACCENT_STRONG),
+        WatcherHealth::Failed => ("failed", Theme::DANGER),
     };
     Span::styled(
         label,

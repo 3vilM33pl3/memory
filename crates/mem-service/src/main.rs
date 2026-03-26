@@ -24,11 +24,12 @@ use mem_api::{
     DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, MemorySourceRecord,
     ProjectCommitsResponse, ProjectMemoriesResponse, ProjectOverviewResponse, QueryRequest,
     ReindexRequest, ReindexResponse, RelatedMemorySummary, StatsResponse, StreamRequest,
-    StreamResponse, ValidationError, WatcherHeartbeatRequest, WatcherPresence,
-    WatcherPresenceSummary, WatcherUnregisterRequest, read_capnp_text_frame,
-    write_capnp_text_frame,
+    StreamResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
+    WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
+    WatcherUnregisterRequest, read_capnp_text_frame, write_capnp_text_frame,
 };
 use mem_curate::{curate, store_capture};
+use mem_platform::restart_local_watcher_service;
 use mem_search::{
     EmbeddingService, parse_memory_type, parse_relation_type, parse_source_kind, query_memory,
     rebuild_chunks,
@@ -120,6 +121,9 @@ struct ClusterPeer {
 }
 
 const WATCHER_STALE_AFTER_SECONDS: u64 = 90;
+const WATCHER_RESTART_BACKOFF_SECONDS: u64 = 120;
+const WATCHER_EXPIRY_AFTER_SECONDS: u64 = 600;
+const WATCHER_MAX_RESTART_ATTEMPTS: u32 = 3;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -346,6 +350,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/projects/{slug}/overview", get(project_overview))
         .route("/v1/watchers/heartbeat", post(watcher_heartbeat))
         .route("/v1/watchers/unregister", post(watcher_unregister))
+        .route("/v1/watchers/restart-local", post(watcher_restart_local))
         .route("/v1/archive", post(archive))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
@@ -359,14 +364,17 @@ fn build_http_app(state: AppState) -> Router {
 }
 
 async fn start_cluster_tasks(state: AppState) -> Result<Vec<JoinHandle<Result<()>>>> {
+    let mut tasks = Vec::new();
+    if state.is_primary() {
+        tasks.push(tokio::spawn(run_watcher_watchdog(state.clone())));
+    }
     if !state.config.cluster.enabled {
-        return Ok(Vec::new());
+        return Ok(tasks);
     }
 
     let socket = Arc::new(bind_cluster_socket(
         &state.config.cluster.discovery_multicast_addr,
     )?);
-    let mut tasks = Vec::new();
     tasks.push(tokio::spawn(run_cluster_listener(
         socket.clone(),
         state.clone(),
@@ -514,6 +522,16 @@ fn selected_primary_peer(state: &AppState) -> Option<ClusterPeer> {
             .then_with(|| left.service_id.cmp(&right.service_id))
     });
     peers.into_iter().next()
+}
+
+fn cluster_peer_by_service_id(state: &AppState, service_id: &str) -> Option<ClusterPeer> {
+    prune_cluster_peers(&state.cluster, state.config.cluster.peer_ttl);
+    let peers = state
+        .cluster
+        .peers
+        .lock()
+        .expect("cluster peer mutex poisoned");
+    peers.get(service_id).cloned()
 }
 
 struct ProtoServers {
@@ -1583,14 +1601,39 @@ async fn watcher_heartbeat(
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     if !state.is_primary() {
+        let project = request.project.clone();
+        let (_, changed, transition) = register_watcher_heartbeat(&state.watchers, request.clone());
+        if changed {
+            notify_project_refreshed(&state, project);
+        }
+        if let Some((summary, details)) = transition {
+            notify_project_changed(
+                &state,
+                request.project.clone(),
+                None,
+                ActivityKind::WatcherHealth,
+                summary,
+                Some(details),
+            );
+        }
         return Ok(Json(
             proxy_post_json(&state, "/v1/watchers/heartbeat", &request, true).await?,
         ));
     }
     let project = request.project.clone();
-    let (summary, changed) = register_watcher_heartbeat(&state.watchers, request);
+    let (summary, changed, transition) = register_watcher_heartbeat(&state.watchers, request);
     if changed {
-        notify_project_refreshed(&state, project);
+        notify_project_refreshed(&state, project.clone());
+    }
+    if let Some((summary, details)) = transition {
+        notify_project_changed(
+            &state,
+            project,
+            None,
+            ActivityKind::WatcherHealth,
+            summary,
+            Some(details),
+        );
     }
     Ok(Json(summary))
 }
@@ -1603,6 +1646,11 @@ async fn watcher_unregister(
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     if !state.is_primary() {
+        let project = request.project.clone();
+        let (_, changed) = unregister_watcher(&state.watchers, &request);
+        if changed {
+            notify_project_refreshed(&state, project);
+        }
         return Ok(Json(
             proxy_post_json(&state, "/v1/watchers/unregister", &request, true).await?,
         ));
@@ -1613,6 +1661,30 @@ async fn watcher_unregister(
         notify_project_refreshed(&state, project);
     }
     Ok(Json(summary))
+}
+
+async fn watcher_restart_local(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<WatcherRestartRequest>,
+) -> Result<Json<WatcherRestartResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if request.host_service_id != state.config.cluster.service_id {
+        return Err(ApiError::status_message(
+            StatusCode::BAD_REQUEST,
+            "restart request was sent to the wrong host service",
+        ));
+    }
+
+    restart_local_watcher_service(&request.project).map_err(ApiError::io)?;
+    update_local_watcher_restart_state(&state.watchers, &request.watcher_id);
+    notify_project_refreshed(&state, request.project.clone());
+
+    Ok(Json(WatcherRestartResponse {
+        accepted: true,
+        message: format!("requested restart for watcher {}", request.watcher_id),
+    }))
 }
 
 async fn archive(
@@ -1786,14 +1858,20 @@ async fn fetch_project_overview_with_watchers(
 fn register_watcher_heartbeat(
     watchers: &Mutex<HashMap<String, WatcherPresence>>,
     request: WatcherHeartbeatRequest,
-) -> (WatcherPresenceSummary, bool) {
+) -> (
+    WatcherPresenceSummary,
+    bool,
+    Option<(String, ActivityDetails)>,
+) {
     let mut registry = watchers.lock().expect("watcher registry mutex poisoned");
     let before = watcher_summary_from_registry(&registry, &request.project);
-    prune_stale_watchers(&mut registry);
+    expire_dead_watchers(&mut registry);
     let now = chrono::Utc::now();
+    let mut transition = None;
     registry
         .entry(request.watcher_id.clone())
         .and_modify(|watcher| {
+            let recovered = watcher.health != WatcherHealth::Healthy;
             watcher.project = request.project.clone();
             watcher.repo_root = request.repo_root.clone();
             watcher.hostname = request.hostname.clone();
@@ -1801,6 +1879,24 @@ fn register_watcher_heartbeat(
             watcher.mode = request.mode.clone();
             watcher.started_at = request.started_at;
             watcher.last_heartbeat_at = now;
+            watcher.host_service_id = request.host_service_id.clone();
+            watcher.managed_by_service = request.managed_by_service;
+            watcher.health = WatcherHealth::Healthy;
+            watcher.last_restart_attempt_at = None;
+            watcher.restart_attempt_count = 0;
+            if recovered {
+                transition = Some((
+                    format!("Watcher {} recovered", request.watcher_id),
+                    ActivityDetails::WatcherHealth {
+                        watcher_id: request.watcher_id.clone(),
+                        hostname: request.hostname.clone(),
+                        health: WatcherHealth::Healthy,
+                        managed_by_service: request.managed_by_service,
+                        restart_attempt_count: 0,
+                        message: Some("heartbeat recovered".to_string()),
+                    },
+                ));
+            }
         })
         .or_insert_with(|| WatcherPresence {
             watcher_id: request.watcher_id.clone(),
@@ -1811,9 +1907,15 @@ fn register_watcher_heartbeat(
             mode: request.mode.clone(),
             started_at: request.started_at,
             last_heartbeat_at: now,
+            host_service_id: request.host_service_id.clone(),
+            managed_by_service: request.managed_by_service,
+            health: WatcherHealth::Healthy,
+            last_restart_attempt_at: None,
+            restart_attempt_count: 0,
         });
     let after = watcher_summary_from_registry(&registry, &request.project);
     let changed = before.active_count != after.active_count
+        || before.unhealthy_count != after.unhealthy_count
         || before
             .watchers
             .iter()
@@ -1824,7 +1926,7 @@ fn register_watcher_heartbeat(
                 .iter()
                 .map(|watcher| watcher.watcher_id.as_str())
                 .collect::<Vec<_>>();
-    (after, changed)
+    (after, changed, transition)
 }
 
 fn unregister_watcher(
@@ -1833,11 +1935,12 @@ fn unregister_watcher(
 ) -> (WatcherPresenceSummary, bool) {
     let mut registry = watchers.lock().expect("watcher registry mutex poisoned");
     let before = watcher_summary_from_registry(&registry, &request.project);
-    prune_stale_watchers(&mut registry);
+    expire_dead_watchers(&mut registry);
     let removed = registry.remove(&request.watcher_id).is_some();
     let after = watcher_summary_from_registry(&registry, &request.project);
     let changed = removed
         || before.active_count != after.active_count
+        || before.unhealthy_count != after.unhealthy_count
         || before
             .watchers
             .iter()
@@ -1856,16 +1959,31 @@ fn watcher_summary_for_project(
     project: &str,
 ) -> WatcherPresenceSummary {
     let mut registry = watchers.lock().expect("watcher registry mutex poisoned");
-    prune_stale_watchers(&mut registry);
+    expire_dead_watchers(&mut registry);
+    refresh_watcher_health_from_heartbeats(&mut registry);
     watcher_summary_from_registry(&registry, project)
 }
 
-fn prune_stale_watchers(registry: &mut HashMap<String, WatcherPresence>) {
+fn expire_dead_watchers(registry: &mut HashMap<String, WatcherPresence>) {
+    let expiry_after =
+        chrono::Duration::from_std(StdDuration::from_secs(WATCHER_EXPIRY_AFTER_SECONDS))
+            .expect("valid watcher expiry duration");
+    let now = chrono::Utc::now();
+    registry.retain(|_, watcher| now - watcher.last_heartbeat_at <= expiry_after);
+}
+
+fn refresh_watcher_health_from_heartbeats(registry: &mut HashMap<String, WatcherPresence>) {
     let stale_after =
         chrono::Duration::from_std(StdDuration::from_secs(WATCHER_STALE_AFTER_SECONDS))
             .expect("valid watcher stale duration");
     let now = chrono::Utc::now();
-    registry.retain(|_, watcher| now - watcher.last_heartbeat_at <= stale_after);
+    for watcher in registry.values_mut() {
+        if now - watcher.last_heartbeat_at > stale_after
+            && watcher.health == WatcherHealth::Healthy
+        {
+            watcher.health = WatcherHealth::Stale;
+        }
+    }
 }
 
 fn watcher_summary_from_registry(
@@ -1884,12 +2002,200 @@ fn watcher_summary_from_registry(
             .then_with(|| left.watcher_id.cmp(&right.watcher_id))
     });
     let last_heartbeat_at = watchers.first().map(|watcher| watcher.last_heartbeat_at);
+    let active_count = watchers
+        .iter()
+        .filter(|watcher| watcher.health == WatcherHealth::Healthy)
+        .count();
+    let unhealthy_count = watchers.len().saturating_sub(active_count);
     WatcherPresenceSummary {
-        active_count: watchers.len(),
+        active_count,
+        unhealthy_count,
         stale_after_seconds: WATCHER_STALE_AFTER_SECONDS,
         last_heartbeat_at,
         watchers,
     }
+}
+
+fn update_local_watcher_restart_state(
+    watchers: &Mutex<HashMap<String, WatcherPresence>>,
+    watcher_id: &str,
+) {
+    let mut registry = watchers.lock().expect("watcher registry mutex poisoned");
+    if let Some(watcher) = registry.get_mut(watcher_id) {
+        watcher.health = WatcherHealth::Restarting;
+        watcher.last_restart_attempt_at = Some(chrono::Utc::now());
+        watcher.restart_attempt_count = watcher.restart_attempt_count.saturating_add(1);
+    }
+}
+
+async fn run_watcher_watchdog(state: AppState) -> Result<()> {
+    let tick = Duration::from_secs(15);
+    let stale_after =
+        chrono::Duration::from_std(StdDuration::from_secs(WATCHER_STALE_AFTER_SECONDS))
+            .expect("valid watcher stale duration");
+    let restart_backoff =
+        chrono::Duration::from_std(StdDuration::from_secs(WATCHER_RESTART_BACKOFF_SECONDS))
+            .expect("valid watcher restart backoff");
+    loop {
+        tokio::time::sleep(tick).await;
+        if !state.is_primary() {
+            continue;
+        }
+
+        let mut activity_events = Vec::new();
+        let mut restart_requests = Vec::new();
+        {
+            let mut registry = state.watchers.lock().expect("watcher registry mutex poisoned");
+            expire_dead_watchers(&mut registry);
+            let now = chrono::Utc::now();
+            for watcher in registry.values_mut() {
+                if now - watcher.last_heartbeat_at <= stale_after {
+                    continue;
+                }
+
+                if !watcher.managed_by_service {
+                    if watcher.health != WatcherHealth::Stale {
+                        watcher.health = WatcherHealth::Stale;
+                        activity_events.push((
+                            watcher.project.clone(),
+                            format!("Watcher {} went stale", watcher.watcher_id),
+                            ActivityDetails::WatcherHealth {
+                                watcher_id: watcher.watcher_id.clone(),
+                                hostname: watcher.hostname.clone(),
+                                health: WatcherHealth::Stale,
+                                managed_by_service: false,
+                                restart_attempt_count: watcher.restart_attempt_count,
+                                message: Some(
+                                    "heartbeat missed; manual watcher will not be restarted"
+                                        .to_string(),
+                                ),
+                            },
+                        ));
+                    }
+                    continue;
+                }
+
+                let retry_allowed = watcher
+                    .last_restart_attempt_at
+                    .map(|last| now - last >= restart_backoff)
+                    .unwrap_or(true);
+                if watcher.restart_attempt_count >= WATCHER_MAX_RESTART_ATTEMPTS {
+                    if watcher.health != WatcherHealth::Failed {
+                        watcher.health = WatcherHealth::Failed;
+                        activity_events.push((
+                            watcher.project.clone(),
+                            format!("Watcher {} failed to recover", watcher.watcher_id),
+                            ActivityDetails::WatcherHealth {
+                                watcher_id: watcher.watcher_id.clone(),
+                                hostname: watcher.hostname.clone(),
+                                health: WatcherHealth::Failed,
+                                managed_by_service: true,
+                                restart_attempt_count: watcher.restart_attempt_count,
+                                message: Some(
+                                    "watcher exceeded restart attempt limit".to_string(),
+                                ),
+                            },
+                        ));
+                    }
+                    continue;
+                }
+                if !retry_allowed || watcher.health == WatcherHealth::Restarting {
+                    continue;
+                }
+
+                watcher.health = WatcherHealth::Restarting;
+                watcher.last_restart_attempt_at = Some(now);
+                watcher.restart_attempt_count = watcher.restart_attempt_count.saturating_add(1);
+                restart_requests.push(WatcherRestartRequest {
+                    project: watcher.project.clone(),
+                    watcher_id: watcher.watcher_id.clone(),
+                    host_service_id: watcher.host_service_id.clone(),
+                });
+                activity_events.push((
+                    watcher.project.clone(),
+                    format!("Restarting watcher {}", watcher.watcher_id),
+                    ActivityDetails::WatcherHealth {
+                        watcher_id: watcher.watcher_id.clone(),
+                        hostname: watcher.hostname.clone(),
+                        health: WatcherHealth::Restarting,
+                        managed_by_service: true,
+                        restart_attempt_count: watcher.restart_attempt_count,
+                        message: Some(
+                            "watcher heartbeat missed; requesting restart".to_string(),
+                        ),
+                    },
+                ));
+            }
+        }
+
+        for (project, summary, details) in activity_events {
+            notify_project_refreshed(&state, project.clone());
+            notify_project_changed(
+                &state,
+                project,
+                None,
+                ActivityKind::WatcherHealth,
+                summary,
+                Some(details),
+            );
+        }
+
+        for request in restart_requests {
+            let dispatch = dispatch_watcher_restart(&state, &request).await;
+            if let Err(error) = dispatch {
+                let mut registry = state.watchers.lock().expect("watcher registry mutex poisoned");
+                if let Some(watcher) = registry.get_mut(&request.watcher_id) {
+                    watcher.health = WatcherHealth::Failed;
+                    let details = ActivityDetails::WatcherHealth {
+                        watcher_id: watcher.watcher_id.clone(),
+                        hostname: watcher.hostname.clone(),
+                        health: WatcherHealth::Failed,
+                        managed_by_service: watcher.managed_by_service,
+                        restart_attempt_count: watcher.restart_attempt_count,
+                        message: Some(format!("restart request failed: {error}")),
+                    };
+                    let project = watcher.project.clone();
+                    drop(registry);
+                    notify_project_refreshed(&state, project.clone());
+                    notify_project_changed(
+                        &state,
+                        project,
+                        None,
+                        ActivityKind::WatcherHealth,
+                        format!("Watcher {} restart failed", request.watcher_id),
+                        Some(details),
+                    );
+                }
+            }
+        }
+    }
+}
+
+async fn dispatch_watcher_restart(state: &AppState, request: &WatcherRestartRequest) -> Result<()> {
+    if request.host_service_id == state.config.cluster.service_id {
+        restart_local_watcher_service(&request.project)?;
+        return Ok(());
+    }
+
+    let peer = cluster_peer_by_service_id(state, &request.host_service_id)
+        .ok_or_else(|| anyhow::anyhow!("host-local memory service is unavailable"))?;
+    let response = state
+        .http_client
+        .post(format!(
+            "http://{}/v1/watchers/restart-local",
+            peer.advertise_addr
+        ))
+        .header("x-api-token", &state.api_token)
+        .json(request)
+        .send()
+        .await
+        .context("send remote watcher restart request")?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("remote restart failed with {status}: {body}");
+    }
+    Ok(())
 }
 
 fn stream_activity_response(event: ServiceEvent) -> StreamResponse {
@@ -1909,6 +2215,30 @@ fn stream_activity_response(event: ServiceEvent) -> StreamResponse {
 mod tests {
     use super::*;
     use mem_api::AutomationMode;
+
+    fn test_presence(
+        watcher_id: &str,
+        project: &str,
+        hostname: &str,
+        mode: AutomationMode,
+        last_heartbeat_at: chrono::DateTime<chrono::Utc>,
+    ) -> WatcherPresence {
+        WatcherPresence {
+            watcher_id: watcher_id.to_string(),
+            project: project.to_string(),
+            repo_root: "/repo".to_string(),
+            hostname: hostname.to_string(),
+            pid: 111,
+            mode,
+            started_at: last_heartbeat_at,
+            last_heartbeat_at,
+            host_service_id: "service-a".to_string(),
+            managed_by_service: true,
+            health: WatcherHealth::Healthy,
+            last_restart_attempt_at: None,
+            restart_attempt_count: 0,
+        }
+    }
 
     #[tokio::test]
     async fn recent_activity_responses_replays_latest_project_events() {
@@ -1967,70 +2297,76 @@ mod tests {
             pid: 111,
             mode: AutomationMode::Suggest,
             started_at,
+            host_service_id: "service-a".to_string(),
+            managed_by_service: true,
         };
 
-        let (first, first_changed) = register_watcher_heartbeat(&watchers, request.clone());
-        let (second, second_changed) = register_watcher_heartbeat(&watchers, request);
+        let (first, first_changed, _) = register_watcher_heartbeat(&watchers, request.clone());
+        let (second, second_changed, transition) = register_watcher_heartbeat(&watchers, request);
 
         assert_eq!(first.active_count, 1);
         assert_eq!(second.active_count, 1);
+        assert_eq!(second.unhealthy_count, 0);
         assert_eq!(second.watchers.len(), 1);
         assert_eq!(second.watchers[0].watcher_id, "watcher-1");
         assert!(first_changed);
         assert!(!second_changed);
+        assert!(transition.is_none());
     }
 
     #[test]
-    fn watcher_summary_filters_by_project_and_prunes_stale_entries() {
+    fn watcher_summary_filters_by_project_and_marks_stale_entries_unhealthy() {
         let now = chrono::Utc::now();
         let mut registry = HashMap::new();
         registry.insert(
             "watcher-live".to_string(),
-            WatcherPresence {
-                watcher_id: "watcher-live".to_string(),
-                project: "memory".to_string(),
-                repo_root: "/repo".to_string(),
-                hostname: "host-a".to_string(),
-                pid: 111,
-                mode: AutomationMode::Suggest,
-                started_at: now,
-                last_heartbeat_at: now,
-            },
+            test_presence("watcher-live", "memory", "host-a", AutomationMode::Suggest, now),
         );
         registry.insert(
             "watcher-other".to_string(),
-            WatcherPresence {
-                watcher_id: "watcher-other".to_string(),
-                project: "other".to_string(),
-                repo_root: "/other".to_string(),
-                hostname: "host-b".to_string(),
-                pid: 222,
-                mode: AutomationMode::Auto,
-                started_at: now,
-                last_heartbeat_at: now,
-            },
+            test_presence("watcher-other", "other", "host-b", AutomationMode::Auto, now),
         );
         registry.insert(
             "watcher-stale".to_string(),
-            WatcherPresence {
-                watcher_id: "watcher-stale".to_string(),
-                project: "memory".to_string(),
-                repo_root: "/repo".to_string(),
-                hostname: "host-c".to_string(),
-                pid: 333,
-                mode: AutomationMode::Suggest,
-                started_at: now,
-                last_heartbeat_at: now
-                    - chrono::Duration::seconds(WATCHER_STALE_AFTER_SECONDS as i64 + 1),
-            },
+            test_presence(
+                "watcher-stale",
+                "memory",
+                "host-c",
+                AutomationMode::Suggest,
+                now - chrono::Duration::seconds(WATCHER_STALE_AFTER_SECONDS as i64 + 1),
+            ),
         );
         let watchers = Mutex::new(registry);
 
         let summary = watcher_summary_for_project(&watchers, "memory");
 
         assert_eq!(summary.active_count, 1);
-        assert_eq!(summary.watchers.len(), 1);
+        assert_eq!(summary.unhealthy_count, 1);
+        assert_eq!(summary.watchers.len(), 2);
         assert_eq!(summary.watchers[0].watcher_id, "watcher-live");
+        assert_eq!(summary.watchers[1].watcher_id, "watcher-stale");
+    }
+
+    #[test]
+    fn stale_manual_watcher_is_counted_as_unhealthy() {
+        let now = chrono::Utc::now();
+        let watchers = Mutex::new(HashMap::from([(
+            "watcher-manual".to_string(),
+            WatcherPresence {
+                managed_by_service: false,
+                ..test_presence(
+                    "watcher-manual",
+                    "memory",
+                    "host-a",
+                    AutomationMode::Suggest,
+                    now - chrono::Duration::seconds(WATCHER_STALE_AFTER_SECONDS as i64 + 1),
+                )
+            },
+        )]));
+
+        let summary = watcher_summary_for_project(&watchers, "memory");
+        assert_eq!(summary.active_count, 0);
+        assert_eq!(summary.unhealthy_count, 1);
     }
 }
 

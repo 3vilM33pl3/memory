@@ -571,6 +571,7 @@ pub enum ActivityKind {
     CommitSync,
     Query,
     QueryError,
+    WatcherHealth,
     CaptureTask,
     Curate,
     Reindex,
@@ -601,6 +602,15 @@ pub enum ActivityDetails {
         answer: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    WatcherHealth {
+        watcher_id: String,
+        hostname: String,
+        health: WatcherHealth,
+        managed_by_service: bool,
+        restart_attempt_count: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
     },
     CaptureTask {
         session_id: Uuid,
@@ -832,11 +842,21 @@ pub struct AutomationStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatcherPresenceSummary {
     pub active_count: usize,
+    pub unhealthy_count: usize,
     pub stale_after_seconds: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_heartbeat_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub watchers: Vec<WatcherPresence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WatcherHealth {
+    Healthy,
+    Stale,
+    Restarting,
+    Failed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -845,10 +865,17 @@ pub struct WatcherPresence {
     pub project: String,
     pub repo_root: String,
     pub hostname: String,
+    pub host_service_id: String,
     pub pid: u32,
     pub mode: AutomationMode,
+    pub managed_by_service: bool,
+    pub health: WatcherHealth,
     pub started_at: DateTime<Utc>,
     pub last_heartbeat_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_restart_attempt_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub restart_attempt_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -857,8 +884,10 @@ pub struct WatcherHeartbeatRequest {
     pub project: String,
     pub repo_root: String,
     pub hostname: String,
+    pub host_service_id: String,
     pub pid: u32,
     pub mode: AutomationMode,
+    pub managed_by_service: bool,
     pub started_at: DateTime<Utc>,
 }
 
@@ -876,11 +905,42 @@ impl WatcherHeartbeatRequest {
         if self.hostname.trim().is_empty() {
             return Err(ValidationError::new("hostname must be non-empty"));
         }
+        if self.host_service_id.trim().is_empty() {
+            return Err(ValidationError::new("host_service_id must be non-empty"));
+        }
         if self.pid == 0 {
             return Err(ValidationError::new("pid must be non-zero"));
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatcherRestartRequest {
+    pub project: String,
+    pub watcher_id: String,
+    pub host_service_id: String,
+}
+
+impl WatcherRestartRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self.watcher_id.trim().is_empty() {
+            return Err(ValidationError::new("watcher_id must be non-empty"));
+        }
+        if self.host_service_id.trim().is_empty() {
+            return Err(ValidationError::new("host_service_id must be non-empty"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatcherRestartResponse {
+    pub accepted: bool,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

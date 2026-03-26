@@ -12,6 +12,7 @@ chrono.workspace = true
 config.workspace = true
 mem-api = { path = "../mem-api" }
 mem-curate = { path = "../mem-curate" }
+mem-platform = { path = "../mem-platform" }
 mem-search = { path = "../mem-search" }
 mem-watch = { path = "../mem-watch" }
 futures-util.workspace = true

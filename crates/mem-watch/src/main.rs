@@ -97,11 +97,20 @@ async fn run_loop(
     let state = load_state(&project, &repo_root, &config.automation).await?;
     let watcher_id = Uuid::new_v4().to_string();
     let hostname = detect_hostname();
+    let host_service_id = config.cluster.service_id.clone();
+    let managed_by_service = watcher_is_service_managed();
     let pid = std::process::id();
     let started_at = chrono::Utc::now();
 
-    let heartbeat_request =
-        build_watcher_heartbeat_request(&state, &watcher_id, &hostname, pid, started_at);
+    let heartbeat_request = build_watcher_heartbeat_request(
+        &state,
+        &watcher_id,
+        &hostname,
+        &host_service_id,
+        managed_by_service,
+        pid,
+        started_at,
+    );
     let mut heartbeat_state = HeartbeatState::Unknown;
     let mut backend_instance = BackendInstanceState {
         current: fetch_service_instance_id(&client, &config).await.ok().flatten(),
@@ -134,6 +143,8 @@ async fn run_loop(
                     &state,
                     &watcher_id,
                     &hostname,
+                    &host_service_id,
+                    managed_by_service,
                     pid,
                     started_at,
                 );
@@ -284,6 +295,16 @@ fn resolve_writer_id(config: &AppConfig, cli_writer_id: Option<String>) -> Resul
     );
 }
 
+fn watcher_is_service_managed() -> bool {
+    std::env::var("MEMORY_LAYER_WATCH_SERVICE_MANAGED")
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
 async fn shutdown_signal() {
     #[cfg(unix)]
     {
@@ -323,6 +344,7 @@ mod tests {
     fn heartbeat_success_after_failure_recovers() {
         let summary = WatcherPresenceSummary {
             active_count: 1,
+            unhealthy_count: 0,
             stale_after_seconds: 90,
             last_heartbeat_at: None,
             watchers: Vec::new(),

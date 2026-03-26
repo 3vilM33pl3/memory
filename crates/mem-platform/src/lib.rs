@@ -1,7 +1,10 @@
 use std::{
     env,
     path::{Path, PathBuf},
+    process::Command,
 };
+
+use anyhow::{Context, Result};
 
 pub fn preferred_global_config_path() -> PathBuf {
     #[cfg(target_os = "macos")]
@@ -135,6 +138,51 @@ pub fn packaged_system_service_available() -> bool {
 
 pub fn backend_service_available() -> bool {
     packaged_system_service_available()
+}
+
+pub fn restart_local_watcher_service(project: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let uid_output = Command::new("id")
+            .arg("-u")
+            .output()
+            .context("run id -u for launchctl target")?;
+        if !uid_output.status.success() {
+            let stderr = String::from_utf8_lossy(&uid_output.stderr);
+            anyhow::bail!("id -u failed: {}", stderr.trim());
+        }
+        let uid = String::from_utf8_lossy(&uid_output.stdout).trim().to_string();
+        let target = format!("gui/{uid}/{}", watch_launch_agent_label(project));
+        let output = Command::new("launchctl")
+            .args(["kickstart", "-k", &target])
+            .output()
+            .context("run launchctl kickstart")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("launchctl kickstart failed: {}", stderr.trim());
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = project;
+        anyhow::bail!("watcher watchdog restart is not implemented on Windows yet")
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let unit_name = watch_service_unit_name(project);
+        let output = Command::new("systemctl")
+            .args(["--user", "restart", &unit_name])
+            .output()
+            .with_context(|| format!("run systemctl --user restart {unit_name}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("systemctl --user restart {unit_name} failed: {}", stderr.trim());
+        }
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "macos")]
