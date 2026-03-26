@@ -1,10 +1,10 @@
 # Memory Layer
 
-Memory Layer is a local knowledge base for coding agents such as Codex CLI and Claude Code.
+Memory Layer is a local knowledge base built first for coding agents such as Codex CLI and Claude Code, while still working well for normal developers.
 
-It captures durable project knowledge, stores it in PostgreSQL / pgvector, as embeddings and makes it searchable in a TUI or browser so important context does not disappear into chat history, terminal scrollback, or old commits. 
+It captures durable project knowledge, stores it in PostgreSQL with pgvector, and makes it searchable in a TUI or browser so important context does not disappear into chat history, terminal scrollback, or old commits.
 
-It uses an army of (distributed) watchers to track projects and assist the LMMs and developers working on it. 
+It supports multiple developers, multiple projects, and multiple coding agents at the same time through a distributed watcher system and a shared memory backend.
 
 ![Memory Layer TUI](docs/img/tui-overview.png)
 
@@ -51,12 +51,13 @@ For the full onboarding flow, prerequisites, upgrade path, and troubleshooting, 
 
 ## What It Does
 
-- stores project memory in PostgreSQL
+- stores project memory in PostgreSQL with pgvector-backed chunk embeddings
 - supports both primary and relay service modes
-- keeps memory scoped per project
+- keeps memory scoped per project while supporting multiple developers, writers, and agents
 - captures raw evidence and curates durable memory from it
-- combines lexical search with optional semantic recall and related-memory links
-- keeps multiple embedding spaces so teams can switch embedding models without losing older vectors
+- combines lexical search, vector search, and related-memory links
+- supports re-embedding when you switch embedding models without losing older embedding spaces
+- uses distributed watchers to track active projects and feed evidence into the shared memory system
 - provides a TUI and a browser UI
 - can scan a repository for durable project knowledge
 - can import git commit history as searchable evidence
