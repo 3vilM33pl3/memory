@@ -3395,6 +3395,31 @@ fn print_index_report(report: &scan::RepoIndexReport) {
         report.language_coverage.config_files,
         report.language_coverage.other_files,
     );
+    println!(
+        "Analyzer facts: symbols {} | imports {} | references {} | calls {} | test links {}",
+        report.symbol_count,
+        report.import_count,
+        report.reference_count,
+        report.call_count,
+        report.test_link_count,
+    );
+    if !report.enabled_analyzers.is_empty() {
+        println!("Enabled analyzers: {}", report.enabled_analyzers.join(", "));
+    }
+    for summary in &report.analyzer_summaries {
+        println!(
+            "- {}: seen {} | parsed {} | symbols {} | imports {} | refs {} | calls {} | tests {} | errors {}",
+            summary.analyzer,
+            summary.files_seen,
+            summary.files_parsed,
+            summary.symbol_count,
+            summary.import_count,
+            summary.reference_count,
+            summary.call_count,
+            summary.test_link_count,
+            summary.errors.len(),
+        );
+    }
     if let Some(head) = &report.head {
         println!("HEAD: {head}");
     }
@@ -3424,6 +3449,31 @@ fn print_index_status(status: &Option<scan::RepoIndexStatus>, project: &str) {
         status.language_coverage.config_files,
         status.language_coverage.other_files,
     );
+    println!(
+        "Analyzer facts: symbols {} | imports {} | references {} | calls {} | test links {}",
+        status.symbol_count,
+        status.import_count,
+        status.reference_count,
+        status.call_count,
+        status.test_link_count,
+    );
+    if !status.enabled_analyzers.is_empty() {
+        println!("Enabled analyzers: {}", status.enabled_analyzers.join(", "));
+    }
+    for summary in &status.analyzer_summaries {
+        println!(
+            "- {}: seen {} | parsed {} | symbols {} | imports {} | refs {} | calls {} | tests {} | errors {}",
+            summary.analyzer,
+            summary.files_seen,
+            summary.files_parsed,
+            summary.symbol_count,
+            summary.import_count,
+            summary.reference_count,
+            summary.call_count,
+            summary.test_link_count,
+            summary.errors.len(),
+        );
+    }
     if let Some(head) = &status.head {
         println!("HEAD: {head}");
     }

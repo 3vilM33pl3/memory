@@ -70,7 +70,16 @@ The current index includes:
 - the selected git commits used for scan
 - the current `HEAD`
 - a simple language-coverage summary
+- parser-backed analyzer summaries for enabled languages
+- extracted symbol, import, reference, call, and test-link facts
 - evidence-bundle counts for debugging and future scan quality work
+
+Analyzer enablement comes from `.agents/memory-layer.toml`:
+
+```toml
+[analysis]
+analyzers = ["rust", "typescript", "python"]
+```
 
 When you run `mem-cli scan`, it reuses the existing index if it still matches the current repo `HEAD` and the same `--since` window. Otherwise it rebuilds the index first.
 
@@ -332,7 +341,7 @@ It is especially useful when onboarding Memory Layer to an existing project that
 
 ## What `scan` Is Not Good At
 
-`scan` is not currently a full repository analyzer.
+`scan` is not currently a full semantic repository model.
 
 It does **not**:
 
@@ -341,7 +350,7 @@ It does **not**:
 - run tests
 - infer runtime behavior from actual execution
 - inspect issue trackers or external systems
-- use vector search or embeddings
+- build the code graph yet
 - guarantee that every accepted candidate is correct just because the model produced it
 
 It is only as good as:

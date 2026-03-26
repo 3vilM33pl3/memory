@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::Utc;
+use mem_analyze::{AnalysisReport, AnalyzerSummary};
 use mem_api::{
     AgentProjectConfig, AppConfig, CaptureCandidateInput, CaptureCandidateSourceInput,
     CaptureTaskRequest, MemoryType, SourceKind, discover_global_config_path,
@@ -57,6 +58,13 @@ pub(crate) struct RepoIndexReport {
     pub commits_indexed: usize,
     pub evidence_bundle_count: usize,
     pub language_coverage: LanguageCoverage,
+    pub enabled_analyzers: Vec<String>,
+    pub analyzer_summaries: Vec<AnalyzerSummary>,
+    pub symbol_count: usize,
+    pub import_count: usize,
+    pub reference_count: usize,
+    pub call_count: usize,
+    pub test_link_count: usize,
     pub index_path: String,
 }
 
@@ -74,6 +82,13 @@ pub(crate) struct RepoIndexStatus {
     pub commits_indexed: usize,
     pub evidence_bundle_count: usize,
     pub language_coverage: LanguageCoverage,
+    pub enabled_analyzers: Vec<String>,
+    pub analyzer_summaries: Vec<AnalyzerSummary>,
+    pub symbol_count: usize,
+    pub import_count: usize,
+    pub reference_count: usize,
+    pub call_count: usize,
+    pub test_link_count: usize,
     pub index_path: String,
 }
 
@@ -97,6 +112,8 @@ struct PersistedRepoIndex {
     built_at: String,
     tracked_files: usize,
     language_coverage: LanguageCoverage,
+    #[serde(default)]
+    analysis: AnalysisReport,
     dossier: ScanDossier,
 }
 
@@ -188,6 +205,13 @@ pub(crate) fn run_index(
         commits_indexed: index.dossier.commits.len(),
         evidence_bundle_count: index.dossier.files.len() + index.dossier.commits.len(),
         language_coverage: index.language_coverage,
+        enabled_analyzers: index.analysis.enabled_analyzers.clone(),
+        analyzer_summaries: index.analysis.summaries.clone(),
+        symbol_count: index.analysis.symbols.len(),
+        import_count: index.analysis.imports.len(),
+        reference_count: index.analysis.references.len(),
+        call_count: index.analysis.calls.len(),
+        test_link_count: index.analysis.test_links.len(),
         index_path: index_path.display().to_string(),
     })
 }
@@ -208,6 +232,13 @@ pub(crate) fn read_index_status(repo_root: &Path, project: &str) -> Result<Optio
         commits_indexed: index.dossier.commits.len(),
         evidence_bundle_count: index.dossier.files.len() + index.dossier.commits.len(),
         language_coverage: index.language_coverage,
+        enabled_analyzers: index.analysis.enabled_analyzers.clone(),
+        analyzer_summaries: index.analysis.summaries.clone(),
+        symbol_count: index.analysis.symbols.len(),
+        import_count: index.analysis.imports.len(),
+        reference_count: index.analysis.references.len(),
+        call_count: index.analysis.calls.len(),
+        test_link_count: index.analysis.test_links.len(),
         index_path: index_path.display().to_string(),
     }))
 }
@@ -385,6 +416,12 @@ fn build_and_write_repo_index(
 ) -> Result<(PersistedRepoIndex, PathBuf)> {
     let tracked_paths = list_tracked_files(repo_root);
     let language_coverage = derive_language_coverage(&tracked_paths);
+    let settings = load_repo_agent_settings(repo_root).unwrap_or_default();
+    let analysis = mem_analyze::analyze_repository(
+        repo_root,
+        &tracked_paths,
+        &settings.analysis.analyzers,
+    )?;
     let dossier = build_dossier(repo_root, project, since, max_input_bytes)?;
     let index = PersistedRepoIndex {
         prompt_version: PROMPT_VERSION.to_string(),
@@ -395,6 +432,7 @@ fn build_and_write_repo_index(
         built_at: Utc::now().to_rfc3339(),
         tracked_files: tracked_paths.len(),
         language_coverage,
+        analysis,
         dossier,
     };
     let index_path = repo_index_path(repo_root, project);

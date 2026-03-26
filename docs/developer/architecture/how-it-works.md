@@ -382,10 +382,12 @@ It:
 
 1. reads high-value repo files
 2. reads recent git history
-3. builds a structured dossier
-4. sends that dossier to an OpenAI-compatible model
-5. validates the returned candidate memories
-6. captures and curates them through the normal backend flow
+3. builds or reuses a local repository index under `.mem/runtime/index/`
+4. runs parser-backed analyzers for enabled languages from `.agents/memory-layer.toml`
+5. builds a structured dossier from indexed evidence
+6. sends that dossier to an OpenAI-compatible model
+7. validates the returned candidate memories
+8. captures and curates them through the normal backend flow
 
 This is intentionally implemented in the CLI rather than as a special backend write path. The backend still remains the source of truth for storage and curation.
 

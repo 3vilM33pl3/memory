@@ -10,6 +10,7 @@ anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
 crossterm.workspace = true
+mem-analyze = { path = "../mem-analyze" }
 mem-api = { path = "../mem-api" }
 mem-platform = { path = "../mem-platform" }
 mem-watch = { path = "../mem-watch" }

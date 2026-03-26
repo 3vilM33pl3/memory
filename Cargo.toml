@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/mem-analyze",
   "crates/mem-platform",
   "crates/mem-api",
   "crates/mem-watch",
@@ -42,6 +43,11 @@ ratatui = "0.29.0"
 crossterm = "0.28.1"
 capnp = "0.19.8"
 pgvector = { version = "0.4.1", features = ["sqlx"] }
+tree-sitter = "0.24.7"
+tree-sitter-rust = "0.23.3"
+tree-sitter-python = "0.23.6"
+tree-sitter-javascript = "0.23.1"
+tree-sitter-typescript = "0.23.2"
 
 [workspace.lints.clippy]
 dbg_macro = "deny"
