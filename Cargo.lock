@@ -1300,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "mem-analyze"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -1313,7 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "mem-api"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "capnp",
  "chrono",
@@ -1329,7 +1329,7 @@ dependencies = [
 
 [[package]]
 name = "mem-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "capnp",
@@ -1352,7 +1352,7 @@ dependencies = [
 
 [[package]]
 name = "mem-curate"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "mem-api",
@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "mem-ingest"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "mem-api",
@@ -1375,14 +1375,14 @@ dependencies = [
 
 [[package]]
 name = "mem-platform"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
 name = "mem-search"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1397,7 +1397,7 @@ dependencies = [
 
 [[package]]
 name = "mem-service"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1425,7 +1425,7 @@ dependencies = [
 
 [[package]]
 name = "mem-watch"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
