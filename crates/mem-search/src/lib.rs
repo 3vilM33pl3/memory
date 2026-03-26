@@ -120,6 +120,19 @@ impl EmbeddingService {
     }
 }
 
+fn empty_embedding_batch() -> EmbeddingBatch {
+    EmbeddingBatch {
+        space: EmbeddingSpace {
+            provider: String::new(),
+            base_url: String::new(),
+            model: String::new(),
+            space_key: String::new(),
+        },
+        dimension: 0,
+        vectors: Vec::new(),
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct EmbeddingRequest {
     model: String,
@@ -170,10 +183,19 @@ pub async fn query_memory(
                     )
                         .await
                         .context("fetch semantic candidates")?;
-                    let semantic_status = if candidates.is_empty() {
-                        "no_fresh_embeddings".to_string()
+                    let semantic_status = if candidates.is_empty()
+                        && !project_has_active_embedding_space(
+                            pool,
+                            &request.project,
+                            &embedding_batch.space.space_key,
+                            embedding_batch.dimension,
+                        )
+                        .await
+                        .context("check active embedding space coverage")?
+                    {
+                        "active_space_missing".to_string()
                     } else {
-                        "ok".to_string()
+                        "active_space_ok".to_string()
                     };
                     (candidates, semantic_status)
                 } else {
@@ -295,25 +317,12 @@ pub async fn rebuild_chunks(
                 .await
                 .context("embed rebuilt chunks")?
         } else {
-            EmbeddingBatch {
-                space: EmbeddingSpace {
-                    provider: String::new(),
-                    base_url: String::new(),
-                    model: String::new(),
-                    space_key: String::new(),
-                },
-                dimension: 0,
-                vectors: Vec::new(),
-            }
+            empty_embedding_batch()
         };
 
         for (index, chunk_text) in chunks.iter().enumerate() {
             let embedding = embedding_batch.vectors.get(index).cloned();
-            let embedding_updated_at = if embedding.is_some() {
-                Some(Utc::now())
-            } else {
-                None
-            };
+            let chunk_id = Uuid::new_v4();
             sqlx::query(
                 r#"
                 INSERT INTO memory_chunks
@@ -322,53 +331,24 @@ pub async fn rebuild_chunks(
                         memory_entry_id,
                         chunk_text,
                         search_text,
-                        tsv,
-                        embedding,
-                        embedding_provider,
-                        embedding_base_url,
-                        embedding_model,
-                        embedding_dimension,
-                        embedding_space,
-                        embedding_updated_at
+                        tsv
                     )
                 VALUES
-                    ($1, $2, $3, $4, to_tsvector('english', $4), $5, $6, $7, $8, $9, $10, $11)
+                    ($1, $2, $3, $4, to_tsvector('english', $4))
                 "#,
             )
-            .bind(Uuid::new_v4())
+            .bind(chunk_id)
             .bind(memory_id)
             .bind(chunk_text)
             .bind(format!("{summary}\n{chunk_text}"))
-            .bind(embedding)
-            .bind(if embedding_batch.space.provider.is_empty() {
-                None::<String>
-            } else {
-                Some(embedding_batch.space.provider.clone())
-            })
-            .bind(if embedding_batch.space.base_url.is_empty() {
-                None::<String>
-            } else {
-                Some(embedding_batch.space.base_url.clone())
-            })
-            .bind(if embedding_batch.space.model.is_empty() {
-                None::<String>
-            } else {
-                Some(embedding_batch.space.model.clone())
-            })
-            .bind(if embedding_batch.dimension > 0 {
-                Some(embedding_batch.dimension)
-            } else {
-                None::<i32>
-            })
-            .bind(if embedding_batch.space.space_key.is_empty() {
-                None::<String>
-            } else {
-                Some(embedding_batch.space.space_key.clone())
-            })
-            .bind(embedding_updated_at)
             .execute(pool)
             .await
             .context("insert rebuilt chunk")?;
+            if let Some(embedding) = embedding {
+                upsert_chunk_embedding(pool, chunk_id, &embedding_batch.space, embedding_batch.dimension, embedding)
+                    .await
+                    .context("upsert rebuilt chunk embedding")?;
+            }
         }
         count += 1;
     }
@@ -387,15 +367,14 @@ pub async fn reembed_project_chunks(
         FROM memory_chunks mc
         JOIN memory_entries m ON m.id = mc.memory_entry_id
         JOIN projects p ON p.id = m.project_id
+        LEFT JOIN memory_chunk_embeddings mce
+          ON mce.chunk_id = mc.id
+         AND mce.embedding_space = $2
         WHERE p.slug = $1
           AND m.status = 'active'
           AND (
-                mc.embedding IS NULL
-                OR mc.embedding_space IS DISTINCT FROM $2
-                OR mc.embedding_provider IS NULL
-                OR mc.embedding_base_url IS NULL
-                OR mc.embedding_model IS NULL
-                OR mc.embedding_dimension IS NULL
+                mce.chunk_id IS NULL
+                OR mce.embedding_dimension IS NULL
               )
         ORDER BY mc.id
         "#,
@@ -433,34 +412,40 @@ pub async fn reembed_project_chunks(
                 .get(index)
                 .cloned()
                 .context("missing embedding for stale chunk batch item")?;
-            sqlx::query(
-                r#"
-                UPDATE memory_chunks
-                SET embedding = $2,
-                    embedding_provider = $3,
-                    embedding_base_url = $4,
-                    embedding_model = $5,
-                    embedding_dimension = $6,
-                    embedding_space = $7,
-                    embedding_updated_at = now()
-                WHERE id = $1
-                "#,
-            )
-            .bind(chunk_id)
-            .bind(embedding)
-            .bind(&embeddings.space.provider)
-            .bind(&embeddings.space.base_url)
-            .bind(&embeddings.space.model)
-            .bind(embeddings.dimension)
-            .bind(&embeddings.space.space_key)
-            .execute(pool)
-            .await
-            .context("update chunk embedding")?;
+            upsert_chunk_embedding(pool, *chunk_id, &embeddings.space, embeddings.dimension, embedding)
+                .await
+                .context("update active-space chunk embedding")?;
             reembedded_chunks += 1;
         }
     }
 
     Ok(reembedded_chunks)
+}
+
+pub async fn prune_project_embeddings(
+    pool: &PgPool,
+    project: &str,
+    embedder: &EmbeddingService,
+) -> Result<u64> {
+    let target_space = embedder.embedding_space();
+    let result = sqlx::query(
+        r#"
+        DELETE FROM memory_chunk_embeddings mce
+        USING memory_chunks mc, memory_entries m, projects p
+        WHERE mce.chunk_id = mc.id
+          AND mc.memory_entry_id = m.id
+          AND m.project_id = p.id
+          AND p.slug = $1
+          AND m.status = 'active'
+          AND mce.embedding_space <> $2
+        "#,
+    )
+    .bind(project)
+    .bind(&target_space.space_key)
+    .execute(pool)
+    .await
+    .context("delete inactive embedding spaces")?;
+    Ok(result.rows_affected())
 }
 
 pub fn parse_memory_type(value: &str) -> MemoryType {
@@ -764,7 +749,7 @@ async fn fetch_semantic_candidates(
             m.confidence,
             m.updated_at,
             mc.chunk_text,
-            (mc.embedding <=> $4) AS cosine_distance,
+            (mce.embedding <=> $6) AS cosine_distance,
             COALESCE((
                 SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
                 FROM memory_tags mt
@@ -777,13 +762,13 @@ async fn fetch_semantic_candidates(
                   AND ms.file_path IS NOT NULL
             ), ARRAY[]::text[]) AS source_paths
         FROM memory_chunks mc
+        JOIN memory_chunk_embeddings mce ON mce.chunk_id = mc.id
         JOIN memory_entries m ON m.id = mc.memory_entry_id
         JOIN projects p ON p.id = m.project_id
         WHERE p.slug = $1
           AND m.status = 'active'
-          AND mc.embedding IS NOT NULL
-          AND mc.embedding_space = $4
-          AND mc.embedding_dimension = $5
+          AND mce.embedding_space = $4
+          AND mce.embedding_dimension = $5
           AND ($2::text[] IS NULL OR m.memory_type = ANY($2))
           AND (
                 cardinality($3::text[]) = 0
@@ -795,7 +780,7 @@ async fn fetch_semantic_candidates(
                 )
           )
         ORDER BY cosine_distance ASC, m.updated_at DESC, m.id
-        LIMIT $6
+        LIMIT $7
         "#,
     )
     .bind(&request.project)
@@ -861,6 +846,79 @@ async fn fetch_semantic_candidates(
 
 fn vector_dimension(vector: &Vector) -> i32 {
     vector.as_slice().len() as i32
+}
+
+async fn upsert_chunk_embedding(
+    pool: &PgPool,
+    chunk_id: Uuid,
+    space: &EmbeddingSpace,
+    dimension: i32,
+    embedding: Vector,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO memory_chunk_embeddings (
+            chunk_id,
+            embedding_space,
+            embedding,
+            embedding_provider,
+            embedding_base_url,
+            embedding_model,
+            embedding_dimension,
+            embedding_updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (chunk_id, embedding_space) DO UPDATE
+        SET embedding = EXCLUDED.embedding,
+            embedding_provider = EXCLUDED.embedding_provider,
+            embedding_base_url = EXCLUDED.embedding_base_url,
+            embedding_model = EXCLUDED.embedding_model,
+            embedding_dimension = EXCLUDED.embedding_dimension,
+            embedding_updated_at = EXCLUDED.embedding_updated_at
+        "#,
+    )
+    .bind(chunk_id)
+    .bind(&space.space_key)
+    .bind(embedding)
+    .bind(&space.provider)
+    .bind(&space.base_url)
+    .bind(&space.model)
+    .bind(dimension)
+    .bind(Utc::now())
+    .execute(pool)
+    .await
+    .context("upsert chunk embedding")?;
+    Ok(())
+}
+
+async fn project_has_active_embedding_space(
+    pool: &PgPool,
+    project: &str,
+    embedding_space: &str,
+    embedding_dimension: i32,
+) -> Result<bool> {
+    let row = sqlx::query(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM memory_chunk_embeddings mce
+            JOIN memory_chunks mc ON mc.id = mce.chunk_id
+            JOIN memory_entries m ON m.id = mc.memory_entry_id
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1
+              AND m.status = 'active'
+              AND mce.embedding_space = $2
+              AND mce.embedding_dimension = $3
+        ) AS present
+        "#,
+    )
+    .bind(project)
+    .bind(embedding_space)
+    .bind(embedding_dimension)
+    .fetch_one(pool)
+    .await
+    .context("check active embedding space")?;
+    Ok(row.try_get("present")?)
 }
 
 fn merge_candidates(

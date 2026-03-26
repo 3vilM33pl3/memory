@@ -47,6 +47,7 @@ const EMPTY_OVERVIEW: ProjectOverviewResponse = {
   fresh_embedding_chunks: 0,
   stale_embedding_chunks: 0,
   missing_embedding_chunks: 0,
+  embedding_spaces_total: 0,
   active_embedding_provider: null,
   active_embedding_model: null,
   tasks_total: 0,
@@ -247,7 +248,7 @@ export default function App() {
         setStatusMessage(`Reindexed ${response.reindexed_entries} memories.`);
       } else if (action === "reembed") {
         const response = await reembed(project);
-        setStatusMessage(`Re-embedded ${response.reembedded_chunks} stale or missing chunks.`);
+        setStatusMessage(`Materialized ${response.reembedded_chunks} active-space chunk embeddings.`);
       } else {
         const response = await archiveProject(project);
         setStatusMessage(`Archived ${response.archived_count} low-value memories.`);
@@ -591,7 +592,8 @@ export default function App() {
               <Metric label="Confidence bins" value={`${overview.high_confidence_memories} high / ${overview.medium_confidence_memories} medium / ${overview.low_confidence_memories} low`} />
               <Metric label="Recent 7d" value={`${overview.recent_memories_7d} memories / ${overview.recent_captures_7d} captures`} />
               <Metric label="Raw captures" value={`${overview.raw_captures_total} total / ${overview.uncurated_raw_captures} uncurated`} />
-              <Metric label="Embeddings" value={`${overview.embedding_chunks_total} total / ${overview.fresh_embedding_chunks} fresh / ${overview.stale_embedding_chunks} stale / ${overview.missing_embedding_chunks} missing`} />
+              <Metric label="Embeddings" value={`${overview.embedding_chunks_total} chunks / ${overview.fresh_embedding_chunks} active-space / ${overview.stale_embedding_chunks} other-space only / ${overview.missing_embedding_chunks} missing active-space`} />
+              <Metric label="Embedding spaces" value={`${overview.embedding_spaces_total} stored space(s)`} />
               <Metric label="Active embedding" value={overview.active_embedding_model ? `${overview.active_embedding_provider} / ${overview.active_embedding_model}` : "disabled"} />
               <Metric label="Tasks / Sessions / Runs" value={`${overview.tasks_total} / ${overview.sessions_total} / ${overview.curation_runs_total}`} />
               <Metric label="Last memory" value={formatDateTime(overview.last_memory_at)} />

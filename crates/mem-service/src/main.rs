@@ -23,18 +23,18 @@ use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse,
     CaptureTaskRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest,
     DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, MemorySourceRecord,
-    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectOverviewResponse, QueryRequest,
-    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
-    StatsResponse, StreamRequest, StreamResponse, ValidationError, WatcherHealth,
-    WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary, WatcherRestartRequest,
-    WatcherRestartResponse,
+    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectOverviewResponse,
+    PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryRequest, ReembedRequest,
+    ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary, StatsResponse,
+    StreamRequest, StreamResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest,
+    WatcherPresence, WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
     WatcherUnregisterRequest, read_capnp_text_frame, write_capnp_text_frame,
 };
 use mem_curate::{curate, store_capture};
 use mem_platform::restart_local_watcher_service;
 use mem_search::{
     EmbeddingService, parse_memory_type, parse_relation_type, parse_source_kind, query_memory,
-    rebuild_chunks, reembed_project_chunks,
+    prune_project_embeddings, rebuild_chunks, reembed_project_chunks,
 };
 use mem_service::{
     fetch_project_commit, fetch_project_commits, fetch_project_memories, fetch_project_overview,
@@ -350,6 +350,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/curate", post(curate_memory))
         .route("/v1/reindex", post(reindex))
         .route("/v1/reembed", post(reembed))
+        .route("/v1/prune-embeddings", post(prune_embeddings))
         .route("/v1/memory/{id}", get(get_memory))
         .route("/v1/memory", delete(delete_memory))
         .route("/v1/stats", get(stats))
@@ -1510,6 +1511,42 @@ async fn reembed(
     );
     Ok(Json(ReembedResponse {
         reembedded_chunks: count,
+    }))
+}
+
+async fn prune_embeddings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<PruneEmbeddingsRequest>,
+) -> Result<Json<PruneEmbeddingsResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/prune-embeddings", &request, true).await?,
+        ));
+    }
+    let Some(embedder) = state.embedder.as_ref() else {
+        return Err(ApiError::validation(ValidationError::new(
+            "embeddings are not configured; cannot prune inactive spaces",
+        )));
+    };
+    let project = request.project.clone();
+    let count = prune_project_embeddings(state.pool()?, &request.project, embedder)
+        .await
+        .map_err(ApiError::io)?;
+    notify_project_changed(
+        &state,
+        project,
+        None,
+        ActivityKind::Reembed,
+        format!("Pruned {count} inactive embedding row(s)."),
+        Some(ActivityDetails::Reembed {
+            reembedded_chunks: count,
+        }),
+    );
+    Ok(Json(PruneEmbeddingsResponse {
+        pruned_embeddings: count,
     }))
 }
 

@@ -391,8 +391,10 @@ impl App {
             }
             KeyCode::Char('e') if key.modifiers.is_empty() => {
                 let response = api.reembed(&self.project).await?;
-                self.status_message =
-                    format!("Re-embedded {} stale or missing chunks.", response.reembedded_chunks);
+                self.status_message = format!(
+                    "Materialized {} chunk embeddings for the active space.",
+                    response.reembedded_chunks
+                );
                 self.refresh(api).await;
             }
             KeyCode::Char('a') if key.modifiers.is_empty() => {
@@ -1588,7 +1590,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::TEXT),
             )),
             Line::from(Span::styled(
-                "e re-embed stale or missing vectors",
+                "e materialize active-space vectors",
                 Style::default().fg(Theme::TEXT),
             )),
             Line::from(Span::styled(
@@ -2892,6 +2894,7 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
         fresh_embedding_chunks: 0,
         stale_embedding_chunks: 0,
         missing_embedding_chunks: 0,
+        embedding_spaces_total: 0,
         active_embedding_provider: None,
         active_embedding_model: None,
         last_memory_at: None,

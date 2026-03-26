@@ -321,7 +321,7 @@ The current implementation is PostgreSQL-first. It uses:
 
 - `memory_entries.search_document`
 - `memory_chunks.tsv`
-- pgvector-backed chunk embeddings stored on `memory_chunks`
+- pgvector-backed chunk embeddings stored in `memory_chunk_embeddings`
 - `memory_relations` as a reranking signal
 - Rust-side reranking
 - deterministic answer synthesis
@@ -338,6 +338,8 @@ The query flow is:
 6. return ranked results plus score explanations
 
 The important design point is that semantic search is additive, not a replacement for lexical search. Exact wording still matters, but pgvector similarity can now recover relevant memories when the query uses different wording from the stored canonical text.
+
+Embedding storage is now multi-space. A chunk can keep multiple vectors side by side for different embedding models or providers, and the active `[embeddings]` config selects which space semantic retrieval uses. Switching models does not overwrite older vectors; `reembed` only materializes the current active space, and cleanup of older spaces is explicit.
 
 Results are still project-scoped. A query is always evaluated inside one project slug unless the interface is explicitly extended otherwise.
 

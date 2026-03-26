@@ -310,6 +310,20 @@ mem-cli doctor
 mem-cli reindex --project my-project
 ```
 
+If you later switch the embedding model, Memory Layer keeps the old embedding space instead of overwriting it. Use:
+
+```bash
+mem-cli reembed --project my-project
+```
+
+to materialize vectors for the newly active space, and:
+
+```bash
+mem-cli prune-embeddings --project my-project
+```
+
+only when you want to delete non-active embedding spaces explicitly.
+
 If `mem-cli doctor` reports that `pgvector` is missing, install the PostgreSQL package first and rerun the check.
 
 On Debian, upgrades should preserve local edits to:

@@ -89,6 +89,7 @@ export interface ProjectOverviewResponse {
   fresh_embedding_chunks: number;
   stale_embedding_chunks: number;
   missing_embedding_chunks: number;
+  embedding_spaces_total: number;
   active_embedding_provider: string | null;
   active_embedding_model: string | null;
   top_tags: NamedCount[];

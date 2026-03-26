@@ -21,9 +21,9 @@ use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CommitDetailResponse,
     CommitSyncRequest, CommitSyncResponse, CurateRequest, CurateResponse, DeleteMemoryRequest,
     DeleteMemoryResponse, MemoryEntryResponse, ProjectCommitsResponse, ProjectMemoriesResponse,
-    ProjectOverviewResponse, QueryFilters, QueryRequest, QueryResponse, ReembedRequest,
-    ReembedResponse, ReindexRequest, ReindexResponse, TestResult, discover_global_config_path,
-    discover_repo_env_path,
+    ProjectOverviewResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters,
+    QueryRequest, QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
+    TestResult, discover_global_config_path, discover_repo_env_path,
 };
 use mem_platform as platform;
 use mem_watch::{flush_path, load_state, run_once, to_status};
@@ -62,6 +62,7 @@ enum Command {
     Curate(CurateArgs),
     Reindex(ProjectArgs),
     Reembed(ProjectArgs),
+    PruneEmbeddings(ProjectArgs),
     Health,
     Stats,
     Archive(ArchiveArgs),
@@ -545,6 +546,13 @@ async fn main() -> Result<()> {
                 .send()
                 .await?;
             print_json_response(response).await?;
+        }
+        Command::PruneEmbeddings(args) => {
+            let api = ApiClient::new(client, config);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&api.prune_embeddings(&args.project).await?)?
+            );
         }
         Command::Health => {
             let response = client.get(service_url(&config, "/healthz")).send().await?;
@@ -3154,6 +3162,20 @@ impl ApiClient {
                 .post(service_url(&self.config, "/v1/reembed"))
                 .headers(write_headers(&self.config.service.api_token)?)
                 .json(&ReembedRequest {
+                    project: project.to_string(),
+                })
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn prune_embeddings(&self, project: &str) -> Result<PruneEmbeddingsResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/prune-embeddings"))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .json(&PruneEmbeddingsRequest {
                     project: project.to_string(),
                 })
                 .send()

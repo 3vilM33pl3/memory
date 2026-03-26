@@ -56,6 +56,7 @@ For the full onboarding flow, prerequisites, upgrade path, and troubleshooting, 
 - keeps memory scoped per project
 - captures raw evidence and curates durable memory from it
 - combines lexical search with optional semantic recall and related-memory links
+- keeps multiple embedding spaces so teams can switch embedding models without losing older vectors
 - provides a TUI and a browser UI
 - can scan a repository for durable project knowledge
 - can import git commit history as searchable evidence

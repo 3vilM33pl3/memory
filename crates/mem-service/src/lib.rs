@@ -183,6 +183,7 @@ pub async fn fetch_project_overview(
         fresh_embedding_chunks: embedding_health.fresh_embedding_chunks,
         stale_embedding_chunks: embedding_health.stale_embedding_chunks,
         missing_embedding_chunks: embedding_health.missing_embedding_chunks,
+        embedding_spaces_total: embedding_health.embedding_spaces_total,
         active_embedding_provider: embedding_health.active_embedding_provider,
         active_embedding_model: embedding_health.active_embedding_model,
         memory_type_breakdown,
@@ -550,6 +551,7 @@ fn empty_overview(
         fresh_embedding_chunks: 0,
         stale_embedding_chunks: 0,
         missing_embedding_chunks: 0,
+        embedding_spaces_total: 0,
         active_embedding_provider: if embeddings.provider.trim().is_empty()
             || embeddings.model.trim().is_empty()
         {
@@ -579,6 +581,7 @@ struct EmbeddingHealth {
     fresh_embedding_chunks: i64,
     stale_embedding_chunks: i64,
     missing_embedding_chunks: i64,
+    embedding_spaces_total: i64,
     active_embedding_provider: Option<String>,
     active_embedding_model: Option<String>,
 }
@@ -602,22 +605,45 @@ async fn fetch_embedding_health(
         SELECT
             COUNT(mc.id) AS embedding_chunks_total,
             COUNT(mc.id) FILTER (
-                WHERE mc.embedding IS NOT NULL
-                  AND $2::text IS NOT NULL
-                  AND mc.embedding_space = $2
-                  AND mc.embedding_dimension IS NOT NULL
+                WHERE $2::text IS NOT NULL
+                  AND EXISTS (
+                    SELECT 1
+                    FROM memory_chunk_embeddings mce
+                    WHERE mce.chunk_id = mc.id
+                      AND mce.embedding_space = $2
+                  )
             ) AS fresh_embedding_chunks,
             COUNT(mc.id) FILTER (
-                WHERE mc.embedding IS NULL
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM memory_chunk_embeddings mce
+                    WHERE mce.chunk_id = mc.id
+                )
             ) AS missing_embedding_chunks,
             COUNT(mc.id) FILTER (
-                WHERE mc.embedding IS NOT NULL
-                  AND (
-                    $2::text IS NULL
-                    OR mc.embedding_space IS DISTINCT FROM $2
-                    OR mc.embedding_dimension IS NULL
+                WHERE $2::text IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM memory_chunk_embeddings mce
+                    WHERE mce.chunk_id = mc.id
+                      AND $2::text IS NOT NULL
+                      AND mce.embedding_space = $2
                   )
-            ) AS stale_embedding_chunks
+                  AND EXISTS (
+                    SELECT 1
+                    FROM memory_chunk_embeddings mce
+                    WHERE mce.chunk_id = mc.id
+                  )
+            ) AS stale_embedding_chunks,
+            COALESCE((
+                SELECT COUNT(DISTINCT mce.embedding_space)
+                FROM memory_chunk_embeddings mce
+                JOIN memory_chunks mc2 ON mc2.id = mce.chunk_id
+                JOIN memory_entries m2 ON m2.id = mc2.memory_entry_id
+                JOIN projects p2 ON p2.id = m2.project_id
+                WHERE p2.slug = $1
+                  AND m2.status = 'active'
+            ), 0) AS embedding_spaces_total
         FROM memory_chunks mc
         JOIN memory_entries m ON m.id = mc.memory_entry_id
         JOIN projects p ON p.id = m.project_id
@@ -635,6 +661,7 @@ async fn fetch_embedding_health(
         fresh_embedding_chunks: row.try_get("fresh_embedding_chunks")?,
         stale_embedding_chunks: row.try_get("stale_embedding_chunks")?,
         missing_embedding_chunks: row.try_get("missing_embedding_chunks")?,
+        embedding_spaces_total: row.try_get("embedding_spaces_total")?,
         active_embedding_provider: if active_space.is_some() {
             Some(active_provider.to_string())
         } else {

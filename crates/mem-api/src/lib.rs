@@ -749,6 +749,25 @@ pub struct ReembedResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneEmbeddingsRequest {
+    pub project: String,
+}
+
+impl PruneEmbeddingsRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneEmbeddingsResponse {
+    pub pruned_embeddings: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMemoryListItem {
     pub id: Uuid,
     pub summary: String,
@@ -823,6 +842,8 @@ pub struct ProjectOverviewResponse {
     pub stale_embedding_chunks: i64,
     #[serde(default)]
     pub missing_embedding_chunks: i64,
+    #[serde(default)]
+    pub embedding_spaces_total: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_embedding_provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
