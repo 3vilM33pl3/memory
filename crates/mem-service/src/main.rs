@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    io::ErrorKind,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
     sync::{Arc, Mutex},
@@ -71,6 +72,7 @@ struct AppState {
     recent_activity: Arc<Mutex<VecDeque<ServiceEvent>>>,
     watchers: Arc<Mutex<HashMap<String, WatcherPresence>>>,
     cluster: ClusterRuntime,
+    shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -150,10 +152,13 @@ async fn main() -> Result<()> {
             .bind_addr
             .parse()
             .context("parse bind_addr")?;
-        let state = build_state(config.clone()).await?;
-        let app = build_http_app(state.clone());
-        let listener = tokio::net::TcpListener::bind(addr).await?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let shutdown_handle = Arc::new(Mutex::new(Some(shutdown_tx)));
+        let state = build_state(config.clone(), shutdown_handle.clone()).await?;
+        let app = build_http_app(state.clone());
+        let listener = bind_http_listener_with_handoff(&config, addr)
+            .await
+            .context("bind http listener")?;
         let mut http_server = tokio::spawn(async move {
             axum::serve(listener, app)
                 .with_graceful_shutdown(async {
@@ -191,7 +196,7 @@ async fn main() -> Result<()> {
                 }
                 result = tokio::signal::ctrl_c() => {
                     result.context("listen for ctrl-c")?;
-                    let _ = shutdown_tx.send(());
+                    request_runtime_shutdown(&shutdown_handle);
                     http_server.await.context("join mem-service task")??;
                     abort_tasks(&mut proto_tasks);
                     abort_tasks(&mut cluster_tasks);
@@ -200,7 +205,7 @@ async fn main() -> Result<()> {
                 result = wait_for_config_change(path, config_fingerprint) => {
                     config_fingerprint = result.context("watch config file")?;
                     tracing::info!(path = %path.display(), "config changed; restarting backend");
-                    let _ = shutdown_tx.send(());
+                    request_runtime_shutdown(&shutdown_handle);
                     http_server.await.context("join mem-service task")??;
                     abort_tasks(&mut proto_tasks);
                     abort_tasks(&mut cluster_tasks);
@@ -214,7 +219,7 @@ async fn main() -> Result<()> {
                 }
                 result = tokio::signal::ctrl_c() => {
                     result.context("listen for ctrl-c")?;
-                    let _ = shutdown_tx.send(());
+                    request_runtime_shutdown(&shutdown_handle);
                     http_server.await.context("join mem-service task")??;
                     abort_tasks(&mut proto_tasks);
                     abort_tasks(&mut cluster_tasks);
@@ -227,7 +232,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn build_state(config: AppConfig) -> Result<AppState> {
+async fn build_state(
+    config: AppConfig,
+    shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+) -> Result<AppState> {
     let http_client = reqwest::Client::builder()
         .timeout(config.service.request_timeout)
         .build()
@@ -276,6 +284,7 @@ async fn build_state(config: AppConfig) -> Result<AppState> {
         cluster: ClusterRuntime {
             peers: Arc::new(Mutex::new(HashMap::new())),
         },
+        shutdown,
     })
 }
 
@@ -334,6 +343,7 @@ fn build_http_app(state: AppState) -> Router {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/ws", get(websocket))
+        .route("/v1/admin/shutdown", post(admin_shutdown))
         .route("/v1/query", post(query))
         .route("/v1/commits/sync", post(sync_commits))
         .route("/v1/capture/task", post(capture_task))
@@ -363,6 +373,67 @@ fn build_http_app(state: AppState) -> Router {
     } else {
         app.fallback(any(web_unavailable))
     }
+}
+
+fn request_runtime_shutdown(shutdown: &Arc<Mutex<Option<oneshot::Sender<()>>>>) {
+    if let Some(sender) = shutdown.lock().expect("shutdown mutex poisoned").take() {
+        let _ = sender.send(());
+    }
+}
+
+async fn bind_http_listener_with_handoff(
+    config: &AppConfig,
+    addr: SocketAddr,
+) -> Result<TcpListener> {
+    match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => Ok(listener),
+        Err(error) if error.kind() == ErrorKind::AddrInUse => {
+            if !request_existing_instance_shutdown(config).await? {
+                return Err(error).context("address already in use and handoff was refused");
+            }
+            wait_for_listener_release(addr).await?;
+            tokio::net::TcpListener::bind(addr)
+                .await
+                .context("bind http listener after handoff")
+        }
+        Err(error) => Err(error).context("bind http listener"),
+    }
+}
+
+async fn request_existing_instance_shutdown(config: &AppConfig) -> Result<bool> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .context("build handoff client")?;
+    let response = match client
+        .post(format!("http://{}/v1/admin/shutdown", config.service.bind_addr))
+        .header("x-api-token", &config.service.api_token)
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to contact existing backend for handoff");
+            return Ok(false);
+        }
+    };
+    Ok(response.status().is_success())
+}
+
+async fn wait_for_listener_release(addr: SocketAddr) -> Result<()> {
+    for _ in 0..20 {
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => {
+                drop(listener);
+                return Ok(());
+            }
+            Err(error) if error.kind() == ErrorKind::AddrInUse => {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+            Err(error) => return Err(error).context("wait for listener release"),
+        }
+    }
+    anyhow::bail!("timed out waiting for existing backend to release {addr}");
 }
 
 async fn start_cluster_tasks(state: AppState) -> Result<Vec<JoinHandle<Result<()>>>> {
@@ -1204,6 +1275,18 @@ async fn config_path_fingerprint(path: Option<&FsPath>) -> Result<ConfigFingerpr
 
 async fn healthz(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
     Ok(Json(health_payload(&state).await.map_err(ApiError::io)?))
+}
+
+async fn admin_shutdown(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_strict_token(&headers, &state.api_token)?;
+    request_runtime_shutdown(&state.shutdown);
+    Ok(Json(serde_json::json!({
+        "accepted": true,
+        "message": "shutdown requested"
+    })))
 }
 
 async fn web_unavailable() -> impl IntoResponse {
@@ -2432,6 +2515,19 @@ fn require_token(headers: &HeaderMap, expected: &str, bind_addr: &str) -> Result
     Err(ApiError::unauthorized(
         "missing x-api-token header or trusted local browser origin",
     ))
+}
+
+fn require_strict_token(headers: &HeaderMap, expected: &str) -> Result<(), ApiError> {
+    let Some(provided) = headers
+        .get("x-api-token")
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Err(ApiError::unauthorized("missing x-api-token header"));
+    };
+    if provided != expected {
+        return Err(ApiError::unauthorized("invalid api token"));
+    }
+    Ok(())
 }
 
 fn is_local_browser_request(headers: &HeaderMap, bind_addr: &str) -> bool {
