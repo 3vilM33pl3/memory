@@ -31,6 +31,9 @@ pub(crate) struct ScanReport {
     pub files_considered: usize,
     pub commits_considered: usize,
     pub candidate_count: usize,
+    pub index_reused: bool,
+    pub index_path: String,
+    pub language_coverage: LanguageCoverage,
     pub written: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capture_id: Option<String>,
@@ -40,17 +43,77 @@ pub(crate) struct ScanReport {
     pub summary: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RepoIndexReport {
+    pub project: String,
+    pub repo_root: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    pub built_at: String,
+    pub tracked_files: usize,
+    pub files_indexed: usize,
+    pub commits_indexed: usize,
+    pub evidence_bundle_count: usize,
+    pub language_coverage: LanguageCoverage,
+    pub index_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RepoIndexStatus {
+    pub project: String,
+    pub repo_root: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    pub built_at: String,
+    pub tracked_files: usize,
+    pub files_indexed: usize,
+    pub commits_indexed: usize,
+    pub evidence_bundle_count: usize,
+    pub language_coverage: LanguageCoverage,
+    pub index_path: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct LanguageCoverage {
+    pub rust_files: usize,
+    pub ts_js_files: usize,
+    pub python_files: usize,
+    pub docs_files: usize,
+    pub config_files: usize,
+    pub other_files: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedRepoIndex {
+    prompt_version: String,
+    project: String,
+    repo_root: String,
+    head: Option<String>,
+    since: Option<String>,
+    built_at: String,
+    tracked_files: usize,
+    language_coverage: LanguageCoverage,
+    dossier: ScanDossier,
+}
+
 pub(crate) async fn run_scan(
     api: &ApiClient,
     repo_root: &Path,
     project: &str,
     since: Option<&str>,
+    rebuild_index: bool,
     dry_run: bool,
     writer_id: &str,
     writer_name: Option<&str>,
 ) -> Result<ScanReport> {
     ensure_llm_config(&api.config)?;
-    let dossier = build_dossier(repo_root, project, since, api.config.llm.max_input_bytes)?;
+    let (index, index_path, index_reused) =
+        resolve_repo_index(repo_root, project, since, api.config.llm.max_input_bytes, rebuild_index)?;
+    let dossier = index.dossier.clone();
     let response = analyze_dossier(&api.client, &api.config, &dossier).await?;
     let candidates = validate_candidates(response.candidates)?;
     let summary = normalize_summary(&response.summary, project, &candidates);
@@ -72,6 +135,9 @@ pub(crate) async fn run_scan(
             files_considered: dossier.files.len(),
             commits_considered: dossier.commits.len(),
             candidate_count: candidates.len(),
+            index_reused,
+            index_path: index_path.display().to_string(),
+            language_coverage: index.language_coverage.clone(),
             written: false,
             capture_id: None,
             curate_run_id: None,
@@ -88,12 +154,62 @@ pub(crate) async fn run_scan(
         files_considered: dossier.files.len(),
         commits_considered: dossier.commits.len(),
         candidate_count: candidates.len(),
+        index_reused,
+        index_path: index_path.display().to_string(),
+        language_coverage: index.language_coverage,
         written: true,
         capture_id: Some(capture.raw_capture_id.to_string()),
         curate_run_id: Some(curate.run_id.to_string()),
         report_path: report_path.display().to_string(),
         summary,
     })
+}
+
+pub(crate) fn run_index(
+    repo_root: &Path,
+    project: &str,
+    since: Option<&str>,
+    config: &AppConfig,
+) -> Result<RepoIndexReport> {
+    let (index, index_path) = build_and_write_repo_index(
+        repo_root,
+        project,
+        since,
+        config.llm.max_input_bytes,
+    )?;
+    Ok(RepoIndexReport {
+        project: index.project,
+        repo_root: index.repo_root,
+        head: index.head,
+        since: index.since,
+        built_at: index.built_at,
+        tracked_files: index.tracked_files,
+        files_indexed: index.dossier.files.len(),
+        commits_indexed: index.dossier.commits.len(),
+        evidence_bundle_count: index.dossier.files.len() + index.dossier.commits.len(),
+        language_coverage: index.language_coverage,
+        index_path: index_path.display().to_string(),
+    })
+}
+
+pub(crate) fn read_index_status(repo_root: &Path, project: &str) -> Result<Option<RepoIndexStatus>> {
+    let index_path = repo_index_path(repo_root, project);
+    let Some(index) = read_repo_index(&index_path)? else {
+        return Ok(None);
+    };
+    Ok(Some(RepoIndexStatus {
+        project: index.project,
+        repo_root: index.repo_root,
+        head: index.head,
+        since: index.since,
+        built_at: index.built_at,
+        tracked_files: index.tracked_files,
+        files_indexed: index.dossier.files.len(),
+        commits_indexed: index.dossier.commits.len(),
+        evidence_bundle_count: index.dossier.files.len() + index.dossier.commits.len(),
+        language_coverage: index.language_coverage,
+        index_path: index_path.display().to_string(),
+    }))
 }
 
 fn ensure_llm_config(config: &AppConfig) -> Result<()> {
@@ -127,7 +243,7 @@ fn ensure_llm_config(config: &AppConfig) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ScanDossier {
     project: String,
     repo_root: String,
@@ -136,14 +252,14 @@ struct ScanDossier {
     commits: Vec<GitCommitContext>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct RepoFileContext {
     path: String,
     score: i32,
     content: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct GitCommitContext {
     hash: String,
     committed_at: String,
@@ -233,11 +349,95 @@ fn build_dossier(
     })
 }
 
+fn resolve_repo_index(
+    repo_root: &Path,
+    project: &str,
+    since: Option<&str>,
+    max_input_bytes: usize,
+    rebuild_index: bool,
+) -> Result<(PersistedRepoIndex, PathBuf, bool)> {
+    let index_path = repo_index_path(repo_root, project);
+    let current_head = git_output(repo_root, ["rev-parse", "HEAD"])
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty());
+
+    if !rebuild_index {
+        if let Some(existing) = read_repo_index(&index_path)? {
+            if existing.project == project
+                && existing.head == current_head
+                && existing.since.as_deref() == since
+            {
+                return Ok((existing, index_path, true));
+            }
+        }
+    }
+
+    let (index, _) = build_and_write_repo_index(repo_root, project, since, max_input_bytes)?;
+    Ok((index, index_path, false))
+}
+
+fn build_and_write_repo_index(
+    repo_root: &Path,
+    project: &str,
+    since: Option<&str>,
+    max_input_bytes: usize,
+) -> Result<(PersistedRepoIndex, PathBuf)> {
+    let tracked_paths = list_tracked_files(repo_root);
+    let language_coverage = derive_language_coverage(&tracked_paths);
+    let dossier = build_dossier(repo_root, project, since, max_input_bytes)?;
+    let index = PersistedRepoIndex {
+        prompt_version: PROMPT_VERSION.to_string(),
+        project: project.to_string(),
+        repo_root: repo_root.canonicalize()?.display().to_string(),
+        head: dossier.head.clone(),
+        since: since.map(ToOwned::to_owned),
+        built_at: Utc::now().to_rfc3339(),
+        tracked_files: tracked_paths.len(),
+        language_coverage,
+        dossier,
+    };
+    let index_path = repo_index_path(repo_root, project);
+    write_repo_index(&index_path, &index)?;
+    Ok((index, index_path))
+}
+
+fn repo_index_path(repo_root: &Path, project: &str) -> PathBuf {
+    repo_root
+        .join(".mem")
+        .join("runtime")
+        .join("index")
+        .join(format!("{project}-repo-index.json"))
+}
+
+fn write_repo_index(path: &Path, index: &PersistedRepoIndex) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    fs::write(path, serde_json::to_string_pretty(index)?)
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+fn read_repo_index(path: &Path) -> Result<Option<PersistedRepoIndex>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    Ok(Some(
+        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?,
+    ))
+}
+
+fn list_tracked_files(repo_root: &Path) -> Vec<String> {
+    git_output(repo_root, ["ls-files"])
+        .map(|output| output.lines().map(ToOwned::to_owned).collect::<Vec<_>>())
+        .unwrap_or_default()
+}
+
 fn collect_repo_files(repo_root: &Path, budget: usize) -> Result<Vec<RepoFileContext>> {
     let settings = load_repo_agent_settings(repo_root).unwrap_or_default();
-    let tracked = git_output(repo_root, ["ls-files"])
-        .map(|output| output.lines().map(ToOwned::to_owned).collect::<Vec<_>>())
-        .unwrap_or_default();
+    let tracked = list_tracked_files(repo_root);
 
     let mut scored = tracked
         .into_iter()
@@ -281,6 +481,31 @@ fn collect_repo_files(repo_root: &Path, budget: usize) -> Result<Vec<RepoFileCon
     }
 
     Ok(files)
+}
+
+fn derive_language_coverage(paths: &[String]) -> LanguageCoverage {
+    let mut coverage = LanguageCoverage::default();
+    for path in paths {
+        let lower = path.to_ascii_lowercase();
+        let ext = Path::new(path).extension().and_then(|ext| ext.to_str());
+        if lower.starts_with("docs/") || matches!(ext, Some("md" | "rst" | "adoc")) {
+            coverage.docs_files += 1;
+        } else if matches!(ext, Some("rs")) {
+            coverage.rust_files += 1;
+        } else if matches!(ext, Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs")) {
+            coverage.ts_js_files += 1;
+        } else if matches!(ext, Some("py")) {
+            coverage.python_files += 1;
+        } else if matches!(
+            ext,
+            Some("toml" | "yaml" | "yml" | "json" | "ini" | "env" | "service")
+        ) {
+            coverage.config_files += 1;
+        } else {
+            coverage.other_files += 1;
+        }
+    }
+    coverage
 }
 
 fn collect_git_history(
@@ -870,5 +1095,24 @@ mod tests {
 
         assert!(file_score("ops/runbook.md", &settings) > file_score("misc.txt", &settings));
         assert!(is_ignored_path("docs/private/secrets.md", &settings));
+    }
+
+    #[test]
+    fn derive_language_coverage_counts_expected_extensions() {
+        let coverage = derive_language_coverage(&[
+            "src/main.rs".to_string(),
+            "web/src/App.tsx".to_string(),
+            "scripts/tool.py".to_string(),
+            "docs/guide.md".to_string(),
+            "memory-layer.toml".to_string(),
+            "Makefile".to_string(),
+        ]);
+
+        assert_eq!(coverage.rust_files, 1);
+        assert_eq!(coverage.ts_js_files, 1);
+        assert_eq!(coverage.python_files, 1);
+        assert_eq!(coverage.docs_files, 1);
+        assert_eq!(coverage.config_files, 1);
+        assert_eq!(coverage.other_files, 1);
     }
 }

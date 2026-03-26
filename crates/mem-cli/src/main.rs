@@ -55,6 +55,7 @@ enum Command {
     Watch(WatchArgs),
     Doctor(DoctorArgs),
     Commits(CommitsArgs),
+    Index(IndexArgs),
     Query(QueryArgs),
     Scan(ScanArgs),
     CaptureTask(CaptureTaskArgs),
@@ -195,6 +196,36 @@ struct CommitShowArgs {
 }
 
 #[derive(Debug, Args)]
+struct IndexArgs {
+    #[command(subcommand)]
+    command: IndexCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum IndexCommand {
+    Repo(IndexRepoArgs),
+    Status(IndexStatusArgs),
+}
+
+#[derive(Debug, Args)]
+struct IndexRepoArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    since: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct IndexStatusArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
 struct CaptureTaskArgs {
     #[arg(long)]
     file: PathBuf,
@@ -206,6 +237,8 @@ struct ScanArgs {
     project: Option<String>,
     #[arg(long)]
     since: Option<String>,
+    #[arg(long)]
+    rebuild_index: bool,
     #[arg(long)]
     dry_run: bool,
     #[arg(long)]
@@ -458,6 +491,31 @@ async fn main() -> Result<()> {
                 print_query_response(payload);
             }
         }
+        Command::Index(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            match args.command {
+                IndexCommand::Repo(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    let report =
+                        scan::run_index(&repo_root, &project, args.since.as_deref(), &config)?;
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        print_index_report(&report);
+                    }
+                }
+                IndexCommand::Status(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    let status = scan::read_index_status(&repo_root, &project)?;
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&status)?);
+                    } else {
+                        print_index_status(&status, &project);
+                    }
+                }
+            }
+        }
         Command::Scan(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let repo_root = resolve_repo_root(&cwd)?;
@@ -469,6 +527,7 @@ async fn main() -> Result<()> {
                 &repo_root,
                 &project,
                 args.since.as_deref(),
+                args.rebuild_index,
                 args.dry_run,
                 &writer.id,
                 writer.name.as_deref(),
@@ -3287,13 +3346,28 @@ fn print_query_response(payload: QueryResponse) {
 fn print_scan_report(report: &scan::ScanReport) {
     println!("Scan summary:\n{}\n", report.summary);
     println!(
-        "Project: {} | Files: {} | Commits: {} | Candidates: {} | Written: {}",
+        "Project: {} | Files: {} | Commits: {} | Candidates: {} | Written: {} | Index: {}",
         report.project,
         report.files_considered,
         report.commits_considered,
         report.candidate_count,
-        if report.written { "yes" } else { "no" }
+        if report.written { "yes" } else { "no" },
+        if report.index_reused {
+            "reused"
+        } else {
+            "rebuilt"
+        }
     );
+    println!(
+        "Coverage: rust {} | ts/js {} | python {} | docs {} | config {} | other {}",
+        report.language_coverage.rust_files,
+        report.language_coverage.ts_js_files,
+        report.language_coverage.python_files,
+        report.language_coverage.docs_files,
+        report.language_coverage.config_files,
+        report.language_coverage.other_files,
+    );
+    println!("Index: {}", report.index_path);
     println!("Report: {}", report.report_path);
     if let Some(capture_id) = &report.capture_id {
         println!("Capture: {capture_id}");
@@ -3301,6 +3375,63 @@ fn print_scan_report(report: &scan::ScanReport) {
     if let Some(run_id) = &report.curate_run_id {
         println!("Curate run: {run_id}");
     }
+}
+
+fn print_index_report(report: &scan::RepoIndexReport) {
+    println!("Repository index built for {}\n", report.project);
+    println!(
+        "Files: {} selected / {} tracked | Commits: {} | Evidence bundles: {}",
+        report.files_indexed,
+        report.tracked_files,
+        report.commits_indexed,
+        report.evidence_bundle_count,
+    );
+    println!(
+        "Coverage: rust {} | ts/js {} | python {} | docs {} | config {} | other {}",
+        report.language_coverage.rust_files,
+        report.language_coverage.ts_js_files,
+        report.language_coverage.python_files,
+        report.language_coverage.docs_files,
+        report.language_coverage.config_files,
+        report.language_coverage.other_files,
+    );
+    if let Some(head) = &report.head {
+        println!("HEAD: {head}");
+    }
+    if let Some(since) = &report.since {
+        println!("Since: {since}");
+    }
+    println!("Index: {}", report.index_path);
+}
+
+fn print_index_status(status: &Option<scan::RepoIndexStatus>, project: &str) {
+    let Some(status) = status else {
+        println!("No repository index found for {project}.");
+        println!("Build one with: mem-cli index repo --project {project}");
+        return;
+    };
+    println!("Repository index status for {}\n", status.project);
+    println!(
+        "Files: {} selected / {} tracked | Commits: {} | Evidence bundles: {}",
+        status.files_indexed, status.tracked_files, status.commits_indexed, status.evidence_bundle_count,
+    );
+    println!(
+        "Coverage: rust {} | ts/js {} | python {} | docs {} | config {} | other {}",
+        status.language_coverage.rust_files,
+        status.language_coverage.ts_js_files,
+        status.language_coverage.python_files,
+        status.language_coverage.docs_files,
+        status.language_coverage.config_files,
+        status.language_coverage.other_files,
+    );
+    if let Some(head) = &status.head {
+        println!("HEAD: {head}");
+    }
+    if let Some(since) = &status.since {
+        println!("Since: {since}");
+    }
+    println!("Built: {}", status.built_at);
+    println!("Index: {}", status.index_path);
 }
 
 fn print_commit_sync_response(response: &CommitSyncResponse) {

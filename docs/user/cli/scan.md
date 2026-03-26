@@ -6,10 +6,13 @@ Its job is to inspect an existing codebase, ask an LLM for durable project knowl
 
 This is not a generic "summarize my repo" command. It is specifically trying to extract project memory that should still be useful later.
 
+`scan` now sits on top of a local repository index. You can build that index explicitly with `mem-cli index repo` and inspect it with `mem-cli index status`.
+
 ## Table of Contents
 
 - [What It Does](#what-it-does)
 - [What It Reads](#what-it-reads)
+- [Repository Index](#repository-index)
 - [What It Reads From Git](#what-it-reads-from-git)
 - [What It Sends To The LLM](#what-it-sends-to-the-llm)
 - [What It Accepts From The LLM](#what-it-accepts-from-the-llm)
@@ -40,12 +43,42 @@ At a high level, `scan` does this:
 
 So `scan` is really:
 
+- local repository indexing
 - repository sampling
 - LLM extraction
 - strict validation
 - normal Memory Layer ingestion
 
 It does not bypass the existing backend or write directly to PostgreSQL tables.
+
+## Repository Index
+
+Before `scan` asks the LLM anything, it now works from a local repository index stored under:
+
+- `.mem/runtime/index/`
+
+You can manage that index directly:
+
+```bash
+mem-cli index repo --project my-project
+mem-cli index status --project my-project
+```
+
+The current index includes:
+
+- the selected repository files used for scan
+- the selected git commits used for scan
+- the current `HEAD`
+- a simple language-coverage summary
+- evidence-bundle counts for debugging and future scan quality work
+
+When you run `mem-cli scan`, it reuses the existing index if it still matches the current repo `HEAD` and the same `--since` window. Otherwise it rebuilds the index first.
+
+If you want to force a fresh index before scanning, use:
+
+```bash
+mem-cli scan --project my-project --rebuild-index
+```
 
 ## What It Reads
 
@@ -216,8 +249,7 @@ mem-cli scan --project my-project --dry-run
 
 In dry-run mode, `scan` still:
 
-- reads files
-- reads git history
+- builds or reuses the repository index
 - calls the LLM
 - validates candidates
 - writes a scan report
@@ -239,9 +271,12 @@ The report includes:
 - prompt version
 - project
 - whether it was a dry run
+- whether the repository index was reused or rebuilt
+- the repository index path
 - summary
 - how many files were considered
 - how many commits were considered
+- language coverage
 - the dossier that was sent
 - the accepted candidates
 
