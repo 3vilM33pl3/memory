@@ -2056,7 +2056,10 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
     ))];
     if summary.unhealthy_count > 0 {
         lines.push(Line::from(Span::styled(
-            format!("{} watcher(s) currently unhealthy.", summary.unhealthy_count),
+            format!(
+                "{} watcher(s) currently unhealthy.",
+                summary.unhealthy_count
+            ),
             Style::default().fg(Theme::WARNING),
         )));
     }

@@ -597,7 +597,9 @@ async fn fetch_embedding_health(
     let active_space = if active_provider.is_empty() || active_model.is_empty() {
         None
     } else {
-        Some(format!("{active_provider}|{active_base_url}|{active_model}"))
+        Some(format!(
+            "{active_provider}|{active_base_url}|{active_model}"
+        ))
     };
 
     let row = sqlx::query(

@@ -96,8 +96,10 @@ impl EmbeddingService {
             serde_json::from_str(&body).context("parse embedding response")?;
         let mut data = parsed.data;
         data.sort_by_key(|item| item.index);
-        let vectors =
-            data.into_iter().map(|item| Vector::from(item.embedding)).collect::<Vec<_>>();
+        let vectors = data
+            .into_iter()
+            .map(|item| Vector::from(item.embedding))
+            .collect::<Vec<_>>();
         let dimension = vectors.first().map(vector_dimension).unwrap_or(0);
         Ok(EmbeddingBatch {
             space: self.embedding_space(),
@@ -181,8 +183,8 @@ pub async fn query_memory(
                         &query_embedding,
                         candidate_limit,
                     )
-                        .await
-                        .context("fetch semantic candidates")?;
+                    .await
+                    .context("fetch semantic candidates")?;
                     let semantic_status = if candidates.is_empty()
                         && !project_has_active_embedding_space(
                             pool,
@@ -345,9 +347,15 @@ pub async fn rebuild_chunks(
             .await
             .context("insert rebuilt chunk")?;
             if let Some(embedding) = embedding {
-                upsert_chunk_embedding(pool, chunk_id, &embedding_batch.space, embedding_batch.dimension, embedding)
-                    .await
-                    .context("upsert rebuilt chunk embedding")?;
+                upsert_chunk_embedding(
+                    pool,
+                    chunk_id,
+                    &embedding_batch.space,
+                    embedding_batch.dimension,
+                    embedding,
+                )
+                .await
+                .context("upsert rebuilt chunk embedding")?;
             }
         }
         count += 1;
@@ -412,9 +420,15 @@ pub async fn reembed_project_chunks(
                 .get(index)
                 .cloned()
                 .context("missing embedding for stale chunk batch item")?;
-            upsert_chunk_embedding(pool, *chunk_id, &embeddings.space, embeddings.dimension, embedding)
-                .await
-                .context("update active-space chunk embedding")?;
+            upsert_chunk_embedding(
+                pool,
+                *chunk_id,
+                &embeddings.space,
+                embeddings.dimension,
+                embedding,
+            )
+            .await
+            .context("update active-space chunk embedding")?;
             reembedded_chunks += 1;
         }
     }

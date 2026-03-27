@@ -128,8 +128,13 @@ pub(crate) async fn run_scan(
     writer_name: Option<&str>,
 ) -> Result<ScanReport> {
     ensure_llm_config(&api.config)?;
-    let (index, index_path, index_reused) =
-        resolve_repo_index(repo_root, project, since, api.config.llm.max_input_bytes, rebuild_index)?;
+    let (index, index_path, index_reused) = resolve_repo_index(
+        repo_root,
+        project,
+        since,
+        api.config.llm.max_input_bytes,
+        rebuild_index,
+    )?;
     let dossier = index.dossier.clone();
     let response = analyze_dossier(&api.client, &api.config, &dossier).await?;
     let candidates = validate_candidates(response.candidates)?;
@@ -188,12 +193,8 @@ pub(crate) fn run_index(
     since: Option<&str>,
     config: &AppConfig,
 ) -> Result<RepoIndexReport> {
-    let (index, index_path) = build_and_write_repo_index(
-        repo_root,
-        project,
-        since,
-        config.llm.max_input_bytes,
-    )?;
+    let (index, index_path) =
+        build_and_write_repo_index(repo_root, project, since, config.llm.max_input_bytes)?;
     Ok(RepoIndexReport {
         project: index.project,
         repo_root: index.repo_root,
@@ -216,7 +217,10 @@ pub(crate) fn run_index(
     })
 }
 
-pub(crate) fn read_index_status(repo_root: &Path, project: &str) -> Result<Option<RepoIndexStatus>> {
+pub(crate) fn read_index_status(
+    repo_root: &Path,
+    project: &str,
+) -> Result<Option<RepoIndexStatus>> {
     let index_path = repo_index_path(repo_root, project);
     let Some(index) = read_repo_index(&index_path)? else {
         return Ok(None);
@@ -417,11 +421,8 @@ fn build_and_write_repo_index(
     let tracked_paths = list_tracked_files(repo_root);
     let language_coverage = derive_language_coverage(&tracked_paths);
     let settings = load_repo_agent_settings(repo_root).unwrap_or_default();
-    let analysis = mem_analyze::analyze_repository(
-        repo_root,
-        &tracked_paths,
-        &settings.analysis.analyzers,
-    )?;
+    let analysis =
+        mem_analyze::analyze_repository(repo_root, &tracked_paths, &settings.analysis.analyzers)?;
     let dossier = build_dossier(repo_root, project, since, max_input_bytes)?;
     let index = PersistedRepoIndex {
         prompt_version: PROMPT_VERSION.to_string(),

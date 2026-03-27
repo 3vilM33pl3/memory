@@ -151,7 +151,9 @@ pub fn restart_local_watcher_service(project: &str) -> Result<()> {
             let stderr = String::from_utf8_lossy(&uid_output.stderr);
             anyhow::bail!("id -u failed: {}", stderr.trim());
         }
-        let uid = String::from_utf8_lossy(&uid_output.stdout).trim().to_string();
+        let uid = String::from_utf8_lossy(&uid_output.stdout)
+            .trim()
+            .to_string();
         let target = format!("gui/{uid}/{}", watch_launch_agent_label(project));
         let output = Command::new("launchctl")
             .args(["kickstart", "-k", &target])
@@ -179,7 +181,10 @@ pub fn restart_local_watcher_service(project: &str) -> Result<()> {
             .with_context(|| format!("run systemctl --user restart {unit_name}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("systemctl --user restart {unit_name} failed: {}", stderr.trim());
+            anyhow::bail!(
+                "systemctl --user restart {unit_name} failed: {}",
+                stderr.trim()
+            );
         }
         Ok(())
     }

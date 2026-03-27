@@ -174,9 +174,7 @@ pub fn analyze_repository(
         let source = match fs::read_to_string(&full_path) {
             Ok(content) => content,
             Err(error) => {
-                summary
-                    .errors
-                    .push(format!("{}: {}", path, error));
+                summary.errors.push(format!("{}: {}", path, error));
                 continue;
             }
         };
@@ -260,7 +258,9 @@ fn parser_for_path(path: &str, enabled: &[String]) -> Option<(&'static str, Anal
         "js" | "jsx" | "mjs" | "cjs" if enabled.iter().any(|item| item == "typescript") => {
             Some(("typescript", AnalyzerLanguage::JavaScript))
         }
-        "py" if enabled.iter().any(|item| item == "python") => Some(("python", AnalyzerLanguage::Python)),
+        "py" if enabled.iter().any(|item| item == "python") => {
+            Some(("python", AnalyzerLanguage::Python))
+        }
         _ => None,
     }
 }
@@ -324,16 +324,26 @@ fn extract_symbol(
         (AnalyzerLanguage::Rust, "trait_item") => (SymbolKind::Trait, "type_identifier"),
         (AnalyzerLanguage::Rust, "impl_item") => (SymbolKind::Module, "type_identifier"),
         (AnalyzerLanguage::TypeScript, "function_declaration")
-        | (AnalyzerLanguage::JavaScript, "function_declaration") => (SymbolKind::Function, "identifier"),
+        | (AnalyzerLanguage::JavaScript, "function_declaration") => {
+            (SymbolKind::Function, "identifier")
+        }
         (AnalyzerLanguage::TypeScript, "class_declaration")
-        | (AnalyzerLanguage::JavaScript, "class_declaration") => (SymbolKind::Class, "type_identifier"),
+        | (AnalyzerLanguage::JavaScript, "class_declaration") => {
+            (SymbolKind::Class, "type_identifier")
+        }
         (AnalyzerLanguage::TypeScript, "method_definition")
-        | (AnalyzerLanguage::JavaScript, "method_definition") => (SymbolKind::Method, "property_identifier"),
-        (AnalyzerLanguage::TypeScript, "interface_declaration") => (SymbolKind::Interface, "type_identifier"),
+        | (AnalyzerLanguage::JavaScript, "method_definition") => {
+            (SymbolKind::Method, "property_identifier")
+        }
+        (AnalyzerLanguage::TypeScript, "interface_declaration") => {
+            (SymbolKind::Interface, "type_identifier")
+        }
         (AnalyzerLanguage::TypeScript, "lexical_declaration")
         | (AnalyzerLanguage::JavaScript, "lexical_declaration")
         | (AnalyzerLanguage::TypeScript, "variable_declaration")
-        | (AnalyzerLanguage::JavaScript, "variable_declaration") => (SymbolKind::Variable, "identifier"),
+        | (AnalyzerLanguage::JavaScript, "variable_declaration") => {
+            (SymbolKind::Variable, "identifier")
+        }
         (AnalyzerLanguage::Python, "function_definition") => (SymbolKind::Function, "identifier"),
         (AnalyzerLanguage::Python, "class_definition") => (SymbolKind::Class, "identifier"),
         _ => return None,
@@ -419,7 +429,10 @@ fn extract_reference(
     let is_identifier = match language {
         AnalyzerLanguage::Rust => matches!(kind, "identifier" | "type_identifier"),
         AnalyzerLanguage::TypeScript | AnalyzerLanguage::JavaScript => {
-            matches!(kind, "identifier" | "property_identifier" | "type_identifier")
+            matches!(
+                kind,
+                "identifier" | "property_identifier" | "type_identifier"
+            )
         }
         AnalyzerLanguage::Python => kind == "identifier",
     };
@@ -506,7 +519,14 @@ fn extract_import_target(language: &AnalyzerLanguage, import_text: &str) -> Opti
         AnalyzerLanguage::TypeScript | AnalyzerLanguage::JavaScript => import_text
             .split("from")
             .nth(1)
-            .map(|value| value.trim().trim_matches(';').trim_matches('\'').trim_matches('"').to_string())
+            .map(|value| {
+                value
+                    .trim()
+                    .trim_matches(';')
+                    .trim_matches('\'')
+                    .trim_matches('"')
+                    .to_string()
+            })
             .or_else(|| {
                 import_text
                     .strip_prefix("import ")
@@ -516,7 +536,9 @@ fn extract_import_target(language: &AnalyzerLanguage, import_text: &str) -> Opti
             if let Some(rest) = import_text.strip_prefix("from ") {
                 rest.split_whitespace().next().map(ToOwned::to_owned)
             } else {
-                import_text.strip_prefix("import ").map(|value| value.trim().to_string())
+                import_text
+                    .strip_prefix("import ")
+                    .map(|value| value.trim().to_string())
             }
         }
     }
@@ -596,8 +618,18 @@ mod tests {
         "#;
         let analysis = analyze_source("src/lib.rs", src, AnalyzerLanguage::Rust).unwrap();
         assert!(analysis.symbols.iter().any(|s| s.name == "run"));
-        assert!(analysis.imports.iter().any(|i| i.import_text.contains("use crate::db::Pool")));
-        assert!(analysis.calls.iter().any(|c| c.callee_text.contains("helper")));
+        assert!(
+            analysis
+                .imports
+                .iter()
+                .any(|i| i.import_text.contains("use crate::db::Pool"))
+        );
+        assert!(
+            analysis
+                .calls
+                .iter()
+                .any(|c| c.callee_text.contains("helper"))
+        );
         assert!(!analysis.test_links.is_empty());
     }
 
@@ -610,8 +642,18 @@ mod tests {
         "#;
         let analysis = analyze_source("web/app.ts", src, AnalyzerLanguage::TypeScript).unwrap();
         assert!(analysis.symbols.iter().any(|s| s.name == "run"));
-        assert!(analysis.imports.iter().any(|i| i.import_text.contains("import { boot }")));
-        assert!(analysis.calls.iter().any(|c| c.callee_text.contains("boot")));
+        assert!(
+            analysis
+                .imports
+                .iter()
+                .any(|i| i.import_text.contains("import { boot }"))
+        );
+        assert!(
+            analysis
+                .calls
+                .iter()
+                .any(|c| c.callee_text.contains("boot"))
+        );
         assert!(!analysis.test_links.is_empty());
     }
 
@@ -632,8 +674,18 @@ def test_smoke():
 "#;
         let analysis = analyze_source("app.py", src, AnalyzerLanguage::Python).unwrap();
         assert!(analysis.symbols.iter().any(|s| s.name == "App"));
-        assert!(analysis.imports.iter().any(|i| i.import_text.contains("import os")));
-        assert!(analysis.calls.iter().any(|c| c.callee_text.contains("helper")));
+        assert!(
+            analysis
+                .imports
+                .iter()
+                .any(|i| i.import_text.contains("import os"))
+        );
+        assert!(
+            analysis
+                .calls
+                .iter()
+                .any(|c| c.callee_text.contains("helper"))
+        );
         assert!(!analysis.test_links.is_empty());
     }
 }
