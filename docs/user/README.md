@@ -15,6 +15,7 @@ This section is for people installing, configuring, and using Memory Layer in re
 ## Reference
 
 - [Embedding Operations](cli/embeddings.md)
+- [Memory Bundles](cli/bundles.md)
 - [Scan Command](cli/scan.md)
 - [Commit History](cli/commits.md)
 

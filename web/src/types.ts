@@ -300,6 +300,54 @@ export interface DeleteMemoryResponse {
   summary: string;
 }
 
+export interface ProjectMemoryExportOptions {
+  include_archived: boolean;
+  include_tags: boolean;
+  include_relations: boolean;
+  include_source_file_paths: boolean;
+  include_git_commits: boolean;
+  include_source_excerpts: boolean;
+}
+
+export interface ProjectMemoryBundlePreview {
+  bundle_id: string;
+  source_project: string;
+  exported_at: string;
+  summary_markdown: string;
+  memory_count: number;
+  relation_count: number;
+  warning_count: number;
+  warnings: string[];
+  options: ProjectMemoryExportOptions;
+}
+
+export interface ProjectMemoryImportPreview {
+  bundle_id: string;
+  bundle_hash: string;
+  source_project: string;
+  target_project: string;
+  exported_at: string;
+  summary_markdown: string;
+  memory_count: number;
+  relation_count: number;
+  new_count: number;
+  unchanged_count: number;
+  replacing_count: number;
+  warning_count: number;
+  warnings: string[];
+  options: ProjectMemoryExportOptions;
+}
+
+export interface ProjectMemoryImportResponse {
+  target_project: string;
+  bundle_id: string;
+  bundle_hash: string;
+  imported_count: number;
+  replaced_count: number;
+  skipped_count: number;
+  relation_count: number;
+}
+
 export type StreamRequest =
   | { type: "health" }
   | { type: "project_overview"; project: string }

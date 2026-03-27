@@ -129,7 +129,7 @@ select {
 }
 
 .tabs {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   margin-bottom: 1rem;
 }
 
@@ -306,6 +306,12 @@ pre {
   border-radius: 12px;
   padding: 0.85rem;
   color: var(--muted);
+}
+
+.warning-list {
+  margin: 0.75rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--danger);
 }
 
 .muted {

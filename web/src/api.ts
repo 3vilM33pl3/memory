@@ -4,6 +4,10 @@ import type {
   DeleteMemoryResponse,
   MemoryEntryResponse,
   ProjectMemoriesResponse,
+  ProjectMemoryBundlePreview,
+  ProjectMemoryExportOptions,
+  ProjectMemoryImportPreview,
+  ProjectMemoryImportResponse,
   ProjectOverviewResponse,
   QueryRequest,
   QueryResponse,
@@ -90,6 +94,60 @@ export async function deleteMemory(memoryId: string): Promise<DeleteMemoryRespon
       method: "DELETE",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ memory_id: memoryId }),
+    }),
+  );
+}
+
+export async function previewExportBundle(
+  project: string,
+  options: ProjectMemoryExportOptions,
+): Promise<ProjectMemoryBundlePreview> {
+  return parseJson(
+    await fetch(`/v1/projects/${encodeURIComponent(project)}/bundle/export/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(options),
+    }),
+  );
+}
+
+export async function exportBundle(
+  project: string,
+  options: ProjectMemoryExportOptions,
+): Promise<Blob> {
+  const response = await fetch(`/v1/projects/${encodeURIComponent(project)}/bundle/export`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(options),
+  });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${await response.text()}`);
+  }
+  return response.blob();
+}
+
+export async function previewImportBundle(
+  project: string,
+  file: File,
+): Promise<ProjectMemoryImportPreview> {
+  return parseJson(
+    await fetch(`/v1/projects/${encodeURIComponent(project)}/bundle/import/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: file,
+    }),
+  );
+}
+
+export async function importBundle(
+  project: string,
+  file: File,
+): Promise<ProjectMemoryImportResponse> {
+  return parseJson(
+    await fetch(`/v1/projects/${encodeURIComponent(project)}/bundle/import`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: file,
     }),
   );
 }

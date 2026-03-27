@@ -52,6 +52,8 @@ For the full onboarding flow, prerequisites, upgrade path, and troubleshooting, 
 
 For semantic-search maintenance and model switching, use [Embedding Operations](docs/user/cli/embeddings.md).
 
+For shareable backup/restore bundles, use [Memory Bundles](docs/user/cli/bundles.md).
+
 ## What It Does
 
 - stores project memory in PostgreSQL with pgvector-backed chunk embeddings
@@ -64,6 +66,7 @@ For semantic-search maintenance and model switching, use [Embedding Operations](
 - provides a TUI and a browser UI
 - can scan a repository for durable project knowledge
 - can import git commit history as searchable evidence
+- can export and import shareable project memory bundles
 
 Project-local customization now has two layers:
 
@@ -77,6 +80,7 @@ Project-local customization now has two layers:
 - [User Documentation Index](docs/user/README.md)
 - [Getting Started](docs/user/getting-started.md)
 - [Embedding Operations](docs/user/cli/embeddings.md)
+- [Memory Bundles](docs/user/cli/bundles.md)
 - [Scan Command](docs/user/cli/scan.md)
 - [Commit History](docs/user/cli/commits.md)
 

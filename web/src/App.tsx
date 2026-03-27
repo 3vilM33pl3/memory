@@ -3,10 +3,14 @@ import {
   archiveProject,
   curate,
   deleteMemory,
+  exportBundle,
   getHealth,
   getMemory,
   getMemories,
   getOverview,
+  importBundle,
+  previewExportBundle,
+  previewImportBundle,
   reembed,
   reindex,
   runQuery,
@@ -17,6 +21,9 @@ import type {
   MemoryEntryResponse,
   MemoryStatus,
   MemoryType,
+  ProjectMemoryBundlePreview,
+  ProjectMemoryExportOptions,
+  ProjectMemoryImportPreview,
   ProjectMemoriesResponse,
   ProjectOverviewResponse,
   QueryResponse,
@@ -24,7 +31,7 @@ import type {
   StreamResponse,
 } from "./types";
 
-type Tab = "memories" | "query" | "activity" | "project";
+type Tab = "memories" | "query" | "activity" | "project" | "bundles";
 
 type MemoryTypeFilter = "all" | MemoryType;
 type StatusFilter = "all" | MemoryStatus;
@@ -86,6 +93,17 @@ export default function App() {
   const [tagFilter, setTagFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [typeFilter, setTypeFilter] = useState<MemoryTypeFilter>("all");
+  const [bundleOptions, setBundleOptions] = useState<ProjectMemoryExportOptions>({
+    include_archived: false,
+    include_tags: true,
+    include_relations: true,
+    include_source_file_paths: false,
+    include_git_commits: false,
+    include_source_excerpts: false,
+  });
+  const [exportPreview, setExportPreview] = useState<ProjectMemoryBundlePreview | null>(null);
+  const [importPreview, setImportPreview] = useState<ProjectMemoryImportPreview | null>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -259,6 +277,64 @@ export default function App() {
     }
   }
 
+  async function handlePreviewExport() {
+    try {
+      const preview = await previewExportBundle(project, bundleOptions);
+      setExportPreview(preview);
+      setStatusMessage(`Prepared export preview for ${preview.memory_count} memories.`);
+      setTab("bundles");
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    }
+  }
+
+  async function handleDownloadExport() {
+    try {
+      const blob = await exportBundle(project, bundleOptions);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${project}-memory-bundle.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setStatusMessage(`Downloaded export bundle for ${project}.`);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    }
+  }
+
+  async function handlePreviewImport() {
+    if (!importFile) {
+      setStatusMessage("Choose a bundle file first.");
+      return;
+    }
+    try {
+      const preview = await previewImportBundle(project, importFile);
+      setImportPreview(preview);
+      setStatusMessage(`Previewed bundle from ${preview.source_project}.`);
+      setTab("bundles");
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    }
+  }
+
+  async function handleApplyImport() {
+    if (!importFile) {
+      setStatusMessage("Choose a bundle file first.");
+      return;
+    }
+    try {
+      const response = await importBundle(project, importFile);
+      setImportPreview(null);
+      setStatusMessage(`Imported ${response.imported_count} memories into ${response.target_project}.`);
+      await refreshProject(project);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    }
+  }
+
   async function handleDelete(memoryId: string) {
     try {
       const response = await deleteMemory(memoryId);
@@ -335,7 +411,7 @@ export default function App() {
       </section>
 
       <nav className="tabs">
-        {(["memories", "query", "activity", "project"] as Tab[]).map((name) => (
+        {(["memories", "query", "activity", "project", "bundles"] as Tab[]).map((name) => (
           <button
             key={name}
             className={tab === name ? "tab-active" : ""}
@@ -635,6 +711,58 @@ export default function App() {
               <KeyValueList items={overview.top_files.map((item) => [item.name, String(item.count)])} empty="No file provenance yet." />
             </div>
           </section>
+        </section>
+      ) : null}
+
+      {tab === "bundles" ? (
+        <section className="panel-grid">
+          <div className="panel detail-scroll">
+            <h2>Export bundle</h2>
+            <label><input type="checkbox" checked={bundleOptions.include_archived} onChange={(event) => setBundleOptions((current) => ({ ...current, include_archived: event.target.checked }))} /> Include archived memories</label>
+            <label><input type="checkbox" checked={bundleOptions.include_tags} onChange={(event) => setBundleOptions((current) => ({ ...current, include_tags: event.target.checked }))} /> Include tags</label>
+            <label><input type="checkbox" checked={bundleOptions.include_relations} onChange={(event) => setBundleOptions((current) => ({ ...current, include_relations: event.target.checked }))} /> Include relations</label>
+            <label><input type="checkbox" checked={bundleOptions.include_source_file_paths} onChange={(event) => setBundleOptions((current) => ({ ...current, include_source_file_paths: event.target.checked }))} /> Include source file paths</label>
+            <label><input type="checkbox" checked={bundleOptions.include_git_commits} onChange={(event) => setBundleOptions((current) => ({ ...current, include_git_commits: event.target.checked }))} /> Include git commit hashes</label>
+            <label><input type="checkbox" checked={bundleOptions.include_source_excerpts} onChange={(event) => setBundleOptions((current) => ({ ...current, include_source_excerpts: event.target.checked }))} /> Include source excerpts</label>
+            <div className="actions-row">
+              <button onClick={() => void handlePreviewExport()} type="button">Preview export</button>
+              <button onClick={() => void handleDownloadExport()} type="button">Download bundle</button>
+            </div>
+            {exportPreview ? (
+              <>
+                <p className="muted">{exportPreview.memory_count} memories · {exportPreview.relation_count} relations · {exportPreview.warning_count} warnings</p>
+                <pre className="code-block">{exportPreview.summary_markdown}</pre>
+                {exportPreview.warnings.length ? (
+                  <ul className="warning-list">
+                    {exportPreview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                  </ul>
+                ) : null}
+              </>
+            ) : (
+              <p className="muted">Export a versioned, shareable bundle of the current project’s curated memories.</p>
+            )}
+          </div>
+          <div className="panel detail-scroll">
+            <h2>Import bundle</h2>
+            <input type="file" accept=".zip,.mlbundle.zip" onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} />
+            <div className="actions-row">
+              <button onClick={() => void handlePreviewImport()} type="button">Preview import</button>
+              <button onClick={() => void handleApplyImport()} type="button">Import bundle</button>
+            </div>
+            {importPreview ? (
+              <>
+                <p className="muted">{importPreview.memory_count} memories · {importPreview.new_count} new · {importPreview.unchanged_count} unchanged · {importPreview.replacing_count} replacing</p>
+                <pre className="code-block">{importPreview.summary_markdown}</pre>
+                {importPreview.warnings.length ? (
+                  <ul className="warning-list">
+                    {importPreview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                  </ul>
+                ) : null}
+              </>
+            ) : (
+              <p className="muted">Upload a bundle to preview and import it into the current project.</p>
+            )}
+          </div>
         </section>
       ) : null}
 

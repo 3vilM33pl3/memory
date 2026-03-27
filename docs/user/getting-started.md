@@ -258,7 +258,14 @@ Search project memory:
 mem-cli query --project my-project --question "How is deployment handled here?"
 ```
 
+Export a shareable memory bundle:
+
+```bash
+mem-cli export --project my-project --out my-project.mlbundle.zip
+```
+
 For semantic-search maintenance commands such as `reindex`, `reembed`, and `prune-embeddings`, see [Embedding Operations](cli/embeddings.md).
+For project memory backup and restore, see [Memory Bundles](cli/bundles.md).
 
 ## Optional Background Watcher
 
@@ -344,6 +351,7 @@ with package defaults on every upgrade.
 
 Full command documentation:
 
+- [Memory Bundles](cli/bundles.md)
 - [Scan Command](cli/scan.md)
 
 Try it safely first:
@@ -422,6 +430,7 @@ cargo run --bin memory-watch -- run --project memory
 ## Related Docs
 
 - [User Documentation](README.md)
+- [Memory Bundles](cli/bundles.md)
 - [Scan Command](cli/scan.md)
 - [Commit History](cli/commits.md)
 - [Developer Documentation](../developer/README.md)
