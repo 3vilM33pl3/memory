@@ -255,6 +255,22 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
     })
 }
 
+pub async fn refresh_memory_relations(
+    pool: &PgPool,
+    project: &str,
+    memory_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let project_row = sqlx::query("SELECT id FROM projects WHERE slug = $1")
+        .bind(project)
+        .fetch_one(&mut *tx)
+        .await?;
+    let project_id: Uuid = project_row.try_get("id")?;
+    refresh_relations(&mut tx, project_id, memory_id).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 async fn upsert_project(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project: &str,

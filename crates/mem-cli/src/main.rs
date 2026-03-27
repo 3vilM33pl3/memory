@@ -21,9 +21,11 @@ use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CommitDetailResponse,
     CommitSyncRequest, CommitSyncResponse, CurateRequest, CurateResponse, DeleteMemoryRequest,
     DeleteMemoryResponse, MemoryEntryResponse, ProjectCommitsResponse, ProjectMemoriesResponse,
-    ProjectOverviewResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters,
-    QueryRequest, QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
-    TestResult, discover_global_config_path, discover_repo_env_path, read_repo_project_slug,
+    ProjectMemoryBundlePreview, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
+    ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
+    PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse, ReembedRequest,
+    ReembedResponse, ReindexRequest, ReindexResponse, TestResult, discover_global_config_path,
+    discover_repo_env_path, read_repo_project_slug,
 };
 use mem_platform as platform;
 use mem_watch::{flush_path, load_state, run_once, to_status};
@@ -56,6 +58,8 @@ enum Command {
     Doctor(DoctorArgs),
     Commits(CommitsArgs),
     Index(IndexArgs),
+    Export(ExportArgs),
+    Import(ImportArgs),
     Query(QueryArgs),
     Scan(ScanArgs),
     CaptureTask(CaptureTaskArgs),
@@ -221,6 +225,33 @@ struct IndexRepoArgs {
 struct IndexStatusArgs {
     #[arg(long)]
     project: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ExportArgs {
+    #[arg(long)]
+    project: String,
+    #[arg(long)]
+    out: PathBuf,
+    #[arg(long)]
+    include_archived: bool,
+    #[arg(long)]
+    include_source_file_paths: bool,
+    #[arg(long)]
+    include_git_commits: bool,
+    #[arg(long)]
+    include_source_excerpts: bool,
+}
+
+#[derive(Debug, Args)]
+struct ImportArgs {
+    #[arg(long)]
+    project: String,
+    bundle: PathBuf,
+    #[arg(long)]
+    preview: bool,
     #[arg(long)]
     json: bool,
 }
@@ -513,6 +544,48 @@ async fn main() -> Result<()> {
                     } else {
                         print_index_status(&status, &project);
                     }
+                }
+            }
+        }
+        Command::Export(args) => {
+            let api = ApiClient::new(client, config);
+            let options = ProjectMemoryExportOptions {
+                include_archived: args.include_archived,
+                include_tags: true,
+                include_relations: true,
+                include_source_file_paths: args.include_source_file_paths,
+                include_git_commits: args.include_git_commits,
+                include_source_excerpts: args.include_source_excerpts,
+            };
+            let preview = api.export_bundle_preview(&args.project, &options).await?;
+            let bytes = api.export_bundle(&args.project, &options).await?;
+            fs::write(&args.out, bytes).with_context(|| format!("write {}", args.out.display()))?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "project": args.project,
+                    "output": args.out.display().to_string(),
+                    "preview": preview
+                }))?
+            );
+        }
+        Command::Import(args) => {
+            let api = ApiClient::new(client, config);
+            let bytes = fs::read(&args.bundle)
+                .with_context(|| format!("read {}", args.bundle.display()))?;
+            if args.preview {
+                let preview = api.import_bundle_preview(&args.project, bytes).await?;
+                if args.json {
+                    println!("{}", serde_json::to_string_pretty(&preview)?);
+                } else {
+                    print_bundle_import_preview(&preview);
+                }
+            } else {
+                let response = api.import_bundle(&args.project, bytes).await?;
+                if args.json {
+                    println!("{}", serde_json::to_string_pretty(&response)?);
+                } else {
+                    print_bundle_import_response(&response);
                 }
             }
         }
@@ -3132,6 +3205,88 @@ impl ApiClient {
         .await
     }
 
+    pub(crate) async fn export_bundle_preview(
+        &self,
+        project: &str,
+        options: &ProjectMemoryExportOptions,
+    ) -> Result<ProjectMemoryBundlePreview> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/bundle/export/preview"),
+                ))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .json(options)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn export_bundle(
+        &self,
+        project: &str,
+        options: &ProjectMemoryExportOptions,
+    ) -> Result<Vec<u8>> {
+        let response = self
+            .client
+            .post(service_url(
+                &self.config,
+                &format!("/v1/projects/{project}/bundle/export"),
+            ))
+            .headers(write_headers(&self.config.service.api_token)?)
+            .json(options)
+            .send()
+            .await?;
+        let status = response.status();
+        let bytes = response.bytes().await?;
+        if !status.is_success() {
+            anyhow::bail!("{status} {}", String::from_utf8_lossy(&bytes));
+        }
+        Ok(bytes.to_vec())
+    }
+
+    pub(crate) async fn import_bundle_preview(
+        &self,
+        project: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ProjectMemoryImportPreview> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/bundle/import/preview"),
+                ))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .header("content-type", "application/octet-stream")
+                .body(bytes)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn import_bundle(
+        &self,
+        project: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ProjectMemoryImportResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/bundle/import"),
+                ))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .header("content-type", "application/octet-stream")
+                .body(bytes)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
     pub(crate) async fn query(&self, request: &QueryRequest) -> Result<QueryResponse> {
         get_json(
             self.client
@@ -3341,6 +3496,32 @@ fn print_query_response(payload: QueryResponse) {
             );
         }
     }
+}
+
+fn print_bundle_import_preview(preview: &ProjectMemoryImportPreview) {
+    println!("Bundle: {}", preview.bundle_id);
+    println!("Source project: {}", preview.source_project);
+    println!("Target project: {}", preview.target_project);
+    println!(
+        "Memories: {} total | {} new | {} unchanged | {} replacing",
+        preview.memory_count, preview.new_count, preview.unchanged_count, preview.replacing_count
+    );
+    println!("Warnings: {}", preview.warning_count);
+    println!("\n{}", preview.summary_markdown);
+}
+
+fn print_bundle_import_response(response: &ProjectMemoryImportResponse) {
+    println!(
+        "Imported bundle {} into {}",
+        response.bundle_id, response.target_project
+    );
+    println!(
+        "Imported: {} | Replaced: {} | Skipped: {} | Relations: {}",
+        response.imported_count,
+        response.replaced_count,
+        response.skipped_count,
+        response.relation_count
+    );
 }
 
 fn print_scan_report(report: &scan::ScanReport) {
