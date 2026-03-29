@@ -7,7 +7,15 @@ if [[ $# -lt 1 ]]; then
 fi
 
 PAYLOAD_FILE="$1"
-MEMCTL_BIN="${MEMCTL_BIN:-cargo run --quiet --bin mem-cli --}"
+if [[ -n "${MEMCTL_BIN:-}" ]]; then
+  :
+elif command -v memctl >/dev/null 2>&1; then
+  MEMCTL_BIN="memctl"
+elif command -v mem-cli >/dev/null 2>&1; then
+  MEMCTL_BIN="mem-cli"
+else
+  MEMCTL_BIN="cargo run --quiet --bin mem-cli --"
+fi
 
 if [[ ! -f "$PAYLOAD_FILE" ]]; then
   echo "Payload file not found: $PAYLOAD_FILE" >&2
