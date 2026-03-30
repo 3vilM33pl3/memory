@@ -2231,16 +2231,80 @@ fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::MUTED),
             )));
         }
-        lines.push(Line::from(""));
-        append_resume_briefing_lines(&mut lines, &response.briefing);
+        if let Some(current_thread) = &response.current_thread {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Current Thread")]));
+            lines.push(Line::from(Span::styled(
+                current_thread.clone(),
+                Style::default().fg(Theme::TEXT),
+            )));
+        }
+        if let Some(action) = &response.primary_next_step {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Next Step")]));
+            lines.push(Line::from(Span::styled(
+                format!("{}: {}", action.title, action.rationale),
+                Style::default().fg(Theme::TEXT),
+            )));
+            if let Some(command_hint) = &action.command_hint {
+                lines.push(Line::from(Span::styled(
+                    command_hint.clone(),
+                    Style::default().fg(Theme::MUTED),
+                )));
+            }
+        }
+        if !response.change_summary.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("What Changed")]));
+            for item in &response.change_summary {
+                lines.push(Line::from(Span::styled(
+                    format!("- {item}"),
+                    Style::default().fg(Theme::TEXT),
+                )));
+            }
+        }
+        if !response.attention_items.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Needs Attention")]));
+            for item in &response.attention_items {
+                lines.push(Line::from(Span::styled(
+                    format!("- {item}"),
+                    Style::default().fg(Theme::WARNING),
+                )));
+            }
+        }
+        if !response.context_items.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Keep In Mind")]));
+            for item in &response.context_items {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("[{}] ", item.memory_type),
+                        Style::default().fg(Theme::ACCENT),
+                    ),
+                    Span::styled(item.summary.clone(), Style::default().fg(Theme::TEXT)),
+                ]));
+            }
+        }
+        if !response.secondary_next_steps.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Other Useful Follow-Ups")]));
+            for action in &response.secondary_next_steps {
+                lines.push(Line::from(Span::styled(
+                    format!("- {}: {}", action.title, action.rationale),
+                    Style::default().fg(Theme::TEXT),
+                )));
+                if let Some(command_hint) = &action.command_hint {
+                    lines.push(Line::from(Span::styled(
+                        format!("  {command_hint}"),
+                        Style::default().fg(Theme::MUTED),
+                    )));
+                }
+            }
+        }
         if !response.warnings.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "Warnings",
-                Style::default()
-                    .fg(Theme::WARNING)
-                    .add_modifier(Modifier::BOLD),
-            )));
+            lines.push(Line::from(vec![section_span("All Warnings")]));
             for warning in &response.warnings {
                 lines.push(Line::from(Span::styled(
                     format!("- {warning}"),
@@ -2250,12 +2314,7 @@ fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         }
         if !response.actions.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "Suggested Next Actions",
-                Style::default()
-                    .fg(Theme::ACCENT)
-                    .add_modifier(Modifier::BOLD),
-            )));
+            lines.push(Line::from(vec![section_span("All Suggested Next Actions")]));
             for action in &response.actions {
                 lines.push(Line::from(Span::styled(
                     format!("- {}: {}", action.title, action.rationale),
@@ -2269,14 +2328,17 @@ fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 }
             }
         }
+        if response.current_thread.is_none()
+            && response.change_summary.is_empty()
+            && response.attention_items.is_empty()
+            && response.context_items.is_empty()
+        {
+            lines.push(Line::from(""));
+            append_resume_briefing_lines(&mut lines, &response.briefing);
+        }
         if !response.timeline.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "Recent Timeline",
-                Style::default()
-                    .fg(Theme::ACCENT_STRONG)
-                    .add_modifier(Modifier::BOLD),
-            )));
+            lines.push(Line::from(vec![section_span("Recent Timeline")]));
             for event in response.timeline.iter().take(8) {
                 lines.push(Line::from(Span::styled(
                     format!(

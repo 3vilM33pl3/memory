@@ -3744,7 +3744,6 @@ fn print_bundle_import_response(response: &ProjectMemoryImportResponse) {
 
 fn print_resume_response(response: &ResumeResponse) {
     println!("Resume for {}\n", response.project);
-    println!("{}\n", response.briefing);
 
     if let Some(checkpoint) = &response.checkpoint {
         println!(
@@ -3760,28 +3759,84 @@ fn print_resume_response(response: &ResumeResponse) {
         );
     }
 
+    if let Some(current_thread) = &response.current_thread {
+        println!("Current thread:\n- {}\n", current_thread);
+    }
+
+    if let Some(action) = &response.primary_next_step {
+        println!("Next step:");
+        println!("- {}: {}", action.title, action.rationale);
+        if let Some(command_hint) = &action.command_hint {
+            println!("  {}", command_hint);
+        }
+        println!();
+    }
+
+    if !response.change_summary.is_empty() {
+        println!("What changed:");
+        for item in &response.change_summary {
+            println!("- {item}");
+        }
+        println!();
+    }
+
+    if !response.attention_items.is_empty() {
+        println!("Needs attention:");
+        for item in &response.attention_items {
+            println!("- {item}");
+        }
+        println!();
+    }
+
+    if !response.context_items.is_empty() {
+        println!("Keep in mind:");
+        for item in &response.context_items {
+            println!("- [{}] {}", item.memory_type, item.summary);
+        }
+        println!();
+    }
+
+    if !response.secondary_next_steps.is_empty() {
+        println!("Other useful follow-ups:");
+        for action in &response.secondary_next_steps {
+            println!("- {}: {}", action.title, action.rationale);
+            if let Some(command_hint) = &action.command_hint {
+                println!("  {}", command_hint);
+            }
+        }
+        println!();
+    }
+
     println!(
-        "Changes: {} timeline event(s) | {} commit(s) | {} changed memory entry/entries",
+        "Support data: {} timeline event(s) | {} commit(s) | {} changed memory entry/entries",
         response.timeline.len(),
         response.commits.len(),
         response.changed_memories.len(),
     );
 
     if !response.warnings.is_empty() {
-        println!("\nWarnings:");
+        println!("\nAll warnings:");
         for warning in &response.warnings {
             println!("- {warning}");
         }
     }
 
     if !response.actions.is_empty() {
-        println!("\nSuggested next actions:");
+        println!("\nAll suggested next actions:");
         for action in &response.actions {
             println!("- {}: {}", action.title, action.rationale);
             if let Some(command_hint) = &action.command_hint {
                 println!("  {}", command_hint);
             }
         }
+    }
+
+    if response.current_thread.is_none()
+        && response.change_summary.is_empty()
+        && response.attention_items.is_empty()
+        && response.context_items.is_empty()
+    {
+        println!("\n{}", response.briefing);
     }
 }
 

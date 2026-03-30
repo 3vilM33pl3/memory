@@ -45,6 +45,25 @@ The resume briefing combines:
 - current project warnings and health
 - durable high-signal context that still matters
 
+## What you get back
+
+The resume output is task-oriented. It is meant to answer "how do I get back into flow?" rather than dump raw counts.
+
+The main sections are:
+
+- `Current thread`
+  - the most likely active work thread since your checkpoint
+- `Next step`
+  - the one action Memory Layer thinks you should take first
+- `What changed`
+  - the most important recent project activity, commits, or memory changes
+- `Needs attention`
+  - actionable blockers or review items
+- `Keep in mind`
+  - durable context that is still relevant to the current thread
+
+The CLI and TUI also keep the supporting timeline, warnings, and raw project state available below the briefing.
+
 If LLM configuration is available, Memory Layer synthesizes a concise briefing from that structured resume pack. If not, the deterministic resume pack is still returned.
 
 ## TUI
@@ -52,3 +71,5 @@ If LLM configuration is available, Memory Layer synthesizes a concise briefing f
 The TUI has a dedicated `Resume` tab.
 
 If a checkpoint exists and the project changed since that checkpoint, the TUI opens on `Resume` first so you can get back into flow immediately.
+
+The `Resume` tab renders the task-oriented sections directly, then shows recent timeline items underneath for deeper inspection.

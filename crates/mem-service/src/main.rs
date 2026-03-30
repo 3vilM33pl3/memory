@@ -2761,16 +2761,34 @@ async fn project_resume(
         .await
         .map_err(ApiError::sql)?;
     let warnings = resume_warnings(&overview);
-    let actions = resume_actions(&slug, &overview, &timeline, &changed_memories);
-    let deterministic = build_resume_briefing(
+    let actions = resume_actions(
         &slug,
         request.checkpoint.as_ref(),
+        &overview,
+        &timeline,
+        &changed_memories,
+    );
+    let current_thread = infer_current_thread(
+        request.checkpoint.as_ref(),
+        &overview,
         &timeline,
         &commits,
         &changed_memories,
-        &durable_context,
-        &warnings,
-        &actions,
+    );
+    let change_summary = build_change_summary(&timeline, &commits, &changed_memories);
+    let attention_items = build_attention_items(&overview, &timeline);
+    let context_items = select_resume_context(&changed_memories, &durable_context);
+    let primary_next_step = actions.first().cloned();
+    let secondary_next_steps = actions.iter().skip(1).take(2).cloned().collect::<Vec<_>>();
+    let deterministic = build_resume_briefing(
+        &slug,
+        request.checkpoint.as_ref(),
+        current_thread.as_deref(),
+        &change_summary,
+        &attention_items,
+        primary_next_step.as_ref(),
+        &secondary_next_steps,
+        &context_items,
     );
     let briefing = if request.include_llm_summary {
         summarize_resume_with_llm(&state, &slug, &deterministic)
@@ -2785,6 +2803,12 @@ async fn project_resume(
         generated_at: chrono::Utc::now(),
         checkpoint: request.checkpoint,
         briefing,
+        current_thread,
+        change_summary,
+        attention_items,
+        primary_next_step,
+        secondary_next_steps,
+        context_items,
         timeline,
         commits,
         changed_memories,
@@ -2947,11 +2971,22 @@ fn resume_warnings(overview: &ProjectOverviewResponse) -> Vec<String> {
 
 fn resume_actions(
     project: &str,
+    checkpoint: Option<&mem_api::ResumeCheckpoint>,
     overview: &ProjectOverviewResponse,
     timeline: &[ActivityEvent],
     changed_memories: &[mem_api::ProjectMemoryListItem],
 ) -> Vec<ResumeAction> {
     let mut actions = Vec::new();
+    if overview.pending_replacement_proposals > 0 {
+        actions.push(ResumeAction {
+            title: "Review queued memory updates".to_string(),
+            rationale: format!(
+                "{} memory update proposal(s) are waiting for review before outdated memories can be replaced.",
+                overview.pending_replacement_proposals
+            ),
+            command_hint: Some(format!("mem-cli tui --project {project}")),
+        });
+    }
     if overview.uncurated_raw_captures > 0 {
         actions.push(ResumeAction {
             title: "Curate pending captures".to_string(),
@@ -2993,6 +3028,13 @@ fn resume_actions(
             command_hint: Some(format!("mem-cli resume --project {project}")),
         });
     }
+    if let Some(note) = checkpoint.and_then(|checkpoint| checkpoint.note.as_deref()) {
+        actions.push(ResumeAction {
+            title: "Resume the last approved thread".to_string(),
+            rationale: format!("Your last checkpoint note was: {note}"),
+            command_hint: Some(format!("mem-cli resume --project {project}")),
+        });
+    }
     if actions.is_empty() {
         actions.push(ResumeAction {
             title: "Ask the next scoped question".to_string(),
@@ -3003,15 +3045,267 @@ fn resume_actions(
     actions
 }
 
-fn build_resume_briefing(
-    project: &str,
+fn infer_current_thread(
     checkpoint: Option<&mem_api::ResumeCheckpoint>,
+    overview: &ProjectOverviewResponse,
     timeline: &[ActivityEvent],
     commits: &[mem_api::CommitRecord],
     changed_memories: &[mem_api::ProjectMemoryListItem],
+) -> Option<String> {
+    if overview.pending_replacement_proposals > 0 {
+        return Some(format!(
+            "Recent curation surfaced {} queued memory update proposal(s) that still need review.",
+            overview.pending_replacement_proposals
+        ));
+    }
+    if overview.uncurated_raw_captures > 0 {
+        return Some(format!(
+            "{} raw capture(s) are waiting to be curated into canonical memory.",
+            overview.uncurated_raw_captures
+        ));
+    }
+    if let Some(event) = timeline
+        .iter()
+        .find(|event| !matches!(event.kind, ActivityKind::Checkpoint))
+    {
+        let thread = match event.kind {
+            ActivityKind::Scan => "Recent work focused on refreshing project memory from a repo scan.",
+            ActivityKind::Curate => "Recent work focused on curating new captures into canonical memory.",
+            ActivityKind::CaptureTask => "Recent work captured fresh project evidence that may need follow-up.",
+            ActivityKind::MemoryReplacement => {
+                "Recent work replaced outdated memory with a newer canonical version."
+            }
+            ActivityKind::Reindex => "Recent work rebuilt the project's searchable chunk index.",
+            ActivityKind::Reembed => {
+                "Recent work refreshed the active embedding space for semantic retrieval."
+            }
+            ActivityKind::CommitSync => "Recent work synced stored commit history for the project.",
+            ActivityKind::Query | ActivityKind::QueryError => {
+                "Recent work centered on answering or debugging project questions."
+            }
+            ActivityKind::WatcherHealth => {
+                "Recent work involved watcher health and background automation recovery."
+            }
+            ActivityKind::BundleImport | ActivityKind::BundleExport => {
+                "Recent work focused on importing or exporting shareable memory bundles."
+            }
+            ActivityKind::Archive | ActivityKind::DeleteMemory => {
+                "Recent work changed the active memory set for the project."
+            }
+            ActivityKind::Checkpoint => "",
+        };
+        if !thread.is_empty() {
+            return Some(format!("{thread} Latest event: {}", event.summary.trim_end_matches('.')));
+        }
+    }
+    if let Some(commit) = commits.first() {
+        return Some(format!(
+            "Recent work landed in git, most recently `{}` ({})",
+            commit.subject, commit.short_hash
+        ));
+    }
+    if let Some(memory) = changed_memories.first() {
+        return Some(format!(
+            "Recent work changed project memory, including: {}",
+            memory.summary
+        ));
+    }
+    checkpoint
+        .and_then(|checkpoint| checkpoint.note.as_ref())
+        .map(|note| format!("The last explicit work checkpoint was: {note}"))
+}
+
+fn build_change_summary(
+    timeline: &[ActivityEvent],
+    commits: &[mem_api::CommitRecord],
+    changed_memories: &[mem_api::ProjectMemoryListItem],
+) -> Vec<String> {
+    let mut items = Vec::new();
+    for event in timeline
+        .iter()
+        .filter(|event| !matches!(event.kind, ActivityKind::Checkpoint))
+        .take(3)
+    {
+        let entry = format!(
+            "{} {}",
+            event.recorded_at.format("%m-%d %H:%M"),
+            format_resume_event_summary(event)
+        );
+        if !items.contains(&entry) {
+            items.push(entry);
+        }
+    }
+    if let Some(commit) = commits.first() {
+        let changed_paths = if commit.changed_paths.is_empty() {
+            "no path summary".to_string()
+        } else {
+            commit
+                .changed_paths
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        items.push(format!(
+            "Latest stored commit: {} ({}) touching {}",
+            commit.subject, commit.short_hash, changed_paths
+        ));
+    }
+    if !changed_memories.is_empty() {
+        let examples = changed_memories
+            .iter()
+            .take(2)
+            .map(|item| item.summary.clone())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        items.push(format!(
+            "{} memory update(s) landed, including: {}",
+            changed_memories.len(),
+            examples
+        ));
+    }
+    items.truncate(5);
+    items
+}
+
+fn format_resume_event_summary(event: &ActivityEvent) -> String {
+    let base = match &event.details {
+        Some(ActivityDetails::Query { query, .. }) => {
+            format!("Query explored: {}", query.trim())
+        }
+        Some(ActivityDetails::Checkpoint { note, .. }) => note
+            .as_ref()
+            .map(|note| format!("Saved checkpoint: {note}"))
+            .unwrap_or_else(|| event.summary.trim().to_string()),
+        _ => match event.kind {
+            ActivityKind::Query | ActivityKind::QueryError => {
+                let query = event
+                    .summary
+                    .strip_prefix("Query: ")
+                    .or_else(|| event.summary.strip_prefix("Query failed: "))
+                    .unwrap_or(event.summary.as_str())
+                    .trim();
+                format!("Query explored: {query}")
+            }
+            _ => event.summary.trim().to_string(),
+        },
+    };
+    clamp_resume_line(base.trim_end_matches('.'), 110)
+}
+
+fn clamp_resume_line(value: &str, limit: usize) -> String {
+    let value = value.trim();
+    if value.chars().count() <= limit {
+        return value.to_string();
+    }
+    let mut truncated = String::new();
+    for ch in value.chars().take(limit.saturating_sub(1)) {
+        truncated.push(ch);
+    }
+    truncated.push('…');
+    truncated
+}
+
+fn build_attention_items(
+    overview: &ProjectOverviewResponse,
+    timeline: &[ActivityEvent],
+) -> Vec<String> {
+    let mut items = Vec::new();
+    if overview.pending_replacement_proposals > 0 {
+        items.push(format!(
+            "{} memory update proposal(s) are waiting for review.",
+            overview.pending_replacement_proposals
+        ));
+    }
+    if overview.uncurated_raw_captures > 0 {
+        items.push(format!(
+            "{} raw capture(s) still need curation.",
+            overview.uncurated_raw_captures
+        ));
+    }
+    if overview
+        .watchers
+        .as_ref()
+        .is_some_and(|watchers| watchers.unhealthy_count > 0)
+    {
+        let unhealthy = overview
+            .watchers
+            .as_ref()
+            .map(|watchers| watchers.unhealthy_count)
+            .unwrap_or(0);
+        items.push(format!("{unhealthy} watcher(s) are unhealthy or restarting."));
+    }
+    if timeline
+        .iter()
+        .any(|event| matches!(event.kind, ActivityKind::QueryError))
+    {
+        items.push("Recent query errors may indicate an unresolved blocker.".to_string());
+    }
+    let embedding_work_active = timeline.iter().any(|event| {
+        matches!(
+            event.kind,
+            ActivityKind::Scan | ActivityKind::Reembed | ActivityKind::Reindex
+        )
+    });
+    if overview.missing_embedding_chunks > 0 && (embedding_work_active || items.is_empty()) {
+        items.push(format!(
+            "{} chunk(s) are missing active-space embeddings.",
+            overview.missing_embedding_chunks
+        ));
+    }
+    items
+}
+
+fn select_resume_context(
+    changed_memories: &[mem_api::ProjectMemoryListItem],
     durable_context: &[mem_api::ProjectMemoryListItem],
-    warnings: &[String],
-    actions: &[ResumeAction],
+) -> Vec<mem_api::ProjectMemoryListItem> {
+    let mut selected = Vec::new();
+
+    if let Some(item) = changed_memories.iter().find(|item| {
+        matches!(
+            item.memory_type,
+            mem_api::MemoryType::Decision
+                | mem_api::MemoryType::Architecture
+                | mem_api::MemoryType::Convention
+                | mem_api::MemoryType::Debugging
+        )
+    }) {
+        selected.push(item.clone());
+    } else if let Some(item) = changed_memories.first() {
+        selected.push(item.clone());
+    }
+
+    if let Some(item) = durable_context.iter().find(|item| {
+        matches!(
+            item.memory_type,
+            mem_api::MemoryType::Architecture | mem_api::MemoryType::Convention
+        ) && !selected.iter().any(|existing| existing.id == item.id)
+    }) {
+        selected.push(item.clone());
+    }
+
+    if let Some(item) = durable_context
+        .iter()
+        .find(|item| !selected.iter().any(|existing| existing.id == item.id))
+    {
+        selected.push(item.clone());
+    }
+
+    selected.truncate(3);
+    selected
+}
+
+fn build_resume_briefing(
+    project: &str,
+    checkpoint: Option<&mem_api::ResumeCheckpoint>,
+    current_thread: Option<&str>,
+    change_summary: &[String],
+    attention_items: &[String],
+    primary_next_step: Option<&ResumeAction>,
+    secondary_next_steps: &[ResumeAction],
+    context_items: &[mem_api::ProjectMemoryListItem],
 ) -> String {
     let mut lines = Vec::new();
     lines.push(format!("Resume briefing for project `{project}`."));
@@ -3026,33 +3320,48 @@ fn build_resume_briefing(
     } else {
         lines.push("No checkpoint is stored yet. This is a current-state briefing.".to_string());
     }
-    lines.push(format!(
-        "Since then: {} timeline event(s), {} commit(s), {} changed memory entry/entries.",
-        timeline.len(),
-        commits.len(),
-        changed_memories.len()
-    ));
-    if let Some(event) = timeline.first() {
-        lines.push(format!("Most recent event: {}.", event.summary));
+    if let Some(current_thread) = current_thread {
+        lines.push(String::new());
+        lines.push("Current thread:".to_string());
+        lines.push(format!("- {current_thread}"));
     }
-    if let Some(commit) = commits.first() {
-        lines.push(format!(
-            "Most recent commit: {} ({})",
-            commit.subject, commit.short_hash
-        ));
-    }
-    if !warnings.is_empty() {
-        lines.push(format!("Warnings: {}", warnings.join(" | ")));
-    }
-    if !durable_context.is_empty() {
-        lines.push("Durable context to keep in mind:".to_string());
-        for item in durable_context.iter().take(3) {
-            lines.push(format!("- {}", item.summary));
+    if let Some(action) = primary_next_step {
+        lines.push(String::new());
+        lines.push("Next step:".to_string());
+        lines.push(format!("- {}: {}", action.title, action.rationale));
+        if let Some(command_hint) = &action.command_hint {
+            lines.push(format!("  {command_hint}"));
         }
     }
-    if !actions.is_empty() {
-        lines.push("Suggested next actions:".to_string());
-        for action in actions.iter().take(3) {
+    if !change_summary.is_empty() {
+        lines.push(String::new());
+        lines.push("What changed:".to_string());
+        for item in change_summary.iter().take(5) {
+            lines.push(format!("- {item}"));
+        }
+    }
+    if !attention_items.is_empty() {
+        lines.push(String::new());
+        lines.push("Needs attention:".to_string());
+        for item in attention_items.iter().take(4) {
+            lines.push(format!("- {item}"));
+        }
+    }
+    if !context_items.is_empty() {
+        lines.push(String::new());
+        lines.push("Keep in mind:".to_string());
+        for item in context_items.iter().take(3) {
+            lines.push(format!(
+                "- [{}] {}",
+                item.memory_type,
+                item.summary
+            ));
+        }
+    }
+    if !secondary_next_steps.is_empty() {
+        lines.push(String::new());
+        lines.push("Other useful follow-ups:".to_string());
+        for action in secondary_next_steps.iter().take(2) {
             lines.push(format!("- {}: {}", action.title, action.rationale));
         }
     }

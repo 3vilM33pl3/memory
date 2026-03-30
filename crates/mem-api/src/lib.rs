@@ -656,6 +656,18 @@ pub struct ResumeResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<ResumeCheckpoint>,
     pub briefing: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_thread: Option<String>,
+    #[serde(default)]
+    pub change_summary: Vec<String>,
+    #[serde(default)]
+    pub attention_items: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_next_step: Option<ResumeAction>,
+    #[serde(default)]
+    pub secondary_next_steps: Vec<ResumeAction>,
+    #[serde(default)]
+    pub context_items: Vec<ProjectMemoryListItem>,
     #[serde(default)]
     pub timeline: Vec<ActivityEvent>,
     #[serde(default)]
