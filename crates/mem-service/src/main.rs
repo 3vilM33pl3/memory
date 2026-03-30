@@ -2741,26 +2741,24 @@ async fn project_resume(
     }
 
     let pool = state.pool()?;
-    let overview = fetch_project_overview_with_watchers(&state, &slug)
-        .await
-        .map_err(ApiError::sql)?;
     let since = request
         .checkpoint
         .as_ref()
         .map(|checkpoint| checkpoint.marked_at)
         .or(request.since);
-    let timeline = fetch_project_timeline(pool, &slug, since, request.limit)
-        .await
-        .map_err(ApiError::sql)?;
-    let commits = fetch_project_commits_since(pool, &slug, since, request.limit)
-        .await
-        .map_err(ApiError::sql)?;
-    let changed_memories = fetch_recent_project_memories(pool, &slug, since, request.limit)
-        .await
-        .map_err(ApiError::sql)?;
-    let durable_context = fetch_durable_resume_context(pool, &slug, request.limit.min(8))
-        .await
-        .map_err(ApiError::sql)?;
+    let overview_fut = fetch_project_overview_with_watchers(&state, &slug);
+    let timeline_fut = fetch_project_timeline(pool, &slug, since, request.limit);
+    let commits_fut = fetch_project_commits_since(pool, &slug, since, request.limit);
+    let changed_memories_fut = fetch_recent_project_memories(pool, &slug, since, request.limit);
+    let durable_context_fut = fetch_durable_resume_context(pool, &slug, request.limit.min(8));
+    let (overview, timeline, commits, changed_memories, durable_context) = tokio::try_join!(
+        overview_fut,
+        timeline_fut,
+        commits_fut,
+        changed_memories_fut,
+        durable_context_fut,
+    )
+    .map_err(ApiError::sql)?;
     let warnings = resume_warnings(&overview);
     let actions = resume_actions(
         &slug,

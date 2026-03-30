@@ -16,7 +16,8 @@ use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
     NamedCount, ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse,
     QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, ReplacementPolicy,
-    ReplacementProposalRecord, ResumeRequest, ResumeResponse, StreamRequest, StreamResponse,
+    ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest, ResumeResponse, StreamRequest,
+    StreamResponse,
     WatcherHealth, load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
     write_capnp_text_frame,
 };
@@ -55,8 +56,9 @@ impl Theme {
 }
 
 pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> Result<()> {
+    let (background_tx, mut background_rx) = mpsc::unbounded_channel();
     let mut terminal = setup_terminal()?;
-    let mut app = App::new(project, repo_root, detect_tool_versions());
+    let mut app = App::new(project, repo_root, detect_tool_versions(), background_tx);
     terminal.draw(|frame| draw(frame, &app))?;
     app.refresh(&api, RefreshMode::Startup).await;
     let mut stream = StreamSession::connect(&api).await.ok();
@@ -86,6 +88,9 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
         }
         if stream_failed {
             stream = None;
+        }
+        while let Ok(event) = background_rx.try_recv() {
+            app.apply_background_event(event);
         }
         terminal.draw(|frame| draw(frame, &app))?;
         if event::poll(Duration::from_millis(200))? {
@@ -122,7 +127,9 @@ struct App {
     query_selected_index: usize,
     query_table_state: TableState,
     resume_response: Option<ResumeResponse>,
+    resume_loading: bool,
     resume_loaded: bool,
+    resume_error: Option<String>,
     resume_scroll: u16,
     activity_events: Vec<ActivityEntry>,
     activity_selected_index: usize,
@@ -138,6 +145,8 @@ struct App {
     health_ok: bool,
     filters: Filters,
     input_mode: InputMode,
+    startup_resume_autoselect_pending: bool,
+    background_tx: mpsc::UnboundedSender<BackgroundEvent>,
 }
 
 struct ToolVersions {
@@ -165,6 +174,15 @@ enum QueryLogOutcome {
     Error(String),
 }
 
+enum BackgroundEvent {
+    ResumeLoaded {
+        response: Result<ResumeResponse, String>,
+        checkpoint_present: bool,
+        has_changes: bool,
+        allow_autoselect: bool,
+    },
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RefreshMode {
     Startup,
@@ -172,7 +190,12 @@ enum RefreshMode {
 }
 
 impl App {
-    fn new(project: String, repo_root: PathBuf, versions: ToolVersions) -> Self {
+    fn new(
+        project: String,
+        repo_root: PathBuf,
+        versions: ToolVersions,
+        background_tx: mpsc::UnboundedSender<BackgroundEvent>,
+    ) -> Self {
         let mut table_state = TableState::default();
         table_state.select(Some(0));
         let mut query_table_state = TableState::default();
@@ -197,7 +220,9 @@ impl App {
             query_selected_index: 0,
             query_table_state,
             resume_response: None,
+            resume_loading: false,
             resume_loaded: false,
+            resume_error: None,
             resume_scroll: 0,
             activity_events: Vec::new(),
             activity_selected_index: 0,
@@ -213,6 +238,8 @@ impl App {
             health_ok: false,
             filters: Filters::default(),
             input_mode: InputMode::Normal,
+            startup_resume_autoselect_pending: true,
+            background_tx,
         }
     }
 
@@ -292,16 +319,33 @@ impl App {
             }
         }
 
-        if mode == RefreshMode::Full || self.active_tab == TabKind::Resume {
-            self.refresh_resume(api).await;
+        if mode == RefreshMode::Startup {
+            if self.resume_checkpoint().is_some() {
+                self.request_resume_refresh(api, true);
+            }
+        } else if mode == RefreshMode::Full || self.active_tab == TabKind::Resume {
+            self.request_resume_refresh(api, false);
         }
     }
 
-    async fn refresh_resume(&mut self, api: &ApiClient) {
-        let repo_root = resume::current_repo_root().ok();
-        let checkpoint = repo_root
-            .as_deref()
-            .and_then(|root| resume::load_checkpoint(&self.project, root).ok().flatten());
+    fn resume_checkpoint(&self) -> Option<ResumeCheckpoint> {
+        resume::load_checkpoint(&self.project, &self.repo_root)
+            .ok()
+            .flatten()
+    }
+
+    fn request_resume_refresh(&mut self, api: &ApiClient, allow_autoselect: bool) {
+        if self.resume_loading {
+            return;
+        }
+        let checkpoint = self.resume_checkpoint();
+        self.resume_loading = true;
+        self.resume_error = None;
+        if self.resume_response.is_some() {
+            self.status_message = "Refreshing resume...".to_string();
+        } else {
+            self.status_message = "Loading resume...".to_string();
+        }
         let request = ResumeRequest {
             project: self.project.clone(),
             checkpoint: checkpoint.clone(),
@@ -309,21 +353,62 @@ impl App {
             include_llm_summary: false,
             limit: 12,
         };
-        match api.resume(&request).await {
-            Ok(response) => {
-                let has_changes = !response.timeline.is_empty()
-                    || !response.commits.is_empty()
-                    || !response.changed_memories.is_empty();
-                self.resume_response = Some(response);
-                self.resume_loaded = true;
-                if checkpoint.is_some() && has_changes {
-                    self.active_tab = TabKind::Resume;
+        let api = api.clone();
+        let tx = self.background_tx.clone();
+        tokio::spawn(async move {
+            let response = api.resume(&request).await.map_err(|error| error.to_string());
+            let has_changes = match &response {
+                Ok(response) => {
+                    !response.timeline.is_empty()
+                        || !response.commits.is_empty()
+                        || !response.changed_memories.is_empty()
                 }
-            }
-            Err(error) => {
-                self.status_message = format!("Resume unavailable: {error}");
-                self.resume_response = None;
-                self.resume_loaded = false;
+                Err(_) => false,
+            };
+            let _ = tx.send(BackgroundEvent::ResumeLoaded {
+                response,
+                checkpoint_present: checkpoint.is_some(),
+                has_changes,
+                allow_autoselect,
+            });
+        });
+    }
+
+    fn apply_background_event(&mut self, event: BackgroundEvent) {
+        match event {
+            BackgroundEvent::ResumeLoaded {
+                response,
+                checkpoint_present,
+                has_changes,
+                allow_autoselect,
+            } => {
+                self.resume_loading = false;
+                match response {
+                    Ok(response) => {
+                        self.resume_response = Some(response);
+                        self.resume_loaded = true;
+                        self.resume_error = None;
+                        if allow_autoselect
+                            && self.startup_resume_autoselect_pending
+                            && checkpoint_present
+                            && has_changes
+                        {
+                            self.active_tab = TabKind::Resume;
+                        }
+                        self.status_message = if self.active_tab == TabKind::Resume {
+                            "Resume loaded.".to_string()
+                        } else {
+                            "Resume updated in the background.".to_string()
+                        };
+                    }
+                    Err(error) => {
+                        self.resume_error = Some(error.clone());
+                        if self.resume_response.is_none() {
+                            self.resume_loaded = false;
+                        }
+                        self.status_message = format!("Resume unavailable: {error}");
+                    }
+                }
             }
         }
     }
@@ -354,17 +439,19 @@ impl App {
             }
         }
 
+        self.startup_resume_autoselect_pending = false;
+
         match key.code {
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') if key.modifiers.is_empty() => {
                 self.active_tab = self.active_tab.next();
                 if self.active_tab == TabKind::Resume && !self.resume_loaded {
-                    self.refresh_resume(api).await;
+                    self.request_resume_refresh(api, false);
                 }
             }
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') if key.modifiers.is_empty() => {
                 self.active_tab = self.active_tab.prev();
                 if self.active_tab == TabKind::Resume && !self.resume_loaded {
-                    self.refresh_resume(api).await;
+                    self.request_resume_refresh(api, false);
                 }
             }
             KeyCode::Char('r') if key.modifiers.is_empty() => {
@@ -2204,6 +2291,13 @@ fn current_query_display(app: &App) -> String {
 fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let lines = if let Some(response) = &app.resume_response {
         let mut lines = Vec::new();
+        if app.resume_loading {
+            lines.push(Line::from(Span::styled(
+                "Refreshing resume in the background...",
+                Style::default().fg(Theme::ACCENT),
+            )));
+            lines.push(Line::from(""));
+        }
         lines.push(Line::from(vec![
             label_span("Project: "),
             Span::styled(response.project.clone(), Style::default().fg(Theme::TEXT)),
@@ -2351,6 +2445,16 @@ fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             }
         }
         lines
+    } else if app.resume_loading {
+        vec![Line::from(Span::styled(
+            "Loading resume in the background...",
+            Style::default().fg(Theme::ACCENT),
+        ))]
+    } else if let Some(error) = &app.resume_error {
+        vec![Line::from(Span::styled(
+            format!("Resume unavailable: {error}"),
+            Style::default().fg(Theme::WARNING),
+        ))]
     } else {
         vec![Line::from(Span::styled(
             "Resume briefing is unavailable. Press r to refresh.",

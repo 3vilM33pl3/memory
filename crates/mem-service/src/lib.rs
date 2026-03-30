@@ -104,50 +104,55 @@ pub async fn fetch_project_overview(
     automation: &mem_api::AutomationConfig,
     embeddings: &mem_api::EmbeddingConfig,
 ) -> Result<ProjectOverviewResponse, sqlx::Error> {
-    let row = sqlx::query(
-        r#"
-        SELECT
-            p.slug,
-            COUNT(DISTINCT m.id) AS memory_entries_total,
-            COUNT(DISTINCT m.id) FILTER (WHERE m.status = 'active') AS active_memories,
-            COUNT(DISTINCT m.id) FILTER (WHERE m.status = 'archived') AS archived_memories,
-            COUNT(DISTINCT rc.id) AS raw_captures_total,
-            COUNT(DISTINCT rc.id) FILTER (WHERE rc.curated_at IS NULL) AS uncurated_raw_captures,
-            COUNT(DISTINCT t.id) AS tasks_total,
-            COUNT(DISTINCT s.id) AS sessions_total,
-            COUNT(DISTINCT cr.id) AS curation_runs_total,
-            COUNT(DISTINCT m.id) FILTER (WHERE m.updated_at >= now() - interval '7 days') AS recent_memories_7d,
-            COUNT(DISTINCT rc.id) FILTER (WHERE rc.created_at >= now() - interval '7 days') AS recent_captures_7d,
-            COUNT(DISTINCT m.id) FILTER (WHERE m.confidence >= 0.8) AS high_confidence_memories,
-            COUNT(DISTINCT m.id) FILTER (WHERE m.confidence >= 0.5 AND m.confidence < 0.8) AS medium_confidence_memories,
-            COUNT(DISTINCT m.id) FILTER (WHERE m.confidence < 0.5) AS low_confidence_memories,
-            MAX(m.updated_at) AS last_memory_at,
-            MAX(rc.created_at) AS last_capture_at,
-            MAX(cr.created_at) AS last_curation_at,
-            CAST(FLOOR(EXTRACT(EPOCH FROM (now() - MIN(rc.created_at) FILTER (WHERE rc.curated_at IS NULL))) / 3600) AS BIGINT) AS oldest_uncurated_capture_age_hours
-        FROM projects p
-        LEFT JOIN memory_entries m ON m.project_id = p.id
-        LEFT JOIN sessions s ON s.project_id = p.id
-        LEFT JOIN tasks t ON t.session_id = s.id
-        LEFT JOIN raw_captures rc ON rc.task_id = t.id
-        LEFT JOIN curation_runs cr ON cr.project_id = p.id
-        WHERE p.slug = $1
-        GROUP BY p.slug
-        "#,
-    )
-    .bind(slug)
-    .fetch_optional(pool)
-    .await?;
+    let project_exists_fut = project_exists(pool, slug);
+    let memory_stats_fut = fetch_memory_stats(pool, slug);
+    let capture_stats_fut = fetch_capture_stats(pool, slug);
+    let curation_stats_fut = fetch_curation_stats(pool, slug);
+    let memory_type_breakdown_fut = fetch_memory_type_breakdown(pool, slug);
+    let source_kind_breakdown_fut = fetch_source_kind_breakdown(pool, slug);
+    let top_tags_fut = fetch_top_tags(pool, slug);
+    let top_files_fut = fetch_top_files(pool, slug);
+    let automation_fut = load_automation_status(slug, automation);
+    let embedding_health_fut = fetch_embedding_health(pool, slug, embeddings);
+    let pending_replacement_proposals_fut = fetch_pending_replacement_proposals(pool, slug);
 
-    let memory_type_breakdown = fetch_memory_type_breakdown(pool, slug).await?;
-    let source_kind_breakdown = fetch_source_kind_breakdown(pool, slug).await?;
-    let top_tags = fetch_top_tags(pool, slug).await?;
-    let top_files = fetch_top_files(pool, slug).await?;
-    let automation = load_automation_status(slug, automation).await;
-    let embedding_health = fetch_embedding_health(pool, slug, embeddings).await?;
-    let pending_replacement_proposals = fetch_pending_replacement_proposals(pool, slug).await?;
+    let (
+        project_exists_result,
+        memory_stats_result,
+        capture_stats_result,
+        curation_stats_result,
+        memory_type_breakdown_result,
+        source_kind_breakdown_result,
+        top_tags_result,
+        top_files_result,
+        automation,
+        embedding_health_result,
+        pending_replacement_proposals_result,
+    ) = tokio::join!(
+        project_exists_fut,
+        memory_stats_fut,
+        capture_stats_fut,
+        curation_stats_fut,
+        memory_type_breakdown_fut,
+        source_kind_breakdown_fut,
+        top_tags_fut,
+        top_files_fut,
+        automation_fut,
+        embedding_health_fut,
+        pending_replacement_proposals_fut,
+    );
+    let project_exists = project_exists_result?;
+    let memory_stats = memory_stats_result?;
+    let capture_stats = capture_stats_result?;
+    let curation_stats = curation_stats_result?;
+    let memory_type_breakdown = memory_type_breakdown_result?;
+    let source_kind_breakdown = source_kind_breakdown_result?;
+    let top_tags = top_tags_result?;
+    let top_files = top_files_result?;
+    let embedding_health = embedding_health_result?;
+    let pending_replacement_proposals = pending_replacement_proposals_result?;
 
-    let Some(row) = row else {
+    if !project_exists {
         return Ok(empty_overview(
             slug,
             memory_type_breakdown,
@@ -157,29 +162,29 @@ pub async fn fetch_project_overview(
             embeddings,
             automation,
         ));
-    };
+    }
 
     Ok(ProjectOverviewResponse {
         project: slug.to_string(),
         service_status: "ok".to_string(),
         database_status: "up".to_string(),
-        memory_entries_total: row.try_get("memory_entries_total")?,
-        active_memories: row.try_get("active_memories")?,
-        archived_memories: row.try_get("archived_memories")?,
-        raw_captures_total: row.try_get("raw_captures_total")?,
-        uncurated_raw_captures: row.try_get("uncurated_raw_captures")?,
-        tasks_total: row.try_get("tasks_total")?,
-        sessions_total: row.try_get("sessions_total")?,
-        curation_runs_total: row.try_get("curation_runs_total")?,
-        recent_memories_7d: row.try_get("recent_memories_7d")?,
-        recent_captures_7d: row.try_get("recent_captures_7d")?,
-        high_confidence_memories: row.try_get("high_confidence_memories")?,
-        medium_confidence_memories: row.try_get("medium_confidence_memories")?,
-        low_confidence_memories: row.try_get("low_confidence_memories")?,
-        last_memory_at: row.try_get("last_memory_at")?,
-        last_capture_at: row.try_get("last_capture_at")?,
-        last_curation_at: row.try_get("last_curation_at")?,
-        oldest_uncurated_capture_age_hours: row.try_get("oldest_uncurated_capture_age_hours")?,
+        memory_entries_total: memory_stats.memory_entries_total,
+        active_memories: memory_stats.active_memories,
+        archived_memories: memory_stats.archived_memories,
+        raw_captures_total: capture_stats.raw_captures_total,
+        uncurated_raw_captures: capture_stats.uncurated_raw_captures,
+        tasks_total: capture_stats.tasks_total,
+        sessions_total: capture_stats.sessions_total,
+        curation_runs_total: curation_stats.curation_runs_total,
+        recent_memories_7d: memory_stats.recent_memories_7d,
+        recent_captures_7d: capture_stats.recent_captures_7d,
+        high_confidence_memories: memory_stats.high_confidence_memories,
+        medium_confidence_memories: memory_stats.medium_confidence_memories,
+        low_confidence_memories: memory_stats.low_confidence_memories,
+        last_memory_at: memory_stats.last_memory_at,
+        last_capture_at: capture_stats.last_capture_at,
+        last_curation_at: curation_stats.last_curation_at,
+        oldest_uncurated_capture_age_hours: capture_stats.oldest_uncurated_capture_age_hours,
         embedding_chunks_total: embedding_health.embedding_chunks_total,
         fresh_embedding_chunks: embedding_health.fresh_embedding_chunks,
         stale_embedding_chunks: embedding_health.stale_embedding_chunks,
@@ -194,6 +199,133 @@ pub async fn fetch_project_overview(
         pending_replacement_proposals,
         automation,
         watchers: None,
+    })
+}
+
+async fn project_exists(pool: &PgPool, slug: &str) -> Result<bool, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM projects WHERE slug = $1
+        ) AS project_exists
+        "#,
+    )
+    .bind(slug)
+    .fetch_one(pool)
+    .await?;
+    row.try_get("project_exists")
+}
+
+struct MemoryStats {
+    memory_entries_total: i64,
+    active_memories: i64,
+    archived_memories: i64,
+    recent_memories_7d: i64,
+    high_confidence_memories: i64,
+    medium_confidence_memories: i64,
+    low_confidence_memories: i64,
+    last_memory_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn fetch_memory_stats(pool: &PgPool, slug: &str) -> Result<MemoryStats, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            COUNT(*) AS memory_entries_total,
+            COUNT(*) FILTER (WHERE m.status = 'active') AS active_memories,
+            COUNT(*) FILTER (WHERE m.status = 'archived') AS archived_memories,
+            COUNT(*) FILTER (WHERE m.updated_at >= now() - interval '7 days') AS recent_memories_7d,
+            COUNT(*) FILTER (WHERE m.confidence >= 0.8) AS high_confidence_memories,
+            COUNT(*) FILTER (WHERE m.confidence >= 0.5 AND m.confidence < 0.8) AS medium_confidence_memories,
+            COUNT(*) FILTER (WHERE m.confidence < 0.5) AS low_confidence_memories,
+            MAX(m.updated_at) AS last_memory_at
+        FROM memory_entries m
+        JOIN projects p ON p.id = m.project_id
+        WHERE p.slug = $1
+        "#,
+    )
+    .bind(slug)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(MemoryStats {
+        memory_entries_total: row.try_get("memory_entries_total")?,
+        active_memories: row.try_get("active_memories")?,
+        archived_memories: row.try_get("archived_memories")?,
+        recent_memories_7d: row.try_get("recent_memories_7d")?,
+        high_confidence_memories: row.try_get("high_confidence_memories")?,
+        medium_confidence_memories: row.try_get("medium_confidence_memories")?,
+        low_confidence_memories: row.try_get("low_confidence_memories")?,
+        last_memory_at: row.try_get("last_memory_at")?,
+    })
+}
+
+struct CaptureStats {
+    raw_captures_total: i64,
+    uncurated_raw_captures: i64,
+    tasks_total: i64,
+    sessions_total: i64,
+    recent_captures_7d: i64,
+    last_capture_at: Option<chrono::DateTime<chrono::Utc>>,
+    oldest_uncurated_capture_age_hours: Option<i64>,
+}
+
+async fn fetch_capture_stats(pool: &PgPool, slug: &str) -> Result<CaptureStats, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            COUNT(DISTINCT s.id) AS sessions_total,
+            COUNT(DISTINCT t.id) AS tasks_total,
+            COUNT(DISTINCT rc.id) AS raw_captures_total,
+            COUNT(DISTINCT rc.id) FILTER (WHERE rc.curated_at IS NULL) AS uncurated_raw_captures,
+            COUNT(DISTINCT rc.id) FILTER (WHERE rc.created_at >= now() - interval '7 days') AS recent_captures_7d,
+            MAX(rc.created_at) AS last_capture_at,
+            CAST(FLOOR(EXTRACT(EPOCH FROM (now() - MIN(rc.created_at) FILTER (WHERE rc.curated_at IS NULL))) / 3600) AS BIGINT) AS oldest_uncurated_capture_age_hours
+        FROM sessions s
+        JOIN projects p ON p.id = s.project_id
+        LEFT JOIN tasks t ON t.session_id = s.id
+        LEFT JOIN raw_captures rc ON rc.task_id = t.id
+        WHERE p.slug = $1
+        "#,
+    )
+    .bind(slug)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(CaptureStats {
+        raw_captures_total: row.try_get("raw_captures_total")?,
+        uncurated_raw_captures: row.try_get("uncurated_raw_captures")?,
+        tasks_total: row.try_get("tasks_total")?,
+        sessions_total: row.try_get("sessions_total")?,
+        recent_captures_7d: row.try_get("recent_captures_7d")?,
+        last_capture_at: row.try_get("last_capture_at")?,
+        oldest_uncurated_capture_age_hours: row.try_get("oldest_uncurated_capture_age_hours")?,
+    })
+}
+
+struct CurationStats {
+    curation_runs_total: i64,
+    last_curation_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn fetch_curation_stats(pool: &PgPool, slug: &str) -> Result<CurationStats, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            COUNT(*) AS curation_runs_total,
+            MAX(cr.created_at) AS last_curation_at
+        FROM curation_runs cr
+        JOIN projects p ON p.id = cr.project_id
+        WHERE p.slug = $1
+        "#,
+    )
+    .bind(slug)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(CurationStats {
+        curation_runs_total: row.try_get("curation_runs_total")?,
+        last_curation_at: row.try_get("last_curation_at")?,
     })
 }
 
@@ -626,53 +758,44 @@ async fn fetch_embedding_health(
 
     let row = sqlx::query(
         r#"
+        WITH active_chunks AS (
+            SELECT mc.id
+            FROM memory_chunks mc
+            JOIN memory_entries m ON m.id = mc.memory_entry_id
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1
+              AND m.status = 'active'
+        ),
+        chunk_embedding_status AS (
+            SELECT
+                ac.id AS chunk_id,
+                COUNT(mce.chunk_id) AS embedding_count,
+                COALESCE(BOOL_OR(mce.embedding_space = $2), false) AS has_active_space
+            FROM active_chunks ac
+            LEFT JOIN memory_chunk_embeddings mce ON mce.chunk_id = ac.id
+            GROUP BY ac.id
+        ),
+        space_count AS (
+            SELECT COUNT(DISTINCT mce.embedding_space) AS embedding_spaces_total
+            FROM active_chunks ac
+            JOIN memory_chunk_embeddings mce ON mce.chunk_id = ac.id
+        )
         SELECT
-            COUNT(mc.id) AS embedding_chunks_total,
-            COUNT(mc.id) FILTER (
+            COUNT(*) AS embedding_chunks_total,
+            COUNT(*) FILTER (
                 WHERE $2::text IS NOT NULL
-                  AND EXISTS (
-                    SELECT 1
-                    FROM memory_chunk_embeddings mce
-                    WHERE mce.chunk_id = mc.id
-                      AND mce.embedding_space = $2
-                  )
+                  AND has_active_space
             ) AS fresh_embedding_chunks,
-            COUNT(mc.id) FILTER (
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM memory_chunk_embeddings mce
-                    WHERE mce.chunk_id = mc.id
-                )
+            COUNT(*) FILTER (
+                WHERE embedding_count = 0
             ) AS missing_embedding_chunks,
-            COUNT(mc.id) FILTER (
+            COUNT(*) FILTER (
                 WHERE $2::text IS NOT NULL
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM memory_chunk_embeddings mce
-                    WHERE mce.chunk_id = mc.id
-                      AND $2::text IS NOT NULL
-                      AND mce.embedding_space = $2
-                  )
-                  AND EXISTS (
-                    SELECT 1
-                    FROM memory_chunk_embeddings mce
-                    WHERE mce.chunk_id = mc.id
-                  )
+                  AND NOT has_active_space
+                  AND embedding_count > 0
             ) AS stale_embedding_chunks,
-            COALESCE((
-                SELECT COUNT(DISTINCT mce.embedding_space)
-                FROM memory_chunk_embeddings mce
-                JOIN memory_chunks mc2 ON mc2.id = mce.chunk_id
-                JOIN memory_entries m2 ON m2.id = mc2.memory_entry_id
-                JOIN projects p2 ON p2.id = m2.project_id
-                WHERE p2.slug = $1
-                  AND m2.status = 'active'
-            ), 0) AS embedding_spaces_total
-        FROM memory_chunks mc
-        JOIN memory_entries m ON m.id = mc.memory_entry_id
-        JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
-          AND m.status = 'active'
+            COALESCE((SELECT embedding_spaces_total FROM space_count), 0) AS embedding_spaces_total
+        FROM chunk_embedding_status
         "#,
     )
     .bind(slug)

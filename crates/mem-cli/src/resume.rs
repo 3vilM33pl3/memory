@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    env, fs,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -14,13 +14,6 @@ use serde::{Deserialize, Serialize};
 struct StoredCheckpoints {
     #[serde(default)]
     checkpoints: BTreeMap<String, ResumeCheckpoint>,
-}
-
-pub(crate) fn current_repo_root() -> Result<PathBuf> {
-    env::current_dir()
-        .context("read current directory")?
-        .canonicalize()
-        .context("canonicalize current directory")
 }
 
 fn checkpoint_store_path() -> Result<PathBuf> {
