@@ -23,14 +23,14 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse,
-    CaptureTaskRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest,
-    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, MemorySourceRecord,
-    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
-    ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
-    ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
-    ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
-    PruneEmbeddingsResponse, QueryRequest, ReembedRequest, ReembedResponse, ReindexRequest,
-    ReindexResponse, RelatedMemorySummary, ReplacementProposalListResponse,
+    CaptureTaskRequest, CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest,
+    CommitSyncResponse, CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse,
+    MemoryEntryResponse, MemorySourceRecord, ProjectCommitsResponse, ProjectMemoriesResponse,
+    ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest,
+    ProjectMemoryBundlePreview, ProjectMemoryBundleSource, ProjectMemoryExportOptions,
+    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectOverviewResponse,
+    PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryRequest, ReembedRequest, ReembedResponse,
+    ReindexRequest, ReindexResponse, RelatedMemorySummary, ReplacementProposalListResponse,
     ReplacementProposalResolutionResponse, ResumeAction, ResumeRequest, ResumeResponse,
     ScanActivityRequest, SourceKind, StatsResponse, StreamRequest, StreamResponse, ValidationError,
     WatcherHealth, WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary,
@@ -358,6 +358,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/ws", get(websocket))
         .route("/v1/admin/shutdown", post(admin_shutdown))
         .route("/v1/query", post(query))
+        .route("/v1/checkpoint/activity", post(checkpoint_activity))
         .route("/v1/scan/activity", post(scan_activity))
         .route("/v1/commits/sync", post(sync_commits))
         .route("/v1/capture/task", post(capture_task))
@@ -1936,6 +1937,41 @@ async fn scan_activity(
     Ok(Json(serde_json::json!({ "logged": true })))
 }
 
+async fn checkpoint_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CheckpointActivityRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/checkpoint/activity", &request, true).await?,
+        ));
+    }
+
+    let summary = if let Some(note) = request.checkpoint.note.as_deref() {
+        format!("Saved checkpoint for project {} ({note})", request.project)
+    } else {
+        format!("Saved checkpoint for project {}", request.project)
+    };
+    notify_project_changed(
+        &state,
+        request.project.clone(),
+        None,
+        ActivityKind::Checkpoint,
+        summary,
+        Some(ActivityDetails::Checkpoint {
+            repo_root: request.checkpoint.repo_root.clone(),
+            marked_at: request.checkpoint.marked_at,
+            note: request.checkpoint.note.clone(),
+            git_branch: request.checkpoint.git_branch.clone(),
+            git_head: request.checkpoint.git_head.clone(),
+        }),
+    );
+    Ok(Json(serde_json::json!({ "logged": true })))
+}
+
 async fn curate_memory(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -3086,6 +3122,7 @@ async fn summarize_resume_with_llm(
 
 fn parse_activity_kind(value: &str) -> ActivityKind {
     match value {
+        "checkpoint" => ActivityKind::Checkpoint,
         "scan" => ActivityKind::Scan,
         "commit_sync" => ActivityKind::CommitSync,
         "bundle_export" => ActivityKind::BundleExport,
@@ -3407,6 +3444,7 @@ fn summarize_query(query: &str) -> String {
 
 fn activity_kind_label(kind: &ActivityKind) -> &'static str {
     match kind {
+        ActivityKind::Checkpoint => "checkpoint",
         ActivityKind::Scan => "scan",
         ActivityKind::CommitSync => "commit_sync",
         ActivityKind::BundleExport => "bundle_export",

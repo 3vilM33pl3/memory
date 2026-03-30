@@ -2927,6 +2927,31 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                     lines.push(activity_kv_line("Curate run", curate_run_id.clone()));
                 }
             }
+            ActivityDetails::Checkpoint {
+                repo_root,
+                marked_at,
+                note,
+                git_branch,
+                git_head,
+            } => {
+                lines.push(activity_kv_line(
+                    "Marked at",
+                    format_timestamp(Some(*marked_at)),
+                ));
+                lines.push(activity_kv_line("Repo root", repo_root.clone()));
+                lines.push(activity_kv_line(
+                    "Note",
+                    note.clone().unwrap_or_else(|| "n/a".to_string()),
+                ));
+                lines.push(activity_kv_line(
+                    "Branch",
+                    git_branch.clone().unwrap_or_else(|| "n/a".to_string()),
+                ));
+                lines.push(activity_kv_line(
+                    "HEAD",
+                    git_head.clone().unwrap_or_else(|| "n/a".to_string()),
+                ));
+            }
             ActivityDetails::CommitSync {
                 imported_count,
                 updated_count,
@@ -3273,6 +3298,7 @@ fn section_span(value: impl Into<String>) -> Span<'static> {
 
 fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
     let (label, color) = match kind {
+        ActivityKind::Checkpoint => ("checkpoint", Theme::ACCENT_STRONG),
         ActivityKind::Scan => ("scan", Theme::ACCENT_STRONG),
         ActivityKind::CommitSync => ("commit-sync", Theme::ACCENT_STRONG),
         ActivityKind::BundleExport => ("bundle-export", Theme::ACCENT_STRONG),

@@ -19,14 +19,14 @@ use std::{
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use mem_api::{
-    AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CommitDetailResponse,
-    CommitSyncRequest, CommitSyncResponse, CurateRequest, CurateResponse, DeleteMemoryRequest,
-    DeleteMemoryResponse, MemoryEntryResponse, ProjectCommitsResponse, ProjectMemoriesResponse,
-    ProjectMemoryBundlePreview, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
-    ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
-    PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse, ReembedRequest,
-    ReembedResponse, ReindexRequest, ReindexResponse, ReplacementPolicy, ResumeRequest,
-    ResumeResponse, ScanActivityRequest, TestResult, discover_global_config_path,
+    AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest,
+    CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest, CurateResponse,
+    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, ProjectCommitsResponse,
+    ProjectMemoriesResponse, ProjectMemoryBundlePreview, ProjectMemoryExportOptions,
+    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectOverviewResponse,
+    PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse,
+    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, ReplacementPolicy,
+    ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult, discover_global_config_path,
     discover_repo_env_path, load_repo_replacement_policy, read_repo_project_slug,
 };
 use mem_platform as platform;
@@ -637,6 +637,16 @@ async fn main() -> Result<()> {
                     let project = resolve_project_slug(args.project, &cwd)?;
                     let (checkpoint, path) =
                         resume::save_checkpoint(&project, &repo_root, args.note)?;
+                    let api = ApiClient::new(client.clone(), config.clone());
+                    let request = CheckpointActivityRequest {
+                        project: project.clone(),
+                        checkpoint: checkpoint.clone(),
+                    };
+                    if let Err(error) = api.log_checkpoint_activity(&request).await {
+                        eprintln!(
+                            "warning: failed to log checkpoint activity for `{project}`: {error}"
+                        );
+                    }
                     println!(
                         "Saved checkpoint for `{project}` to {}\n\n{}",
                         path.display(),
@@ -3470,6 +3480,25 @@ impl ApiClient {
         let response = self
             .client
             .post(service_url(&self.config, "/v1/scan/activity"))
+            .headers(write_headers(&self.config.service.api_token)?)
+            .json(request)
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            anyhow::bail!("{status} {body}");
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn log_checkpoint_activity(
+        &self,
+        request: &CheckpointActivityRequest,
+    ) -> Result<()> {
+        let response = self
+            .client
+            .post(service_url(&self.config, "/v1/checkpoint/activity"))
             .headers(write_headers(&self.config.service.api_token)?)
             .json(request)
             .send()

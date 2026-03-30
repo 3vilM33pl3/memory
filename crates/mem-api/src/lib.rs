@@ -833,6 +833,7 @@ pub enum StreamResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityKind {
+    Checkpoint,
     Scan,
     CommitSync,
     BundleExport,
@@ -852,6 +853,16 @@ pub enum ActivityKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActivityDetails {
+    Checkpoint {
+        repo_root: String,
+        marked_at: DateTime<Utc>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_branch: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_head: Option<String>,
+    },
     Scan {
         dry_run: bool,
         candidate_count: usize,
@@ -978,6 +989,29 @@ impl ScanActivityRequest {
         }
         if self.report_path.trim().is_empty() {
             return Err(ValidationError::new("report_path must be non-empty"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointActivityRequest {
+    pub project: String,
+    pub checkpoint: ResumeCheckpoint,
+}
+
+impl CheckpointActivityRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self.checkpoint.project.trim().is_empty() {
+            return Err(ValidationError::new("checkpoint.project must be non-empty"));
+        }
+        if self.checkpoint.repo_root.trim().is_empty() {
+            return Err(ValidationError::new(
+                "checkpoint.repo_root must be non-empty",
+            ));
         }
         Ok(())
     }
