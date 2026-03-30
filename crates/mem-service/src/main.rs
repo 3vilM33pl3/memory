@@ -419,9 +419,7 @@ async fn bind_http_listener_with_handoff(
                 return Err(error).context("address already in use and handoff was refused");
             }
             wait_for_listener_release(addr).await?;
-            tokio::net::TcpListener::bind(addr)
-                .await
-                .context("bind http listener after handoff")
+            bind_tcp_listener_with_addr_in_use_wait(addr, "http listener after handoff").await
         }
         Err(error) => Err(error).context("bind http listener"),
     }
@@ -464,6 +462,22 @@ async fn wait_for_listener_release(addr: SocketAddr) -> Result<()> {
         }
     }
     anyhow::bail!("timed out waiting for existing backend to release {addr}");
+}
+
+async fn bind_tcp_listener_with_addr_in_use_wait(
+    addr: SocketAddr,
+    context_label: &'static str,
+) -> Result<TcpListener> {
+    match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => Ok(listener),
+        Err(error) if error.kind() == ErrorKind::AddrInUse => {
+            wait_for_listener_release(addr).await?;
+            tokio::net::TcpListener::bind(addr)
+                .await
+                .with_context(|| format!("bind {context_label} after waiting for release"))
+        }
+        Err(error) => Err(error).with_context(|| format!("bind {context_label}")),
+    }
 }
 
 async fn start_cluster_tasks(state: AppState) -> Result<Vec<JoinHandle<Result<()>>>> {
@@ -657,7 +671,13 @@ async fn start_proto_servers(state: AppState) -> Result<ProtoServers> {
 
     let unix_listener = UnixListener::bind(&unix_path)
         .with_context(|| format!("bind unix socket {}", unix_path.display()))?;
-    let tcp_listener = TcpListener::bind(&state.config.service.capnp_tcp_addr)
+    let tcp_addr: SocketAddr = state
+        .config
+        .service
+        .capnp_tcp_addr
+        .parse()
+        .context("parse capnp tcp addr")?;
+    let tcp_listener = bind_tcp_listener_with_addr_in_use_wait(tcp_addr, "capnp tcp addr")
         .await
         .context("bind capnp tcp addr")?;
 
