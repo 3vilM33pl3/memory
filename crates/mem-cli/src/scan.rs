@@ -10,7 +10,7 @@ use chrono::Utc;
 use mem_analyze::{AnalysisReport, AnalyzerSummary};
 use mem_api::{
     AgentProjectConfig, AppConfig, CaptureCandidateInput, CaptureCandidateSourceInput,
-    CaptureTaskRequest, MemoryType, SourceKind, discover_global_config_path,
+    CaptureTaskRequest, MemoryType, ScanActivityRequest, SourceKind, discover_global_config_path,
     discover_repo_env_path, load_repo_agent_settings,
 };
 use reqwest::{Client, header};
@@ -163,7 +163,7 @@ pub(crate) async fn run_scan(
         write_scan_report(repo_root, project, &dossier, &summary, &candidates, dry_run)?;
 
     if dry_run {
-        return Ok(ScanReport {
+        let report = ScanReport {
             project: project.to_string(),
             repo_root: repo_root.display().to_string(),
             files_considered: dossier.files.len(),
@@ -178,12 +178,14 @@ pub(crate) async fn run_scan(
             report_path: report_path.display().to_string(),
             summary,
             candidate_previews,
-        });
+        };
+        log_scan_activity(api, &report).await;
+        return Ok(report);
     }
 
     let capture = api.capture_task(&request).await?;
     let curate = api.curate(project).await?;
-    Ok(ScanReport {
+    let report = ScanReport {
         project: project.to_string(),
         repo_root: repo_root.display().to_string(),
         files_considered: dossier.files.len(),
@@ -198,7 +200,9 @@ pub(crate) async fn run_scan(
         report_path: report_path.display().to_string(),
         summary,
         candidate_previews,
-    })
+    };
+    log_scan_activity(api, &report).await;
+    Ok(report)
 }
 
 pub(crate) fn run_index(
@@ -517,6 +521,23 @@ fn summarize_candidate_sources(sources: &[CaptureCandidateSourceInput]) -> Vec<S
         preview.push(format!("+{remaining} more"));
     }
     preview
+}
+
+async fn log_scan_activity(api: &ApiClient, report: &ScanReport) {
+    let request = ScanActivityRequest {
+        project: report.project.clone(),
+        dry_run: !report.written,
+        candidate_count: report.candidate_count,
+        files_considered: report.files_considered,
+        commits_considered: report.commits_considered,
+        index_reused: report.index_reused,
+        report_path: report.report_path.clone(),
+        capture_id: report.capture_id.clone(),
+        curate_run_id: report.curate_run_id.clone(),
+    };
+    if let Err(error) = api.log_scan_activity(&request).await {
+        eprintln!("Warning: failed to log scan activity: {error}");
+    }
 }
 
 fn read_repo_index(path: &Path) -> Result<Option<PersistedRepoIndex>> {

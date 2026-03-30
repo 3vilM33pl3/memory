@@ -25,7 +25,8 @@ use mem_api::{
     ProjectMemoryBundlePreview, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
     ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
     PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse, ReembedRequest,
-    ReembedResponse, ReindexRequest, ReindexResponse, ResumeRequest, ResumeResponse, TestResult,
+    ReembedResponse, ReindexRequest, ReindexResponse, ResumeRequest, ResumeResponse,
+    ScanActivityRequest, TestResult,
     discover_global_config_path, discover_repo_env_path, read_repo_project_slug,
 };
 use mem_platform as platform;
@@ -3394,6 +3395,22 @@ impl ApiClient {
                 .await?,
         )
         .await
+    }
+
+    pub(crate) async fn log_scan_activity(&self, request: &ScanActivityRequest) -> Result<()> {
+        let response = self
+            .client
+            .post(service_url(&self.config, "/v1/scan/activity"))
+            .headers(write_headers(&self.config.service.api_token)?)
+            .json(request)
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            anyhow::bail!("{status} {body}");
+        }
+        Ok(())
     }
 
     pub(crate) async fn memory_detail(&self, memory_id: &str) -> Result<MemoryEntryResponse> {

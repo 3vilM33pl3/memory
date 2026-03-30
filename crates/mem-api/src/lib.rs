@@ -759,6 +759,7 @@ pub enum StreamResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityKind {
+    Scan,
     CommitSync,
     BundleExport,
     BundleImport,
@@ -776,6 +777,18 @@ pub enum ActivityKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActivityDetails {
+    Scan {
+        dry_run: bool,
+        candidate_count: usize,
+        files_considered: usize,
+        commits_considered: usize,
+        index_reused: bool,
+        report_path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capture_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        curate_run_id: Option<String>,
+    },
     CommitSync {
         imported_count: usize,
         updated_count: usize,
@@ -852,6 +865,33 @@ pub struct ActivityEvent {
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<ActivityDetails>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanActivityRequest {
+    pub project: String,
+    pub dry_run: bool,
+    pub candidate_count: usize,
+    pub files_considered: usize,
+    pub commits_considered: usize,
+    pub index_reused: bool,
+    pub report_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curate_run_id: Option<String>,
+}
+
+impl ScanActivityRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self.report_path.trim().is_empty() {
+            return Err(ValidationError::new("report_path must be non-empty"));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

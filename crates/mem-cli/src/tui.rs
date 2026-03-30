@@ -2641,6 +2641,29 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![section_span("Operation Detail")]));
         match details {
+            ActivityDetails::Scan {
+                dry_run,
+                candidate_count,
+                files_considered,
+                commits_considered,
+                index_reused,
+                report_path,
+                capture_id,
+                curate_run_id,
+            } => {
+                lines.push(activity_kv_line("Dry run", dry_run.to_string()));
+                lines.push(activity_kv_line("Candidates", candidate_count.to_string()));
+                lines.push(activity_kv_line("Files", files_considered.to_string()));
+                lines.push(activity_kv_line("Commits", commits_considered.to_string()));
+                lines.push(activity_kv_line("Index reused", index_reused.to_string()));
+                lines.push(activity_kv_line("Report", report_path.clone()));
+                if let Some(capture_id) = capture_id {
+                    lines.push(activity_kv_line("Capture", capture_id.clone()));
+                }
+                if let Some(curate_run_id) = curate_run_id {
+                    lines.push(activity_kv_line("Curate run", curate_run_id.clone()));
+                }
+            }
             ActivityDetails::CommitSync {
                 imported_count,
                 updated_count,
@@ -2934,6 +2957,7 @@ fn section_span(value: impl Into<String>) -> Span<'static> {
 
 fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
     let (label, color) = match kind {
+        ActivityKind::Scan => ("scan", Theme::ACCENT_STRONG),
         ActivityKind::CommitSync => ("commit-sync", Theme::ACCENT_STRONG),
         ActivityKind::BundleExport => ("bundle-export", Theme::ACCENT_STRONG),
         ActivityKind::BundleImport => ("bundle-import", Theme::ACCENT_STRONG),

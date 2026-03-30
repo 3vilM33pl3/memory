@@ -30,7 +30,8 @@ use mem_api::{
     ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
     ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
     PruneEmbeddingsResponse, QueryRequest, ReembedRequest, ReembedResponse, ReindexRequest,
-    ReindexResponse, RelatedMemorySummary, ResumeAction, ResumeRequest, ResumeResponse, SourceKind,
+    ReindexResponse, RelatedMemorySummary, ResumeAction, ResumeRequest, ResumeResponse,
+    ScanActivityRequest, SourceKind,
     StatsResponse, StreamRequest, StreamResponse, ValidationError, WatcherHealth,
     WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary, WatcherRestartRequest,
     WatcherRestartResponse, WatcherUnregisterRequest, read_capnp_text_frame,
@@ -354,6 +355,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/ws", get(websocket))
         .route("/v1/admin/shutdown", post(admin_shutdown))
         .route("/v1/query", post(query))
+        .route("/v1/scan/activity", post(scan_activity))
         .route("/v1/commits/sync", post(sync_commits))
         .route("/v1/capture/task", post(capture_task))
         .route("/v1/curate", post(curate_memory))
@@ -1875,6 +1877,50 @@ async fn capture_task(
     Ok(Json(response))
 }
 
+async fn scan_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ScanActivityRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/scan/activity", &request, true).await?,
+        ));
+    }
+
+    let summary = if request.dry_run {
+        format!(
+            "Scanned repository in dry-run mode and accepted {} candidate memory entry/entries.",
+            request.candidate_count
+        )
+    } else {
+        format!(
+            "Scanned repository and accepted {} candidate memory entry/entries.",
+            request.candidate_count
+        )
+    };
+    notify_project_changed(
+        &state,
+        request.project.clone(),
+        None,
+        ActivityKind::Scan,
+        summary,
+        Some(ActivityDetails::Scan {
+            dry_run: request.dry_run,
+            candidate_count: request.candidate_count,
+            files_considered: request.files_considered,
+            commits_considered: request.commits_considered,
+            index_reused: request.index_reused,
+            report_path: request.report_path.clone(),
+            capture_id: request.capture_id.clone(),
+            curate_run_id: request.curate_run_id.clone(),
+        }),
+    );
+    Ok(Json(serde_json::json!({ "logged": true })))
+}
+
 async fn curate_memory(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2906,6 +2952,7 @@ async fn summarize_resume_with_llm(
 
 fn parse_activity_kind(value: &str) -> ActivityKind {
     match value {
+        "scan" => ActivityKind::Scan,
         "commit_sync" => ActivityKind::CommitSync,
         "bundle_export" => ActivityKind::BundleExport,
         "bundle_import" => ActivityKind::BundleImport,
@@ -3216,6 +3263,7 @@ fn summarize_query(query: &str) -> String {
 
 fn activity_kind_label(kind: &ActivityKind) -> &'static str {
     match kind {
+        ActivityKind::Scan => "scan",
         ActivityKind::CommitSync => "commit_sync",
         ActivityKind::BundleExport => "bundle_export",
         ActivityKind::BundleImport => "bundle_import",
