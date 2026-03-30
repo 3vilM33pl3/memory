@@ -2036,10 +2036,7 @@ fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             )));
         }
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            response.briefing.clone(),
-            Style::default().fg(Theme::TEXT),
-        )));
+        append_resume_briefing_lines(&mut lines, &response.briefing);
         if !response.warnings.is_empty() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
@@ -2112,6 +2109,36 @@ fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             app.resume_scroll
         )));
     frame.render_widget(paragraph, area);
+}
+
+fn append_resume_briefing_lines(lines: &mut Vec<Line<'static>>, briefing: &str) {
+    for raw_line in briefing.lines() {
+        let trimmed = raw_line.trim_end();
+        if trimmed.is_empty() {
+            lines.push(Line::from(""));
+            continue;
+        }
+
+        let line = if let Some(heading) = trimmed.strip_prefix("### ") {
+            Line::from(Span::styled(
+                heading.to_string(),
+                Style::default()
+                    .fg(Theme::ACCENT_STRONG)
+                    .add_modifier(Modifier::BOLD),
+            ))
+        } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+            Line::from(Span::styled(
+                trimmed.to_string(),
+                Style::default().fg(Theme::TEXT),
+            ))
+        } else {
+            Line::from(Span::styled(
+                trimmed.to_string(),
+                Style::default().fg(Theme::TEXT),
+            ))
+        };
+        lines.push(line);
+    }
 }
 
 fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
