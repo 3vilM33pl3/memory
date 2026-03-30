@@ -28,6 +28,13 @@ Resume a project after an interruption:
 ./.agents/skills/memory-layer/scripts/resume-project.sh [project-slug]
 ```
 
+Save a checkpoint after a planning session transitions into approved execution:
+```bash
+./.agents/skills/memory-layer/scripts/checkpoint-project.sh \
+  --project <project-slug> \
+  --note "Plan approved; starting implementation"
+```
+
 Remember task context automatically:
 ```bash
 ./.agents/skills/memory-layer/scripts/remember-task.sh \
@@ -41,10 +48,11 @@ Remember task context automatically:
 
 1. Query memory before answering project-specific questions.
 2. For "get me back into flow" or "what changed since I was last here?" prompts, use the resume script instead of a generic query.
-3. Use the automatic remember workflow once work is complete.
-4. The remember workflow captures and curates in one step.
-5. Prefer insufficient evidence over unsupported conclusions.
-6. Never invent provenance.
+3. If you produce a proposed plan and the user approves execution, save a checkpoint immediately before starting implementation.
+4. Use the automatic remember workflow once work is complete.
+5. The remember workflow captures and curates in one step.
+6. Prefer insufficient evidence over unsupported conclusions.
+7. Never invent provenance.
 
 ## Mandatory post-task rule
 
@@ -54,6 +62,17 @@ After any meaningful repository work, run the remember workflow before sending t
 - the user explicitly asked not to store memory
 
 This skill should default to storing durable project knowledge, not waiting for the user to ask again.
+
+## Planning transition rule
+
+When a turn has a real planning phase and the user then approves execution, save a checkpoint before implementation starts.
+
+Use a short note that explains the transition, for example:
+- `Plan approved; starting implementation`
+- `Plan approved; beginning refactor`
+- `Plan approved; moving to execution`
+
+This makes `mem-cli resume` useful when the user returns after delegating or switching projects.
 
 ## Remember guidance
 

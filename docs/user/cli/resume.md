@@ -10,6 +10,12 @@ Save a checkpoint before leaving:
 mem-cli checkpoint save --project my-project --note "Waiting on agent review"
 ```
 
+For agent-driven workflows, a good checkpoint moment is right after a planning session ends and execution is approved:
+
+```bash
+mem-cli checkpoint save --project my-project --note "Plan approved; starting implementation"
+```
+
 Show the current checkpoint:
 
 ```bash
