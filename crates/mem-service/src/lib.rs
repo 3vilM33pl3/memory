@@ -390,7 +390,7 @@ pub async fn fetch_project_commit(
     row.map(row_to_commit_record).transpose()
 }
 
-fn row_to_commit_record(row: sqlx::postgres::PgRow) -> Result<CommitRecord, sqlx::Error> {
+pub fn row_to_commit_record(row: sqlx::postgres::PgRow) -> Result<CommitRecord, sqlx::Error> {
     Ok(CommitRecord {
         hash: row.try_get("commit_hash")?,
         short_hash: row.try_get("short_hash")?,

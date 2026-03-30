@@ -30,10 +30,11 @@ use mem_api::{
     ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
     ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
     PruneEmbeddingsResponse, QueryRequest, ReembedRequest, ReembedResponse, ReindexRequest,
-    ReindexResponse, RelatedMemorySummary, SourceKind, StatsResponse, StreamRequest,
-    StreamResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
-    WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
-    WatcherUnregisterRequest, read_capnp_text_frame, write_capnp_text_frame,
+    ReindexResponse, RelatedMemorySummary, ResumeAction, ResumeRequest, ResumeResponse, SourceKind,
+    StatsResponse, StreamRequest, StreamResponse, ValidationError, WatcherHealth,
+    WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary, WatcherRestartRequest,
+    WatcherRestartResponse, WatcherUnregisterRequest, read_capnp_text_frame,
+    write_capnp_text_frame,
 };
 use mem_curate::{curate, refresh_memory_relations, store_capture};
 use mem_platform::restart_local_watcher_service;
@@ -385,6 +386,7 @@ fn build_http_app(state: AppState) -> Router {
         )
         .route("/v1/projects/{slug}/memories", get(project_memories))
         .route("/v1/projects/{slug}/overview", get(project_overview))
+        .route("/v1/projects/{slug}/resume", post(project_resume))
         .route("/v1/watchers/heartbeat", post(watcher_heartbeat))
         .route("/v1/watchers/unregister", post(watcher_unregister))
         .route("/v1/watchers/restart-local", post(watcher_restart_local))
@@ -2180,6 +2182,18 @@ async fn project_bundle_export(
     let (manifest, _) = build_bundle_manifest(&slug, &options, &memories)?;
     let bytes = serialize_bundle_archive(&manifest)?;
     let filename = bundle_filename(&slug, &manifest.bundle_id);
+    notify_project_changed(
+        &state,
+        slug.clone(),
+        None,
+        ActivityKind::BundleExport,
+        format!("Exported memory bundle {}", manifest.bundle_id),
+        Some(ActivityDetails::BundleTransfer {
+            bundle_id: manifest.bundle_id.clone(),
+            item_count: manifest.entries.len(),
+            source_project: Some(slug.clone()),
+        }),
+    );
     let mut response = Response::new(bytes.into());
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -2398,6 +2412,21 @@ async fn project_bundle_import(
         .await
         .map_err(ApiError::io)?;
 
+    notify_project_changed(
+        &state,
+        slug.clone(),
+        None,
+        ActivityKind::BundleImport,
+        format!(
+            "Imported memory bundle {} into {} memory entry/entries.",
+            loaded.manifest.bundle_id, imported_count
+        ),
+        Some(ActivityDetails::BundleTransfer {
+            bundle_id: loaded.manifest.bundle_id.clone(),
+            item_count: imported_count,
+            source_project: Some(loaded.manifest.source_project.clone()),
+        }),
+    );
     notify_project_refreshed(&state, slug.clone());
 
     Ok(Json(ProjectMemoryImportResponse {
@@ -2455,6 +2484,422 @@ async fn project_commit_detail(
         project: slug,
         commit,
     }))
+}
+
+async fn project_resume(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Json(request): Json<ResumeRequest>,
+) -> Result<Json<ResumeResponse>, ApiError> {
+    request.validate().map_err(ApiError::validation)?;
+    if request.project != slug {
+        return Err(ApiError::validation(ValidationError::new(
+            "request project must match path slug",
+        )));
+    }
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(
+                &state,
+                &format!("/v1/projects/{slug}/resume"),
+                &request,
+                false,
+            )
+            .await?,
+        ));
+    }
+
+    let pool = state.pool()?;
+    let overview = fetch_project_overview_with_watchers(&state, &slug)
+        .await
+        .map_err(ApiError::sql)?;
+    let since = request
+        .checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.marked_at)
+        .or(request.since);
+    let timeline = fetch_project_timeline(pool, &slug, since, request.limit)
+        .await
+        .map_err(ApiError::sql)?;
+    let commits = fetch_project_commits_since(pool, &slug, since, request.limit)
+        .await
+        .map_err(ApiError::sql)?;
+    let changed_memories = fetch_recent_project_memories(pool, &slug, since, request.limit)
+        .await
+        .map_err(ApiError::sql)?;
+    let durable_context = fetch_durable_resume_context(pool, &slug, request.limit.min(8))
+        .await
+        .map_err(ApiError::sql)?;
+    let warnings = resume_warnings(&overview);
+    let actions = resume_actions(&slug, &overview, &timeline, &changed_memories);
+    let deterministic = build_resume_briefing(
+        &slug,
+        request.checkpoint.as_ref(),
+        &timeline,
+        &commits,
+        &changed_memories,
+        &durable_context,
+        &warnings,
+        &actions,
+    );
+    let briefing = if request.include_llm_summary {
+        summarize_resume_with_llm(&state, &slug, &deterministic)
+            .await
+            .unwrap_or(deterministic)
+    } else {
+        deterministic
+    };
+
+    Ok(Json(ResumeResponse {
+        project: slug,
+        generated_at: chrono::Utc::now(),
+        checkpoint: request.checkpoint,
+        briefing,
+        timeline,
+        commits,
+        changed_memories,
+        durable_context,
+        warnings,
+        actions,
+        overview,
+    }))
+}
+
+async fn fetch_project_timeline(
+    pool: &PgPool,
+    slug: &str,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    limit: usize,
+) -> Result<Vec<ActivityEvent>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT te.recorded_at, p.slug AS project, te.kind, te.memory_id, te.summary, te.details_json
+        FROM project_timeline_events te
+        JOIN projects p ON p.id = te.project_id
+        WHERE p.slug = $1
+          AND ($2::timestamptz IS NULL OR te.recorded_at >= $2)
+        ORDER BY te.recorded_at DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(slug)
+    .bind(since)
+    .bind(limit as i64)
+    .fetch_all(pool)
+    .await?;
+
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        let kind: String = row.try_get("kind")?;
+        let details = row
+            .try_get::<Option<sqlx::types::Json<ActivityDetails>>, _>("details_json")?
+            .map(|payload| payload.0);
+        items.push(ActivityEvent {
+            recorded_at: row.try_get("recorded_at")?,
+            project: row.try_get("project")?,
+            kind: parse_activity_kind(&kind),
+            memory_id: row.try_get("memory_id")?,
+            summary: row.try_get("summary")?,
+            details,
+        });
+    }
+    Ok(items)
+}
+
+async fn fetch_project_commits_since(
+    pool: &PgPool,
+    slug: &str,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    limit: usize,
+) -> Result<Vec<mem_api::CommitRecord>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT pc.commit_hash, pc.short_hash, pc.subject, pc.body, pc.author_name, pc.author_email,
+               pc.committed_at, pc.parent_hashes, pc.changed_paths, pc.imported_at
+        FROM project_commits pc
+        JOIN projects p ON p.id = pc.project_id
+        WHERE p.slug = $1
+          AND ($2::timestamptz IS NULL OR pc.imported_at >= $2 OR pc.committed_at >= $2)
+        ORDER BY pc.committed_at DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(slug)
+    .bind(since)
+    .bind(limit as i64)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(mem_service::row_to_commit_record)
+        .collect()
+}
+
+async fn fetch_recent_project_memories(
+    pool: &PgPool,
+    slug: &str,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    limit: usize,
+) -> Result<Vec<mem_api::ProjectMemoryListItem>, sqlx::Error> {
+    let response = fetch_project_memories(pool, slug, None, limit as i64, 0).await?;
+    Ok(response
+        .items
+        .into_iter()
+        .filter(|item| since.is_none_or(|cutoff| item.updated_at >= cutoff))
+        .collect())
+}
+
+async fn fetch_durable_resume_context(
+    pool: &PgPool,
+    slug: &str,
+    limit: usize,
+) -> Result<Vec<mem_api::ProjectMemoryListItem>, sqlx::Error> {
+    let response = fetch_project_memories(pool, slug, Some("active"), 200, 0).await?;
+    let mut items = response.items;
+    items.sort_by(|left, right| {
+        right
+            .importance
+            .cmp(&left.importance)
+            .then_with(|| {
+                right
+                    .confidence
+                    .partial_cmp(&left.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| right.updated_at.cmp(&left.updated_at))
+    });
+    items.retain(|item| {
+        matches!(
+            item.memory_type,
+            mem_api::MemoryType::Architecture
+                | mem_api::MemoryType::Convention
+                | mem_api::MemoryType::Environment
+        )
+    });
+    items.truncate(limit);
+    Ok(items)
+}
+
+fn resume_warnings(overview: &ProjectOverviewResponse) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if overview.uncurated_raw_captures > 0 {
+        warnings.push(format!(
+            "{} raw capture(s) still need curation.",
+            overview.uncurated_raw_captures
+        ));
+    }
+    if overview
+        .watchers
+        .as_ref()
+        .is_some_and(|watchers| watchers.unhealthy_count > 0)
+    {
+        let unhealthy = overview
+            .watchers
+            .as_ref()
+            .map(|w| w.unhealthy_count)
+            .unwrap_or(0);
+        warnings.push(format!("{unhealthy} watcher(s) are unhealthy."));
+    }
+    if overview.missing_embedding_chunks > 0 {
+        warnings.push(format!(
+            "{} chunk(s) are missing active-space embeddings.",
+            overview.missing_embedding_chunks
+        ));
+    }
+    warnings
+}
+
+fn resume_actions(
+    project: &str,
+    overview: &ProjectOverviewResponse,
+    timeline: &[ActivityEvent],
+    changed_memories: &[mem_api::ProjectMemoryListItem],
+) -> Vec<ResumeAction> {
+    let mut actions = Vec::new();
+    if overview.uncurated_raw_captures > 0 {
+        actions.push(ResumeAction {
+            title: "Curate pending captures".to_string(),
+            rationale: format!(
+                "{} raw capture(s) are waiting to be curated into canonical memory.",
+                overview.uncurated_raw_captures
+            ),
+            command_hint: Some(format!("mem-cli curate --project {project}")),
+        });
+    }
+    if overview
+        .watchers
+        .as_ref()
+        .is_some_and(|watchers| watchers.unhealthy_count > 0)
+    {
+        actions.push(ResumeAction {
+            title: "Inspect watcher health".to_string(),
+            rationale: "At least one watcher is unhealthy or restarting.".to_string(),
+            command_hint: Some(format!("mem-cli watch status --project {project}")),
+        });
+    }
+    if timeline
+        .iter()
+        .any(|event| matches!(event.kind, ActivityKind::QueryError))
+    {
+        actions.push(ResumeAction {
+            title: "Review recent failed queries".to_string(),
+            rationale: "Recent agent or user queries failed and may indicate blockers.".to_string(),
+            command_hint: Some(format!("mem-cli tui --project {project}")),
+        });
+    }
+    if !changed_memories.is_empty() {
+        actions.push(ResumeAction {
+            title: "Review changed memories".to_string(),
+            rationale: format!(
+                "{} memory entry/entries changed since the last checkpoint.",
+                changed_memories.len()
+            ),
+            command_hint: Some(format!("mem-cli resume --project {project}")),
+        });
+    }
+    if actions.is_empty() {
+        actions.push(ResumeAction {
+            title: "Ask the next scoped question".to_string(),
+            rationale: "The project looks stable; use the resume pack as the launch point for your next task.".to_string(),
+            command_hint: Some(format!("mem-cli query --project {project} --question \"What should I work on next?\"")),
+        });
+    }
+    actions
+}
+
+fn build_resume_briefing(
+    project: &str,
+    checkpoint: Option<&mem_api::ResumeCheckpoint>,
+    timeline: &[ActivityEvent],
+    commits: &[mem_api::CommitRecord],
+    changed_memories: &[mem_api::ProjectMemoryListItem],
+    durable_context: &[mem_api::ProjectMemoryListItem],
+    warnings: &[String],
+    actions: &[ResumeAction],
+) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("Resume briefing for project `{project}`."));
+    if let Some(checkpoint) = checkpoint {
+        lines.push(format!(
+            "Last checkpoint: {}.",
+            checkpoint.marked_at.format("%Y-%m-%d %H:%M UTC")
+        ));
+        if let Some(note) = &checkpoint.note {
+            lines.push(format!("Checkpoint note: {note}"));
+        }
+    } else {
+        lines.push("No checkpoint is stored yet. This is a current-state briefing.".to_string());
+    }
+    lines.push(format!(
+        "Since then: {} timeline event(s), {} commit(s), {} changed memory entry/entries.",
+        timeline.len(),
+        commits.len(),
+        changed_memories.len()
+    ));
+    if let Some(event) = timeline.first() {
+        lines.push(format!("Most recent event: {}.", event.summary));
+    }
+    if let Some(commit) = commits.first() {
+        lines.push(format!(
+            "Most recent commit: {} ({})",
+            commit.subject, commit.short_hash
+        ));
+    }
+    if !warnings.is_empty() {
+        lines.push(format!("Warnings: {}", warnings.join(" | ")));
+    }
+    if !durable_context.is_empty() {
+        lines.push("Durable context to keep in mind:".to_string());
+        for item in durable_context.iter().take(3) {
+            lines.push(format!("- {}", item.summary));
+        }
+    }
+    if !actions.is_empty() {
+        lines.push("Suggested next actions:".to_string());
+        for action in actions.iter().take(3) {
+            lines.push(format!("- {}: {}", action.title, action.rationale));
+        }
+    }
+    lines.join("\n")
+}
+
+async fn summarize_resume_with_llm(
+    state: &AppState,
+    project: &str,
+    deterministic: &str,
+) -> Result<String> {
+    if state.config.llm.provider.trim() != "openai_compatible"
+        || state.config.llm.model.trim().is_empty()
+    {
+        anyhow::bail!("llm summary is not configured");
+    }
+    let api_key = std::env::var(&state.config.llm.api_key_env)
+        .context("read llm api key for resume summary")?;
+    let url = format!(
+        "{}/chat/completions",
+        state.config.llm.base_url.trim_end_matches('/')
+    );
+    let request = serde_json::json!({
+        "model": state.config.llm.model,
+        "temperature": 0.0,
+        "max_completion_tokens": 600,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You write concise project resume briefings for returning developers. Summarize what changed, what still matters, and what to do next. Keep it factual and grounded in the provided project resume pack."
+            },
+            {
+                "role": "user",
+                "content": format!("Project: {project}\n\nResume pack:\n{deterministic}")
+            }
+        ]
+    });
+    let response = state
+        .http_client
+        .post(url)
+        .bearer_auth(api_key)
+        .json(&request)
+        .send()
+        .await
+        .context("send llm resume summary request")?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .context("read llm resume summary body")?;
+    if !status.is_success() {
+        anyhow::bail!("llm resume summary failed: {status} {body}");
+    }
+    let payload: serde_json::Value =
+        serde_json::from_str(&body).context("parse llm resume summary response")?;
+    let content = payload
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(|content| content.as_str())
+        .map(str::trim)
+        .filter(|content| !content.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("llm resume summary missing content"))?;
+    Ok(content.to_string())
+}
+
+fn parse_activity_kind(value: &str) -> ActivityKind {
+    match value {
+        "commit_sync" => ActivityKind::CommitSync,
+        "bundle_export" => ActivityKind::BundleExport,
+        "bundle_import" => ActivityKind::BundleImport,
+        "query" => ActivityKind::Query,
+        "query_error" => ActivityKind::QueryError,
+        "watcher_health" => ActivityKind::WatcherHealth,
+        "capture_task" => ActivityKind::CaptureTask,
+        "curate" => ActivityKind::Curate,
+        "reindex" => ActivityKind::Reindex,
+        "reembed" => ActivityKind::Reembed,
+        "archive" => ActivityKind::Archive,
+        "delete_memory" => ActivityKind::DeleteMemory,
+        _ => ActivityKind::Query,
+    }
 }
 
 async fn watcher_heartbeat(
@@ -2654,6 +3099,46 @@ async fn delete_memory(
     }))
 }
 
+fn persist_timeline_event(state: &AppState, event: &ServiceEvent) {
+    let Some(pool) = state.pool.clone() else {
+        return;
+    };
+    let project = event.project.clone();
+    let kind = activity_kind_label(&event.kind).to_string();
+    let summary = event.summary.clone();
+    let memory_id = event.memory_id;
+    let recorded_at = event.recorded_at;
+    let details = event.details.clone().map(sqlx::types::Json);
+    tokio::spawn(async move {
+        let project_id = match sqlx::query("SELECT id FROM projects WHERE slug = $1")
+            .bind(&project)
+            .fetch_optional(&pool)
+            .await
+        {
+            Ok(Some(row)) => match row.try_get::<Uuid, _>("id") {
+                Ok(value) => value,
+                Err(_) => return,
+            },
+            _ => return,
+        };
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO project_timeline_events (id, project_id, recorded_at, kind, memory_id, summary, details_json)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(project_id)
+        .bind(recorded_at)
+        .bind(kind)
+        .bind(memory_id)
+        .bind(summary)
+        .bind(details)
+        .execute(&pool)
+        .await;
+    });
+}
+
 fn notify_project_changed(
     state: &AppState,
     project: String,
@@ -2672,6 +3157,9 @@ fn notify_project_changed(
         include_activity: true,
     };
     let _ = state.events.send(event.clone());
+    if event.include_activity {
+        persist_timeline_event(state, &event);
+    }
     let mut history = state
         .recent_activity
         .lock()
@@ -2703,6 +3191,23 @@ fn summarize_query(query: &str) -> String {
         format!("{summary}...")
     } else {
         summary
+    }
+}
+
+fn activity_kind_label(kind: &ActivityKind) -> &'static str {
+    match kind {
+        ActivityKind::CommitSync => "commit_sync",
+        ActivityKind::BundleExport => "bundle_export",
+        ActivityKind::BundleImport => "bundle_import",
+        ActivityKind::Query => "query",
+        ActivityKind::QueryError => "query_error",
+        ActivityKind::WatcherHealth => "watcher_health",
+        ActivityKind::CaptureTask => "capture_task",
+        ActivityKind::Curate => "curate",
+        ActivityKind::Reindex => "reindex",
+        ActivityKind::Reembed => "reembed",
+        ActivityKind::Archive => "archive",
+        ActivityKind::DeleteMemory => "delete_memory",
     }
 }
 

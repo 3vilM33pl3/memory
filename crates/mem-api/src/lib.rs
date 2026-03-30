@@ -530,6 +530,74 @@ pub struct ProjectMemoryBundleManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResumeCheckpoint {
+    pub project: String,
+    pub repo_root: String,
+    pub marked_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_head: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResumeRequest {
+    pub project: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<ResumeCheckpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<DateTime<Utc>>,
+    #[serde(default = "default_true")]
+    pub include_llm_summary: bool,
+    #[serde(default = "default_resume_limit")]
+    pub limit: usize,
+}
+
+impl ResumeRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self.limit == 0 {
+            return Err(ValidationError::new("limit must be greater than zero"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResumeAction {
+    pub title: String,
+    pub rationale: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResumeResponse {
+    pub project: String,
+    pub generated_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<ResumeCheckpoint>,
+    pub briefing: String,
+    #[serde(default)]
+    pub timeline: Vec<ActivityEvent>,
+    #[serde(default)]
+    pub commits: Vec<CommitRecord>,
+    #[serde(default)]
+    pub changed_memories: Vec<ProjectMemoryListItem>,
+    #[serde(default)]
+    pub durable_context: Vec<ProjectMemoryListItem>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub actions: Vec<ResumeAction>,
+    pub overview: ProjectOverviewResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitSyncItem {
     pub hash: String,
     pub short_hash: String,
@@ -692,6 +760,8 @@ pub enum StreamResponse {
 #[serde(rename_all = "snake_case")]
 pub enum ActivityKind {
     CommitSync,
+    BundleExport,
+    BundleImport,
     Query,
     QueryError,
     WatcherHealth,
@@ -714,6 +784,12 @@ pub enum ActivityDetails {
         newest_commit: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         oldest_commit: Option<String>,
+    },
+    BundleTransfer {
+        bundle_id: String,
+        item_count: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_project: Option<String>,
     },
     Query {
         query: String,
@@ -806,6 +882,10 @@ fn default_archive_importance() -> i32 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_resume_limit() -> usize {
+    12
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

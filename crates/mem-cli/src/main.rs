@@ -1,4 +1,5 @@
 mod commits;
+mod resume;
 mod scan;
 mod tui;
 mod wizard;
@@ -24,8 +25,8 @@ use mem_api::{
     ProjectMemoryBundlePreview, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
     ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
     PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse, ReembedRequest,
-    ReembedResponse, ReindexRequest, ReindexResponse, TestResult, discover_global_config_path,
-    discover_repo_env_path, read_repo_project_slug,
+    ReembedResponse, ReindexRequest, ReindexResponse, ResumeRequest, ResumeResponse, TestResult,
+    discover_global_config_path, discover_repo_env_path, read_repo_project_slug,
 };
 use mem_platform as platform;
 use mem_watch::{flush_path, load_state, run_once, to_status};
@@ -60,6 +61,8 @@ enum Command {
     Index(IndexArgs),
     Export(ExportArgs),
     Import(ImportArgs),
+    Checkpoint(CheckpointArgs),
+    Resume(ResumeArgs),
     Query(QueryArgs),
     Scan(ScanArgs),
     CaptureTask(CaptureTaskArgs),
@@ -254,6 +257,42 @@ struct ImportArgs {
     preview: bool,
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ResumeArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    json: bool,
+    #[arg(long, default_value_t = true)]
+    include_llm_summary: bool,
+}
+
+#[derive(Debug, Args)]
+struct CheckpointArgs {
+    #[command(subcommand)]
+    command: CheckpointCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum CheckpointCommand {
+    Save(CheckpointSaveArgs),
+    Show(CheckpointShowArgs),
+}
+
+#[derive(Debug, Args)]
+struct CheckpointSaveArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    note: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct CheckpointShowArgs {
+    #[arg(long)]
+    project: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -587,6 +626,51 @@ async fn main() -> Result<()> {
                 } else {
                     print_bundle_import_response(&response);
                 }
+            }
+        }
+        Command::Checkpoint(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            match args.command {
+                CheckpointCommand::Save(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    let (checkpoint, path) =
+                        resume::save_checkpoint(&project, &repo_root, args.note)?;
+                    println!(
+                        "Saved checkpoint for `{project}` to {}\n\n{}",
+                        path.display(),
+                        resume::format_checkpoint(&checkpoint)
+                    );
+                }
+                CheckpointCommand::Show(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    if let Some(checkpoint) = resume::load_checkpoint(&project, &repo_root)? {
+                        println!("{}", resume::format_checkpoint(&checkpoint));
+                    } else {
+                        println!("No checkpoint stored for `{project}`.");
+                    }
+                }
+            }
+        }
+        Command::Resume(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            let project = resolve_project_slug(args.project, &cwd)?;
+            let checkpoint = resume::load_checkpoint(&project, &repo_root)?;
+            let api = ApiClient::new(client, config);
+            let payload = api
+                .resume(&ResumeRequest {
+                    project: project.clone(),
+                    checkpoint,
+                    since: None,
+                    include_llm_summary: args.include_llm_summary,
+                    limit: 12,
+                })
+                .await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            } else {
+                print_resume_response(&payload);
             }
         }
         Command::Scan(args) => {
@@ -3170,6 +3254,20 @@ impl ApiClient {
         .await
     }
 
+    pub(crate) async fn resume(&self, request: &ResumeRequest) -> Result<ResumeResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{}/resume", request.project),
+                ))
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
     pub(crate) async fn project_commits(
         &self,
         project: &str,
@@ -3522,6 +3620,49 @@ fn print_bundle_import_response(response: &ProjectMemoryImportResponse) {
         response.skipped_count,
         response.relation_count
     );
+}
+
+fn print_resume_response(response: &ResumeResponse) {
+    println!("Resume for {}\n", response.project);
+    println!("{}\n", response.briefing);
+
+    if let Some(checkpoint) = &response.checkpoint {
+        println!(
+            "Checkpoint: {}",
+            checkpoint.marked_at.format("%Y-%m-%d %H:%M UTC")
+        );
+        if let Some(note) = &checkpoint.note {
+            println!("Checkpoint note: {note}");
+        }
+        println!(
+            "Checkpoint age: {} hour(s)\n",
+            resume::checkpoint_age_hours(checkpoint, response.generated_at)
+        );
+    }
+
+    println!(
+        "Changes: {} timeline event(s) | {} commit(s) | {} changed memory entry/entries",
+        response.timeline.len(),
+        response.commits.len(),
+        response.changed_memories.len(),
+    );
+
+    if !response.warnings.is_empty() {
+        println!("\nWarnings:");
+        for warning in &response.warnings {
+            println!("- {warning}");
+        }
+    }
+
+    if !response.actions.is_empty() {
+        println!("\nSuggested next actions:");
+        for action in &response.actions {
+            println!("- {}: {}", action.title, action.rationale);
+            if let Some(command_hint) = &action.command_hint {
+                println!("  {}", command_hint);
+            }
+        }
+    }
 }
 
 fn print_scan_report(report: &scan::ScanReport) {

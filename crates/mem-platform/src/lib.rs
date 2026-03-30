@@ -86,6 +86,38 @@ pub fn preferred_user_env_path() -> Option<PathBuf> {
     }
 }
 
+pub fn preferred_user_state_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        return Some(macos_app_support_dir()?);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+            return Some(PathBuf::from(local_app_data).join("memory-layer"));
+        }
+        if let Ok(app_data) = env::var("APPDATA") {
+            return Some(PathBuf::from(app_data).join("memory-layer"));
+        }
+        return None;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Ok(state_home) = env::var("XDG_STATE_HOME") {
+            return Some(PathBuf::from(state_home).join("memory-layer"));
+        }
+        let home = env::var("HOME").ok()?;
+        Some(
+            PathBuf::from(home)
+                .join(".local")
+                .join("state")
+                .join("memory-layer"),
+        )
+    }
+}
+
 pub fn default_shared_capnp_unix_socket() -> String {
     #[cfg(target_os = "macos")]
     if let Some(path) = macos_app_support_dir() {

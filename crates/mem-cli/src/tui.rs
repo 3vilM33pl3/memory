@@ -14,8 +14,9 @@ use crossterm::{
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
     NamedCount, ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse,
-    QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, StreamRequest,
-    StreamResponse, WatcherHealth, read_capnp_text_frame, write_capnp_text_frame,
+    QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, ResumeRequest,
+    ResumeResponse, StreamRequest, StreamResponse, WatcherHealth, read_capnp_text_frame,
+    write_capnp_text_frame,
 };
 use ratatui::{
     Terminal,
@@ -30,7 +31,7 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::{ApiClient, SourceKindString};
+use crate::{ApiClient, SourceKindString, resume};
 
 struct Theme;
 
@@ -116,6 +117,8 @@ struct App {
     query_selected_detail: Option<MemoryEntryResponse>,
     query_selected_index: usize,
     query_table_state: TableState,
+    resume_response: Option<ResumeResponse>,
+    resume_scroll: u16,
     activity_events: Vec<ActivityEntry>,
     activity_selected_index: usize,
     activity_table_state: TableState,
@@ -178,6 +181,8 @@ impl App {
             query_selected_detail: None,
             query_selected_index: 0,
             query_table_state,
+            resume_response: None,
+            resume_scroll: 0,
             activity_events: Vec::new(),
             activity_selected_index: 0,
             activity_table_state,
@@ -241,6 +246,37 @@ impl App {
                 self.status_message = error.to_string();
             }
         }
+
+        self.refresh_resume(api).await;
+    }
+
+    async fn refresh_resume(&mut self, api: &ApiClient) {
+        let repo_root = resume::current_repo_root().ok();
+        let checkpoint = repo_root
+            .as_deref()
+            .and_then(|root| resume::load_checkpoint(&self.project, root).ok().flatten());
+        let request = ResumeRequest {
+            project: self.project.clone(),
+            checkpoint: checkpoint.clone(),
+            since: None,
+            include_llm_summary: true,
+            limit: 12,
+        };
+        match api.resume(&request).await {
+            Ok(response) => {
+                let has_changes = !response.timeline.is_empty()
+                    || !response.commits.is_empty()
+                    || !response.changed_memories.is_empty();
+                self.resume_response = Some(response);
+                if checkpoint.is_some() && has_changes {
+                    self.active_tab = TabKind::Resume;
+                }
+            }
+            Err(error) => {
+                self.status_message = format!("Resume unavailable: {error}");
+                self.resume_response = None;
+            }
+        }
     }
 
     async fn handle_key(
@@ -277,6 +313,12 @@ impl App {
                 self.active_tab = self.active_tab.prev();
             }
             KeyCode::Char('r') if key.modifiers.is_empty() => self.refresh(api).await,
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Resume => {
+                self.scroll_resume(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Resume => {
+                self.scroll_resume(-1);
+            }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Memories => {
                 self.move_selection(1, api, stream).await;
             }
@@ -315,6 +357,15 @@ impl App {
             }
             KeyCode::Home if self.active_tab == TabKind::Memories => {
                 self.memory_detail_scroll = 0;
+            }
+            KeyCode::PageDown if self.active_tab == TabKind::Resume => {
+                self.scroll_resume(8);
+            }
+            KeyCode::PageUp if self.active_tab == TabKind::Resume => {
+                self.scroll_resume(-8);
+            }
+            KeyCode::Home if self.active_tab == TabKind::Resume => {
+                self.resume_scroll = 0;
             }
             KeyCode::PageDown if self.active_tab == TabKind::Project => {
                 self.scroll_project(8);
@@ -729,6 +780,15 @@ impl App {
         };
     }
 
+    fn scroll_resume(&mut self, delta: i16) {
+        self.resume_scroll = if delta.is_negative() {
+            self.resume_scroll.saturating_sub(delta.unsigned_abs())
+        } else {
+            self.resume_scroll
+                .saturating_add(u16::try_from(delta).unwrap_or(0))
+        };
+    }
+
     fn scroll_watchers(&mut self, delta: i16) {
         self.watcher_scroll = if delta.is_negative() {
             self.watcher_scroll.saturating_sub(delta.unsigned_abs())
@@ -868,6 +928,7 @@ async fn subscribe_stream(stream: &mut StreamSession, app: &App) -> Result<()> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TabKind {
+    Resume,
     Memories,
     Query,
     Activity,
@@ -878,17 +939,19 @@ enum TabKind {
 impl TabKind {
     fn next(self) -> Self {
         match self {
+            Self::Resume => Self::Memories,
             Self::Memories => Self::Query,
             Self::Query => Self::Activity,
             Self::Activity => Self::Project,
             Self::Project => Self::Watchers,
-            Self::Watchers => Self::Memories,
+            Self::Watchers => Self::Resume,
         }
     }
 
     fn prev(self) -> Self {
         match self {
-            Self::Memories => Self::Watchers,
+            Self::Resume => Self::Watchers,
+            Self::Memories => Self::Resume,
             Self::Query => Self::Memories,
             Self::Activity => Self::Query,
             Self::Project => Self::Activity,
@@ -898,11 +961,12 @@ impl TabKind {
 
     fn index(self) -> usize {
         match self {
-            Self::Memories => 0,
-            Self::Query => 1,
-            Self::Activity => 2,
-            Self::Project => 3,
-            Self::Watchers => 4,
+            Self::Resume => 0,
+            Self::Memories => 1,
+            Self::Query => 2,
+            Self::Activity => 3,
+            Self::Project => 4,
+            Self::Watchers => 5,
         }
     }
 }
@@ -1076,10 +1140,12 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         ])
         .split(frame.area());
 
-    let titles = ["Memories", "Query", "Activity", "Project", "Watchers"]
-        .into_iter()
-        .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
-        .collect::<Vec<_>>();
+    let titles = [
+        "Resume", "Memories", "Query", "Activity", "Project", "Watchers",
+    ]
+    .into_iter()
+    .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
+    .collect::<Vec<_>>();
     let tabs = Tabs::new(titles)
         .select(app.active_tab.index())
         .block(
@@ -1096,6 +1162,12 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     frame.render_widget(tabs, chunks[0]);
 
     let filter_bar = Paragraph::new(vec![Line::from(match app.active_tab {
+        TabKind::Resume => vec![
+            accent_span("refresh "),
+            Span::styled("r  ", Style::default().fg(Theme::TEXT)),
+            accent_span("scroll "),
+            Span::styled("j/k PgUp/PgDn Home", Style::default().fg(Theme::TEXT)),
+        ],
         TabKind::Memories => vec![
             accent_span("search=/ "),
             Span::styled(
@@ -1187,6 +1259,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     frame.render_widget(filter_bar, chunks[1]);
 
     match app.active_tab {
+        TabKind::Resume => draw_resume_tab(frame, app, chunks[2]),
         TabKind::Memories => draw_memories_tab(frame, app, chunks[2]),
         TabKind::Query => draw_query_tab(frame, app, chunks[2]),
         TabKind::Activity => draw_activity_tab(frame, app, chunks[2]),
@@ -1932,6 +2005,115 @@ fn current_query_display(app: &App) -> String {
     }
 }
 
+fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let lines = if let Some(response) = &app.resume_response {
+        let mut lines = Vec::new();
+        lines.push(Line::from(vec![
+            label_span("Project: "),
+            Span::styled(response.project.clone(), Style::default().fg(Theme::TEXT)),
+        ]));
+        if let Some(checkpoint) = &response.checkpoint {
+            lines.push(Line::from(vec![
+                label_span("Checkpoint: "),
+                Span::styled(
+                    checkpoint
+                        .marked_at
+                        .format("%Y-%m-%d %H:%M UTC")
+                        .to_string(),
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]));
+            if let Some(note) = &checkpoint.note {
+                lines.push(Line::from(vec![
+                    label_span("Note: "),
+                    Span::styled(note.clone(), Style::default().fg(Theme::TEXT)),
+                ]));
+            }
+        } else {
+            lines.push(Line::from(Span::styled(
+                "No checkpoint stored yet. Use `mem-cli checkpoint save --project <slug>` when you leave a project.",
+                Style::default().fg(Theme::MUTED),
+            )));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            response.briefing.clone(),
+            Style::default().fg(Theme::TEXT),
+        )));
+        if !response.warnings.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Warnings",
+                Style::default()
+                    .fg(Theme::WARNING)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for warning in &response.warnings {
+                lines.push(Line::from(Span::styled(
+                    format!("- {warning}"),
+                    Style::default().fg(Theme::WARNING),
+                )));
+            }
+        }
+        if !response.actions.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Suggested Next Actions",
+                Style::default()
+                    .fg(Theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for action in &response.actions {
+                lines.push(Line::from(Span::styled(
+                    format!("- {}: {}", action.title, action.rationale),
+                    Style::default().fg(Theme::TEXT),
+                )));
+                if let Some(command_hint) = &action.command_hint {
+                    lines.push(Line::from(Span::styled(
+                        format!("  {command_hint}"),
+                        Style::default().fg(Theme::MUTED),
+                    )));
+                }
+            }
+        }
+        if !response.timeline.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Recent Timeline",
+                Style::default()
+                    .fg(Theme::ACCENT_STRONG)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for event in response.timeline.iter().take(8) {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "- {}  {}",
+                        event.recorded_at.format("%m-%d %H:%M"),
+                        event.summary
+                    ),
+                    Style::default().fg(Theme::TEXT),
+                )));
+            }
+        }
+        lines
+    } else {
+        vec![Line::from(Span::styled(
+            "Resume briefing is unavailable. Press r to refresh.",
+            Style::default().fg(Theme::MUTED),
+        ))]
+    };
+
+    let paragraph = Paragraph::new(lines)
+        .scroll((app.resume_scroll, 0))
+        .wrap(Wrap { trim: false })
+        .style(Style::default().bg(Theme::PANEL_ALT))
+        .block(themed_block(format!(
+            "Resume (scroll {})",
+            app.resume_scroll
+        )));
+    frame.render_widget(paragraph, area);
+}
+
 fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -2448,6 +2630,17 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                     lines.push(activity_kv_line("Oldest", oldest_commit.clone()));
                 }
             }
+            ActivityDetails::BundleTransfer {
+                bundle_id,
+                item_count,
+                source_project,
+            } => {
+                lines.push(activity_kv_line("Bundle", bundle_id.clone()));
+                lines.push(activity_kv_line("Items", item_count.to_string()));
+                if let Some(source_project) = source_project {
+                    lines.push(activity_kv_line("Source project", source_project.clone()));
+                }
+            }
             ActivityDetails::Query {
                 query,
                 top_k,
@@ -2714,6 +2907,8 @@ fn section_span(value: impl Into<String>) -> Span<'static> {
 fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
     let (label, color) = match kind {
         ActivityKind::CommitSync => ("commit-sync", Theme::ACCENT_STRONG),
+        ActivityKind::BundleExport => ("bundle-export", Theme::ACCENT_STRONG),
+        ActivityKind::BundleImport => ("bundle-import", Theme::ACCENT_STRONG),
         ActivityKind::Query => ("query", Theme::ACCENT),
         ActivityKind::QueryError => ("query-error", Theme::DANGER),
         ActivityKind::CaptureTask => ("capture", Theme::ACCENT),
