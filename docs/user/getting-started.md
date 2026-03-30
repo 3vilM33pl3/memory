@@ -267,6 +267,8 @@ mem-cli export --project my-project --out my-project.mlbundle.zip
 For semantic-search maintenance commands such as `reindex`, `reembed`, and `prune-embeddings`, see [Embedding Operations](cli/embeddings.md).
 For project memory backup and restore, see [Memory Bundles](cli/bundles.md).
 
+For getting back into flow after an interruption, see [Resume Briefings](cli/resume.md).
+
 ## Optional Background Watcher
 
 If you want Memory Layer to capture useful work in the background:

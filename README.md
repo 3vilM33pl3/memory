@@ -81,6 +81,7 @@ Project-local customization now has two layers:
 - [Getting Started](docs/user/getting-started.md)
 - [Embedding Operations](docs/user/cli/embeddings.md)
 - [Memory Bundles](docs/user/cli/bundles.md)
+- [Resume Briefings](docs/user/cli/resume.md)
 - [Scan Command](docs/user/cli/scan.md)
 - [Commit History](docs/user/cli/commits.md)
 

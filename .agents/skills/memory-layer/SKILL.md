@@ -23,6 +23,11 @@ Query memory:
 ./.agents/skills/memory-layer/scripts/query-memory.sh "<question>"
 ```
 
+Resume a project after an interruption:
+```bash
+./.agents/skills/memory-layer/scripts/resume-project.sh [project-slug]
+```
+
 Remember task context automatically:
 ```bash
 ./.agents/skills/memory-layer/scripts/remember-task.sh \
@@ -35,10 +40,11 @@ Remember task context automatically:
 ## Workflow
 
 1. Query memory before answering project-specific questions.
-2. Use the automatic remember workflow once work is complete.
-3. The remember workflow captures and curates in one step.
-4. Prefer insufficient evidence over unsupported conclusions.
-5. Never invent provenance.
+2. For "get me back into flow" or "what changed since I was last here?" prompts, use the resume script instead of a generic query.
+3. Use the automatic remember workflow once work is complete.
+4. The remember workflow captures and curates in one step.
+5. Prefer insufficient evidence over unsupported conclusions.
+6. Never invent provenance.
 
 ## Mandatory post-task rule
 
