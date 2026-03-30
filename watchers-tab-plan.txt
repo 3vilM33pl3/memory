@@ -1,0 +1,82 @@
+Plan: Add A Dedicated Watchers Tab To The Memory Layer TUI
+
+Summary
+
+Add a fifth `Watchers` tab to the Memory Layer TUI in `crates/mem-cli/src/tui.rs`. The current `Project` tab should keep only a compact one-line watcher summary, while the detailed watcher presence view moves into the new tab.
+
+The implementation should not require backend or API changes. The data already exists on `ProjectOverviewResponse.watchers`, so this is a TUI layout/navigation refactor only.
+
+Key Changes
+
+1. Tab model and navigation
+- Extend `TabKind` with `Watchers`.
+- Update `next`, `prev`, and `index` so tab order becomes:
+  - `Memories`
+  - `Query`
+  - `Activity`
+  - `Project`
+  - `Watchers`
+- Update the tab title bar to include `Watchers`.
+- Treat `Watchers` like `Project` for vertical scrolling keys:
+  - `j/k`
+  - `PgUp/PgDn`
+  - `Home`
+- Add a dedicated watcher scroll offset to `App` instead of reusing `project_scroll`.
+
+2. Project tab simplification
+- Keep the existing compact watcher status line in the `Overview` section:
+  - active count
+  - stale-after seconds
+  - last heartbeat time
+- Remove the bottom-right detailed `Watchers` panel from `draw_project_tab`.
+- Reflow the `Project` tab so the freed space is used by the remaining content cleanly rather than leaving an empty split.
+- Keep the existing `Operations` panel in `Project`.
+
+3. New Watchers tab
+- Add `draw_watchers_tab(frame, app, area)`.
+- Render this tab as a watcher-focused page using the existing `overview.watchers` data:
+  - top summary block with active count, stale-after threshold, and last heartbeat
+  - main detail block listing watcher entries
+  - each watcher entry should show:
+    - hostname
+    - pid
+    - mode
+    - repo root
+    - last heartbeat
+    - watcher id if it fits cleanly
+- If there are no watchers:
+  - show a clear empty state
+  - keep the existing startup guidance about `mem-cli watch enable --project <slug>` and `memory-watch run --project <slug>`
+- Make the detail block scrollable when there are more watchers than fit on screen.
+
+4. Rendering helpers
+- Keep `watcher_lines(app)` as the source for the detailed watcher list, but refactor it if needed so:
+  - `Project` can still use a compact summary line
+  - `Watchers` can render the full detailed list
+- Prefer splitting watcher rendering into:
+  - one compact summary helper
+  - one detailed watcher-lines helper
+- Reuse the existing theme and panel styles so the new tab matches the current TUI.
+
+Test Plan
+
+- Manual TUI checks:
+  - the tab bar shows `Watchers`
+  - tab cycling reaches `Watchers` in the expected order
+  - the `Project` tab still shows a compact watcher summary
+  - the detailed watcher list appears only in `Watchers`
+  - empty-state messaging is correct when no watchers are present
+  - long watcher lists scroll correctly without affecting `Project` scroll state
+- Data scenarios:
+  - `overview.watchers = None`
+  - `overview.watchers` present with `0` active watchers
+  - multiple active watchers with different hosts and repo roots
+- Verification:
+  - `cargo check -p mem-cli`
+  - one focused manual run of `mem-cli tui --project <slug>`
+
+Assumptions
+
+- This change targets the sibling Memory Layer project TUI at `../memory`, not the Soundmind terminal UI.
+- No new backend endpoints or API schema changes are needed.
+- The chosen behavior is: keep a compact watcher summary in `Project`, but move detailed watcher presence into a dedicated `Watchers` tab.
