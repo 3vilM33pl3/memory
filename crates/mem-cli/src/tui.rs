@@ -55,6 +55,7 @@ impl Theme {
 pub(crate) async fn run(api: ApiClient, project: String) -> Result<()> {
     let mut terminal = setup_terminal()?;
     let mut app = App::new(project, detect_tool_versions());
+    terminal.draw(|frame| draw(frame, &app))?;
     app.refresh(&api).await;
     let mut stream = StreamSession::connect(&api).await.ok();
     if let Some(stream_session) = stream.as_mut() {
@@ -190,7 +191,7 @@ impl App {
             project_scroll: 0,
             watcher_scroll: 0,
             versions,
-            status_message: "Press r to refresh, q to exit.".to_string(),
+            status_message: "Loading project data...".to_string(),
             health_ok: false,
             filters: Filters::default(),
             input_mode: InputMode::Normal,
@@ -259,7 +260,7 @@ impl App {
             project: self.project.clone(),
             checkpoint: checkpoint.clone(),
             since: None,
-            include_llm_summary: true,
+            include_llm_summary: false,
             limit: 12,
         };
         match api.resume(&request).await {
