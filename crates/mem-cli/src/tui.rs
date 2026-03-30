@@ -778,6 +778,20 @@ impl App {
     }
 
     fn record_backend_activity(&mut self, event: ActivityEvent) {
+        if let Some(ActivityDetails::WatcherHealth {
+            health,
+            previous_health,
+            message,
+            ..
+        }) = event.details.as_ref()
+        {
+            self.status_message = watcher_transition_status_message(
+                &event.summary,
+                health,
+                previous_health.as_ref(),
+                message.as_deref(),
+            );
+        }
         self.activity_events
             .insert(0, ActivityEntry::Backend(event));
         self.finish_activity_insert();
@@ -3062,6 +3076,8 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                 health,
                 managed_by_service,
                 restart_attempt_count,
+                previous_health,
+                recovered_after_restart_attempts,
                 message,
             } => {
                 lines.push(activity_kv_line("Watcher", watcher_id.clone()));
@@ -3070,6 +3086,12 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                     label_span("Health: "),
                     watcher_health_span(health),
                 ]));
+                if let Some(previous_health) = previous_health {
+                    lines.push(Line::from(vec![
+                        label_span("Previous health: "),
+                        watcher_health_span(previous_health),
+                    ]));
+                }
                 lines.push(activity_kv_line(
                     "Managed by service",
                     managed_by_service.to_string(),
@@ -3078,6 +3100,12 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                     "Restart attempts",
                     restart_attempt_count.to_string(),
                 ));
+                if let Some(attempts) = recovered_after_restart_attempts {
+                    lines.push(activity_kv_line(
+                        "Recovered after attempts",
+                        attempts.to_string(),
+                    ));
+                }
                 lines.push(activity_kv_line(
                     "Message",
                     message.clone().unwrap_or_else(|| "n/a".to_string()),
@@ -3153,6 +3181,23 @@ fn activity_summary(item: &ActivityEntry) -> String {
                 }
             }
         }
+    }
+}
+
+fn watcher_transition_status_message(
+    summary: &str,
+    health: &WatcherHealth,
+    previous_health: Option<&WatcherHealth>,
+    message: Option<&str>,
+) -> String {
+    if matches!(health, WatcherHealth::Healthy)
+        && previous_health.is_some_and(|value| !matches!(value, WatcherHealth::Healthy))
+    {
+        format!("Watcher recovered: {summary}")
+    } else if let Some(message) = message {
+        format!("Watcher status: {summary} ({message})")
+    } else {
+        format!("Watcher status: {summary}")
     }
 }
 
@@ -3262,6 +3307,15 @@ fn watcher_health_span(health: &WatcherHealth) -> Span<'static> {
     )
 }
 
+fn watcher_health_label(health: &WatcherHealth) -> &'static str {
+    match health {
+        WatcherHealth::Healthy => "healthy",
+        WatcherHealth::Stale => "stale",
+        WatcherHealth::Restarting => "restarting",
+        WatcherHealth::Failed => "failed",
+    }
+}
+
 fn query_match_span(kind: &QueryMatchKind) -> Span<'static> {
     let (label, color) = match kind {
         QueryMatchKind::Lexical => ("lexical", Theme::ACCENT_STRONG),
@@ -3276,7 +3330,22 @@ fn query_match_span(kind: &QueryMatchKind) -> Span<'static> {
 
 fn activity_entry_kind_span(item: &ActivityEntry) -> Span<'static> {
     match item {
-        ActivityEntry::Backend(event) => activity_kind_span(&event.kind),
+        ActivityEntry::Backend(event) => {
+            if let Some(ActivityDetails::WatcherHealth {
+                health: WatcherHealth::Healthy,
+                previous_health: Some(previous_health),
+                ..
+            }) = event.details.as_ref()
+            {
+                return Span::styled(
+                    format!("watcher-{}", watcher_health_label(previous_health)),
+                    Style::default()
+                        .fg(Theme::SUCCESS)
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
+            activity_kind_span(&event.kind)
+        }
         ActivityEntry::Query(entry) => match &entry.outcome {
             QueryLogOutcome::Success(response) => {
                 if response.insufficient_evidence {

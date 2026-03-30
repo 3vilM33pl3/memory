@@ -3104,6 +3104,15 @@ fn parse_activity_kind(value: &str) -> ActivityKind {
     }
 }
 
+fn watcher_health_label(health: &WatcherHealth) -> &'static str {
+    match health {
+        WatcherHealth::Healthy => "healthy",
+        WatcherHealth::Stale => "stale",
+        WatcherHealth::Restarting => "restarting",
+        WatcherHealth::Failed => "failed",
+    }
+}
+
 async fn watcher_heartbeat(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -3450,7 +3459,9 @@ fn register_watcher_heartbeat(
     registry
         .entry(request.watcher_id.clone())
         .and_modify(|watcher| {
-            let recovered = watcher.health != WatcherHealth::Healthy;
+            let previous_health = watcher.health.clone();
+            let previous_restart_attempt_count = watcher.restart_attempt_count;
+            let recovered = previous_health != WatcherHealth::Healthy;
             watcher.project = request.project.clone();
             watcher.repo_root = request.repo_root.clone();
             watcher.hostname = request.hostname.clone();
@@ -3465,14 +3476,21 @@ fn register_watcher_heartbeat(
             watcher.restart_attempt_count = 0;
             if recovered {
                 transition = Some((
-                    format!("Watcher {} recovered", request.watcher_id),
+                    format!(
+                        "Watcher {} recovered from {} after {} restart attempt(s)",
+                        request.watcher_id,
+                        watcher_health_label(&previous_health),
+                        previous_restart_attempt_count
+                    ),
                     ActivityDetails::WatcherHealth {
                         watcher_id: request.watcher_id.clone(),
                         hostname: request.hostname.clone(),
                         health: WatcherHealth::Healthy,
                         managed_by_service: request.managed_by_service,
                         restart_attempt_count: 0,
-                        message: Some("heartbeat recovered".to_string()),
+                        previous_health: Some(previous_health),
+                        recovered_after_restart_attempts: Some(previous_restart_attempt_count),
+                        message: Some("watcher heartbeat recovered".to_string()),
                     },
                 ));
             }
@@ -3646,6 +3664,8 @@ async fn run_watcher_watchdog(state: AppState) -> Result<()> {
                                 health: WatcherHealth::Stale,
                                 managed_by_service: false,
                                 restart_attempt_count: watcher.restart_attempt_count,
+                                previous_health: Some(WatcherHealth::Healthy),
+                                recovered_after_restart_attempts: None,
                                 message: Some(
                                     "heartbeat missed; manual watcher will not be restarted"
                                         .to_string(),
@@ -3672,6 +3692,8 @@ async fn run_watcher_watchdog(state: AppState) -> Result<()> {
                                 health: WatcherHealth::Failed,
                                 managed_by_service: true,
                                 restart_attempt_count: watcher.restart_attempt_count,
+                                previous_health: Some(WatcherHealth::Restarting),
+                                recovered_after_restart_attempts: None,
                                 message: Some("watcher exceeded restart attempt limit".to_string()),
                             },
                         ));
@@ -3699,6 +3721,8 @@ async fn run_watcher_watchdog(state: AppState) -> Result<()> {
                         health: WatcherHealth::Restarting,
                         managed_by_service: true,
                         restart_attempt_count: watcher.restart_attempt_count,
+                        previous_health: Some(WatcherHealth::Stale),
+                        recovered_after_restart_attempts: None,
                         message: Some("watcher heartbeat missed; requesting restart".to_string()),
                     },
                 ));
@@ -3732,6 +3756,8 @@ async fn run_watcher_watchdog(state: AppState) -> Result<()> {
                         health: WatcherHealth::Failed,
                         managed_by_service: watcher.managed_by_service,
                         restart_attempt_count: watcher.restart_attempt_count,
+                        previous_health: Some(WatcherHealth::Restarting),
+                        recovered_after_restart_attempts: None,
                         message: Some(format!("restart request failed: {error}")),
                     };
                     let project = watcher.project.clone();

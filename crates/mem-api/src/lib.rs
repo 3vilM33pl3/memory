@@ -898,6 +898,10 @@ pub enum ActivityDetails {
         managed_by_service: bool,
         restart_attempt_count: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        previous_health: Option<WatcherHealth>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recovered_after_restart_attempts: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
     MemoryReplacement {
