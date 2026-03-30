@@ -3691,6 +3691,21 @@ fn print_scan_report(report: &scan::ScanReport) {
     );
     println!("Index: {}", report.index_path);
     println!("Report: {}", report.report_path);
+    if !report.candidate_previews.is_empty() {
+        println!("\nCandidates:");
+        for preview in &report.candidate_previews {
+            println!("- {}", preview.summary);
+            println!(
+                "  type={} confidence={:.2} importance={}",
+                preview.memory_type,
+                preview.confidence,
+                preview.importance,
+            );
+            if !preview.provenance_preview.is_empty() {
+                println!("  provenance: {}", preview.provenance_preview.join(" | "));
+            }
+        }
+    }
     if let Some(capture_id) = &report.capture_id {
         println!("Capture: {capture_id}");
     }

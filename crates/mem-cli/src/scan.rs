@@ -42,6 +42,17 @@ pub(crate) struct ScanReport {
     pub curate_run_id: Option<String>,
     pub report_path: String,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidate_previews: Vec<ScanCandidatePreview>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ScanCandidatePreview {
+    pub summary: String,
+    pub memory_type: MemoryType,
+    pub confidence: f32,
+    pub importance: i32,
+    pub provenance_preview: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -147,6 +158,7 @@ pub(crate) async fn run_scan(
         writer_id,
         writer_name,
     )?;
+    let candidate_previews = build_candidate_previews(&candidates);
     let report_path =
         write_scan_report(repo_root, project, &dossier, &summary, &candidates, dry_run)?;
 
@@ -165,6 +177,7 @@ pub(crate) async fn run_scan(
             curate_run_id: None,
             report_path: report_path.display().to_string(),
             summary,
+            candidate_previews,
         });
     }
 
@@ -184,6 +197,7 @@ pub(crate) async fn run_scan(
         curate_run_id: Some(curate.run_id.to_string()),
         report_path: report_path.display().to_string(),
         summary,
+        candidate_previews,
     })
 }
 
@@ -456,6 +470,53 @@ fn write_repo_index(path: &Path, index: &PersistedRepoIndex) -> Result<()> {
     fs::write(path, serde_json::to_string_pretty(index)?)
         .with_context(|| format!("write {}", path.display()))?;
     Ok(())
+}
+
+fn build_candidate_previews(candidates: &[CaptureCandidateInput]) -> Vec<ScanCandidatePreview> {
+    candidates
+        .iter()
+        .map(|candidate| ScanCandidatePreview {
+            summary: candidate.summary.clone(),
+            memory_type: candidate.memory_type.clone(),
+            confidence: candidate.confidence,
+            importance: candidate.importance,
+            provenance_preview: summarize_candidate_sources(&candidate.sources),
+        })
+        .collect()
+}
+
+fn summarize_candidate_sources(sources: &[CaptureCandidateSourceInput]) -> Vec<String> {
+    let mut preview: Vec<String> = sources
+        .iter()
+        .filter_map(|source| match source.source_kind {
+            SourceKind::File => source.file_path.as_ref().map(|path| format!("file:{path}")),
+            SourceKind::GitCommit => source
+                .excerpt
+                .as_ref()
+                .map(|excerpt| format!("commit:{excerpt}"))
+                .or_else(|| Some("commit".to_string())),
+            SourceKind::TaskPrompt => Some("task prompt".to_string()),
+            SourceKind::CommandOutput => Some("command output".to_string()),
+            SourceKind::Test => source
+                .excerpt
+                .as_ref()
+                .map(|excerpt| format!("test:{excerpt}"))
+                .or_else(|| Some("test".to_string())),
+            SourceKind::Note => source
+                .excerpt
+                .as_ref()
+                .map(|excerpt| format!("note:{excerpt}"))
+                .or_else(|| Some("note".to_string())),
+        })
+        .collect();
+    preview.sort();
+    preview.dedup();
+    if preview.len() > 3 {
+        let remaining = preview.len() - 3;
+        preview.truncate(3);
+        preview.push(format!("+{remaining} more"));
+    }
+    preview
 }
 
 fn read_repo_index(path: &Path) -> Result<Option<PersistedRepoIndex>> {

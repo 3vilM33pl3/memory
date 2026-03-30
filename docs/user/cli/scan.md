@@ -261,6 +261,7 @@ In dry-run mode, `scan` still:
 - builds or reuses the repository index
 - calls the LLM
 - validates candidates
+- prints a concise preview of the accepted candidate memories
 - writes a scan report
 
 But it does **not**:
