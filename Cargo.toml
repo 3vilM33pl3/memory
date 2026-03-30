@@ -50,6 +50,7 @@ tree-sitter-javascript = "0.23.1"
 tree-sitter-typescript = "0.23.2"
 regex = "1.12.2"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
+toml = "0.8.23"
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

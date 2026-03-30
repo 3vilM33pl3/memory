@@ -42,6 +42,26 @@ impl fmt::Display for MemoryType {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplacementPolicy {
+    Conservative,
+    #[default]
+    Balanced,
+    Aggressive,
+}
+
+impl fmt::Display for ReplacementPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Conservative => "conservative",
+            Self::Balanced => "balanced",
+            Self::Aggressive => "aggressive",
+        };
+        f.write_str(value)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryRelationType {
@@ -167,6 +187,8 @@ pub struct CurateRequest {
     pub project: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement_policy: Option<ReplacementPolicy>,
 }
 
 impl CurateRequest {
@@ -374,6 +396,58 @@ pub struct CurateResponse {
     pub run_id: Uuid,
     pub input_count: i64,
     pub output_count: i64,
+    #[serde(default)]
+    pub replaced_count: i64,
+    #[serde(default)]
+    pub proposal_count: i64,
+    #[serde(default)]
+    pub replacements: Vec<AppliedMemoryReplacement>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppliedMemoryReplacement {
+    pub old_memory_id: Uuid,
+    pub old_summary: String,
+    pub new_memory_id: Uuid,
+    pub new_summary: String,
+    pub automatic: bool,
+    pub policy: ReplacementPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplacementProposalRecord {
+    pub id: Uuid,
+    pub project: String,
+    pub target_memory_id: Uuid,
+    pub target_summary: String,
+    pub candidate_summary: String,
+    pub candidate_canonical_text: String,
+    pub candidate_memory_type: MemoryType,
+    pub score: i32,
+    pub policy: ReplacementPolicy,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplacementProposalListResponse {
+    pub project: String,
+    #[serde(default)]
+    pub proposals: Vec<ReplacementProposalRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplacementProposalResolutionResponse {
+    pub project: String,
+    pub proposal_id: Uuid,
+    pub status: String,
+    pub policy: ReplacementPolicy,
+    pub target_memory_id: Uuid,
+    pub target_summary: String,
+    pub candidate_summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_memory_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -766,6 +840,7 @@ pub enum ActivityKind {
     Query,
     QueryError,
     WatcherHealth,
+    MemoryReplacement,
     CaptureTask,
     Curate,
     Reindex,
@@ -825,6 +900,14 @@ pub enum ActivityDetails {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    MemoryReplacement {
+        old_memory_id: Uuid,
+        old_summary: String,
+        new_memory_id: Uuid,
+        new_summary: String,
+        automatic: bool,
+        policy: ReplacementPolicy,
+    },
     CaptureTask {
         session_id: Uuid,
         task_id: Uuid,
@@ -837,6 +920,8 @@ pub enum ActivityDetails {
         run_id: Uuid,
         input_count: i64,
         output_count: i64,
+        replaced_count: i64,
+        proposal_count: i64,
     },
     Reindex {
         reindexed_entries: u64,
@@ -1101,6 +1186,8 @@ pub struct ProjectOverviewResponse {
     pub top_tags: Vec<NamedCount>,
     #[serde(default)]
     pub top_files: Vec<NamedCount>,
+    #[serde(default)]
+    pub pending_replacement_proposals: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automation: Option<AutomationStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1444,6 +1531,8 @@ pub struct AgentProjectConfig {
     pub analysis: AgentAnalysisConfig,
     #[serde(default)]
     pub retrieval: AgentRetrievalConfig,
+    #[serde(default)]
+    pub curation: AgentCurationConfig,
 }
 
 impl Default for AgentProjectConfig {
@@ -1452,6 +1541,7 @@ impl Default for AgentProjectConfig {
             capture: AgentCaptureConfig::default(),
             analysis: AgentAnalysisConfig::default(),
             retrieval: AgentRetrievalConfig::default(),
+            curation: AgentCurationConfig::default(),
         }
     }
 }
@@ -1482,6 +1572,12 @@ impl Default for AgentAnalysisConfig {
 pub struct AgentRetrievalConfig {
     #[serde(default)]
     pub graph_enabled: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentCurationConfig {
+    #[serde(default)]
+    pub replacement_policy: ReplacementPolicy,
 }
 
 fn default_agent_analyzers() -> Vec<String> {
@@ -1524,6 +1620,12 @@ pub fn load_repo_agent_settings(repo_root: &Path) -> Result<AgentProjectConfig, 
         .add_source(File::from(path).format(FileFormat::Toml).required(false))
         .build()?;
     config.try_deserialize()
+}
+
+pub fn load_repo_replacement_policy(repo_root: &Path) -> Result<ReplacementPolicy, ConfigError> {
+    Ok(load_repo_agent_settings(repo_root)?
+        .curation
+        .replacement_policy)
 }
 
 pub fn resolve_secret_value(key: &str) -> Option<String> {

@@ -30,14 +30,17 @@ use mem_api::{
     ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
     ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
     PruneEmbeddingsResponse, QueryRequest, ReembedRequest, ReembedResponse, ReindexRequest,
-    ReindexResponse, RelatedMemorySummary, ResumeAction, ResumeRequest, ResumeResponse,
-    ScanActivityRequest, SourceKind,
-    StatsResponse, StreamRequest, StreamResponse, ValidationError, WatcherHealth,
-    WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary, WatcherRestartRequest,
-    WatcherRestartResponse, WatcherUnregisterRequest, read_capnp_text_frame,
+    ReindexResponse, RelatedMemorySummary, ReplacementProposalListResponse,
+    ReplacementProposalResolutionResponse, ResumeAction, ResumeRequest, ResumeResponse,
+    ScanActivityRequest, SourceKind, StatsResponse, StreamRequest, StreamResponse, ValidationError,
+    WatcherHealth, WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary,
+    WatcherRestartRequest, WatcherRestartResponse, WatcherUnregisterRequest, read_capnp_text_frame,
     write_capnp_text_frame,
 };
-use mem_curate::{curate, refresh_memory_relations, store_capture};
+use mem_curate::{
+    approve_replacement_proposal, curate, list_replacement_proposals, refresh_memory_relations,
+    reject_replacement_proposal, store_capture,
+};
 use mem_platform::restart_local_watcher_service;
 use mem_search::{
     EmbeddingService, parse_memory_type, parse_relation_type, parse_source_kind,
@@ -385,6 +388,18 @@ fn build_http_app(state: AppState) -> Router {
         .route(
             "/v1/projects/{slug}/bundle/import",
             post(project_bundle_import),
+        )
+        .route(
+            "/v1/projects/{slug}/replacement-proposals",
+            get(project_replacement_proposals),
+        )
+        .route(
+            "/v1/projects/{slug}/replacement-proposals/{proposal_id}/approve",
+            post(project_replacement_proposal_approve),
+        )
+        .route(
+            "/v1/projects/{slug}/replacement-proposals/{proposal_id}/reject",
+            post(project_replacement_proposal_reject),
         )
         .route("/v1/projects/{slug}/memories", get(project_memories))
         .route("/v1/projects/{slug}/overview", get(project_overview))
@@ -1948,15 +1963,40 @@ async fn curate_memory(
         None,
         ActivityKind::Curate,
         format!(
-            "Curated {} capture(s) into {} memory entry/entries.",
-            response.input_count, response.output_count
+            "Curated {} capture(s) into {} memory entry/entries with {} replacement(s) and {} queued update proposal(s).",
+            response.input_count,
+            response.output_count,
+            response.replaced_count,
+            response.proposal_count
         ),
         Some(ActivityDetails::Curate {
             run_id: response.run_id,
             input_count: response.input_count,
             output_count: response.output_count,
+            replaced_count: response.replaced_count,
+            proposal_count: response.proposal_count,
         }),
     );
+    for replacement in &response.replacements {
+        notify_project_changed(
+            &state,
+            request.project.clone(),
+            Some(replacement.new_memory_id),
+            ActivityKind::MemoryReplacement,
+            format!(
+                "Replaced memory \"{}\" with \"{}\".",
+                replacement.old_summary, replacement.new_summary
+            ),
+            Some(ActivityDetails::MemoryReplacement {
+                old_memory_id: replacement.old_memory_id,
+                old_summary: replacement.old_summary.clone(),
+                new_memory_id: replacement.new_memory_id,
+                new_summary: replacement.new_summary.clone(),
+                automatic: replacement.automatic,
+                policy: replacement.policy,
+            }),
+        );
+    }
     Ok(Json(response))
 }
 
@@ -2511,6 +2551,94 @@ async fn project_bundle_import(
     }))
 }
 
+async fn project_replacement_proposals(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Result<Json<ReplacementProposalListResponse>, ApiError> {
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_get_json(
+                &state,
+                &format!("/v1/projects/{slug}/replacement-proposals"),
+            )
+            .await?,
+        ));
+    }
+    Ok(Json(
+        list_replacement_proposals(state.pool()?, &slug)
+            .await
+            .map_err(ApiError::sql)?,
+    ))
+}
+
+async fn project_replacement_proposal_approve(
+    State(state): State<AppState>,
+    Path((slug, proposal_id)): Path<(String, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<ReplacementProposalResolutionResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(
+                &state,
+                &format!("/v1/projects/{slug}/replacement-proposals/{proposal_id}/approve"),
+                &serde_json::json!({}),
+                true,
+            )
+            .await?,
+        ));
+    }
+    let response = approve_replacement_proposal(state.pool()?, &slug, proposal_id)
+        .await
+        .map_err(ApiError::sql)?;
+    if let Some(new_memory_id) = response.new_memory_id {
+        notify_project_changed(
+            &state,
+            slug.clone(),
+            Some(new_memory_id),
+            ActivityKind::MemoryReplacement,
+            format!(
+                "Replaced memory \"{}\" with \"{}\" after review.",
+                response.target_summary, response.candidate_summary
+            ),
+            Some(ActivityDetails::MemoryReplacement {
+                old_memory_id: response.target_memory_id,
+                old_summary: response.target_summary.clone(),
+                new_memory_id,
+                new_summary: response.candidate_summary.clone(),
+                automatic: false,
+                policy: response.policy,
+            }),
+        );
+    }
+    notify_project_refreshed(&state, slug.clone());
+    Ok(Json(response))
+}
+
+async fn project_replacement_proposal_reject(
+    State(state): State<AppState>,
+    Path((slug, proposal_id)): Path<(String, Uuid)>,
+    headers: HeaderMap,
+) -> Result<Json<ReplacementProposalResolutionResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(
+                &state,
+                &format!("/v1/projects/{slug}/replacement-proposals/{proposal_id}/reject"),
+                &serde_json::json!({}),
+                true,
+            )
+            .await?,
+        ));
+    }
+    let response = reject_replacement_proposal(state.pool()?, &slug, proposal_id)
+        .await
+        .map_err(ApiError::sql)?;
+    notify_project_refreshed(&state, slug.clone());
+    Ok(Json(response))
+}
+
 async fn project_commits(
     State(state): State<AppState>,
     Path(slug): Path<String>,
@@ -2772,6 +2900,12 @@ fn resume_warnings(overview: &ProjectOverviewResponse) -> Vec<String> {
             overview.missing_embedding_chunks
         ));
     }
+    if overview.pending_replacement_proposals > 0 {
+        warnings.push(format!(
+            "{} memory update proposal(s) are waiting for review.",
+            overview.pending_replacement_proposals
+        ));
+    }
     warnings
 }
 
@@ -2959,6 +3093,7 @@ fn parse_activity_kind(value: &str) -> ActivityKind {
         "query" => ActivityKind::Query,
         "query_error" => ActivityKind::QueryError,
         "watcher_health" => ActivityKind::WatcherHealth,
+        "memory_replacement" => ActivityKind::MemoryReplacement,
         "capture_task" => ActivityKind::CaptureTask,
         "curate" => ActivityKind::Curate,
         "reindex" => ActivityKind::Reindex,
@@ -3270,6 +3405,7 @@ fn activity_kind_label(kind: &ActivityKind) -> &'static str {
         ActivityKind::Query => "query",
         ActivityKind::QueryError => "query_error",
         ActivityKind::WatcherHealth => "watcher_health",
+        ActivityKind::MemoryReplacement => "memory_replacement",
         ActivityKind::CaptureTask => "capture_task",
         ActivityKind::Curate => "curate",
         ActivityKind::Reindex => "reindex",

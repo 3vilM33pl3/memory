@@ -145,6 +145,7 @@ pub async fn fetch_project_overview(
     let top_files = fetch_top_files(pool, slug).await?;
     let automation = load_automation_status(slug, automation).await;
     let embedding_health = fetch_embedding_health(pool, slug, embeddings).await?;
+    let pending_replacement_proposals = fetch_pending_replacement_proposals(pool, slug).await?;
 
     let Some(row) = row else {
         return Ok(empty_overview(
@@ -190,6 +191,7 @@ pub async fn fetch_project_overview(
         source_kind_breakdown,
         top_tags,
         top_files,
+        pending_replacement_proposals,
         automation,
         watchers: None,
     })
@@ -570,9 +572,29 @@ fn empty_overview(
         source_kind_breakdown,
         top_tags,
         top_files,
+        pending_replacement_proposals: 0,
         automation,
         watchers: None,
     }
+}
+
+async fn fetch_pending_replacement_proposals(
+    pool: &PgPool,
+    slug: &str,
+) -> Result<i64, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT COUNT(mrp.id) AS pending_replacement_proposals
+        FROM memory_replacement_proposals mrp
+        JOIN projects p ON p.id = mrp.project_id
+        WHERE p.slug = $1
+          AND mrp.status = 'pending'
+        "#,
+    )
+    .bind(slug)
+    .fetch_one(pool)
+    .await?;
+    row.try_get("pending_replacement_proposals")
 }
 
 #[derive(Default)]

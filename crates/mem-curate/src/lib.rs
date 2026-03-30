@@ -1,5 +1,9 @@
-use mem_api::{CaptureTaskResponse, CurateRequest, CurateResponse, MemoryRelationType};
-use mem_ingest::{extract_candidates, idempotency_key};
+use mem_api::{
+    AppliedMemoryReplacement, CaptureTaskResponse, CurateRequest, CurateResponse,
+    MemoryRelationType, ReplacementPolicy, ReplacementProposalListResponse,
+    ReplacementProposalRecord, ReplacementProposalResolutionResponse,
+};
+use mem_ingest::{CandidateAssertion, extract_candidates, idempotency_key};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -116,6 +120,10 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
 
     let run_id = Uuid::new_v4();
     let mut output_count = 0_i64;
+    let mut replaced_count = 0_i64;
+    let mut proposal_count = 0_i64;
+    let mut replacements = Vec::new();
+    let policy = request.replacement_policy.unwrap_or_default();
 
     for capture in &captures {
         let capture_id: Uuid = capture.try_get("id")?;
@@ -154,74 +162,56 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
                 .await?;
                 memory_id
             } else {
-                let memory_id = Uuid::new_v4();
-                sqlx::query(
-                    r#"
-                    INSERT INTO memory_entries
-                        (id, project_id, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
-                    VALUES
-                        ($1, $2, $3, $4, $5, 'project', $6, $7, 'active', now(), now(), NULL, to_tsvector('english', $3 || ' ' || $4))
-                    "#,
-                )
-                .bind(memory_id)
-                .bind(project_id)
-                .bind(&candidate.canonical_text)
-                .bind(&candidate.summary)
-                .bind(candidate.memory_type.to_string())
-                .bind(candidate.importance)
-                .bind(candidate.confidence)
-                .execute(&mut *tx)
-                .await?;
-                output_count += 1;
-                memory_id
+                match determine_replacement_decision(&mut tx, project_id, &candidate, policy)
+                    .await?
+                {
+                    ReplacementDecision::InsertNew => {
+                        let memory_id =
+                            insert_candidate_memory(&mut tx, project_id, &candidate).await?;
+                        output_count += 1;
+                        memory_id
+                    }
+                    ReplacementDecision::Replace {
+                        target,
+                        score: _score,
+                        reasons: _reasons,
+                    } => {
+                        let memory_id =
+                            insert_candidate_memory(&mut tx, project_id, &candidate).await?;
+                        sqlx::query("DELETE FROM memory_entries WHERE id = $1")
+                            .bind(target.id)
+                            .execute(&mut *tx)
+                            .await?;
+                        output_count += 1;
+                        replaced_count += 1;
+                        replacements.push(AppliedMemoryReplacement {
+                            old_memory_id: target.id,
+                            old_summary: target.summary,
+                            new_memory_id: memory_id,
+                            new_summary: candidate.summary.clone(),
+                            automatic: true,
+                            policy,
+                        });
+                        memory_id
+                    }
+                    ReplacementDecision::Queue {
+                        target,
+                        score,
+                        reasons,
+                    } => {
+                        queue_replacement_proposal(
+                            &mut tx, project_id, capture_id, task_id, &candidate, &target, policy,
+                            score, &reasons,
+                        )
+                        .await?;
+                        proposal_count += 1;
+                        continue;
+                    }
+                }
             };
 
-            for tag in candidate.tags {
-                sqlx::query(
-                    "INSERT INTO memory_tags (memory_entry_id, tag) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                )
-                .bind(memory_id)
-                .bind(tag)
-                .execute(&mut *tx)
-                .await?;
-            }
-
-            for source in candidate.sources {
-                let source_kind = source.source_kind_to_string();
-                sqlx::query(
-                    r#"
-                    INSERT INTO memory_sources
-                        (id, memory_entry_id, task_id, file_path, git_commit, source_kind, excerpt, created_at)
-                    VALUES
-                        ($1, $2, $3, $4, NULL, $5, $6, now())
-                    "#,
-                )
-                .bind(Uuid::new_v4())
-                .bind(memory_id)
-                .bind(task_id)
-                .bind(source.file_path)
-                .bind(source_kind)
-                .bind(source.excerpt)
-                .execute(&mut *tx)
-                .await?;
-            }
-
-            sqlx::query("DELETE FROM memory_chunks WHERE memory_entry_id = $1")
-                .bind(memory_id)
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query(
-                r#"
-                INSERT INTO memory_chunks (id, memory_entry_id, chunk_text, search_text, tsv)
-                SELECT $1, id, canonical_text, summary || E'\n' || canonical_text, to_tsvector('english', summary || ' ' || canonical_text)
-                FROM memory_entries
-                WHERE id = $2
-                "#,
-            )
-            .bind(Uuid::new_v4())
-            .bind(memory_id)
-            .execute(&mut *tx)
-            .await?;
+            attach_candidate_metadata(&mut tx, memory_id, task_id, &candidate).await?;
+            rebuild_memory_chunks(&mut tx, memory_id).await?;
 
             refresh_relations(&mut tx, project_id, memory_id).await?;
         }
@@ -252,7 +242,256 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
         run_id,
         input_count: captures.len() as i64,
         output_count,
+        replaced_count,
+        proposal_count,
+        replacements,
     })
+}
+
+#[derive(Debug)]
+enum ReplacementDecision {
+    InsertNew,
+    Replace {
+        target: MemoryProfile,
+        score: i32,
+        reasons: Vec<String>,
+    },
+    Queue {
+        target: MemoryProfile,
+        score: i32,
+        reasons: Vec<String>,
+    },
+}
+
+async fn determine_replacement_decision(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    project_id: Uuid,
+    candidate: &CandidateAssertion,
+    policy: ReplacementPolicy,
+) -> Result<ReplacementDecision, sqlx::Error> {
+    let profiles = load_candidate_replacement_targets(tx, project_id, candidate).await?;
+    let mut scored = profiles
+        .into_iter()
+        .filter_map(|target| score_replacement_candidate(candidate, target))
+        .collect::<Vec<_>>();
+    scored.sort_by(|left, right| right.score.cmp(&left.score));
+    let Some(best) = scored.first() else {
+        return Ok(ReplacementDecision::InsertNew);
+    };
+
+    let margin = scored
+        .get(1)
+        .map(|next| best.score - next.score)
+        .unwrap_or(i32::MAX);
+    let explicit_update = best
+        .reasons
+        .iter()
+        .any(|reason| reason == "explicit update language");
+
+    let auto = match policy {
+        ReplacementPolicy::Conservative => explicit_update && best.score >= 10,
+        ReplacementPolicy::Balanced => explicit_update && best.score >= 9 && margin >= 2,
+        ReplacementPolicy::Aggressive => best.score >= 8 && margin >= 2,
+    };
+    if auto {
+        return Ok(ReplacementDecision::Replace {
+            target: best.profile.clone(),
+            score: best.score,
+            reasons: best.reasons.clone(),
+        });
+    }
+
+    let queue = match policy {
+        ReplacementPolicy::Conservative => false,
+        ReplacementPolicy::Balanced => {
+            (7..=8).contains(&best.score) || (explicit_update && best.score >= 9 && margin < 2)
+        }
+        ReplacementPolicy::Aggressive => {
+            (6..=7).contains(&best.score) || (best.score >= 8 && margin < 2)
+        }
+    };
+    if queue {
+        return Ok(ReplacementDecision::Queue {
+            target: best.profile.clone(),
+            score: best.score,
+            reasons: best.reasons.clone(),
+        });
+    }
+
+    Ok(ReplacementDecision::InsertNew)
+}
+
+async fn load_candidate_replacement_targets(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    project_id: Uuid,
+    candidate: &CandidateAssertion,
+) -> Result<Vec<MemoryProfile>, sqlx::Error> {
+    sqlx::query(
+        r#"
+        SELECT
+            m.id,
+            m.summary,
+            m.canonical_text,
+            m.memory_type,
+            m.scope,
+            COALESCE((
+                SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
+                FROM memory_tags mt
+                WHERE mt.memory_entry_id = m.id
+            ), ARRAY[]::text[]) AS tags,
+            COALESCE((
+                SELECT ARRAY_AGG(ms.file_path ORDER BY ms.file_path)
+                FROM memory_sources ms
+                WHERE ms.memory_entry_id = m.id
+                  AND ms.file_path IS NOT NULL
+            ), ARRAY[]::text[]) AS files
+        FROM memory_entries m
+        LEFT JOIN imported_memory_entries ime ON ime.memory_entry_id = m.id
+        WHERE m.project_id = $1
+          AND m.status = 'active'
+          AND ime.memory_entry_id IS NULL
+          AND m.memory_type = $2
+          AND m.scope = 'project'
+        "#,
+    )
+    .bind(project_id)
+    .bind(candidate.memory_type.to_string())
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .map(|row| {
+        Ok(MemoryProfile {
+            id: row.try_get("id")?,
+            summary: row.try_get("summary")?,
+            canonical_text: row.try_get("canonical_text")?,
+            memory_type: row.try_get("memory_type")?,
+            scope: row.try_get("scope")?,
+            tags: row.try_get("tags")?,
+            files: row.try_get("files")?,
+        })
+    })
+    .collect()
+}
+
+async fn insert_candidate_memory(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    project_id: Uuid,
+    candidate: &CandidateAssertion,
+) -> Result<Uuid, sqlx::Error> {
+    let memory_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO memory_entries
+            (id, project_id, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
+        VALUES
+            ($1, $2, $3, $4, $5, 'project', $6, $7, 'active', now(), now(), NULL, to_tsvector('english', $3 || ' ' || $4))
+        "#,
+    )
+    .bind(memory_id)
+    .bind(project_id)
+    .bind(&candidate.canonical_text)
+    .bind(&candidate.summary)
+    .bind(candidate.memory_type.to_string())
+    .bind(candidate.importance)
+    .bind(candidate.confidence)
+    .execute(&mut **tx)
+    .await?;
+    Ok(memory_id)
+}
+
+async fn attach_candidate_metadata(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_id: Uuid,
+    task_id: Uuid,
+    candidate: &CandidateAssertion,
+) -> Result<(), sqlx::Error> {
+    for tag in &candidate.tags {
+        sqlx::query(
+            "INSERT INTO memory_tags (memory_entry_id, tag) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(memory_id)
+        .bind(tag)
+        .execute(&mut **tx)
+        .await?;
+    }
+
+    for source in &candidate.sources {
+        let source_kind = source.source_kind_to_string();
+        sqlx::query(
+            r#"
+            INSERT INTO memory_sources
+                (id, memory_entry_id, task_id, file_path, git_commit, source_kind, excerpt, created_at)
+            VALUES
+                ($1, $2, $3, $4, NULL, $5, $6, now())
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(memory_id)
+        .bind(task_id)
+        .bind(&source.file_path)
+        .bind(source_kind)
+        .bind(&source.excerpt)
+        .execute(&mut **tx)
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn rebuild_memory_chunks(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM memory_chunks WHERE memory_entry_id = $1")
+        .bind(memory_id)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO memory_chunks (id, memory_entry_id, chunk_text, search_text, tsv)
+        SELECT $1, id, canonical_text, summary || E'\n' || canonical_text, to_tsvector('english', summary || ' ' || canonical_text)
+        FROM memory_entries
+        WHERE id = $2
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(memory_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn queue_replacement_proposal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    project_id: Uuid,
+    raw_capture_id: Uuid,
+    task_id: Uuid,
+    candidate: &CandidateAssertion,
+    target: &MemoryProfile,
+    policy: ReplacementPolicy,
+    score: i32,
+    reasons: &[String],
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO memory_replacement_proposals
+            (id, project_id, target_memory_id, task_id, raw_capture_id, candidate_json, policy, score, rationale_json, status, created_at, resolved_at)
+        VALUES
+            ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', now(), NULL)
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(project_id)
+    .bind(target.id)
+    .bind(task_id)
+    .bind(raw_capture_id)
+    .bind(sqlx::types::Json(candidate))
+    .bind(policy.to_string())
+    .bind(score)
+    .bind(sqlx::types::Json(reasons))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 pub async fn refresh_memory_relations(
@@ -317,12 +556,22 @@ impl SourceKindSql for mem_ingest::CandidateSource {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct MemoryProfile {
     id: Uuid,
+    summary: String,
     canonical_text: String,
+    memory_type: String,
+    scope: String,
     tags: Vec<String>,
     files: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ScoredReplacement {
+    profile: MemoryProfile,
+    score: i32,
+    reasons: Vec<String>,
 }
 
 async fn refresh_relations(
@@ -371,7 +620,10 @@ async fn refresh_relations(
     .map(|row| {
         Ok(MemoryProfile {
             id: row.try_get("id")?,
+            summary: row.try_get("summary")?,
             canonical_text: row.try_get("canonical_text")?,
+            memory_type: "unknown".to_string(),
+            scope: "project".to_string(),
             tags: row.try_get("tags")?,
             files: row.try_get("files")?,
         })
@@ -426,7 +678,10 @@ async fn load_memory_profile(
     .map(|row| {
         Ok(MemoryProfile {
             id: row.try_get("id")?,
+            summary: row.try_get("summary")?,
             canonical_text: row.try_get("canonical_text")?,
+            memory_type: "unknown".to_string(),
+            scope: "project".to_string(),
             tags: row.try_get("tags")?,
             files: row.try_get("files")?,
         })
@@ -490,6 +745,81 @@ fn classify_relation(current: &MemoryProfile, other: &MemoryProfile) -> Option<M
     None
 }
 
+fn score_replacement_candidate(
+    candidate: &CandidateAssertion,
+    target: MemoryProfile,
+) -> Option<ScoredReplacement> {
+    if target.memory_type != candidate.memory_type.to_string() || target.scope != "project" {
+        return None;
+    }
+
+    let candidate_tokens = normalize_text(&candidate.canonical_text);
+    let target_tokens = normalize_text(&target.canonical_text);
+    let canonical_overlap = token_overlap_ratio(&candidate_tokens, &target_tokens);
+    let candidate_summary_tokens = normalize_text(&candidate.summary);
+    let target_summary_tokens = normalize_text(&target.summary);
+    let summary_overlap = token_overlap_ratio(&candidate_summary_tokens, &target_summary_tokens);
+    let candidate_files = candidate
+        .sources
+        .iter()
+        .filter_map(|source| source.file_path.clone())
+        .collect::<Vec<_>>();
+    let shared_tags = overlap_count(&candidate.tags, &target.tags);
+    let shared_files = overlap_count(&candidate_files, &target.files);
+
+    if canonical_overlap < 0.45 && shared_files == 0 && shared_tags == 0 {
+        return None;
+    }
+
+    let mut score = 0;
+    let mut reasons = Vec::new();
+
+    if canonical_overlap >= 0.75 {
+        score += 4;
+        reasons.push("canonical overlap >= 0.75".to_string());
+    } else if canonical_overlap >= 0.60 {
+        score += 3;
+        reasons.push("canonical overlap >= 0.60".to_string());
+    } else if canonical_overlap >= 0.45 {
+        score += 2;
+        reasons.push("canonical overlap >= 0.45".to_string());
+    }
+
+    if summary_overlap >= 0.70 {
+        score += 2;
+        reasons.push("summary overlap >= 0.70".to_string());
+    } else if summary_overlap >= 0.55 {
+        score += 1;
+        reasons.push("summary overlap >= 0.55".to_string());
+    }
+
+    if shared_files > 0 {
+        score += 3;
+        reasons.push("shared source files".to_string());
+    }
+
+    if shared_tags >= 2 {
+        score += 2;
+        reasons.push("shared tags >= 2".to_string());
+    } else if shared_tags == 1 {
+        score += 1;
+        reasons.push("shared tag".to_string());
+    }
+
+    if has_explicit_update_language(&candidate.summary)
+        || has_explicit_update_language(&candidate.canonical_text)
+    {
+        score += 3;
+        reasons.push("explicit update language".to_string());
+    }
+
+    Some(ScoredReplacement {
+        profile: target,
+        score,
+        reasons,
+    })
+}
+
 fn normalize_text(text: &str) -> Vec<String> {
     text.split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '/')))
         .filter_map(|segment| {
@@ -549,6 +879,194 @@ fn has_dependency_language(text: &str) -> bool {
         .any(|needle| lowered.contains(needle))
 }
 
+fn has_explicit_update_language(text: &str) -> bool {
+    let lowered = text.to_ascii_lowercase();
+    [
+        "replace",
+        "replaced",
+        "supersede",
+        "superseded",
+        "migrate",
+        "migrated",
+        "now uses",
+        "no longer",
+        "deprecated",
+        "instead of",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
+}
+
+pub async fn list_replacement_proposals(
+    pool: &PgPool,
+    project: &str,
+) -> Result<ReplacementProposalListResponse, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            mrp.id,
+            m.id AS target_memory_id,
+            m.summary AS target_summary,
+            mrp.candidate_json,
+            mrp.policy,
+            mrp.score,
+            mrp.rationale_json,
+            mrp.created_at
+        FROM memory_replacement_proposals mrp
+        JOIN projects p ON p.id = mrp.project_id
+        JOIN memory_entries m ON m.id = mrp.target_memory_id
+        WHERE p.slug = $1
+          AND mrp.status = 'pending'
+        ORDER BY mrp.created_at DESC
+        "#,
+    )
+    .bind(project)
+    .fetch_all(pool)
+    .await?;
+
+    let proposals = rows
+        .into_iter()
+        .map(|row| {
+            let candidate: sqlx::types::Json<CandidateAssertion> = row.try_get("candidate_json")?;
+            let policy_value: String = row.try_get("policy")?;
+            let policy = match policy_value.as_str() {
+                "conservative" => ReplacementPolicy::Conservative,
+                "aggressive" => ReplacementPolicy::Aggressive,
+                _ => ReplacementPolicy::Balanced,
+            };
+            let reasons_json: sqlx::types::Json<Vec<String>> = row.try_get("rationale_json")?;
+            Ok(ReplacementProposalRecord {
+                id: row.try_get("id")?,
+                project: project.to_string(),
+                target_memory_id: row.try_get("target_memory_id")?,
+                target_summary: row.try_get("target_summary")?,
+                candidate_summary: candidate.0.summary.clone(),
+                candidate_canonical_text: candidate.0.canonical_text.clone(),
+                candidate_memory_type: candidate.0.memory_type.clone(),
+                score: row.try_get("score")?,
+                policy,
+                reasons: reasons_json.0,
+                created_at: row.try_get("created_at")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()?;
+
+    Ok(ReplacementProposalListResponse {
+        project: project.to_string(),
+        proposals,
+    })
+}
+
+pub async fn approve_replacement_proposal(
+    pool: &PgPool,
+    project: &str,
+    proposal_id: Uuid,
+) -> Result<ReplacementProposalResolutionResponse, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query(
+        r#"
+        SELECT
+            mrp.target_memory_id,
+            m.summary AS target_summary,
+            mrp.task_id,
+            mrp.candidate_json,
+            mrp.policy
+        FROM memory_replacement_proposals mrp
+        JOIN projects p ON p.id = mrp.project_id
+        JOIN memory_entries m ON m.id = mrp.target_memory_id
+        WHERE p.slug = $1
+          AND mrp.id = $2
+          AND mrp.status = 'pending'
+        "#,
+    )
+    .bind(project)
+    .bind(proposal_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let target_memory_id: Uuid = row.try_get("target_memory_id")?;
+    let target_summary: String = row.try_get("target_summary")?;
+    let task_id: Uuid = row.try_get("task_id")?;
+    let candidate: sqlx::types::Json<CandidateAssertion> = row.try_get("candidate_json")?;
+    let policy = match row.try_get::<String, _>("policy")?.as_str() {
+        "conservative" => ReplacementPolicy::Conservative,
+        "aggressive" => ReplacementPolicy::Aggressive,
+        _ => ReplacementPolicy::Balanced,
+    };
+
+    let project_row = sqlx::query("SELECT id FROM projects WHERE slug = $1")
+        .bind(project)
+        .fetch_one(&mut *tx)
+        .await?;
+    let project_id: Uuid = project_row.try_get("id")?;
+
+    let new_memory_id = insert_candidate_memory(&mut tx, project_id, &candidate.0).await?;
+    attach_candidate_metadata(&mut tx, new_memory_id, task_id, &candidate.0).await?;
+    rebuild_memory_chunks(&mut tx, new_memory_id).await?;
+    sqlx::query(
+        "UPDATE memory_replacement_proposals SET status = 'approved', resolved_at = now() WHERE id = $1",
+    )
+    .bind(proposal_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM memory_entries WHERE id = $1")
+        .bind(target_memory_id)
+        .execute(&mut *tx)
+        .await?;
+    refresh_relations(&mut tx, project_id, new_memory_id).await?;
+    tx.commit().await?;
+
+    Ok(ReplacementProposalResolutionResponse {
+        project: project.to_string(),
+        proposal_id,
+        status: "approved".to_string(),
+        policy,
+        target_memory_id,
+        target_summary,
+        candidate_summary: candidate.0.summary.clone(),
+        new_memory_id: Some(new_memory_id),
+    })
+}
+
+pub async fn reject_replacement_proposal(
+    pool: &PgPool,
+    project: &str,
+    proposal_id: Uuid,
+) -> Result<ReplacementProposalResolutionResponse, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        UPDATE memory_replacement_proposals mrp
+        SET status = 'rejected', resolved_at = now()
+        FROM projects p, memory_entries m
+        WHERE p.id = mrp.project_id
+          AND m.id = mrp.target_memory_id
+          AND p.slug = $1
+          AND mrp.id = $2
+          AND mrp.status = 'pending'
+        RETURNING mrp.target_memory_id, m.summary AS target_summary, mrp.candidate_json, mrp.policy
+        "#,
+    )
+    .bind(project)
+    .bind(proposal_id)
+    .fetch_one(pool)
+    .await?;
+    let candidate: sqlx::types::Json<CandidateAssertion> = row.try_get("candidate_json")?;
+    let policy = match row.try_get::<String, _>("policy")?.as_str() {
+        "conservative" => ReplacementPolicy::Conservative,
+        "aggressive" => ReplacementPolicy::Aggressive,
+        _ => ReplacementPolicy::Balanced,
+    };
+    Ok(ReplacementProposalResolutionResponse {
+        project: project.to_string(),
+        proposal_id,
+        status: "rejected".to_string(),
+        policy,
+        target_memory_id: row.try_get("target_memory_id")?,
+        target_summary: row.try_get("target_summary")?,
+        candidate_summary: candidate.0.summary.clone(),
+        new_memory_id: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,7 +1074,10 @@ mod tests {
     fn profile(canonical_text: &str, tags: &[&str], files: &[&str]) -> MemoryProfile {
         MemoryProfile {
             id: Uuid::new_v4(),
+            summary: canonical_text.to_string(),
             canonical_text: canonical_text.to_string(),
+            memory_type: "convention".to_string(),
+            scope: "project".to_string(),
             tags: tags.iter().map(|value| value.to_string()).collect(),
             files: files.iter().map(|value| value.to_string()).collect(),
         }

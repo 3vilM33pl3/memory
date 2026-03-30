@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use mem_api::{
     AppConfig, AutomationConfig, AutomationMode, AutomationStatus, CaptureTaskRequest,
     CurateRequest, CurateResponse, ProjectOverviewResponse, TestResult, WatcherHeartbeatRequest,
-    WatcherPresenceSummary, WatcherUnregisterRequest,
+    WatcherPresenceSummary, WatcherUnregisterRequest, load_repo_replacement_policy,
 };
 use reqwest::{Client, header::HeaderMap};
 use serde::{Deserialize, Serialize};
@@ -328,7 +328,9 @@ pub async fn run_curate_flow(
     client: &Client,
     config: &AppConfig,
     project: &str,
+    repo_root: &Path,
 ) -> Result<CurateResponse> {
+    let replacement_policy = load_repo_replacement_policy(repo_root).unwrap_or_default();
     send_json(
         client
             .post(service_url(config, "/v1/curate"))
@@ -336,6 +338,7 @@ pub async fn run_curate_flow(
             .json(&CurateRequest {
                 project: project.to_string(),
                 batch_size: None,
+                replacement_policy: Some(replacement_policy),
             })
             .send()
             .await?,
@@ -553,7 +556,8 @@ pub async fn run_once(
                     force_curate,
                 );
                 if curate {
-                    let curate_response = run_curate_flow(client, config, project).await?;
+                    let curate_response =
+                        run_curate_flow(client, config, project, repo_root).await?;
                     let decision = DecisionRecord {
                         at: Some(Utc::now()),
                         action: "captured_curated".to_string(),
@@ -608,7 +612,7 @@ pub async fn run_once(
                 force_curate,
             );
             if curate {
-                let curate_response = run_curate_flow(client, config, project).await?;
+                let curate_response = run_curate_flow(client, config, project, repo_root).await?;
                 let decision = DecisionRecord {
                     at: Some(Utc::now()),
                     action: "curated".to_string(),
