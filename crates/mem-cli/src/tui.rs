@@ -58,7 +58,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
     let mut terminal = setup_terminal()?;
     let mut app = App::new(project, repo_root, detect_tool_versions());
     terminal.draw(|frame| draw(frame, &app))?;
-    app.refresh(&api).await;
+    app.refresh(&api, RefreshMode::Startup).await;
     let mut stream = StreamSession::connect(&api).await.ok();
     if let Some(stream_session) = stream.as_mut() {
         subscribe_stream(stream_session, &app).await?;
@@ -122,6 +122,7 @@ struct App {
     query_selected_index: usize,
     query_table_state: TableState,
     resume_response: Option<ResumeResponse>,
+    resume_loaded: bool,
     resume_scroll: u16,
     activity_events: Vec<ActivityEntry>,
     activity_selected_index: usize,
@@ -164,6 +165,12 @@ enum QueryLogOutcome {
     Error(String),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RefreshMode {
+    Startup,
+    Full,
+}
+
 impl App {
     fn new(project: String, repo_root: PathBuf, versions: ToolVersions) -> Self {
         let mut table_state = TableState::default();
@@ -190,6 +197,7 @@ impl App {
             query_selected_index: 0,
             query_table_state,
             resume_response: None,
+            resume_loaded: false,
             resume_scroll: 0,
             activity_events: Vec::new(),
             activity_selected_index: 0,
@@ -208,12 +216,19 @@ impl App {
         }
     }
 
-    async fn refresh(&mut self, api: &ApiClient) {
+    async fn refresh(&mut self, api: &ApiClient, mode: RefreshMode) {
         self.status_message = "Refreshing...".to_string();
         self.selected_detail = None;
         self.replacement_policy = load_repo_replacement_policy(&self.repo_root).unwrap_or_default();
 
-        match api.health().await {
+        let health_fut = api.health();
+        let overview_fut = api.project_overview(&self.project);
+        let memories_fut = api.project_memories(&self.project);
+        let proposals_fut = api.replacement_proposals(&self.project);
+        let (health_result, overview_result, memories_result, proposals_result) =
+            tokio::join!(health_fut, overview_fut, memories_fut, proposals_fut);
+
+        match health_result {
             Ok(health) => {
                 self.health_ok = true;
                 if let Some(version) = health.get("version").and_then(|value| value.as_str()) {
@@ -228,12 +243,12 @@ impl App {
             }
         }
 
-        match api.project_overview(&self.project).await {
+        match overview_result {
             Ok(overview) => self.overview = overview,
             Err(error) => self.status_message = error.to_string(),
         }
 
-        match api.project_memories(&self.project).await {
+        match memories_result {
             Ok(ProjectMemoriesResponse {
                 project: _,
                 total,
@@ -259,7 +274,7 @@ impl App {
             }
         }
 
-        match api.replacement_proposals(&self.project).await {
+        match proposals_result {
             Ok(response) => {
                 self.replacement_proposals = response.proposals;
                 if self.replacement_proposals.is_empty() {
@@ -277,7 +292,9 @@ impl App {
             }
         }
 
-        self.refresh_resume(api).await;
+        if mode == RefreshMode::Full || self.active_tab == TabKind::Resume {
+            self.refresh_resume(api).await;
+        }
     }
 
     async fn refresh_resume(&mut self, api: &ApiClient) {
@@ -298,6 +315,7 @@ impl App {
                     || !response.commits.is_empty()
                     || !response.changed_memories.is_empty();
                 self.resume_response = Some(response);
+                self.resume_loaded = true;
                 if checkpoint.is_some() && has_changes {
                     self.active_tab = TabKind::Resume;
                 }
@@ -305,6 +323,7 @@ impl App {
             Err(error) => {
                 self.status_message = format!("Resume unavailable: {error}");
                 self.resume_response = None;
+                self.resume_loaded = false;
             }
         }
     }
@@ -338,11 +357,19 @@ impl App {
         match key.code {
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') if key.modifiers.is_empty() => {
                 self.active_tab = self.active_tab.next();
+                if self.active_tab == TabKind::Resume && !self.resume_loaded {
+                    self.refresh_resume(api).await;
+                }
             }
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') if key.modifiers.is_empty() => {
                 self.active_tab = self.active_tab.prev();
+                if self.active_tab == TabKind::Resume && !self.resume_loaded {
+                    self.refresh_resume(api).await;
+                }
             }
-            KeyCode::Char('r') if key.modifiers.is_empty() => self.refresh(api).await,
+            KeyCode::Char('r') if key.modifiers.is_empty() => {
+                self.refresh(api, RefreshMode::Full).await
+            }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Resume => {
                 self.scroll_resume(1);
             }
@@ -490,13 +517,13 @@ impl App {
                     response.replaced_count,
                     response.proposal_count
                 );
-                self.refresh(api).await;
+                self.refresh(api, RefreshMode::Full).await;
             }
             KeyCode::Char('i') if key.modifiers.is_empty() => {
                 let response = api.reindex(&self.project).await?;
                 self.status_message =
                     format!("Reindexed {} memory entries.", response.reindexed_entries);
-                self.refresh(api).await;
+                self.refresh(api, RefreshMode::Full).await;
             }
             KeyCode::Char('e') if key.modifiers.is_empty() => {
                 let response = api.reembed(&self.project).await?;
@@ -504,7 +531,7 @@ impl App {
                     "Materialized {} chunk embeddings for the active space.",
                     response.reembedded_chunks
                 );
-                self.refresh(api).await;
+                self.refresh(api, RefreshMode::Full).await;
             }
             KeyCode::Char('a') if key.modifiers.is_empty() => {
                 let response = api.archive_low_value(&self.project).await?;
@@ -512,7 +539,7 @@ impl App {
                     "Archived {} low-value memories using default thresholds.",
                     response.archived_count
                 );
-                self.refresh(api).await;
+                self.refresh(api, RefreshMode::Full).await;
             }
             KeyCode::Char('D') if key.modifiers == KeyModifiers::SHIFT => {
                 if self.active_tab == TabKind::Memories {
@@ -644,6 +671,7 @@ impl App {
                 self.total_memories = memories.total;
                 self.all_memories = memories.items;
                 self.apply_filters();
+                self.resume_loaded = false;
                 self.status_message = format!(
                     "Streaming update: {} visible memories ({} total).",
                     self.filtered_memories.len(),
@@ -694,6 +722,7 @@ impl App {
                     elapsed_ms,
                     QueryLogOutcome::Success(response.clone()),
                 );
+                self.resume_loaded = false;
                 self.query_last_duration_ms = Some(elapsed_ms);
                 self.query_response = Some(response);
                 self.query_selected_index = 0;
@@ -717,6 +746,7 @@ impl App {
                     elapsed_ms,
                     QueryLogOutcome::Error(error.to_string()),
                 );
+                self.resume_loaded = false;
                 self.query_response = None;
                 self.query_last_duration_ms = Some(elapsed_ms);
                 self.query_selected_detail = None;
@@ -860,7 +890,7 @@ impl App {
             "Approved replacement: {} -> {}",
             response.target_summary, response.candidate_summary
         );
-        self.refresh(api).await;
+        self.refresh(api, RefreshMode::Full).await;
         Ok(())
     }
 
@@ -880,7 +910,7 @@ impl App {
             "Rejected replacement proposal for {}.",
             response.target_summary
         );
-        self.refresh(api).await;
+        self.refresh(api, RefreshMode::Full).await;
         Ok(())
     }
 
@@ -891,7 +921,7 @@ impl App {
         };
         let response = api.delete_memory(item.id).await?;
         self.status_message = format!("Deleted memory: {}", response.summary);
-        self.refresh(api).await;
+        self.refresh(api, RefreshMode::Full).await;
         Ok(())
     }
 
@@ -904,7 +934,7 @@ impl App {
         self.status_message = format!("Deleted memory: {}", response.summary);
         self.query_selected_detail = None;
         self.run_query(api).await;
-        self.refresh(api).await;
+        self.refresh(api, RefreshMode::Full).await;
         Ok(())
     }
 
