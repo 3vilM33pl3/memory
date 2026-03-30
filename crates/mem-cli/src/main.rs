@@ -25,9 +25,9 @@ use mem_api::{
     ProjectMemoryBundlePreview, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
     ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
     PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse, ReembedRequest,
-    ReembedResponse, ReindexRequest, ReindexResponse, ResumeRequest, ResumeResponse,
-    ScanActivityRequest, TestResult,
-    discover_global_config_path, discover_repo_env_path, read_repo_project_slug,
+    ReembedResponse, ReindexRequest, ReindexResponse, ReplacementPolicy, ResumeRequest,
+    ResumeResponse, ScanActivityRequest, TestResult, discover_global_config_path,
+    discover_repo_env_path, load_repo_replacement_policy, read_repo_project_slug,
 };
 use mem_platform as platform;
 use mem_watch::{flush_path, load_state, run_once, to_status};
@@ -715,13 +715,16 @@ async fn main() -> Result<()> {
         }
         Command::Remember(args) => {
             let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
             let project = resolve_project_slug(args.project.clone(), &cwd)?;
             let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
             let request =
                 build_remember_request(args, &project, &writer.id, writer.name.as_deref())?;
             let api = ApiClient::new(client, config);
             let capture = api.capture_task(&request).await?;
-            let curate = api.curate(&project).await?;
+            let curate = api
+                .curate(&project, repo_replacement_policy(&repo_root))
+                .await?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
@@ -731,12 +734,16 @@ async fn main() -> Result<()> {
             );
         }
         Command::Curate(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            let replacement_policy = repo_replacement_policy(&repo_root);
             let response = client
                 .post(service_url(&config, "/v1/curate"))
                 .headers(write_headers(&config.service.api_token)?)
                 .json(&CurateRequest {
                     project: args.project,
                     batch_size: args.batch_size,
+                    replacement_policy: Some(replacement_policy),
                 })
                 .send()
                 .await?;
@@ -843,9 +850,10 @@ async fn main() -> Result<()> {
         }
         Command::Tui(args) => {
             let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
             let project = resolve_project_slug(args.project, &cwd)?;
             let api = ApiClient::new(client, config);
-            tui::run(api, project).await?;
+            tui::run(api, project, repo_root).await?;
         }
     }
 
@@ -2170,6 +2178,10 @@ fn default_global_config_path_label() -> String {
     default_global_config_path().display().to_string()
 }
 
+fn repo_replacement_policy(repo_root: &Path) -> ReplacementPolicy {
+    load_repo_replacement_policy(repo_root).unwrap_or_default()
+}
+
 fn initialize_repo(
     repo_root: &Path,
     project: &str,
@@ -3131,6 +3143,9 @@ analyzers = ["rust", "typescript", "python"]
 
 [retrieval]
 graph_enabled = false
+
+[curation]
+replacement_policy = "balanced"
 "#,
         repo_root.display()
     )
@@ -3249,6 +3264,60 @@ impl ApiClient {
                     &self.config,
                     &format!("/v1/projects/{project}/overview"),
                 ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn replacement_proposals(
+        &self,
+        project: &str,
+    ) -> Result<mem_api::ReplacementProposalListResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/replacement-proposals"),
+                ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn approve_replacement_proposal(
+        &self,
+        project: &str,
+        proposal_id: Uuid,
+    ) -> Result<mem_api::ReplacementProposalResolutionResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/replacement-proposals/{proposal_id}/approve"),
+                ))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .json(&serde_json::json!({}))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn reject_replacement_proposal(
+        &self,
+        project: &str,
+        proposal_id: Uuid,
+    ) -> Result<mem_api::ReplacementProposalResolutionResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/replacement-proposals/{proposal_id}/reject"),
+                ))
+                .headers(write_headers(&self.config.service.api_token)?)
+                .json(&serde_json::json!({}))
                 .send()
                 .await?,
         )
@@ -3456,7 +3525,11 @@ impl ApiClient {
         .await
     }
 
-    pub(crate) async fn curate(&self, project: &str) -> Result<CurateResponse> {
+    pub(crate) async fn curate(
+        &self,
+        project: &str,
+        replacement_policy: ReplacementPolicy,
+    ) -> Result<CurateResponse> {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/curate"))
@@ -3464,6 +3537,7 @@ impl ApiClient {
                 .json(&CurateRequest {
                     project: project.to_string(),
                     batch_size: None,
+                    replacement_policy: Some(replacement_policy),
                 })
                 .send()
                 .await?,
@@ -3714,9 +3788,7 @@ fn print_scan_report(report: &scan::ScanReport) {
             println!("- {}", preview.summary);
             println!(
                 "  type={} confidence={:.2} importance={}",
-                preview.memory_type,
-                preview.confidence,
-                preview.importance,
+                preview.memory_type, preview.confidence, preview.importance,
             );
             if !preview.provenance_preview.is_empty() {
                 println!("  provenance: {}", preview.provenance_preview.join(" | "));

@@ -11,7 +11,7 @@ use mem_analyze::{AnalysisReport, AnalyzerSummary};
 use mem_api::{
     AgentProjectConfig, AppConfig, CaptureCandidateInput, CaptureCandidateSourceInput,
     CaptureTaskRequest, MemoryType, ScanActivityRequest, SourceKind, discover_global_config_path,
-    discover_repo_env_path, load_repo_agent_settings,
+    discover_repo_env_path, load_repo_agent_settings, load_repo_replacement_policy,
 };
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
@@ -184,7 +184,12 @@ pub(crate) async fn run_scan(
     }
 
     let capture = api.capture_task(&request).await?;
-    let curate = api.curate(project).await?;
+    let curate = api
+        .curate(
+            project,
+            load_repo_replacement_policy(repo_root).unwrap_or_default(),
+        )
+        .await?;
     let report = ScanReport {
         project: project.to_string(),
         repo_root: repo_root.display().to_string(),

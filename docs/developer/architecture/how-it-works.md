@@ -305,11 +305,16 @@ The broad pipeline is:
 2. extract candidate facts
 3. classify memory type
 4. reject weak, speculative, or transient statements
-5. dedupe against existing memory
-6. insert or update canonical memory
+5. exact-dedupe against existing memory
+6. for non-duplicates, either:
+   - insert a new canonical memory
+   - replace an older local memory when the candidate is a clear update
+   - queue an ambiguous update as a replacement proposal for review
 7. attach provenance and tags
 8. regenerate search chunks
-9. record the curation run
+9. record the curation run and any replacement events
+
+Canonical memories remain immutable. When curation decides that a new candidate updates an older memory, it inserts the new memory and deletes the old one rather than editing in place. Project policy for this lives in `.agents/memory-layer.toml` under `[curation].replacement_policy`.
 
 The important tradeoff here is determinism over maximum semantic richness. The current implementation favors predictable, inspectable behavior and provenance-backed memory over aggressive inference.
 

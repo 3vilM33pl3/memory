@@ -1,10 +1,11 @@
 use std::{
-    io,
+    fs, io,
+    path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -14,8 +15,9 @@ use crossterm::{
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
     NamedCount, ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse,
-    QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, ResumeRequest,
-    ResumeResponse, StreamRequest, StreamResponse, WatcherHealth, read_capnp_text_frame,
+    QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, ReplacementPolicy,
+    ReplacementProposalRecord, ResumeRequest, ResumeResponse, StreamRequest, StreamResponse,
+    WatcherHealth, load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
     write_capnp_text_frame,
 };
 use ratatui::{
@@ -52,9 +54,9 @@ impl Theme {
     const SELECTION_FG: Color = Color::Rgb(250, 251, 255);
 }
 
-pub(crate) async fn run(api: ApiClient, project: String) -> Result<()> {
+pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> Result<()> {
     let mut terminal = setup_terminal()?;
-    let mut app = App::new(project, detect_tool_versions());
+    let mut app = App::new(project, repo_root, detect_tool_versions());
     terminal.draw(|frame| draw(frame, &app))?;
     app.refresh(&api).await;
     let mut stream = StreamSession::connect(&api).await.ok();
@@ -104,6 +106,7 @@ pub(crate) async fn run(api: ApiClient, project: String) -> Result<()> {
 
 struct App {
     project: String,
+    repo_root: PathBuf,
     active_tab: TabKind,
     all_memories: Vec<ProjectMemoryListItem>,
     filtered_memories: Vec<ProjectMemoryListItem>,
@@ -126,6 +129,9 @@ struct App {
     memory_detail_scroll: u16,
     project_scroll: u16,
     watcher_scroll: u16,
+    replacement_policy: ReplacementPolicy,
+    replacement_proposals: Vec<ReplacementProposalRecord>,
+    replacement_selected_index: usize,
     versions: ToolVersions,
     status_message: String,
     health_ok: bool,
@@ -159,7 +165,7 @@ enum QueryLogOutcome {
 }
 
 impl App {
-    fn new(project: String, versions: ToolVersions) -> Self {
+    fn new(project: String, repo_root: PathBuf, versions: ToolVersions) -> Self {
         let mut table_state = TableState::default();
         table_state.select(Some(0));
         let mut query_table_state = TableState::default();
@@ -168,6 +174,7 @@ impl App {
         activity_table_state.select(Some(0));
         Self {
             project: project.clone(),
+            repo_root: repo_root.clone(),
             active_tab: TabKind::Memories,
             all_memories: Vec::new(),
             filtered_memories: Vec::new(),
@@ -190,6 +197,9 @@ impl App {
             memory_detail_scroll: 0,
             project_scroll: 0,
             watcher_scroll: 0,
+            replacement_policy: load_repo_replacement_policy(&repo_root).unwrap_or_default(),
+            replacement_proposals: Vec::new(),
+            replacement_selected_index: 0,
             versions,
             status_message: "Loading project data...".to_string(),
             health_ok: false,
@@ -201,6 +211,7 @@ impl App {
     async fn refresh(&mut self, api: &ApiClient) {
         self.status_message = "Refreshing...".to_string();
         self.selected_detail = None;
+        self.replacement_policy = load_repo_replacement_policy(&self.repo_root).unwrap_or_default();
 
         match api.health().await {
             Ok(health) => {
@@ -244,6 +255,24 @@ impl App {
                 self.total_memories = 0;
                 self.selected_detail = None;
                 self.table_state.select(None);
+                self.status_message = error.to_string();
+            }
+        }
+
+        match api.replacement_proposals(&self.project).await {
+            Ok(response) => {
+                self.replacement_proposals = response.proposals;
+                if self.replacement_proposals.is_empty() {
+                    self.replacement_selected_index = 0;
+                } else {
+                    self.replacement_selected_index = self
+                        .replacement_selected_index
+                        .min(self.replacement_proposals.len() - 1);
+                }
+            }
+            Err(error) => {
+                self.replacement_proposals.clear();
+                self.replacement_selected_index = 0;
                 self.status_message = error.to_string();
             }
         }
@@ -377,6 +406,31 @@ impl App {
             KeyCode::Home if self.active_tab == TabKind::Project => {
                 self.project_scroll = 0;
             }
+            KeyCode::Char('p')
+                if self.active_tab == TabKind::Project && key.modifiers.is_empty() =>
+            {
+                self.cycle_replacement_policy().await?;
+            }
+            KeyCode::Char('[')
+                if self.active_tab == TabKind::Project && key.modifiers.is_empty() =>
+            {
+                self.select_replacement_proposal(-1);
+            }
+            KeyCode::Char(']')
+                if self.active_tab == TabKind::Project && key.modifiers.is_empty() =>
+            {
+                self.select_replacement_proposal(1);
+            }
+            KeyCode::Char('y')
+                if self.active_tab == TabKind::Project && key.modifiers.is_empty() =>
+            {
+                self.approve_selected_replacement_proposal(api).await?;
+            }
+            KeyCode::Char('n')
+                if self.active_tab == TabKind::Project && key.modifiers.is_empty() =>
+            {
+                self.reject_selected_replacement_proposal(api).await?;
+            }
             KeyCode::PageDown if self.active_tab == TabKind::Watchers => {
                 self.scroll_watchers(8);
             }
@@ -428,10 +482,13 @@ impl App {
                 self.status_message = "Cleared filters.".to_string();
             }
             KeyCode::Char('c') if key.modifiers.is_empty() => {
-                let response = api.curate(&self.project).await?;
+                let response = api.curate(&self.project, self.replacement_policy).await?;
                 self.status_message = format!(
-                    "Curated {} captures into {} memories.",
-                    response.input_count, response.output_count
+                    "Curated {} captures into {} memories with {} replacement(s) and {} queued proposal(s).",
+                    response.input_count,
+                    response.output_count,
+                    response.replaced_count,
+                    response.proposal_count
                 );
                 self.refresh(api).await;
             }
@@ -746,6 +803,71 @@ impl App {
             self.activity_table_state
                 .select(Some(self.activity_selected_index));
         }
+    }
+
+    fn select_replacement_proposal(&mut self, delta: isize) {
+        if self.replacement_proposals.is_empty() {
+            return;
+        }
+        let next = (self.replacement_selected_index as isize + delta).clamp(
+            0,
+            self.replacement_proposals.len().saturating_sub(1) as isize,
+        ) as usize;
+        self.replacement_selected_index = next;
+    }
+
+    async fn cycle_replacement_policy(&mut self) -> Result<()> {
+        self.replacement_policy = match self.replacement_policy {
+            ReplacementPolicy::Conservative => ReplacementPolicy::Balanced,
+            ReplacementPolicy::Balanced => ReplacementPolicy::Aggressive,
+            ReplacementPolicy::Aggressive => ReplacementPolicy::Conservative,
+        };
+        write_replacement_policy(&self.repo_root, self.replacement_policy)?;
+        self.status_message = format!(
+            "Curation replacement policy set to {}.",
+            self.replacement_policy
+        );
+        Ok(())
+    }
+
+    async fn approve_selected_replacement_proposal(&mut self, api: &ApiClient) -> Result<()> {
+        let Some(proposal) = self
+            .replacement_proposals
+            .get(self.replacement_selected_index)
+            .cloned()
+        else {
+            self.status_message = "No pending replacement proposal selected.".to_string();
+            return Ok(());
+        };
+        let response = api
+            .approve_replacement_proposal(&self.project, proposal.id)
+            .await?;
+        self.status_message = format!(
+            "Approved replacement: {} -> {}",
+            response.target_summary, response.candidate_summary
+        );
+        self.refresh(api).await;
+        Ok(())
+    }
+
+    async fn reject_selected_replacement_proposal(&mut self, api: &ApiClient) -> Result<()> {
+        let Some(proposal) = self
+            .replacement_proposals
+            .get(self.replacement_selected_index)
+            .cloned()
+        else {
+            self.status_message = "No pending replacement proposal selected.".to_string();
+            return Ok(());
+        };
+        let response = api
+            .reject_replacement_proposal(&self.project, proposal.id)
+            .await?;
+        self.status_message = format!(
+            "Rejected replacement proposal for {}.",
+            response.target_summary
+        );
+        self.refresh(api).await;
+        Ok(())
     }
 
     async fn delete_selected_memory(&mut self, api: &ApiClient) -> Result<()> {
@@ -1568,6 +1690,16 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             "Watchers",
             Span::styled(watcher_summary_text(app), Style::default().fg(Theme::TEXT)),
         ),
+        metric_line(
+            "Curation policy",
+            Span::styled(
+                format!(
+                    "{} / {} pending proposal(s)",
+                    app.replacement_policy, app.overview.pending_replacement_proposals
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ),
     ])
     .scroll((app.project_scroll, 0))
     .style(Style::default().bg(Theme::PANEL))
@@ -1633,9 +1765,20 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 
     let bottom = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8), Constraint::Length(7)])
+        .constraints([
+            Constraint::Length(8),
+            Constraint::Min(8),
+            Constraint::Length(7),
+        ])
         .split(chunks[2]);
 
+    frame.render_widget(
+        Paragraph::new(replacement_proposal_lines(app))
+            .style(Style::default().bg(Theme::PANEL_ALT))
+            .wrap(Wrap { trim: false })
+            .block(themed_block("Curation Review")),
+        bottom[0],
+    );
     frame.render_widget(
         Paragraph::new(lines_for_named_counts(
             app.overview
@@ -1647,7 +1790,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         ))
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block("Top Files")),
-        bottom[0],
+        bottom[1],
     );
     frame.render_widget(
         Paragraph::new(vec![
@@ -1671,11 +1814,19 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 "a archive low-value memories",
                 Style::default().fg(Theme::TEXT),
             )),
+            Line::from(Span::styled(
+                "p cycle policy / [ ] select proposal",
+                Style::default().fg(Theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "y approve / n reject selected proposal",
+                Style::default().fg(Theme::TEXT),
+            )),
             Line::from(Span::styled("r refresh", Style::default().fg(Theme::TEXT))),
         ])
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block("Operations")),
-        bottom[1],
+        bottom[2],
     );
 }
 
@@ -2344,6 +2495,104 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
     lines
 }
 
+fn replacement_proposal_lines(app: &App) -> Vec<Line<'static>> {
+    if app.replacement_proposals.is_empty() {
+        return vec![
+            Line::from(Span::styled(
+                format!(
+                    "Policy: {}. No pending replacement proposals.",
+                    app.replacement_policy
+                ),
+                Style::default().fg(Theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                "Use `p` to cycle policy. Clear updates replace automatically; ambiguous ones queue here.",
+                Style::default().fg(Theme::MUTED),
+            )),
+        ];
+    }
+
+    let proposal = &app.replacement_proposals[app.replacement_selected_index];
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!(
+                "{} pending proposal(s) / selected {}/{}",
+                app.replacement_proposals.len(),
+                app.replacement_selected_index + 1,
+                app.replacement_proposals.len()
+            ),
+            Style::default().fg(Theme::TEXT),
+        )),
+        Line::from(vec![
+            label_span("Target: "),
+            Span::styled(
+                proposal.target_summary.clone(),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Candidate: "),
+            Span::styled(
+                proposal.candidate_summary.clone(),
+                Style::default().fg(Theme::ACCENT),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Type / Score / Policy: "),
+            Span::styled(
+                format!(
+                    "{} / {} / {}",
+                    proposal.candidate_memory_type, proposal.score, proposal.policy
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+    ];
+    if !proposal.reasons.is_empty() {
+        lines.push(Line::from(vec![
+            label_span("Why: "),
+            Span::styled(
+                proposal.reasons.join(", "),
+                Style::default().fg(Theme::MUTED),
+            ),
+        ]));
+    }
+    lines.push(Line::from(Span::styled(
+        proposal.candidate_canonical_text.clone(),
+        Style::default().fg(Theme::MUTED),
+    )));
+    lines
+}
+
+fn write_replacement_policy(repo_root: &Path, policy: ReplacementPolicy) -> Result<()> {
+    let path = repo_agent_settings_path(repo_root);
+    let mut value = if path.exists() {
+        fs::read_to_string(&path)?
+            .parse::<toml::Value>()
+            .context("parse .agents/memory-layer.toml")?
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+    let table = value
+        .as_table_mut()
+        .context(".agents/memory-layer.toml must be a top-level table")?;
+    let curation = table
+        .entry("curation".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let curation_table = curation
+        .as_table_mut()
+        .context("[curation] must be a table")?;
+    curation_table.insert(
+        "replacement_policy".to_string(),
+        toml::Value::String(policy.to_string()),
+    );
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, toml::to_string_pretty(&value)?)?;
+    Ok(())
+}
+
 fn memory_row(item: &ProjectMemoryListItem) -> Row<'static> {
     let row_style = match item.status {
         MemoryStatus::Active => Style::default().fg(Theme::TEXT).bg(Theme::PANEL),
@@ -2743,6 +2992,8 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                 run_id,
                 input_count,
                 output_count,
+                replaced_count,
+                proposal_count,
             } => {
                 lines.push(activity_kv_line("Run", run_id.to_string()));
                 lines.push(activity_kv_line("Input captures", input_count.to_string()));
@@ -2750,6 +3001,26 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                     "Output memories",
                     output_count.to_string(),
                 ));
+                lines.push(activity_kv_line("Replacements", replaced_count.to_string()));
+                lines.push(activity_kv_line(
+                    "Queued proposals",
+                    proposal_count.to_string(),
+                ));
+            }
+            ActivityDetails::MemoryReplacement {
+                old_memory_id,
+                old_summary,
+                new_memory_id,
+                new_summary,
+                automatic,
+                policy,
+            } => {
+                lines.push(activity_kv_line("Old memory", old_memory_id.to_string()));
+                lines.push(activity_kv_line("Old summary", old_summary.clone()));
+                lines.push(activity_kv_line("New memory", new_memory_id.to_string()));
+                lines.push(activity_kv_line("New summary", new_summary.clone()));
+                lines.push(activity_kv_line("Automatic", automatic.to_string()));
+                lines.push(activity_kv_line("Policy", policy.to_string()));
             }
             ActivityDetails::Reindex { reindexed_entries } => {
                 lines.push(activity_kv_line(
@@ -2963,6 +3234,7 @@ fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
         ActivityKind::BundleImport => ("bundle-import", Theme::ACCENT_STRONG),
         ActivityKind::Query => ("query", Theme::ACCENT),
         ActivityKind::QueryError => ("query-error", Theme::DANGER),
+        ActivityKind::MemoryReplacement => ("replacement", Theme::WARNING),
         ActivityKind::CaptureTask => ("capture", Theme::ACCENT),
         ActivityKind::Curate => ("curate", Theme::SUCCESS),
         ActivityKind::Reindex => ("reindex", Theme::ACCENT_STRONG),
@@ -3155,6 +3427,7 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
         source_kind_breakdown: Vec::new(),
         top_tags: Vec::<NamedCount>::new(),
         top_files: Vec::<NamedCount>::new(),
+        pending_replacement_proposals: 0,
         automation: None,
         watchers: None,
     }

@@ -188,7 +188,17 @@ Use `.agents/memory-layer.toml` for project-owned behavior that should be easy t
 
 - include and ignore path hints for repository scans
 - enabled analyzers
+- curation replacement policy for memory updates
 - future graph and plugin controls
+
+Example:
+
+```toml
+[curation]
+replacement_policy = "balanced"
+```
+
+Available policies are `conservative`, `balanced`, and `aggressive`. `balanced` is the default.
 
 ### Env files
 
