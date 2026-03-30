@@ -16,6 +16,7 @@ This section is for people installing, configuring, and using Memory Layer in re
 
 - [Embedding Operations](cli/embeddings.md)
 - [Memory Bundles](cli/bundles.md)
+- [Watcher Health](cli/watchers.md)
 - [Resume Briefings](cli/resume.md)
 - [Scan Command](cli/scan.md)
 - [Commit History](cli/commits.md)

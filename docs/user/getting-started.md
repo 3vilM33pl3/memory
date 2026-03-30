@@ -276,6 +276,7 @@ mem-cli export --project my-project --out my-project.mlbundle.zip
 
 For semantic-search maintenance commands such as `reindex`, `reembed`, and `prune-embeddings`, see [Embedding Operations](cli/embeddings.md).
 For project memory backup and restore, see [Memory Bundles](cli/bundles.md).
+For watcher health states, restart behavior, and recovery signals in the TUI, see [Watcher Health](cli/watchers.md).
 
 For getting back into flow after an interruption, see [Resume Briefings](cli/resume.md).
 
@@ -294,6 +295,12 @@ Check it:
 ```bash
 mem-cli watch status --project my-project
 ```
+
+In the TUI:
+
+- the `Watchers` tab shows each watcher's health, restart attempts, and last heartbeat
+- the `Activity` tab shows watcher-health transitions such as `stale`, `restarting`, `failed`, and recovery back to `healthy`
+- recovery events now show what state the watcher recovered from and, when relevant, how many restart attempts happened before recovery
 
 Disable it later:
 

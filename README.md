@@ -54,6 +54,8 @@ For semantic-search maintenance and model switching, use [Embedding Operations](
 
 For shareable backup/restore bundles, use [Memory Bundles](docs/user/cli/bundles.md).
 
+For watcher health states, recovery behavior, and the TUI watcher views, use [Watcher Health](docs/user/cli/watchers.md).
+
 ## What It Does
 
 - stores project memory in PostgreSQL with pgvector-backed chunk embeddings
@@ -81,6 +83,7 @@ Project-local customization now has two layers:
 - [Getting Started](docs/user/getting-started.md)
 - [Embedding Operations](docs/user/cli/embeddings.md)
 - [Memory Bundles](docs/user/cli/bundles.md)
+- [Watcher Health](docs/user/cli/watchers.md)
 - [Resume Briefings](docs/user/cli/resume.md)
 - [Scan Command](docs/user/cli/scan.md)
 - [Commit History](docs/user/cli/commits.md)
