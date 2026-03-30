@@ -1887,6 +1887,7 @@ async fn capture_task(
             task_id: response.task_id,
             raw_capture_id: response.raw_capture_id,
             idempotency_key: response.idempotency_key.clone(),
+            task_title: Some(task_title.clone()),
             writer_id: request.writer_id.clone(),
         }),
     );
@@ -2977,13 +2978,24 @@ fn resume_actions(
     changed_memories: &[mem_api::ProjectMemoryListItem],
 ) -> Vec<ResumeAction> {
     let mut actions = Vec::new();
+    let active_task_title = latest_capture_task_title(timeline);
     if overview.pending_replacement_proposals > 0 {
         actions.push(ResumeAction {
             title: "Review queued memory updates".to_string(),
-            rationale: format!(
-                "{} memory update proposal(s) are waiting for review before outdated memories can be replaced.",
-                overview.pending_replacement_proposals
-            ),
+            rationale: active_task_title
+                .as_ref()
+                .map(|task_title| {
+                    format!(
+                        "{} memory update proposal(s) from \"{}\" are waiting for review before outdated memories can be replaced.",
+                        overview.pending_replacement_proposals, task_title
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "{} memory update proposal(s) are waiting for review before outdated memories can be replaced.",
+                        overview.pending_replacement_proposals
+                    )
+                }),
             command_hint: Some(format!("mem-cli tui --project {project}")),
         });
     }
@@ -3052,17 +3064,45 @@ fn infer_current_thread(
     commits: &[mem_api::CommitRecord],
     changed_memories: &[mem_api::ProjectMemoryListItem],
 ) -> Option<String> {
+    let active_task_title = latest_capture_task_title(timeline);
     if overview.pending_replacement_proposals > 0 {
-        return Some(format!(
-            "Recent curation surfaced {} queued memory update proposal(s) that still need review.",
-            overview.pending_replacement_proposals
-        ));
+        return Some(
+            active_task_title
+                .as_ref()
+                .map(|task_title| {
+                    format!(
+                        "Recent work focused on {}. Curation left {} queued memory update proposal(s) to review.",
+                        task_title, overview.pending_replacement_proposals
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "Recent curation surfaced {} queued memory update proposal(s) that still need review.",
+                        overview.pending_replacement_proposals
+                    )
+                }),
+        );
     }
     if overview.uncurated_raw_captures > 0 {
-        return Some(format!(
-            "{} raw capture(s) are waiting to be curated into canonical memory.",
-            overview.uncurated_raw_captures
-        ));
+        return Some(
+            active_task_title
+                .as_ref()
+                .map(|task_title| {
+                    format!(
+                        "Recent work focused on {}. {} raw capture(s) are still waiting to be curated.",
+                        task_title, overview.uncurated_raw_captures
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "{} raw capture(s) are waiting to be curated into canonical memory.",
+                        overview.uncurated_raw_captures
+                    )
+                }),
+        );
+    }
+    if let Some(task_title) = active_task_title {
+        return Some(format!("Recent work focused on {}.", task_title));
     }
     if let Some(event) = timeline
         .iter()
@@ -3121,18 +3161,17 @@ fn build_change_summary(
     changed_memories: &[mem_api::ProjectMemoryListItem],
 ) -> Vec<String> {
     let mut items = Vec::new();
-    for event in timeline
-        .iter()
-        .filter(|event| !matches!(event.kind, ActivityKind::Checkpoint))
-        .take(3)
-    {
-        let entry = format!(
-            "{} {}",
-            event.recorded_at.format("%m-%d %H:%M"),
-            format_resume_event_summary(event)
-        );
-        if !items.contains(&entry) {
-            items.push(entry);
+    let mut seen_titles = Vec::new();
+    for event in timeline.iter().take(6) {
+        if let Some(task_title) = extract_capture_task_title(event) {
+            if !seen_titles.contains(&task_title) {
+                items.push(format!(
+                    "{} Worked on: {}",
+                    event.recorded_at.format("%m-%d %H:%M"),
+                    task_title
+                ));
+                seen_titles.push(task_title);
+            }
         }
     }
     if let Some(commit) = commits.first() {
@@ -3152,7 +3191,23 @@ fn build_change_summary(
             commit.subject, commit.short_hash, changed_paths
         ));
     }
-    if !changed_memories.is_empty() {
+    if items.is_empty() {
+        for event in timeline
+            .iter()
+            .filter(|event| !matches!(event.kind, ActivityKind::Checkpoint | ActivityKind::Curate))
+            .take(3)
+        {
+            let entry = format!(
+                "{} {}",
+                event.recorded_at.format("%m-%d %H:%M"),
+                format_resume_event_summary(event)
+            );
+            if !items.contains(&entry) {
+                items.push(entry);
+            }
+        }
+    }
+    if !changed_memories.is_empty() && items.is_empty() {
         let examples = changed_memories
             .iter()
             .take(2)
@@ -3167,6 +3222,31 @@ fn build_change_summary(
     }
     items.truncate(5);
     items
+}
+
+fn latest_capture_task_title(timeline: &[ActivityEvent]) -> Option<String> {
+    timeline.iter().find_map(extract_capture_task_title)
+}
+
+fn extract_capture_task_title(event: &ActivityEvent) -> Option<String> {
+    match &event.details {
+        Some(ActivityDetails::CaptureTask { task_title, .. }) => task_title
+            .as_ref()
+            .map(|title| title.trim().trim_end_matches('.').to_string())
+            .filter(|title| !title.is_empty())
+            .or_else(|| {
+                event
+                    .summary
+                    .strip_prefix("Captured task: ")
+                    .map(|title| title.trim().trim_end_matches('.').to_string())
+                    .filter(|title| !title.is_empty())
+            }),
+        _ => event
+            .summary
+            .strip_prefix("Captured task: ")
+            .map(|title| title.trim().trim_end_matches('.').to_string())
+            .filter(|title| !title.is_empty()),
+    }
 }
 
 fn format_resume_event_summary(event: &ActivityEvent) -> String {

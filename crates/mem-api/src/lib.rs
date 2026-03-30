@@ -940,6 +940,8 @@ pub enum ActivityDetails {
         task_id: Uuid,
         raw_capture_id: Uuid,
         idempotency_key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_title: Option<String>,
         #[serde(alias = "agent_id")]
         writer_id: String,
     },

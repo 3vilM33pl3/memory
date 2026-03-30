@@ -3111,12 +3111,16 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                 task_id,
                 raw_capture_id,
                 idempotency_key,
+                task_title,
                 writer_id,
             } => {
                 lines.push(activity_kv_line("Session", session_id.to_string()));
                 lines.push(activity_kv_line("Task", task_id.to_string()));
                 lines.push(activity_kv_line("Raw capture", raw_capture_id.to_string()));
                 lines.push(activity_kv_line("Idempotency", idempotency_key.clone()));
+                if let Some(task_title) = task_title {
+                    lines.push(activity_kv_line("Task title", task_title.clone()));
+                }
                 lines.push(activity_kv_line("Writer", writer_id.clone()));
             }
             ActivityDetails::Curate {
