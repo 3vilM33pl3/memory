@@ -17,9 +17,8 @@ use mem_api::{
     NamedCount, ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse,
     QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, ReplacementPolicy,
     ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest, ResumeResponse, StreamRequest,
-    StreamResponse,
-    WatcherHealth, load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
-    write_capnp_text_frame,
+    StreamResponse, WatcherHealth, load_repo_replacement_policy, read_capnp_text_frame,
+    repo_agent_settings_path, write_capnp_text_frame,
 };
 use ratatui::{
     Terminal,
@@ -82,6 +81,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
                 Err(error) => {
                     app.status_message =
                         format!("Streaming disconnected: {error}. Falling back to manual refresh.");
+                    app.ui_status = UiStatus::Error;
                     stream_failed = true;
                 }
             }
@@ -141,6 +141,7 @@ struct App {
     replacement_proposals: Vec<ReplacementProposalRecord>,
     replacement_selected_index: usize,
     versions: ToolVersions,
+    ui_status: UiStatus,
     status_message: String,
     health_ok: bool,
     filters: Filters,
@@ -153,6 +154,14 @@ struct ToolVersions {
     mem_cli: String,
     mem_service: String,
     memory_watch: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UiStatus {
+    Loading,
+    Busy,
+    Ready,
+    Error,
 }
 
 enum ActivityEntry {
@@ -234,6 +243,7 @@ impl App {
             replacement_proposals: Vec::new(),
             replacement_selected_index: 0,
             versions,
+            ui_status: UiStatus::Loading,
             status_message: "Loading project data...".to_string(),
             health_ok: false,
             filters: Filters::default(),
@@ -245,6 +255,11 @@ impl App {
 
     async fn refresh(&mut self, api: &ApiClient, mode: RefreshMode) {
         self.status_message = "Refreshing...".to_string();
+        self.ui_status = if mode == RefreshMode::Startup {
+            UiStatus::Loading
+        } else {
+            UiStatus::Busy
+        };
         self.selected_detail = None;
         self.replacement_policy = load_repo_replacement_policy(&self.repo_root).unwrap_or_default();
 
@@ -254,6 +269,7 @@ impl App {
         let proposals_fut = api.replacement_proposals(&self.project);
         let (health_result, overview_result, memories_result, proposals_result) =
             tokio::join!(health_fut, overview_fut, memories_fut, proposals_fut);
+        let mut had_error = false;
 
         match health_result {
             Ok(health) => {
@@ -263,6 +279,7 @@ impl App {
                 }
             }
             Err(_) => {
+                had_error = true;
                 self.health_ok = false;
                 self.overview.service_status = "error".to_string();
                 self.overview.database_status = "unknown".to_string();
@@ -272,7 +289,10 @@ impl App {
 
         match overview_result {
             Ok(overview) => self.overview = overview,
-            Err(error) => self.status_message = error.to_string(),
+            Err(error) => {
+                had_error = true;
+                self.status_message = error.to_string();
+            }
         }
 
         match memories_result {
@@ -292,6 +312,7 @@ impl App {
                 );
             }
             Err(error) => {
+                had_error = true;
                 self.all_memories.clear();
                 self.filtered_memories.clear();
                 self.total_memories = 0;
@@ -313,11 +334,20 @@ impl App {
                 }
             }
             Err(error) => {
+                had_error = true;
                 self.replacement_proposals.clear();
                 self.replacement_selected_index = 0;
                 self.status_message = error.to_string();
             }
         }
+
+        self.ui_status = if had_error {
+            UiStatus::Error
+        } else if self.resume_loading {
+            UiStatus::Busy
+        } else {
+            UiStatus::Ready
+        };
 
         if mode == RefreshMode::Startup {
             if self.resume_checkpoint().is_some() {
@@ -346,6 +376,9 @@ impl App {
         } else {
             self.status_message = "Loading resume...".to_string();
         }
+        if !matches!(self.ui_status, UiStatus::Loading) {
+            self.ui_status = UiStatus::Busy;
+        }
         let request = ResumeRequest {
             project: self.project.clone(),
             checkpoint: checkpoint.clone(),
@@ -356,7 +389,10 @@ impl App {
         let api = api.clone();
         let tx = self.background_tx.clone();
         tokio::spawn(async move {
-            let response = api.resume(&request).await.map_err(|error| error.to_string());
+            let response = api
+                .resume(&request)
+                .await
+                .map_err(|error| error.to_string());
             let has_changes = match &response {
                 Ok(response) => {
                     !response.timeline.is_empty()
@@ -400,6 +436,7 @@ impl App {
                         } else {
                             "Resume updated in the background.".to_string()
                         };
+                        self.ui_status = UiStatus::Ready;
                     }
                     Err(error) => {
                         self.resume_error = Some(error.clone());
@@ -407,6 +444,7 @@ impl App {
                             self.resume_loaded = false;
                         }
                         self.status_message = format!("Resume unavailable: {error}");
+                        self.ui_status = UiStatus::Error;
                     }
                 }
             }
@@ -764,6 +802,7 @@ impl App {
                     self.filtered_memories.len(),
                     self.total_memories
                 );
+                self.ui_status = UiStatus::Ready;
             }
             StreamResponse::MemorySnapshot { detail }
             | StreamResponse::MemoryChanged { detail } => {
@@ -775,6 +814,7 @@ impl App {
             }
             StreamResponse::Error { message } => {
                 self.status_message = format!("Stream error: {message}");
+                self.ui_status = UiStatus::Error;
             }
             _ => {}
         }
@@ -793,6 +833,7 @@ impl App {
         }
 
         self.status_message = format!("Running query for \"{question}\"...");
+        self.ui_status = UiStatus::Busy;
         let request = QueryRequest {
             project: self.project.clone(),
             query: question.to_string(),
@@ -825,6 +866,7 @@ impl App {
                     self.query_results().len(),
                     elapsed_ms
                 );
+                self.ui_status = UiStatus::Ready;
             }
             Err(error) => {
                 let elapsed_ms = started.elapsed().as_millis() as u64;
@@ -839,6 +881,7 @@ impl App {
                 self.query_selected_detail = None;
                 self.query_table_state.select(None);
                 self.status_message = error.to_string();
+                self.ui_status = UiStatus::Error;
             }
         }
     }
@@ -1390,7 +1433,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Min(10),
-            Constraint::Length(3),
+            Constraint::Length(4),
         ])
         .split(frame.area());
 
@@ -1521,11 +1564,103 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         TabKind::Watchers => draw_watchers_tab(frame, app, chunks[2]),
     }
 
+    let footer_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Length(1)])
+        .split(chunks[3]);
+
     let footer = Paragraph::new(app.status_message.clone())
         .style(status_message_style(app))
         .wrap(Wrap { trim: false })
         .block(themed_block("Status"));
-    frame.render_widget(footer, chunks[3]);
+    frame.render_widget(footer, footer_chunks[0]);
+    draw_bottom_status_bar(frame, app, footer_chunks[1]);
+}
+
+fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Theme::PANEL_ALT)),
+        area,
+    );
+
+    let sections = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(33),
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+        ])
+        .split(area);
+
+    frame.render_widget(
+        Paragraph::new(component_status_line(
+            "TUI",
+            &app.versions.mem_cli,
+            tui_status_label(app),
+            tui_status_color(app),
+            None,
+        ))
+        .style(Style::default().bg(Theme::PANEL_ALT)),
+        sections[0],
+    );
+    frame.render_widget(
+        Paragraph::new(component_status_line(
+            "Service",
+            &app.versions.mem_service,
+            service_status_label(app),
+            service_status_color(app),
+            service_status_detail(app),
+        ))
+        .style(Style::default().bg(Theme::PANEL_ALT)),
+        sections[1],
+    );
+    frame.render_widget(
+        Paragraph::new(component_status_line(
+            "Watchers",
+            &app.versions.memory_watch,
+            watcher_bar_status_label(app),
+            watcher_bar_status_color(app),
+            watcher_bar_status_detail(app),
+        ))
+        .style(Style::default().bg(Theme::PANEL_ALT)),
+        sections[2],
+    );
+}
+
+fn component_status_line<'a>(
+    label: &'a str,
+    version: &'a str,
+    status: &'a str,
+    status_color: Color,
+    detail: Option<String>,
+) -> Line<'a> {
+    let mut spans = vec![
+        Span::styled(
+            format!("{label} "),
+            Style::default()
+                .fg(Theme::ACCENT_STRONG)
+                .bg(Theme::PANEL_ALT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("v{version} "),
+            Style::default().fg(Theme::TEXT).bg(Theme::PANEL_ALT),
+        ),
+        Span::styled(
+            status.to_string(),
+            Style::default()
+                .fg(status_color)
+                .bg(Theme::PANEL_ALT)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if let Some(detail) = detail {
+        spans.push(Span::styled(
+            format!(" {detail}"),
+            Style::default().fg(Theme::MUTED).bg(Theme::PANEL_ALT),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
@@ -3622,6 +3757,93 @@ fn service_span(value: &str) -> Span<'static> {
         value.to_string(),
         Style::default().fg(color).add_modifier(Modifier::BOLD),
     )
+}
+
+fn tui_status_label(app: &App) -> &'static str {
+    match app.ui_status {
+        UiStatus::Loading => "loading",
+        UiStatus::Busy => "busy",
+        UiStatus::Ready => "ready",
+        UiStatus::Error => "error",
+    }
+}
+
+fn tui_status_color(app: &App) -> Color {
+    match app.ui_status {
+        UiStatus::Loading => Theme::ACCENT,
+        UiStatus::Busy => Theme::ACCENT_STRONG,
+        UiStatus::Ready => Theme::SUCCESS,
+        UiStatus::Error => Theme::DANGER,
+    }
+}
+
+fn service_status_label(app: &App) -> &'static str {
+    if !app.health_ok {
+        "down"
+    } else if app.overview.database_status != "ok" {
+        "degraded"
+    } else {
+        match app.overview.service_status.as_str() {
+            "ok" | "up" => "up",
+            "unknown" => "unknown",
+            _ => "degraded",
+        }
+    }
+}
+
+fn service_status_color(app: &App) -> Color {
+    match service_status_label(app) {
+        "up" => Theme::SUCCESS,
+        "unknown" => Theme::WARNING,
+        "degraded" => Theme::WARNING,
+        _ => Theme::DANGER,
+    }
+}
+
+fn service_status_detail(app: &App) -> Option<String> {
+    if !app.health_ok {
+        return Some("db unknown".to_string());
+    }
+    if app.overview.database_status != "ok" {
+        Some(format!("db {}", app.overview.database_status))
+    } else {
+        None
+    }
+}
+
+fn watcher_bar_status_label(app: &App) -> &'static str {
+    let Some(summary) = &app.overview.watchers else {
+        return if app.health_ok { "none" } else { "unknown" };
+    };
+
+    if summary.unhealthy_count > 0 {
+        "degraded"
+    } else if summary.active_count > 0 {
+        "ok"
+    } else {
+        "none"
+    }
+}
+
+fn watcher_bar_status_color(app: &App) -> Color {
+    match watcher_bar_status_label(app) {
+        "ok" => Theme::SUCCESS,
+        "none" => Theme::MUTED,
+        "unknown" => Theme::WARNING,
+        "degraded" => Theme::WARNING,
+        _ => Theme::TEXT,
+    }
+}
+
+fn watcher_bar_status_detail(app: &App) -> Option<String> {
+    let summary = app.overview.watchers.as_ref()?;
+    if summary.unhealthy_count > 0 {
+        Some(format!("{} unhealthy", summary.unhealthy_count))
+    } else if summary.active_count > 0 {
+        Some(format!("{} active", summary.active_count))
+    } else {
+        None
+    }
 }
 
 fn memory_type_span(memory_type: &MemoryType) -> Span<'static> {
