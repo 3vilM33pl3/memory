@@ -3780,7 +3780,7 @@ fn tui_status_color(app: &App) -> Color {
 fn service_status_label(app: &App) -> &'static str {
     if !app.health_ok {
         "down"
-    } else if app.overview.database_status != "ok" {
+    } else if !matches!(app.overview.database_status.as_str(), "ok" | "up") {
         "degraded"
     } else {
         match app.overview.service_status.as_str() {
@@ -3804,7 +3804,7 @@ fn service_status_detail(app: &App) -> Option<String> {
     if !app.health_ok {
         return Some("db unknown".to_string());
     }
-    if app.overview.database_status != "ok" {
+    if !matches!(app.overview.database_status.as_str(), "ok" | "up") {
         Some(format!("db {}", app.overview.database_status))
     } else {
         None
