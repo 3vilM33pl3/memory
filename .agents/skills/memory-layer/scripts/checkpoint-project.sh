@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+. "$SCRIPT_DIR/common.sh"
+
 PROJECT="${MEMORY_LAYER_PROJECT:-$(basename "$PWD")}"
 NOTE=""
 
@@ -21,15 +24,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "${MEMCTL_BIN:-}" ]]; then
-  read -r -a MEMCTL_CMD <<< "$MEMCTL_BIN"
-elif command -v memctl >/dev/null 2>&1; then
-  MEMCTL_CMD=(memctl)
-elif command -v mem-cli >/dev/null 2>&1; then
-  MEMCTL_CMD=(mem-cli)
-else
-  MEMCTL_CMD=(cargo run --quiet --bin mem-cli --)
-fi
+resolve_memctl_cmd
 
 ARGS=(checkpoint save --project "$PROJECT")
 if [[ -n "$NOTE" ]]; then
