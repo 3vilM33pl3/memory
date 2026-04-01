@@ -61,6 +61,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
     terminal.draw(|frame| draw(frame, &app))?;
     app.refresh(&api, RefreshMode::Startup).await;
     let mut stream = StreamSession::connect(&api).await.ok();
+    let mut last_stream_connect_attempt = Instant::now();
     if let Some(stream_session) = stream.as_mut() {
         subscribe_stream(stream_session, &app).await?;
         app.status_message =
@@ -89,9 +90,30 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
         }
         if stream_failed {
             stream = None;
+            last_stream_connect_attempt = Instant::now();
         }
         while let Ok(event) = background_rx.try_recv() {
             app.apply_background_event(event);
+        }
+        if should_attempt_stream_reconnect(stream.is_some(), last_stream_connect_attempt) {
+            last_stream_connect_attempt = Instant::now();
+            match StreamSession::connect(&api).await {
+                Ok(mut stream_session) => match subscribe_stream(&mut stream_session, &app).await {
+                    Ok(()) => {
+                        stream = Some(stream_session);
+                        app.status_message =
+                            "Backend reconnected. Refreshing project data...".to_string();
+                        app.refresh(&api, RefreshMode::Full).await;
+                    }
+                    Err(error) => {
+                        app.status_message = format!(
+                            "Backend reachable, but stream subscription failed: {error}"
+                        );
+                        app.ui_status = UiStatus::Error;
+                    }
+                },
+                Err(_) => {}
+            }
         }
         terminal.draw(|frame| draw(frame, &app))?;
         if event::poll(Duration::from_millis(200))? {
@@ -3934,6 +3956,10 @@ fn should_quit(key: KeyEvent, app: &App) -> bool {
     matches!(app.input_mode, InputMode::Normal) && matches!(key.code, KeyCode::Char('q'))
 }
 
+fn should_attempt_stream_reconnect(stream_connected: bool, last_attempt: Instant) -> bool {
+    !stream_connected && last_attempt.elapsed() >= Duration::from_secs(1)
+}
+
 fn empty_overview(project: String) -> ProjectOverviewResponse {
     ProjectOverviewResponse {
         project,
@@ -4033,10 +4059,11 @@ mod tests {
     use super::{
         empty_overview, format_timestamp, format_timestamp_full, format_timestamp_medium,
         format_timestamp_short, format_timestamp_timeline, service_status_label,
-        watcher_bar_status_label, App, ToolVersions, UiStatus,
+        should_attempt_stream_reconnect, watcher_bar_status_label, App, ToolVersions, UiStatus,
     };
     use mem_api::WatcherPresenceSummary;
     use std::path::PathBuf;
+    use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
 
     #[test]
@@ -4088,5 +4115,15 @@ mod tests {
 
         assert_eq!(service_status_label(&app), "down");
         assert_eq!(watcher_bar_status_label(&app), "unknown");
+    }
+
+    #[test]
+    fn stream_reconnect_attempts_are_rate_limited() {
+        let just_attempted = Instant::now();
+        assert!(!should_attempt_stream_reconnect(false, just_attempted));
+
+        let overdue = Instant::now() - Duration::from_secs(2);
+        assert!(should_attempt_stream_reconnect(false, overdue));
+        assert!(!should_attempt_stream_reconnect(true, overdue));
     }
 }
