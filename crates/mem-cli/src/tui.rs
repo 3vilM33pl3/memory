@@ -81,6 +81,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
                 Err(error) => {
                     app.status_message =
                         format!("Streaming disconnected: {error}. Falling back to manual refresh.");
+                    app.mark_service_unavailable();
                     app.ui_status = UiStatus::Error;
                     stream_failed = true;
                 }
@@ -280,10 +281,7 @@ impl App {
             }
             Err(_) => {
                 had_error = true;
-                self.health_ok = false;
-                self.overview.service_status = "error".to_string();
-                self.overview.database_status = "unknown".to_string();
-                self.versions.mem_service = "unreachable".to_string();
+                self.mark_service_unavailable();
             }
         }
 
@@ -362,6 +360,13 @@ impl App {
         resume::load_checkpoint(&self.project, &self.repo_root)
             .ok()
             .flatten()
+    }
+
+    fn mark_service_unavailable(&mut self) {
+        self.health_ok = false;
+        self.overview.service_status = "error".to_string();
+        self.overview.database_status = "unknown".to_string();
+        self.overview.watchers = None;
     }
 
     fn request_resume_refresh(&mut self, api: &ApiClient, allow_autoselect: bool) {
@@ -3826,8 +3831,12 @@ fn service_status_detail(app: &App) -> Option<String> {
 }
 
 fn watcher_bar_status_label(app: &App) -> &'static str {
+    if !app.health_ok {
+        return "unknown";
+    }
+
     let Some(summary) = &app.overview.watchers else {
-        return if app.health_ok { "none" } else { "unknown" };
+        return "none";
     };
 
     if summary.unhealthy_count > 0 {
@@ -4022,9 +4031,13 @@ mod tests {
     use chrono::{Local, TimeZone, Utc};
 
     use super::{
-        format_timestamp, format_timestamp_full, format_timestamp_medium, format_timestamp_short,
-        format_timestamp_timeline,
+        empty_overview, format_timestamp, format_timestamp_full, format_timestamp_medium,
+        format_timestamp_short, format_timestamp_timeline, service_status_label,
+        watcher_bar_status_label, App, ToolVersions, UiStatus,
     };
+    use mem_api::WatcherPresenceSummary;
+    use std::path::PathBuf;
+    use tokio::sync::mpsc;
 
     #[test]
     fn format_timestamp_returns_na_for_missing_value() {
@@ -4045,5 +4058,35 @@ mod tests {
         assert_eq!(medium, local.format("%Y-%m-%d %H:%M %Z").to_string());
         assert_eq!(short, local.format("%H:%M:%S %Z").to_string());
         assert_eq!(timeline, local.format("%m-%d %H:%M %Z").to_string());
+    }
+
+    #[test]
+    fn footer_statuses_do_not_use_stale_service_or_watcher_state_when_health_is_down() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.4.1".to_string(),
+                mem_service: "0.4.1".to_string(),
+                memory_watch: "0.4.1".to_string(),
+            },
+            tx,
+        );
+        app.ui_status = UiStatus::Error;
+        app.health_ok = false;
+        app.overview = empty_overview("memory".to_string());
+        app.overview.service_status = "ok".to_string();
+        app.overview.database_status = "up".to_string();
+        app.overview.watchers = Some(WatcherPresenceSummary {
+            active_count: 2,
+            unhealthy_count: 0,
+            stale_after_seconds: 90,
+            last_heartbeat_at: None,
+            watchers: Vec::new(),
+        });
+
+        assert_eq!(service_status_label(&app), "down");
+        assert_eq!(watcher_bar_status_label(&app), "unknown");
     }
 }
