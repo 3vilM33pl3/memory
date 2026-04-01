@@ -15,12 +15,13 @@ Memory Layer now supports a native macOS service model:
 
 ## Homebrew formula
 
-The development formula lives in `homebrew/memory-layer.rb`.
+The canonical Homebrew formula now lives in `../../Formula/memory-layer.rb`.
 
-Example local install from this checkout:
+Install from the tap:
 
 ```bash
-brew install --HEAD ./packaging/macos/homebrew/memory-layer.rb
+brew tap 3vilM33pl3/memory https://github.com/3vilM33pl3/memory
+brew install --HEAD 3vilM33pl3/memory/memory-layer
 ```
 
 After install:

@@ -78,10 +78,11 @@ memory tui
 
 ## Fast Install: macOS
 
-1. Install from the local Homebrew formula or your tap:
+1. Tap this repository and install the formula:
 
 ```bash
-brew install --HEAD ./packaging/macos/homebrew/memory-layer.rb
+brew tap 3vilM33pl3/memory https://github.com/3vilM33pl3/memory
+brew install --HEAD 3vilM33pl3/memory/memory-layer
 ```
 
 2. Configure the shared/global settings once on this machine:

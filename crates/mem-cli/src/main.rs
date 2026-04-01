@@ -3666,52 +3666,24 @@ fn start_backend_service_once(config_path: &Path) -> Result<String> {
     #[cfg(target_os = "macos")]
     {
         let plist_path = backend_launch_agent_path()?;
-        let _ = bootout_launch_agent(&plist_path, backend_launch_agent_label());
-        if plist_path.exists() {
-            let _ = fs::remove_file(&plist_path);
-        }
-        let pid_path = backend_pid_file_path()?;
+        let label = backend_launch_agent_label();
         let stdout_path = user_memory_layer_log_dir()?.join("mem-service.stdout.log");
         let stderr_path = user_memory_layer_log_dir()?.join("mem-service.stderr.log");
-        fs::create_dir_all(
-            pid_path
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("backend pid path has no parent"))?,
-        )
-        .with_context(|| format!("create {}", pid_path.display()))?;
-        if let Some(pid) = backend_running_pid()? {
-            return Ok(format!(
-                "Backend process already running.\nPID file: {}\nPID: {}\nConfig: {}",
-                pid_path.display(),
-                pid,
-                config_path.display()
-            ));
-        }
-        let exports = shell_export_prefix()?;
-        let program_command = shell_program_invocation(&[
-            mem_service_binary_path()?.display().to_string(),
-            config_path.display().to_string(),
-        ]);
-        let shell_command = format!(
-            "{exports} nohup {program_command} >>{} 2>>{} </dev/null & echo $! > {}",
-            shell_quote_sh(&stdout_path.display().to_string()),
-            shell_quote_sh(&stderr_path.display().to_string()),
-            shell_quote_sh(&pid_path.display().to_string()),
-        );
-        let output = ProcessCommand::new("/bin/zsh")
-            .args(["-lc", &shell_command])
-            .output()
-            .context("start backend process")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("start backend process failed: {}", stderr.trim());
-        }
+        write_launch_agent(
+            &plist_path,
+            render_backend_launch_agent(config_path)?,
+            label,
+        )?;
+        bootstrap_launch_agent(&plist_path, label)?;
         Ok(format!(
-            "Started backend process.\nPID file: {}\nConfig: {}\nLogs:\n- {}\n- {}",
-            pid_path.display(),
+            "Installed and started backend LaunchAgent {}.\nPlist: {}\nConfig: {}\nLogs:\n- {}\n- {}\n\nManage it with:\n- mem-cli service status\n- mem-cli service disable\n- launchctl kickstart -k {}/{}",
+            label,
+            plist_path.display(),
             config_path.display(),
             stdout_path.display(),
             stderr_path.display(),
+            launchctl_domain_target()?,
+            label,
         ))
     }
 
@@ -3759,27 +3731,16 @@ fn disable_backend_service() -> Result<String> {
     #[cfg(target_os = "macos")]
     {
         let plist_path = backend_launch_agent_path()?;
-        let _ = bootout_launch_agent(&plist_path, backend_launch_agent_label());
+        let label = backend_launch_agent_label();
+        let _ = bootout_launch_agent(&plist_path, label);
         if plist_path.exists() {
-            let _ = fs::remove_file(&plist_path);
-        }
-        let pid_path = backend_pid_file_path()?;
-        if let Some(pid) = backend_running_pid()? {
-            let output = ProcessCommand::new("kill")
-                .arg(pid.to_string())
-                .output()
-                .with_context(|| format!("kill backend pid {pid}"))?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("kill {} failed: {}", pid, stderr.trim());
-            }
-        }
-        if pid_path.exists() {
-            fs::remove_file(&pid_path).with_context(|| format!("remove {}", pid_path.display()))?;
+            fs::remove_file(&plist_path)
+                .with_context(|| format!("remove {}", plist_path.display()))?;
         }
         Ok(format!(
-            "Stopped backend process.\nRemoved pid file: {}",
-            pid_path.display()
+            "Disabled backend LaunchAgent {}.\nRemoved plist: {}",
+            label,
+            plist_path.display()
         ))
     }
 
@@ -3818,16 +3779,18 @@ fn preview_disable_backend_service(config_path: &Path) -> String {
 fn backend_service_status(config_path: &Path) -> Result<String> {
     #[cfg(target_os = "macos")]
     {
-        let pid_path = backend_pid_file_path()?;
-        let pid = backend_running_pid()?;
+        let plist_path = backend_launch_agent_path()?;
+        let label = backend_launch_agent_label();
+        let status = launch_agent_status(label)?;
         Ok(format!(
-            "Backend service:\n- pid file: {}\n- config: {}\n- installed: {}\n- running: {}\n- pid: {}\n\nInspect with:\n- tail -f {}",
-            pid_path.display(),
+            "Backend service:\n- label: {}\n- plist: {}\n- config: {}\n- installed: {}\n- running: {}\n\nInspect with:\n- launchctl print {}/{}\n- tail -f {}",
+            label,
+            plist_path.display(),
             config_path.display(),
-            yes_no(pid_path.exists()),
-            yes_no(pid.is_some()),
-            pid.map(|value| value.to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
+            yes_no(plist_path.exists() || status.loaded),
+            yes_no(status.running),
+            launchctl_domain_target()?,
+            label,
             user_memory_layer_log_dir()?
                 .join("mem-service.stderr.log")
                 .display(),
@@ -4218,18 +4181,8 @@ fn backend_launch_agent_path() -> Result<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn backend_pid_file_path() -> Result<PathBuf> {
-    platform::backend_pid_file_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))
-}
-
-#[cfg(target_os = "macos")]
 fn watch_launch_agent_path(project: &str) -> Result<PathBuf> {
     platform::watch_launch_agent_path(project).ok_or_else(|| anyhow::anyhow!("HOME is not set"))
-}
-
-#[cfg(target_os = "macos")]
-fn user_launch_agents_dir() -> Result<PathBuf> {
-    platform::user_launch_agents_dir().ok_or_else(|| anyhow::anyhow!("HOME is not set"))
 }
 
 #[cfg(target_os = "macos")]
@@ -4254,29 +4207,6 @@ fn launchctl_domain_target() -> Result<String> {
     }
     let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok(format!("gui/{uid}"))
-}
-
-#[cfg(target_os = "macos")]
-fn backend_running_pid() -> Result<Option<u32>> {
-    let pid_path = backend_pid_file_path()?;
-    if !pid_path.exists() {
-        return Ok(None);
-    }
-    let content =
-        fs::read_to_string(&pid_path).with_context(|| format!("read {}", pid_path.display()))?;
-    let pid = match content.trim().parse::<u32>() {
-        Ok(value) => value,
-        Err(_) => return Ok(None),
-    };
-    let status = ProcessCommand::new("kill")
-        .args(["-0", &pid.to_string()])
-        .output()
-        .with_context(|| format!("check backend pid {pid}"))?;
-    if status.status.success() {
-        Ok(Some(pid))
-    } else {
-        Ok(None)
-    }
 }
 
 #[cfg(target_os = "macos")]
@@ -4644,17 +4574,8 @@ fn discover_skill_template_dir() -> Option<PathBuf> {
             .join(".agents")
             .join("skills"),
     );
-    if let Ok(exe) = env::current_exe() {
-        if let Some(bin_dir) = exe.parent() {
-            if let Some(prefix) = bin_dir.parent() {
-                candidates.push(
-                    prefix
-                        .join("share")
-                        .join("memory-layer")
-                        .join("skill-template"),
-                );
-            }
-        }
+    if let Some(path) = platform::current_exe_share_subdir("skill-template") {
+        candidates.push(path);
     }
     if let Ok(data_home) = env::var("XDG_DATA_HOME") {
         candidates.push(
@@ -4662,6 +4583,9 @@ fn discover_skill_template_dir() -> Option<PathBuf> {
                 .join("memory-layer")
                 .join("skill-template"),
         );
+    }
+    if let Some(state_dir) = platform::preferred_user_state_dir() {
+        candidates.push(state_dir.join("skill-template"));
     }
     if let Ok(home) = env::var("HOME") {
         candidates.push(
@@ -6498,9 +6422,8 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     use super::{
-        backend_launch_agent_label, backend_service_available, default_global_config_path,
-        render_backend_launch_agent, render_watch_launch_agent, sanitize_service_fragment,
-        watch_launch_agent_label,
+        backend_launch_agent_label, default_global_config_path, render_backend_launch_agent,
+        render_watch_launch_agent, sanitize_service_fragment, watch_launch_agent_label,
     };
 
     #[cfg(not(target_os = "macos"))]

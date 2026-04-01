@@ -315,6 +315,8 @@ fn discover_web_root(config: &AppConfig) -> Option<PathBuf> {
 
     let candidates = vec![
         Some(PathBuf::from("web").join("dist")),
+        mem_platform::current_exe_share_subdir("web"),
+        mem_platform::preferred_user_state_dir().map(|dir| dir.join("web")),
         std::env::var("HOME")
             .ok()
             .map(|home| PathBuf::from(home).join(".local/share/memory-layer/web")),
@@ -1801,7 +1803,7 @@ async fn web_unavailable() -> impl IntoResponse {
     <main>
       <h1>Memory Layer Web UI is not installed</h1>
       <p><code>mem-service</code> is running, but it could not find built web assets.</p>
-      <p>Build the frontend under <code>web/</code> or install a package that ships <code>/usr/share/memory-layer/web</code>.</p>
+      <p>Build the frontend under <code>web/</code> or install a package that ships <code>share/memory-layer/web</code>.</p>
     </main>
   </body>
 </html>"#,

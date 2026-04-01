@@ -40,7 +40,8 @@ memory tui
 macOS:
 
 ```bash
-brew install --HEAD ./packaging/macos/homebrew/memory-layer.rb
+brew tap 3vilM33pl3/memory https://github.com/3vilM33pl3/memory
+brew install --HEAD 3vilM33pl3/memory/memory-layer
 memory wizard --global
 cd /path/to/your-project
 memory wizard

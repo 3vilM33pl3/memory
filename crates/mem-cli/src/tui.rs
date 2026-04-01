@@ -36,9 +36,7 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::{
-    ApiClient, SourceKindString, enable_relay_discovery_and_restart_backend, resume,
-};
+use crate::{ApiClient, SourceKindString, enable_relay_discovery_and_restart_backend, resume};
 
 struct Theme;
 

@@ -1,22 +1,22 @@
-use std::{
-    env,
-    path::{Path, PathBuf},
-    process::Command,
-};
+#[cfg(not(target_os = "macos"))]
+use std::path::Path;
+use std::{env, path::PathBuf, process::Command};
 
 use anyhow::{Context, Result};
 
 pub fn preferred_global_config_path() -> PathBuf {
+    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
+        return PathBuf::from(config_home)
+            .join("memory-layer")
+            .join("memory-layer.toml");
+    }
+
     #[cfg(target_os = "macos")]
     if let Some(path) = macos_app_support_dir() {
         return path.join("memory-layer.toml");
     }
 
-    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
-        PathBuf::from(config_home)
-            .join("memory-layer")
-            .join("memory-layer.toml")
-    } else if let Ok(home) = env::var("HOME") {
+    if let Ok(home) = env::var("HOME") {
         PathBuf::from(home)
             .join(".config")
             .join("memory-layer")
@@ -27,17 +27,17 @@ pub fn preferred_global_config_path() -> PathBuf {
 }
 
 pub fn discover_existing_global_config_path() -> Option<PathBuf> {
-    #[cfg(target_os = "macos")]
-    if let Some(candidate) = macos_app_support_dir().map(|dir| dir.join("memory-layer.toml")) {
+    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
+        let candidate = PathBuf::from(config_home)
+            .join("memory-layer")
+            .join("memory-layer.toml");
         if candidate.is_file() {
             return Some(candidate);
         }
     }
 
-    if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
-        let candidate = PathBuf::from(config_home)
-            .join("memory-layer")
-            .join("memory-layer.toml");
+    #[cfg(target_os = "macos")]
+    if let Some(candidate) = macos_app_support_dir().map(|dir| dir.join("memory-layer.toml")) {
         if candidate.is_file() {
             return Some(candidate);
         }
@@ -200,6 +200,14 @@ pub fn current_exe_sibling_binary(name: &str) -> Option<PathBuf> {
     let bin_dir = current_exe.parent()?;
     let sibling = bin_dir.join(name);
     sibling.is_file().then_some(sibling)
+}
+
+pub fn current_exe_share_subdir(name: &str) -> Option<PathBuf> {
+    let current_exe = env::current_exe().ok()?;
+    let bin_dir = current_exe.parent()?;
+    let prefix = bin_dir.parent()?;
+    let candidate = prefix.join("share").join("memory-layer").join(name);
+    candidate.is_dir().then_some(candidate)
 }
 
 pub fn packaged_system_service_available() -> bool {
