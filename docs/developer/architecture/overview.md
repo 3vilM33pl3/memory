@@ -48,6 +48,9 @@ skill workflow decides when the agent should use memory, while the helper script
 `.agents/skills/memory-layer/scripts/` are the execution path that actually calls `mem-cli` or
 `memctl`.
 
+For the detailed runtime model of skill discovery, selection, and template bootstrapping, use
+[How Skills Work](../skills/how-skills-work.md).
+
 ### CLI (`mem-cli`)
 
 `mem-cli` is the main user entrypoint for:

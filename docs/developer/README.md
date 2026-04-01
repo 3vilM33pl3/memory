@@ -18,6 +18,7 @@ This section is for developers working on Memory Layer itself: architecture, int
 
 - [Implementation Plans](plans/README.md)
 - [Skills And Agent Material](skills/README.md)
+- [How Skills Work](skills/how-skills-work.md)
 - [Examples](examples/README.md)
 
 ## Related Docs

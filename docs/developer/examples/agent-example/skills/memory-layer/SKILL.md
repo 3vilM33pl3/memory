@@ -5,6 +5,10 @@ description: Query project memory before answering project-specific questions; c
 
 # Memory Layer Skill
 
+This is an example skill for integration reference. The canonical live skill for this repository is:
+
+- [`.agents/skills/memory-layer/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-layer/SKILL.md)
+
 ## Purpose
 
 This skill integrates Codex with the local memory-layer service.
