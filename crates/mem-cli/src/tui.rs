@@ -1680,12 +1680,13 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         rows,
         [
             Constraint::Percentage(34),
-            Constraint::Length(14),
+            Constraint::Length(13),
             Constraint::Length(10),
             Constraint::Length(6),
-            Constraint::Length(20),
+            Constraint::Length(19),
         ],
     )
+    .column_spacing(1)
     .header(header)
     .row_highlight_style(
         Style::default()
@@ -2267,11 +2268,12 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         rows,
         [
             Constraint::Percentage(52),
-            Constraint::Length(14),
+            Constraint::Length(13),
             Constraint::Length(10),
             Constraint::Length(8),
         ],
     )
+    .column_spacing(1)
     .header(header)
     .row_highlight_style(
         Style::default()
@@ -2651,11 +2653,12 @@ fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(17),
-            Constraint::Length(12),
+            Constraint::Length(16),
+            Constraint::Length(11),
             Constraint::Percentage(100),
         ],
     )
+    .column_spacing(1)
     .header(header)
     .row_highlight_style(
         Style::default()
