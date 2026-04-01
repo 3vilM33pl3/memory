@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
@@ -1733,7 +1733,7 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             Line::from(vec![
                 label_span("Updated: "),
                 Span::styled(
-                    detail.updated_at.format("%Y-%m-%d %H:%M UTC").to_string(),
+                    format_timestamp_medium(detail.updated_at),
                     Style::default().fg(Theme::TEXT),
                 ),
             ]),
@@ -2441,10 +2441,7 @@ fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             lines.push(Line::from(vec![
                 label_span("Checkpoint: "),
                 Span::styled(
-                    checkpoint
-                        .marked_at
-                        .format("%Y-%m-%d %H:%M UTC")
-                        .to_string(),
+                    format_timestamp_medium(checkpoint.marked_at),
                     Style::default().fg(Theme::TEXT),
                 ),
             ]));
@@ -2572,7 +2569,7 @@ fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 lines.push(Line::from(Span::styled(
                     format!(
                         "- {}  {}",
-                        event.recorded_at.format("%m-%d %H:%M"),
+                        format_timestamp_timeline(event.recorded_at),
                         event.summary
                     ),
                     Style::default().fg(Theme::TEXT),
@@ -2718,7 +2715,7 @@ fn watcher_summary_text(app: &App) -> String {
         summary.stale_after_seconds,
         summary
             .last_heartbeat_at
-            .map(|value| value.format("%H:%M:%S UTC").to_string())
+            .map(format_timestamp_short)
             .unwrap_or_else(|| "n/a".to_string())
     )
 }
@@ -2773,7 +2770,7 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
         lines.push(Line::from(vec![
             label_span("Last heartbeat: "),
             Span::styled(
-                last_heartbeat.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                format_timestamp_full(last_heartbeat),
                 Style::default().fg(Theme::TEXT),
             ),
         ]));
@@ -2794,7 +2791,7 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
                 Style::default().fg(Theme::TEXT),
             ),
             Span::styled(
-                watcher.last_heartbeat_at.format("%H:%M:%S UTC").to_string(),
+                format_timestamp_short(watcher.last_heartbeat_at),
                 Style::default().fg(Theme::MUTED),
             ),
         ]));
@@ -2830,7 +2827,7 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
             lines.push(Line::from(Span::styled(
                 format!(
                     "  last restart attempt: {}",
-                    last_restart.format("%Y-%m-%d %H:%M:%S UTC")
+                    format_timestamp_full(last_restart)
                 ),
                 Style::default().fg(Theme::MUTED),
             )));
@@ -2958,7 +2955,7 @@ fn memory_row(item: &ProjectMemoryListItem) -> Row<'static> {
             confidence_style(item.confidence),
         )),
         Cell::from(Span::styled(
-            item.updated_at.format("%Y-%m-%d %H:%M").to_string(),
+            format_timestamp_medium(item.updated_at),
             Style::default().fg(Theme::MUTED),
         )),
     ])
@@ -2983,9 +2980,7 @@ fn query_row(item: &QueryResult) -> Row<'static> {
 fn activity_row(item: &ActivityEntry) -> Row<'static> {
     Row::new(vec![
         Cell::from(Span::styled(
-            activity_recorded_at(item)
-                .format("%H:%M:%S UTC")
-                .to_string(),
+            format_timestamp_short(activity_recorded_at(item)),
             Style::default().fg(Theme::TEXT),
         )),
         Cell::from(activity_entry_kind_span(item)),
@@ -3004,10 +2999,7 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
                 Line::from(vec![
                     label_span("When: "),
                     Span::styled(
-                        entry
-                            .recorded_at
-                            .format("%Y-%m-%d %H:%M:%S UTC")
-                            .to_string(),
+                        format_timestamp_full(entry.recorded_at),
                         Style::default().fg(Theme::TEXT),
                     ),
                 ]),
@@ -3201,10 +3193,7 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
         Line::from(vec![
             label_span("When: "),
             Span::styled(
-                event
-                    .recorded_at
-                    .format("%Y-%m-%d %H:%M:%S UTC")
-                    .to_string(),
+                format_timestamp_full(event.recorded_at),
                 Style::default().fg(Theme::TEXT),
             ),
         ]),
@@ -3561,10 +3550,32 @@ fn watcher_transition_status_message(
     }
 }
 
-fn format_timestamp(value: Option<chrono::DateTime<chrono::Utc>>) -> String {
+fn format_timestamp(value: Option<DateTime<Utc>>) -> String {
     value
-        .map(|value| value.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .map(format_timestamp_full)
         .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn format_timestamp_full(value: DateTime<Utc>) -> String {
+    value
+        .with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M:%S %Z")
+        .to_string()
+}
+
+fn format_timestamp_medium(value: DateTime<Utc>) -> String {
+    value
+        .with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M %Z")
+        .to_string()
+}
+
+fn format_timestamp_short(value: DateTime<Utc>) -> String {
+    value.with_timezone(&Local).format("%H:%M:%S %Z").to_string()
+}
+
+fn format_timestamp_timeline(value: DateTime<Utc>) -> String {
+    value.with_timezone(&Local).format("%m-%d %H:%M %Z").to_string()
 }
 
 fn display_filter(value: &str) -> String {
@@ -4001,4 +4012,35 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> Res
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Local, TimeZone, Utc};
+
+    use super::{
+        format_timestamp, format_timestamp_full, format_timestamp_medium, format_timestamp_short,
+        format_timestamp_timeline,
+    };
+
+    #[test]
+    fn format_timestamp_returns_na_for_missing_value() {
+        assert_eq!(format_timestamp(None), "n/a");
+    }
+
+    #[test]
+    fn local_timestamp_formatters_match_local_timezone_rendering() {
+        let timestamp = Utc.with_ymd_and_hms(2026, 4, 1, 12, 34, 56).unwrap();
+        let local = timestamp.with_timezone(&Local);
+
+        let full = format_timestamp_full(timestamp);
+        let medium = format_timestamp_medium(timestamp);
+        let short = format_timestamp_short(timestamp);
+        let timeline = format_timestamp_timeline(timestamp);
+
+        assert_eq!(full, local.format("%Y-%m-%d %H:%M:%S %Z").to_string());
+        assert_eq!(medium, local.format("%Y-%m-%d %H:%M %Z").to_string());
+        assert_eq!(short, local.format("%H:%M:%S %Z").to_string());
+        assert_eq!(timeline, local.format("%m-%d %H:%M %Z").to_string());
+    }
 }
