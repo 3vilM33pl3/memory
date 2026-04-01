@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import math
 import subprocess
 import sys
 import time
@@ -143,7 +144,7 @@ def render_screen(payload: bytes, output_path: Path) -> None:
 
     font = ImageFont.truetype(FONT_NAME, FONT_SIZE)
     left, top, right, bottom = font.getbbox("M")
-    cell_width = max(8, right - left)
+    cell_width = max(8, math.ceil(font.getlength("M")))
     cell_height = max(16, bottom - top + 4)
     cols = max(len(line) for line in lines)
     rows = len(lines)
