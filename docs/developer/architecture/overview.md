@@ -43,6 +43,11 @@ The repo-local skill in `.agents/skills/memory-layer/` tells Codex when to:
 - remember meaningful work
 - curate durable project knowledge
 
+This skill is the main driver for coding agent interaction with Memory Layer. In practice, the
+skill workflow decides when the agent should use memory, while the helper scripts in
+`.agents/skills/memory-layer/scripts/` are the execution path that actually calls `mem-cli` or
+`memctl`.
+
 ### CLI (`mem-cli`)
 
 `mem-cli` is the main user entrypoint for:

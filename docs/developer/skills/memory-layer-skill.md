@@ -26,6 +26,10 @@ description: Query project memory before answering project-specific questions; c
 
 This skill integrates Codex with the local memory-layer service.
 
+It is the main driver for coding agent interaction with Memory Layer. The skill decides when the
+agent should query, checkpoint, resume, capture, or remember, and the helper scripts are the
+concrete execution path that invokes `mem-cli` or `memctl`.
+
 Use this skill when:
 - the user asks a project-specific question like “how do we do X here?”
 - you discover durable project knowledge while working
