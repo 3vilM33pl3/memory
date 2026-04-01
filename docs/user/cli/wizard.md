@@ -14,10 +14,11 @@ Use `wizard` to bootstrap Memory Layer configuration either globally for the mac
 `mem-cli wizard --global` configures shared machine-level settings such as:
 
 - `database.url`
-- default `writer.id`
+- optional shared `writer.id`
 - optional LLM settings
 
 The shared service API token is usually generated automatically into the adjacent `memory-layer.env` file. The wizard only needs an explicit token value if you want to override that generated token.
+If you leave `writer.id` unset, Memory Layer derives a stable writer identity automatically at runtime.
 
 `mem-cli wizard` inside a repository is local-first and bootstraps project files such as:
 

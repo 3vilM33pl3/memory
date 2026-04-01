@@ -16,7 +16,7 @@ Use `doctor` when Memory Layer is installed but something is not working the way
 
 - missing or placeholder database URL
 - missing or placeholder service API token
-- missing writer ID for write-capable commands
+- unexpected auto-derived or overridden writer identity
 - backend connectivity issues
 - missing `pgvector`
 - project bootstrap problems such as missing `.mem` files
@@ -44,8 +44,8 @@ It is especially useful after:
 
 Typical remediation paths are:
 
-- missing writer ID
-  - set `[writer].id` or `MEMORY_LAYER_WRITER_ID`
+- unexpected writer identity
+  - set `[writer].id` or `MEMORY_LAYER_WRITER_ID` if you want a custom stable label instead of the auto-derived default
 - missing `pgvector`
   - install the PostgreSQL package for your server version and enable the `vector` extension
 - repo not initialized

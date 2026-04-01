@@ -25,7 +25,6 @@ This guide is written for someone who just wants Memory Layer working with as li
 Before you install or run the wizard, have these ready:
 
 - a PostgreSQL connection string
-- a unique writer ID for the coding agent or tool that will write memory, for example `codex-cli-main`
 - optional: an OpenAI-compatible API key if you want `mem-cli scan`
 - PostgreSQL with `pgvector` installed if you want semantic retrieval
 
@@ -46,7 +45,7 @@ sudo dpkg -i memory-layer_<version>_amd64.deb
 mem-cli wizard --global
 ```
 
-This is where you set the shared database URL and a default `writer.id`. The shared service API token is provisioned automatically if it is missing or still using the development placeholder.
+This is where you set the shared database URL. The shared service API token is provisioned automatically if it is missing or still using the development placeholder. A writer ID is optional; if you do not set one, Memory Layer derives a stable writer identity automatically.
 
 4. Go to the project you want to use:
 
@@ -123,7 +122,7 @@ The wizard can set up:
 - shared/global settings when that scope is enabled:
   - the PostgreSQL database URL
   - the shared service API token override, if you want to replace the auto-generated one
-  - the default `writer.id`
+  - an optional shared `writer.id`
 - optional LLM settings for `scan`
 - repo-local `.mem/` files
 - optional watcher setup
@@ -182,7 +181,7 @@ Use this for project-specific overrides:
 - watcher settings
 - local backend ports
 - project-specific DB override if needed
-- repo-specific `writer.id` override if one project should write under a different writer identity
+- repo-specific `writer.id` override if one project should write under a different custom writer identity
 
 ### Project memory behavior
 
@@ -213,7 +212,20 @@ OPENAI_API_KEY=your-api-key-here
 
 ## Writer ID
 
-Each coding agent or tool that writes memory should have a unique writer ID.
+Each coding agent or tool that writes memory gets a writer ID.
+
+If you do nothing, Memory Layer derives one automatically from:
+
+- the writing tool
+- the local user
+- the local host name
+
+That gives stable defaults such as:
+
+- `mem-cli-olivier-monolith`
+- `memory-watch-olivier-monolith`
+
+For most setups, that automatic writer identity is enough.
 
 You can configure it in TOML:
 
@@ -229,7 +241,7 @@ or with an environment variable:
 export MEMORY_LAYER_WRITER_ID=codex-cli-main
 ```
 
-If you do not configure this, write-capable commands such as `remember`, `scan`, and `memory-watch` will fail.
+Use an explicit writer ID only when you want a custom stable label shared across tools or machines.
 
 ## Primary And Relay Services
 

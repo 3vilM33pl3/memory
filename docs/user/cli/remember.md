@@ -26,9 +26,22 @@ This is the normal direct write command for users. Agents often use the higher-l
 
 ## Requirements
 
-Write-capable commands require a writer ID.
+`remember` always writes with a writer ID, but you usually do not need to configure one manually.
 
-Configure one with:
+By default, Memory Layer derives a stable writer identity from:
+
+- the writing tool
+- the local user
+- the local host name
+
+Examples:
+
+- `mem-cli-olivier-monolith`
+- `memory-watch-olivier-monolith`
+
+Set an explicit writer only when you want a custom shared label across tools or machines.
+
+You can configure one with:
 
 ```toml
 [writer]
@@ -41,7 +54,7 @@ or:
 export MEMORY_LAYER_WRITER_ID=codex-cli-main
 ```
 
-If no writer ID is configured, `remember` fails instead of creating unattributed memory.
+CLI and environment overrides still take precedence over config and the derived fallback.
 
 ## Basic Examples
 

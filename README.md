@@ -22,7 +22,7 @@ The fastest path is:
 1. Install the package.
 2. Run `mem-cli wizard --global` once per machine.
 3. Run `mem-cli wizard` inside each repository.
-4. Make sure a default `writer.id` is configured for write-capable commands.
+4. Let Memory Layer auto-derive a writer identity, or set `writer.id` only if you want a custom shared label.
 5. Start `mem-service`.
 6. Open the TUI or web UI.
 
