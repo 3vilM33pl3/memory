@@ -30,6 +30,7 @@ FONT_SIZE = 14
 PADDING_X = 20
 PADDING_Y = 18
 QUERY_TEXT = "What is the main driver for coding agent interaction with Memory Layer?"
+BOX_DRAWING_CHARS = set("│─┌┐└┘├┤┬┴┼")
 
 
 @dataclass(frozen=True)
@@ -156,42 +157,67 @@ def render_screen(payload: bytes, output_path: Path) -> None:
     )
     draw = ImageDraw.Draw(image)
 
+    def draw_box_glyph(char: str, style: CellStyle, x: int, y: int) -> None:
+        draw.rectangle([x, y, x + cell_width, y + cell_height], fill=style.bg)
+        fg = style.fg
+        left = x
+        right = x + cell_width - 1
+        top = y
+        bottom = y + cell_height - 1
+        cx = x + cell_width // 2
+        cy = y + cell_height // 2
+
+        if char == "│":
+            draw.line((cx, top, cx, bottom), fill=fg, width=1)
+        elif char == "─":
+            draw.line((left, cy, right, cy), fill=fg, width=1)
+        elif char == "┌":
+            draw.line((cx, cy, right, cy), fill=fg, width=1)
+            draw.line((cx, cy, cx, bottom), fill=fg, width=1)
+        elif char == "┐":
+            draw.line((left, cy, cx, cy), fill=fg, width=1)
+            draw.line((cx, cy, cx, bottom), fill=fg, width=1)
+        elif char == "└":
+            draw.line((cx, top, cx, cy), fill=fg, width=1)
+            draw.line((cx, cy, right, cy), fill=fg, width=1)
+        elif char == "┘":
+            draw.line((cx, top, cx, cy), fill=fg, width=1)
+            draw.line((left, cy, cx, cy), fill=fg, width=1)
+        elif char == "├":
+            draw.line((cx, top, cx, bottom), fill=fg, width=1)
+            draw.line((cx, cy, right, cy), fill=fg, width=1)
+        elif char == "┤":
+            draw.line((cx, top, cx, bottom), fill=fg, width=1)
+            draw.line((left, cy, cx, cy), fill=fg, width=1)
+        elif char == "┬":
+            draw.line((left, cy, right, cy), fill=fg, width=1)
+            draw.line((cx, cy, cx, bottom), fill=fg, width=1)
+        elif char == "┴":
+            draw.line((left, cy, right, cy), fill=fg, width=1)
+            draw.line((cx, top, cx, cy), fill=fg, width=1)
+        elif char == "┼":
+            draw.line((left, cy, right, cy), fill=fg, width=1)
+            draw.line((cx, top, cx, bottom), fill=fg, width=1)
+
     for row, line in enumerate(lines):
         if not line:
             continue
-        x = PADDING_X
         y = PADDING_Y + row * cell_height
-        run_text = ""
-        run_style = line[0][1]
-        run_start = x
-
-        def flush() -> None:
-            nonlocal run_text, run_style, run_start
-            if not run_text:
-                return
-            width = len(run_text) * cell_width
-            draw.rectangle(
-                [run_start, y, run_start + width, y + cell_height],
-                fill=run_style.bg,
-            )
-            draw.text(
-                (run_start, y - 1),
-                run_text,
-                font=font,
-                fill=run_style.fg,
-            )
-            run_text = ""
-
         for col, (char, style) in enumerate(line):
             char_x = PADDING_X + col * cell_width
-            if style != run_style:
-                flush()
-                run_style = style
-                run_start = char_x
-            if not run_text:
-                run_start = char_x
-            run_text += char
-        flush()
+            draw.rectangle(
+                [char_x, y, char_x + cell_width, y + cell_height],
+                fill=style.bg,
+            )
+            if char in BOX_DRAWING_CHARS:
+                draw_box_glyph(char, style, char_x, y)
+            else:
+                draw.text(
+                    (char_x, y - 1),
+                    char,
+                    font=font,
+                    fill=style.fg,
+                )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path)
