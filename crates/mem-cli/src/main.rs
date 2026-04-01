@@ -31,7 +31,10 @@ use mem_api::{
 };
 use mem_platform as platform;
 use mem_watch::{flush_path, load_state, run_once, to_status};
-use reqwest::{Client, header::HeaderMap};
+use reqwest::{
+    Client,
+    header::{HeaderMap, ORIGIN},
+};
 use serde::Serialize;
 use sqlx::{Row, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -747,7 +750,7 @@ async fn main() -> Result<()> {
             }
             let response = client
                 .post(service_url(&config, "/v1/capture/task"))
-                .headers(write_headers(&config.service.api_token)?)
+                .headers(write_headers(&config)?)
                 .json(&request)
                 .send()
                 .await?;
@@ -779,7 +782,7 @@ async fn main() -> Result<()> {
             let replacement_policy = repo_replacement_policy(&repo_root);
             let response = client
                 .post(service_url(&config, "/v1/curate"))
-                .headers(write_headers(&config.service.api_token)?)
+                .headers(write_headers(&config)?)
                 .json(&CurateRequest {
                     project: args.project,
                     batch_size: args.batch_size,
@@ -792,7 +795,7 @@ async fn main() -> Result<()> {
         Command::Reindex(args) => {
             let response = client
                 .post(service_url(&config, "/v1/reindex"))
-                .headers(write_headers(&config.service.api_token)?)
+                .headers(write_headers(&config)?)
                 .json(&ReindexRequest {
                     project: args.project,
                 })
@@ -803,7 +806,7 @@ async fn main() -> Result<()> {
         Command::Reembed(args) => {
             let response = client
                 .post(service_url(&config, "/v1/reembed"))
-                .headers(write_headers(&config.service.api_token)?)
+                .headers(write_headers(&config)?)
                 .json(&ReembedRequest {
                     project: args.project,
                 })
@@ -829,7 +832,7 @@ async fn main() -> Result<()> {
         Command::Archive(args) => {
             let response = client
                 .post(service_url(&config, "/v1/archive"))
-                .headers(write_headers(&config.service.api_token)?)
+                .headers(write_headers(&config)?)
                 .json(&ArchiveRequest {
                     project: args.project,
                     max_confidence: args.max_confidence,
@@ -3426,7 +3429,7 @@ impl ApiClient {
                     &self.config,
                     &format!("/v1/projects/{project}/replacement-proposals/{proposal_id}/approve"),
                 ))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .json(&serde_json::json!({}))
                 .send()
                 .await?,
@@ -3445,7 +3448,7 @@ impl ApiClient {
                     &self.config,
                     &format!("/v1/projects/{project}/replacement-proposals/{proposal_id}/reject"),
                 ))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .json(&serde_json::json!({}))
                 .send()
                 .await?,
@@ -3513,7 +3516,7 @@ impl ApiClient {
                     &self.config,
                     &format!("/v1/projects/{project}/bundle/export/preview"),
                 ))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .json(options)
                 .send()
                 .await?,
@@ -3532,7 +3535,7 @@ impl ApiClient {
                 &self.config,
                 &format!("/v1/projects/{project}/bundle/export"),
             ))
-            .headers(write_headers(&self.config.service.api_token)?)
+            .headers(write_headers(&self.config)?)
             .json(options)
             .send()
             .await?;
@@ -3555,7 +3558,7 @@ impl ApiClient {
                     &self.config,
                     &format!("/v1/projects/{project}/bundle/import/preview"),
                 ))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .header("content-type", "application/octet-stream")
                 .body(bytes)
                 .send()
@@ -3575,7 +3578,7 @@ impl ApiClient {
                     &self.config,
                     &format!("/v1/projects/{project}/bundle/import"),
                 ))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .header("content-type", "application/octet-stream")
                 .body(bytes)
                 .send()
@@ -3599,7 +3602,7 @@ impl ApiClient {
         let response = self
             .client
             .post(service_url(&self.config, "/v1/scan/activity"))
-            .headers(write_headers(&self.config.service.api_token)?)
+            .headers(write_headers(&self.config)?)
             .json(request)
             .send()
             .await?;
@@ -3618,7 +3621,7 @@ impl ApiClient {
         let response = self
             .client
             .post(service_url(&self.config, "/v1/checkpoint/activity"))
-            .headers(write_headers(&self.config.service.api_token)?)
+            .headers(write_headers(&self.config)?)
             .json(request)
             .send()
             .await?;
@@ -3650,7 +3653,7 @@ impl ApiClient {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/commits/sync"))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .json(request)
                 .send()
                 .await?,
@@ -3665,7 +3668,7 @@ impl ApiClient {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/capture/task"))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .json(request)
                 .send()
                 .await?,
@@ -3681,7 +3684,7 @@ impl ApiClient {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/curate"))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .json(&CurateRequest {
                     project: project.to_string(),
                     batch_size: None,
@@ -3697,7 +3700,7 @@ impl ApiClient {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/reindex"))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .json(&ReindexRequest {
                     project: project.to_string(),
                 })
@@ -3711,7 +3714,7 @@ impl ApiClient {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/reembed"))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .json(&ReembedRequest {
                     project: project.to_string(),
                 })
@@ -3725,7 +3728,7 @@ impl ApiClient {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/prune-embeddings"))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .json(&PruneEmbeddingsRequest {
                     project: project.to_string(),
                 })
@@ -3739,7 +3742,7 @@ impl ApiClient {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/archive"))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .json(&ArchiveRequest {
                     project: project.to_string(),
                     max_confidence: 0.3,
@@ -3755,7 +3758,7 @@ impl ApiClient {
         get_json(
             self.client
                 .delete(service_url(&self.config, "/v1/memory"))
-                .headers(write_headers(&self.config.service.api_token)?)
+                .headers(write_headers(&self.config)?)
                 .json(&DeleteMemoryRequest { memory_id })
                 .send()
                 .await?,
@@ -4192,10 +4195,25 @@ fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
     }
 }
 
-fn write_headers(token: &str) -> Result<HeaderMap> {
+fn write_headers(config: &AppConfig) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
-    headers.insert("x-api-token", token.parse()?);
+    if let Some(origin) = trusted_local_origin(&config.service.bind_addr) {
+        headers.insert(ORIGIN, origin.parse()?);
+    } else {
+        headers.insert("x-api-token", config.service.api_token.parse()?);
+    }
     Ok(headers)
+}
+
+fn trusted_local_origin(bind_addr: &str) -> Option<&'static str> {
+    let host = bind_addr
+        .rsplit_once(':')
+        .map(|(host, _)| host.trim_matches('[').trim_matches(']'))
+        .unwrap_or(bind_addr);
+    match host {
+        "127.0.0.1" | "localhost" | "::1" => Some("http://127.0.0.1"),
+        _ => None,
+    }
 }
 
 fn service_url(config: &AppConfig, path: &str) -> String {
@@ -4403,14 +4421,14 @@ impl SourceKindString for mem_api::SourceKind {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, sync::Mutex};
+    use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
 
     use super::{
         DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction,
         build_remember_request, ensure_shared_service_api_token, initialize_repo,
         is_placeholder_database_url, mask_database_url, render_agent_project_config,
         repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
-        root_gitignore_contains_mem, shared_env_lookup,
+        root_gitignore_contains_mem, shared_env_lookup, write_headers,
     };
     use mem_api::AppConfig;
 
@@ -4765,6 +4783,58 @@ mod tests {
         assert_eq!(token, "ml_existingtoken");
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn write_headers_adds_local_origin_for_loopback_service() {
+        let mut config = test_app_config();
+        config.service.bind_addr = "127.0.0.1:4040".to_string();
+        config.service.api_token = "ml_testtoken".to_string();
+
+        let headers = write_headers(&config).unwrap();
+
+        assert!(headers.get("x-api-token").is_none());
+        assert_eq!(
+            headers.get("origin").and_then(|value| value.to_str().ok()),
+            Some("http://127.0.0.1")
+        );
+    }
+
+    #[test]
+    fn write_headers_omits_local_origin_for_non_loopback_service() {
+        let mut config = test_app_config();
+        config.service.bind_addr = "10.22.6.42:4140".to_string();
+        config.service.api_token = "ml_testtoken".to_string();
+
+        let headers = write_headers(&config).unwrap();
+
+        assert_eq!(
+            headers.get("x-api-token").and_then(|value| value.to_str().ok()),
+            Some("ml_testtoken")
+        );
+        assert!(headers.get("origin").is_none());
+    }
+
+    fn test_app_config() -> AppConfig {
+        AppConfig {
+            service: mem_api::ServiceConfig {
+                bind_addr: "127.0.0.1:4040".to_string(),
+                capnp_unix_socket: "/tmp/memory-layer.capnp.sock".to_string(),
+                capnp_tcp_addr: "127.0.0.1:4041".to_string(),
+                web_root: None,
+                api_token: "ml_testtoken".to_string(),
+                request_timeout: Duration::from_secs(30),
+            },
+            database: mem_api::DatabaseConfig {
+                url: "postgresql://memory:test@localhost:5432/memory".to_string(),
+            },
+            features: mem_api::FeatureFlags::default(),
+            llm: mem_api::LlmConfig::default(),
+            embeddings: mem_api::EmbeddingConfig::default(),
+            cluster: mem_api::ClusterConfig::default(),
+            writer: mem_api::WriterConfig::default(),
+            automation: mem_api::AutomationConfig::default(),
+        }
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {

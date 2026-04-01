@@ -12,7 +12,10 @@ use mem_api::{
     CurateRequest, CurateResponse, ProjectOverviewResponse, TestResult, WatcherHeartbeatRequest,
     WatcherPresenceSummary, WatcherUnregisterRequest, load_repo_replacement_policy,
 };
-use reqwest::{Client, header::HeaderMap};
+use reqwest::{
+    Client,
+    header::{HeaderMap, ORIGIN},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -316,7 +319,7 @@ pub async fn run_capture_flow(
     send_json(
         client
             .post(service_url(config, "/v1/capture/task"))
-            .headers(write_headers(&config.service.api_token)?)
+            .headers(write_headers(config)?)
             .json(&request)
             .send()
             .await?,
@@ -334,7 +337,7 @@ pub async fn run_curate_flow(
     send_json(
         client
             .post(service_url(config, "/v1/curate"))
-            .headers(write_headers(&config.service.api_token)?)
+            .headers(write_headers(config)?)
             .json(&CurateRequest {
                 project: project.to_string(),
                 batch_size: None,
@@ -386,7 +389,7 @@ pub async fn heartbeat_watcher(
     send_json(
         client
             .post(service_url(config, "/v1/watchers/heartbeat"))
-            .headers(write_headers(&config.service.api_token)?)
+            .headers(write_headers(config)?)
             .json(request)
             .send()
             .await?,
@@ -402,7 +405,7 @@ pub async fn unregister_watcher(
     send_json(
         client
             .post(service_url(config, "/v1/watchers/unregister"))
-            .headers(write_headers(&config.service.api_token)?)
+            .headers(write_headers(config)?)
             .json(request)
             .send()
             .await?,
@@ -726,10 +729,25 @@ fn service_url(config: &AppConfig, path: &str) -> String {
     format!("http://{}{}", config.service.bind_addr, path)
 }
 
-fn write_headers(token: &str) -> Result<HeaderMap> {
+fn write_headers(config: &AppConfig) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
-    headers.insert("x-api-token", token.parse()?);
+    if let Some(origin) = trusted_local_origin(&config.service.bind_addr) {
+        headers.insert(ORIGIN, origin.parse()?);
+    } else {
+        headers.insert("x-api-token", config.service.api_token.parse()?);
+    }
     Ok(headers)
+}
+
+fn trusted_local_origin(bind_addr: &str) -> Option<&'static str> {
+    let host = bind_addr
+        .rsplit_once(':')
+        .map(|(host, _)| host.trim_matches('[').trim_matches(']'))
+        .unwrap_or(bind_addr);
+    match host {
+        "127.0.0.1" | "localhost" | "::1" => Some("http://127.0.0.1"),
+        _ => None,
+    }
 }
 
 async fn send_json<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> Result<T> {
@@ -818,5 +836,42 @@ mod tests {
         let (curate, reason) = should_curate(&config, 3, false, false);
         assert!(curate);
         assert!(reason.contains("batched threshold"));
+    }
+
+    #[test]
+    fn write_headers_adds_local_origin_for_loopback_service() {
+        let mut config = test_app_config();
+        config.service.bind_addr = "127.0.0.1:4040".to_string();
+        config.service.api_token = "ml_testtoken".to_string();
+
+        let headers = write_headers(&config).unwrap();
+
+        assert!(headers.get("x-api-token").is_none());
+        assert_eq!(
+            headers.get("origin").and_then(|value| value.to_str().ok()),
+            Some("http://127.0.0.1")
+        );
+    }
+
+    fn test_app_config() -> AppConfig {
+        AppConfig {
+            service: mem_api::ServiceConfig {
+                bind_addr: "127.0.0.1:4040".to_string(),
+                capnp_unix_socket: "/tmp/memory-layer.capnp.sock".to_string(),
+                capnp_tcp_addr: "127.0.0.1:4041".to_string(),
+                web_root: None,
+                api_token: "ml_testtoken".to_string(),
+                request_timeout: std::time::Duration::from_secs(30),
+            },
+            database: mem_api::DatabaseConfig {
+                url: "postgresql://memory:test@localhost:5432/memory".to_string(),
+            },
+            features: mem_api::FeatureFlags::default(),
+            llm: mem_api::LlmConfig::default(),
+            embeddings: mem_api::EmbeddingConfig::default(),
+            cluster: mem_api::ClusterConfig::default(),
+            writer: mem_api::WriterConfig::default(),
+            automation: mem_api::AutomationConfig::default(),
+        }
     }
 }
