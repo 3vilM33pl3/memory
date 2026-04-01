@@ -1,6 +1,6 @@
 ---
 name: memory-layer
-description: Query project memory before answering project-specific questions; capture completed task context; curate raw captures into durable canonical memory with provenance.
+description: Query project memory before answering project-specific questions; capture completed task context; curate raw captures into durable canonical memory with provenance; checkpoint plans before execution; use memory to get back into flow after interruptions
 ---
 
 # Memory Layer Skill
@@ -10,6 +10,8 @@ Use this skill when:
 - you discover a durable convention, decision, or debugging lesson
 - you complete meaningful work in this repository
 - the user explicitly asks to store or query memory
+- the user returns after an interruption and wants to get back into flow
+- you transition from planning to execution and want to checkpoint the plan for later resumption
 
 Do not use this skill for:
 - generic questions with no project-specific context
