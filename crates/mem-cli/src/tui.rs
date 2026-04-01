@@ -1666,7 +1666,7 @@ fn component_status_line<'a>(
 fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(area);
 
     let header = Row::new(["Summary", "Type", "Status", "Conf", "Updated"]).style(
@@ -1680,13 +1680,13 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         rows,
         [
             Constraint::Percentage(34),
-            Constraint::Length(13),
-            Constraint::Length(10),
-            Constraint::Length(6),
-            Constraint::Length(19),
+            Constraint::Length(12),
+            Constraint::Length(8),
+            Constraint::Length(5),
+            Constraint::Length(20),
         ],
     )
-    .column_spacing(1)
+    .column_spacing(2)
     .header(header)
     .row_highlight_style(
         Style::default()
