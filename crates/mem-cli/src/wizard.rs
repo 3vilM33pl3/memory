@@ -11,6 +11,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use mem_api::{AppConfig, AutomationMode, discover_global_config_path, read_repo_project_slug};
+use mem_platform as platform;
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -1496,7 +1497,7 @@ async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
                 let trimmed = api.config.writer.id.trim();
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
             })
-            .ok_or_else(|| anyhow::anyhow!("scan requested but no writer id is configured"))?;
+            .unwrap_or_else(|| platform::derive_default_writer_id("mem-cli"));
         let report = scan::run_scan(
             &api,
             repo_root,
@@ -1561,7 +1562,7 @@ fn write_global_config(draft: &WizardDraft) -> Result<()> {
 
 fn render_global_config(draft: &WizardDraft) -> String {
     format!(
-        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\n# service API token is provisioned automatically into memory-layer.env\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[embeddings]\nprovider = \"openai_compatible\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
+        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\n# service API token is provisioned automatically into memory-layer.env\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n# Optional shared writer label. If omitted, Memory Layer derives a writer id automatically.\n# [writer]\n# id = \"codex-cli-main\"\n# name = \"Codex CLI\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[embeddings]\nprovider = \"openai_compatible\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
         default_shared_capnp_unix_socket(),
         draft.database_url,
         draft.llm_provider,

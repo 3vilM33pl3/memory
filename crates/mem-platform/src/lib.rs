@@ -141,6 +141,53 @@ pub fn sanitize_service_fragment(value: &str) -> String {
         .collect::<String>()
 }
 
+pub fn current_username() -> String {
+    env::var("MEMORY_LAYER_WRITER_IDENTITY_USER")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| env::var("USER").ok())
+        .or_else(|| env::var("USERNAME").ok())
+        .or_else(|| command_stdout_trimmed("whoami"))
+        .map(|value| sanitize_service_fragment(value.trim()).to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown-user".to_string())
+}
+
+pub fn current_hostname() -> String {
+    env::var("MEMORY_LAYER_WRITER_IDENTITY_HOST")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| env::var("HOSTNAME").ok())
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| command_stdout_trimmed("hostname"))
+        .map(|value| sanitize_service_fragment(value.trim()).to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown-host".to_string())
+}
+
+pub fn derive_default_writer_id(tool: &str) -> String {
+    format!(
+        "{}-{}-{}",
+        sanitize_service_fragment(tool).to_ascii_lowercase(),
+        current_username(),
+        current_hostname()
+    )
+}
+
+fn command_stdout_trimmed(program: &str) -> Option<String> {
+    let output = Command::new(program).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
 pub fn watch_service_unit_name(project: &str) -> String {
     format!(
         "memory-watch-{}.service",
@@ -270,4 +317,41 @@ pub fn backend_launch_agent_path() -> Option<PathBuf> {
 #[cfg(target_os = "macos")]
 pub fn watch_launch_agent_path(project: &str) -> Option<PathBuf> {
     Some(user_launch_agents_dir()?.join(format!("{}.plist", watch_launch_agent_label(project))))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::derive_default_writer_id;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn restore_env_var(key: &str, value: Option<String>) {
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    #[test]
+    fn derive_default_writer_id_uses_overrides_and_sanitizes_values() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_user = std::env::var("MEMORY_LAYER_WRITER_IDENTITY_USER").ok();
+        let old_host = std::env::var("MEMORY_LAYER_WRITER_IDENTITY_HOST").ok();
+
+        unsafe {
+            std::env::set_var("MEMORY_LAYER_WRITER_IDENTITY_USER", "Olivier Smith");
+            std::env::set_var("MEMORY_LAYER_WRITER_IDENTITY_HOST", "dev-box.local");
+        }
+
+        let writer_id = derive_default_writer_id("mem cli");
+
+        restore_env_var("MEMORY_LAYER_WRITER_IDENTITY_USER", old_user);
+        restore_env_var("MEMORY_LAYER_WRITER_IDENTITY_HOST", old_host);
+
+        assert_eq!(writer_id, "mem-cli-olivier-smith-dev-box-local");
+    }
 }

@@ -1504,24 +1504,16 @@ async fn run_doctor(
 
         report.push(doctor_check(
             "config.writer_id",
+            DoctorStatus::Ok,
             if config.writer.id.trim().is_empty() {
-                DoctorStatus::Fail
-            } else {
-                DoctorStatus::Ok
-            },
-            if config.writer.id.trim().is_empty() {
-                "Writer id is not configured for write-capable workflows."
+                "Writer id will be auto-derived for write-capable workflows."
             } else {
                 "Writer id is configured."
             },
-            if config.writer.id.trim().is_empty() {
-                None
-            } else {
-                Some(config.writer.id.clone())
-            },
+            Some(resolve_writer_identity(&config, None)?.id),
             if config.writer.id.trim().is_empty() {
                 Some(format!(
-                    "Set [writer].id in {} or export MEMORY_LAYER_WRITER_ID",
+                    "Optional: set [writer].id in {} or export MEMORY_LAYER_WRITER_ID if you want a custom stable writer label.",
                     config_path.display()
                 ))
             } else {
@@ -4330,9 +4322,10 @@ fn resolve_writer_identity(
             name: config.writer.name.clone(),
         });
     }
-    anyhow::bail!(
-        "missing writer id; set --writer-id, MEMORY_LAYER_WRITER_ID, MEMORY_LAYER_AGENT_ID, or [writer].id in config"
-    );
+    Ok(WriterIdentity {
+        id: platform::derive_default_writer_id("mem-cli"),
+        name: config.writer.name.clone(),
+    })
 }
 
 fn derive_summary(project: &str, files_changed: &[String]) -> String {
@@ -4410,15 +4403,16 @@ impl SourceKindString for mem_api::SourceKind {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{fs, path::PathBuf, sync::Mutex};
 
     use super::{
         DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction,
         build_remember_request, ensure_shared_service_api_token, initialize_repo,
         is_placeholder_database_url, mask_database_url, render_agent_project_config,
-        repair_repo_bootstrap, resolve_project_slug, resolve_repo_root,
+        repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
         root_gitignore_contains_mem, shared_env_lookup,
     };
+    use mem_api::AppConfig;
 
     #[cfg(target_os = "macos")]
     use super::{
@@ -4429,6 +4423,17 @@ mod tests {
 
     #[cfg(not(target_os = "macos"))]
     use super::{render_watch_unit, watch_unit_name};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn restore_env_var(key: &str, value: Option<String>) {
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
 
     #[test]
     fn project_flag_wins() {
@@ -4485,6 +4490,35 @@ mod tests {
         assert_eq!(request.writer_id, "codex-writer");
         assert!(request.user_prompt.contains("Auto-captured"));
         assert!(request.agent_summary.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn writer_identity_falls_back_to_derived_value() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_user = std::env::var("MEMORY_LAYER_WRITER_IDENTITY_USER").ok();
+        let old_host = std::env::var("MEMORY_LAYER_WRITER_IDENTITY_HOST").ok();
+        let old_writer = std::env::var("MEMORY_LAYER_WRITER_ID").ok();
+        let old_agent = std::env::var("MEMORY_LAYER_AGENT_ID").ok();
+
+        unsafe {
+            std::env::set_var("MEMORY_LAYER_WRITER_IDENTITY_USER", "cli-user");
+            std::env::set_var("MEMORY_LAYER_WRITER_IDENTITY_HOST", "cli-host");
+            std::env::remove_var("MEMORY_LAYER_WRITER_ID");
+            std::env::remove_var("MEMORY_LAYER_AGENT_ID");
+        }
+
+        let config: AppConfig =
+            toml::from_str("[service]\n\n[database]\nurl = \"postgres://example\"\n")
+                .expect("parse minimal config");
+        let writer = resolve_writer_identity(&config, None).expect("resolve writer identity");
+
+        restore_env_var("MEMORY_LAYER_WRITER_IDENTITY_USER", old_user);
+        restore_env_var("MEMORY_LAYER_WRITER_IDENTITY_HOST", old_host);
+        restore_env_var("MEMORY_LAYER_WRITER_ID", old_writer);
+        restore_env_var("MEMORY_LAYER_AGENT_ID", old_agent);
+
+        assert_eq!(writer.id, "mem-cli-cli-user-cli-host");
+        assert_eq!(writer.name, None);
     }
 
     #[test]

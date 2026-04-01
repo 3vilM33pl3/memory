@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use mem_api::{AppConfig, read_repo_project_slug};
+use mem_platform as platform;
 use mem_watch::{
     build_watcher_heartbeat_request, build_watcher_unregister_request, detect_hostname,
     fetch_service_instance_id, flush_path, heartbeat_watcher, load_state, run_once, to_status,
@@ -296,9 +297,7 @@ fn resolve_writer_id(config: &AppConfig, cli_writer_id: Option<String>) -> Resul
     if !trimmed.is_empty() {
         return Ok(trimmed.to_string());
     }
-    anyhow::bail!(
-        "missing writer id; set --writer-id, MEMORY_LAYER_WRITER_ID, MEMORY_LAYER_AGENT_ID, or [writer].id in config"
-    );
+    Ok(platform::derive_default_writer_id("memory-watch"))
 }
 
 fn watcher_is_service_managed() -> bool {
@@ -333,10 +332,22 @@ async fn shutdown_signal() {
 mod tests {
     use super::{
         BackendInstanceState, HeartbeatState, log_heartbeat_transition, resolve_project,
-        update_backend_instance_state,
+        resolve_writer_id, update_backend_instance_state,
     };
+    use mem_api::AppConfig;
     use mem_api::WatcherPresenceSummary;
-    use std::fs;
+    use std::{fs, sync::Mutex};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn restore_env_var(key: &str, value: Option<String>) {
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
 
     #[test]
     fn heartbeat_failure_enters_failing_state() {
@@ -390,6 +401,34 @@ mod tests {
         assert_eq!(resolve_project(None, &repo_root).unwrap(), "sctp");
 
         let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn writer_id_falls_back_to_derived_value() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let old_user = std::env::var("MEMORY_LAYER_WRITER_IDENTITY_USER").ok();
+        let old_host = std::env::var("MEMORY_LAYER_WRITER_IDENTITY_HOST").ok();
+        let old_writer = std::env::var("MEMORY_LAYER_WRITER_ID").ok();
+        let old_agent = std::env::var("MEMORY_LAYER_AGENT_ID").ok();
+
+        unsafe {
+            std::env::set_var("MEMORY_LAYER_WRITER_IDENTITY_USER", "watch-user");
+            std::env::set_var("MEMORY_LAYER_WRITER_IDENTITY_HOST", "watch-host");
+            std::env::remove_var("MEMORY_LAYER_WRITER_ID");
+            std::env::remove_var("MEMORY_LAYER_AGENT_ID");
+        }
+
+        let config: AppConfig =
+            toml::from_str("[service]\n\n[database]\nurl = \"postgres://example\"\n")
+                .expect("parse minimal config");
+        let writer_id = resolve_writer_id(&config, None).expect("resolve writer id");
+
+        restore_env_var("MEMORY_LAYER_WRITER_IDENTITY_USER", old_user);
+        restore_env_var("MEMORY_LAYER_WRITER_IDENTITY_HOST", old_host);
+        restore_env_var("MEMORY_LAYER_WRITER_ID", old_writer);
+        restore_env_var("MEMORY_LAYER_AGENT_ID", old_agent);
+
+        assert_eq!(writer_id, "memory-watch-watch-user-watch-host");
     }
 
     fn unique_temp_dir(name: &str) -> std::path::PathBuf {
