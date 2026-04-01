@@ -25,10 +25,11 @@ This guide is written for someone who just wants Memory Layer working with as li
 Before you install or run the wizard, have these ready:
 
 - a PostgreSQL connection string
-- an API token string for local write-capable tools
 - a unique writer ID for the coding agent or tool that will write memory, for example `codex-cli-main`
 - optional: an OpenAI-compatible API key if you want `mem-cli scan`
 - PostgreSQL with `pgvector` installed if you want semantic retrieval
+
+You do not need to invent a Memory Layer service token yourself for normal installs. Setup generates a machine-local token automatically in `memory-layer.env`, and local write-capable tools use that token to authenticate to `mem-service`.
 
 ## Fast Install: Debian
 
@@ -45,7 +46,7 @@ sudo dpkg -i memory-layer_<version>_amd64.deb
 mem-cli wizard --global
 ```
 
-This is where you set the shared database URL, API token, and a default `writer.id`.
+This is where you set the shared database URL and a default `writer.id`. The shared service API token is provisioned automatically if it is missing or still using the development placeholder.
 
 4. Go to the project you want to use:
 
@@ -121,7 +122,7 @@ The wizard can set up:
 
 - shared/global settings when that scope is enabled:
   - the PostgreSQL database URL
-  - the write API token
+  - the shared service API token override, if you want to replace the auto-generated one
   - the default `writer.id`
 - optional LLM settings for `scan`
 - repo-local `.mem/` files
@@ -169,9 +170,10 @@ Inside each project:
 Use this for values shared by many repos:
 
 - `database.url`
-- `service.api_token`
 - `[cluster]` settings if you want relay discovery on a local network
 - `[llm]` settings
+
+The shared service API token normally lives in the adjacent `memory-layer.env` file and is provisioned automatically during setup.
 
 ### Repo-local config
 
@@ -205,6 +207,7 @@ Available policies are `conservative`, `balanced`, and `aggressive`. `balanced` 
 Use these for secrets such as:
 
 ```bash
+MEMORY_LAYER__SERVICE__API_TOKEN=auto-generated-or-manually-overridden
 OPENAI_API_KEY=your-api-key-here
 ```
 

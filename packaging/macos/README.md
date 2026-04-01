@@ -31,6 +31,8 @@ mem-cli service enable
 mem-cli watch enable --project <slug>
 ```
 
+`mem-cli service enable` provisions the shared service API token automatically if it is missing or still set to the development placeholder.
+
 ## Service labels
 
 - Backend: `com.memory-layer.mem-service`

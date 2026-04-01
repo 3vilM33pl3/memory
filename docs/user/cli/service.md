@@ -27,10 +27,18 @@ Enable or start the service:
 mem-cli service enable
 ```
 
+This command also provisions the shared service API token automatically if it is missing or still set to the old development placeholder.
+
 Check service status:
 
 ```bash
 mem-cli service status
+```
+
+Rotate an old placeholder token manually:
+
+```bash
+mem-cli service ensure-api-token --rotate-placeholder
 ```
 
 Health checks from the client side:

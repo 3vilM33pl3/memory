@@ -15,7 +15,7 @@ Use `doctor` when Memory Layer is installed but something is not working the way
 `mem-cli doctor` checks the current setup for common problems such as:
 
 - missing or placeholder database URL
-- missing service API token
+- missing or placeholder service API token
 - missing writer ID for write-capable commands
 - backend connectivity issues
 - missing `pgvector`
@@ -52,5 +52,7 @@ Typical remediation paths are:
   - run `mem-cli wizard` or `mem-cli init`
 - backend unreachable
   - start the shared backend service or the local development backend
+- placeholder service API token
+  - run `mem-cli service ensure-api-token --rotate-placeholder` or `mem-cli wizard --global`
 
 Use `doctor` first before assuming the memory database or watcher system is broken.
