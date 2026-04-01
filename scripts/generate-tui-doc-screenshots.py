@@ -19,7 +19,7 @@ TUI_BIN = os.environ.get("MEMORY_LAYER_TUI_BIN", str(ROOT / "target" / "debug" /
 WATCH_BIN = os.environ.get(
     "MEMORY_LAYER_WATCH_BIN", str(ROOT / "target" / "debug" / "memory-watch")
 )
-WIDTH = 160
+WIDTH = 184
 HEIGHT = 48
 OUTPUT_DIR = ROOT / "docs" / "img" / "tui"
 DEFAULT_FG = (230, 236, 245)
