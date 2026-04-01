@@ -108,6 +108,17 @@ enum ServiceCommand {
     Enable,
     Disable,
     Status,
+    EnsureApiToken(ServiceEnsureApiTokenArgs),
+}
+
+#[derive(Debug, Args)]
+struct ServiceEnsureApiTokenArgs {
+    #[arg(long)]
+    shared: bool,
+    #[arg(long)]
+    rotate_placeholder: bool,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -422,12 +433,31 @@ async fn main() -> Result<()> {
             let config_path = cli_config
                 .clone()
                 .unwrap_or_else(default_global_config_path);
-            let output = match args.command {
-                ServiceCommand::Enable => enable_backend_service(&config_path)?,
-                ServiceCommand::Disable => disable_backend_service()?,
-                ServiceCommand::Status => backend_service_status(&config_path)?,
-            };
-            println!("{output}");
+            match &args.command {
+                ServiceCommand::Enable => {
+                    let token_result =
+                        ensure_shared_service_api_token_for_config(&config_path, None, true)?;
+                    if token_result.changed {
+                        println!("{}", token_result.summary_line());
+                    }
+                    println!("{}", enable_backend_service(&config_path)?);
+                }
+                ServiceCommand::Disable => println!("{}", disable_backend_service()?),
+                ServiceCommand::Status => println!("{}", backend_service_status(&config_path)?),
+                ServiceCommand::EnsureApiToken(args) => {
+                    let _ = args.shared;
+                    let result = ensure_shared_service_api_token_for_config(
+                        &config_path,
+                        None,
+                        args.rotate_placeholder,
+                    )?;
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    } else {
+                        println!("{}", result.summary_line());
+                    }
+                }
+            }
             return Ok(());
         }
         Command::Watch(args) => {
@@ -906,6 +936,101 @@ fn write_shared_env_file(path: &Path, key: &str, value: &str) -> Result<()> {
     set_private_file_permissions(path)
 }
 
+const DEV_API_TOKEN: &str = "dev-memory-token";
+const SERVICE_API_TOKEN_KEY: &str = "MEMORY_LAYER__SERVICE__API_TOKEN";
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ServiceApiTokenAction {
+    Created,
+    Rotated,
+    Preserved,
+}
+
+#[derive(Debug, Serialize)]
+struct ServiceApiTokenEnsureResult {
+    path: String,
+    changed: bool,
+    action: ServiceApiTokenAction,
+}
+
+impl ServiceApiTokenEnsureResult {
+    fn summary_line(&self) -> String {
+        match self.action {
+            ServiceApiTokenAction::Created => {
+                format!("Created shared service API token in {}", self.path)
+            }
+            ServiceApiTokenAction::Rotated => {
+                format!("Rotated shared service API token in {}", self.path)
+            }
+            ServiceApiTokenAction::Preserved => {
+                format!("Kept existing shared service API token in {}", self.path)
+            }
+        }
+    }
+}
+
+fn is_placeholder_service_api_token(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.is_empty() || trimmed == DEV_API_TOKEN
+}
+
+fn generate_service_api_token() -> String {
+    format!("ml_{}", Uuid::new_v4().simple())
+}
+
+fn ensure_shared_service_api_token(
+    shared_env_path: &Path,
+    preferred_token: Option<&str>,
+    rotate_placeholder: bool,
+) -> Result<ServiceApiTokenEnsureResult> {
+    let existing = shared_env_lookup(shared_env_path, SERVICE_API_TOKEN_KEY);
+    if let Some(token) = existing.as_deref() {
+        if !is_placeholder_service_api_token(token) {
+            return Ok(ServiceApiTokenEnsureResult {
+                path: shared_env_path.display().to_string(),
+                changed: false,
+                action: ServiceApiTokenAction::Preserved,
+            });
+        }
+        if !rotate_placeholder {
+            return Ok(ServiceApiTokenEnsureResult {
+                path: shared_env_path.display().to_string(),
+                changed: false,
+                action: ServiceApiTokenAction::Preserved,
+            });
+        }
+    }
+
+    let token = preferred_token
+        .map(str::trim)
+        .filter(|value| !is_placeholder_service_api_token(value))
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(generate_service_api_token);
+    write_shared_env_file(shared_env_path, SERVICE_API_TOKEN_KEY, &token)?;
+    Ok(ServiceApiTokenEnsureResult {
+        path: shared_env_path.display().to_string(),
+        changed: true,
+        action: if existing.is_some() {
+            ServiceApiTokenAction::Rotated
+        } else {
+            ServiceApiTokenAction::Created
+        },
+    })
+}
+
+fn ensure_shared_service_api_token_for_config(
+    config_path: &Path,
+    preferred_token: Option<&str>,
+    rotate_placeholder: bool,
+) -> Result<ServiceApiTokenEnsureResult> {
+    ensure_shared_service_api_token(
+        &shared_env_path_for_config(config_path),
+        preferred_token,
+        rotate_placeholder,
+    )
+}
+
 fn shared_env_lookup(path: &Path, key: &str) -> Option<String> {
     let content = fs::read_to_string(path).ok()?;
     for line in content.lines() {
@@ -1348,27 +1473,29 @@ async fn run_doctor(
             "config.api_token",
             if config.service.api_token.trim().is_empty() {
                 DoctorStatus::Fail
-            } else if config.service.api_token == "dev-memory-token" {
+            } else if config.service.api_token == DEV_API_TOKEN {
                 DoctorStatus::Warn
             } else {
                 DoctorStatus::Ok
             },
             if config.service.api_token.trim().is_empty() {
                 "API token is empty."
-            } else if config.service.api_token == "dev-memory-token" {
+            } else if config.service.api_token == DEV_API_TOKEN {
                 "API token is set to the development default."
             } else {
                 "API token is configured."
             },
             None,
             if config.service.api_token.trim().is_empty() {
-                Some(format!(
-                    "Set [service].api_token in {}",
-                    global_config_path
-                        .as_ref()
-                        .unwrap_or(&config_path)
-                        .display()
-                ))
+                Some(
+                    "Run `mem-cli wizard --global` or `mem-cli service ensure-api-token --rotate-placeholder` to provision a machine-local token."
+                        .to_string(),
+                )
+            } else if config.service.api_token == DEV_API_TOKEN {
+                Some(
+                    "Run `mem-cli wizard --global` or `mem-cli service ensure-api-token --rotate-placeholder` to provision a machine-local token."
+                        .to_string(),
+                )
             } else {
                 None
             },
@@ -4286,9 +4413,11 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     use super::{
-        RememberArgs, build_remember_request, initialize_repo, is_placeholder_database_url,
-        mask_database_url, render_agent_project_config, repair_repo_bootstrap,
-        resolve_project_slug, resolve_repo_root, root_gitignore_contains_mem,
+        DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction,
+        build_remember_request, ensure_shared_service_api_token, initialize_repo,
+        is_placeholder_database_url, mask_database_url, render_agent_project_config,
+        repair_repo_bootstrap, resolve_project_slug, resolve_repo_root,
+        root_gitignore_contains_mem, shared_env_lookup,
     };
 
     #[cfg(target_os = "macos")]
@@ -4543,6 +4672,63 @@ mod tests {
             super::shared_env_lookup(&path, "OPENAI_API_KEY").as_deref(),
             Some("test-key")
         );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ensure_shared_service_api_token_creates_missing_token() {
+        let dir = unique_temp_dir("mem-token-create");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory-layer.env");
+
+        let result = ensure_shared_service_api_token(&path, None, true).unwrap();
+        let token = shared_env_lookup(&path, SERVICE_API_TOKEN_KEY).unwrap();
+
+        assert!(result.changed);
+        assert!(matches!(result.action, ServiceApiTokenAction::Created));
+        assert!(token.starts_with("ml_"));
+        assert_ne!(token, DEV_API_TOKEN);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ensure_shared_service_api_token_rotates_placeholder() {
+        let dir = unique_temp_dir("mem-token-rotate");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory-layer.env");
+        fs::write(
+            &path,
+            format!("{SERVICE_API_TOKEN_KEY}={DEV_API_TOKEN}\nOPENAI_API_KEY=test-key\n"),
+        )
+        .unwrap();
+
+        let result = ensure_shared_service_api_token(&path, None, true).unwrap();
+        let token = shared_env_lookup(&path, SERVICE_API_TOKEN_KEY).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+
+        assert!(result.changed);
+        assert!(matches!(result.action, ServiceApiTokenAction::Rotated));
+        assert!(token.starts_with("ml_"));
+        assert!(content.contains("OPENAI_API_KEY=test-key"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ensure_shared_service_api_token_preserves_existing_non_placeholder() {
+        let dir = unique_temp_dir("mem-token-preserve");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory-layer.env");
+        fs::write(&path, format!("{SERVICE_API_TOKEN_KEY}=ml_existingtoken\n")).unwrap();
+
+        let result = ensure_shared_service_api_token(&path, None, true).unwrap();
+        let token = shared_env_lookup(&path, SERVICE_API_TOKEN_KEY).unwrap();
+
+        assert!(!result.changed);
+        assert!(matches!(result.action, ServiceApiTokenAction::Preserved));
+        assert_eq!(token, "ml_existingtoken");
 
         let _ = fs::remove_dir_all(dir);
     }

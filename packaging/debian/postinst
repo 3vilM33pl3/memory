@@ -3,4 +3,11 @@ set -euo pipefail
 
 id -u memory-layer >/dev/null 2>&1 || useradd --system --home /var/lib/memory-layer --shell /usr/sbin/nologin memory-layer
 install -d -o memory-layer -g memory-layer /etc/memory-layer /var/lib/memory-layer /var/log/memory-layer
+token_result="$(/usr/bin/mem-cli --config /etc/memory-layer/memory-layer.toml service ensure-api-token --rotate-placeholder --json)"
 systemctl daemon-reload || true
+if printf '%s' "$token_result" | grep -q '"changed":[[:space:]]*true'; then
+    if systemctl is-active --quiet memory-layer.service; then
+        systemctl restart memory-layer.service || true
+    fi
+    echo "Memory Layer rotated the shared service API token; restart any user-scoped watcher services so they pick up the new token."
+fi

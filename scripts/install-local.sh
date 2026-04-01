@@ -51,6 +51,7 @@ fi
 if [[ ! -f "$ENV_FILE" ]]; then
   cat > "$ENV_FILE" <<'EOF'
 # Shared secrets and overrides for Memory Layer CLI and background services.
+# The service API token is provisioned automatically during setup.
 # Example:
 # OPENAI_API_KEY=replace-me
 EOF
@@ -59,6 +60,9 @@ EOF
 else
   echo "Keeping existing environment file at $ENV_FILE"
 fi
+
+"$BIN_DIR/mem-cli" --config "$CONFIG_DIR/memory-layer.toml" service ensure-api-token --rotate-placeholder >/dev/null
+echo "Ensured shared service API token at $ENV_FILE"
 
 cat <<EOF
 

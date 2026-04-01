@@ -24,9 +24,10 @@ use reqwest::Client;
 use super::{
     ApiClient, DoctorReport, DoctorStatus, backend_service_available, default_global_config_path,
     default_local_service_overrides, default_shared_capnp_unix_socket, enable_backend_service,
-    enable_watch_service, mask_database_url, read_local_service_overrides,
-    render_agent_project_config, render_project_metadata, repair_repo_bootstrap, run_doctor,
-    shared_env_lookup, shared_env_path_for_config, write_shared_env_file,
+    enable_watch_service, ensure_shared_service_api_token_for_config, mask_database_url,
+    read_local_service_overrides, render_agent_project_config, render_project_metadata,
+    repair_repo_bootstrap, run_doctor, shared_env_lookup, shared_env_path_for_config,
+    write_shared_env_file,
 };
 use crate::scan::{self, ScanReport};
 
@@ -293,7 +294,7 @@ impl WizardDraft {
 
         Self {
             global_config_path,
-            shared_env_path,
+            shared_env_path: shared_env_path.clone(),
             repo_root: repo_root.clone(),
             project,
             include_global: default_include_global(repo_root.is_some(), prefer_global),
@@ -303,10 +304,13 @@ impl WizardDraft {
                 .unwrap_or_else(|| {
                     "postgresql://memory:<password>@localhost:5432/memory".to_string()
                 }),
-            api_token: global_config
-                .as_ref()
-                .map(|config| config.service.api_token.clone())
-                .unwrap_or_else(|| "dev-memory-token".to_string()),
+            api_token: shared_env_lookup(&shared_env_path, "MEMORY_LAYER__SERVICE__API_TOKEN")
+                .or_else(|| {
+                    global_config
+                        .as_ref()
+                        .map(|config| config.service.api_token.clone())
+                })
+                .unwrap_or_default(),
             llm_provider: global_config
                 .as_ref()
                 .map(|config| config.llm.provider.clone())
@@ -829,7 +833,7 @@ fn shared_items(draft: &WizardDraft) -> Vec<StepItem> {
         ),
         text_item(
             FieldKey::ApiToken,
-            "Write API token",
+            "Service API token override",
             &secret_label(&draft.api_token),
         ),
         choice_item(
@@ -1188,7 +1192,7 @@ fn review_lines(draft: &WizardDraft, step: Step, status: &str) -> Vec<Line<'stat
                     mask_database_url(&draft.database_url)
                 )));
                 lines.push(Line::from(format!(
-                    "Write API token: {}",
+                    "Service API token override: {}",
                     secret_label(&draft.api_token)
                 )));
                 lines.push(Line::from(format!(
@@ -1409,6 +1413,12 @@ async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
             "Updated shared config at {}",
             draft.global_config_path.display()
         ));
+        let token_result = ensure_shared_service_api_token_for_config(
+            &draft.global_config_path,
+            Some(&draft.api_token),
+            true,
+        )?;
+        lines.push(token_result.summary_line());
         if !draft.llm_api_key_value.trim().is_empty() {
             write_shared_env_file(
                 &draft.shared_env_path,
@@ -1551,9 +1561,8 @@ fn write_global_config(draft: &WizardDraft) -> Result<()> {
 
 fn render_global_config(draft: &WizardDraft) -> String {
     format!(
-        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"{}\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[embeddings]\nprovider = \"openai_compatible\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
+        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\n# service API token is provisioned automatically into memory-layer.env\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[embeddings]\nprovider = \"openai_compatible\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
         default_shared_capnp_unix_socket(),
-        draft.api_token,
         draft.database_url,
         draft.llm_provider,
         draft.llm_base_url,
@@ -1713,7 +1722,7 @@ fn field_label(field: FieldKey) -> &'static str {
     match field {
         FieldKey::IncludeGlobal => "Include shared/global setup",
         FieldKey::DatabaseUrl => "Database URL",
-        FieldKey::ApiToken => "Write API token",
+        FieldKey::ApiToken => "Service API token override",
         FieldKey::LlmModelChoice => "LLM model",
         FieldKey::LlmCustomModel => "Custom LLM model",
         FieldKey::LlmApiKeyEnv => "LLM API key env var",
@@ -1862,7 +1871,10 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use super::{Step, WizardDraft, default_include_global, next_step, read_project_slug};
+    use super::{
+        Step, WizardDraft, default_include_global, next_step, read_project_slug,
+        render_global_config,
+    };
     use mem_api::AutomationMode;
 
     #[test]
@@ -1968,5 +1980,49 @@ mod tests {
         assert_eq!(draft.local_capnp_unix_socket, "/tmp/dev.sock");
 
         let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn rendered_global_config_leaves_service_token_in_env_file() {
+        let draft = WizardDraft {
+            global_config_path: PathBuf::from("/tmp/global.toml"),
+            shared_env_path: PathBuf::from("/tmp/global.env"),
+            repo_root: None,
+            project: "memory".to_string(),
+            include_global: super::ToggleChoice::Yes,
+            database_url: "postgresql://memory:secret@localhost:5432/memory".to_string(),
+            api_token: "ml_override".to_string(),
+            llm_provider: "openai_compatible".to_string(),
+            llm_base_url: "https://api.openai.com/v1".to_string(),
+            llm_api_key_env: "OPENAI_API_KEY".to_string(),
+            llm_model_choice: super::LlmModelChoice::Custom,
+            llm_custom_model: "gpt-test".to_string(),
+            llm_api_key_value: String::new(),
+            local_database_url: String::new(),
+            local_llm_api_key_value: String::new(),
+            local_service_mode: super::LocalServiceMode::InheritShared,
+            local_bind_addr: String::new(),
+            local_capnp_tcp_addr: String::new(),
+            local_capnp_unix_socket: String::new(),
+            apply_repo_setup: super::ToggleChoice::No,
+            automation_enabled: super::ToggleChoice::No,
+            automation_mode: AutomationMode::Suggest,
+            automation_poll_interval: "10s".to_string(),
+            automation_capture_idle_threshold: "10m".to_string(),
+            automation_min_changed_files: "2".to_string(),
+            automation_require_passing_test: super::ToggleChoice::No,
+            automation_curate_after_captures: "3".to_string(),
+            automation_curate_on_explicit_flush: super::ToggleChoice::Yes,
+            automation_ignored_paths: ".git/".to_string(),
+            enable_backend_service: super::ToggleChoice::No,
+            enable_watcher_service: super::ToggleChoice::No,
+            scan_choice: super::ScanChoice::Skip,
+            run_doctor: super::ToggleChoice::No,
+        };
+
+        let rendered = render_global_config(&draft);
+
+        assert!(rendered.contains("service API token is provisioned automatically"));
+        assert!(!rendered.contains("api_token ="));
     }
 }

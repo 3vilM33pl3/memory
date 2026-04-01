@@ -28,6 +28,9 @@ class MemoryLayer < Formula
         mem-cli wizard
         mem-cli service enable
 
+      `mem-cli service enable` provisions the shared service API token
+      automatically if it is missing or still set to the development placeholder.
+
       Optional watcher:
         mem-cli watch enable --project <slug>
     EOS
