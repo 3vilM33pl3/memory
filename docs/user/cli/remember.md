@@ -1,0 +1,89 @@
+# `mem-cli remember`
+
+Use `remember` when you want to store a durable project fact or task outcome directly from the CLI.
+
+`remember` is the simplest write path into Memory Layer. It captures task context and runs curation so the result becomes queryable without a separate manual curate step.
+
+## Table of Contents
+
+- [When To Use It](#when-to-use-it)
+- [Requirements](#requirements)
+- [Basic Examples](#basic-examples)
+- [What It Writes](#what-it-writes)
+- [When Not To Use It](#when-not-to-use-it)
+
+## When To Use It
+
+Use `remember` for:
+
+- architecture decisions
+- conventions and workflow rules
+- durable debugging lessons
+- environment facts that will matter later
+- verified task outcomes worth keeping
+
+This is the normal direct write command for users. Agents often use the higher-level `remember-task.sh` helper, which ultimately drives the same write path.
+
+## Requirements
+
+Write-capable commands require a writer ID.
+
+Configure one with:
+
+```toml
+[writer]
+id = "codex-cli-main"
+```
+
+or:
+
+```bash
+export MEMORY_LAYER_WRITER_ID=codex-cli-main
+```
+
+If no writer ID is configured, `remember` fails instead of creating unattributed memory.
+
+## Basic Examples
+
+Store one durable fact:
+
+```bash
+mem-cli remember --project my-project --note "Deployment uses a systemd service."
+```
+
+Store a more explicit remembered task:
+
+```bash
+mem-cli remember \
+  --project my-project \
+  --title "Document deploy convention" \
+  --summary "Captured the deploy convention for later reuse." \
+  --note "Production deploys are done through a systemd unit restart."
+```
+
+## What It Writes
+
+`remember` does not write canonical memory rows directly.
+
+It:
+
+1. creates a normal raw capture
+2. runs curation
+3. produces canonical durable memory with provenance
+
+That means the result still follows the normal Memory Layer data model:
+
+- raw capture as evidence
+- curated memory as the searchable durable result
+
+## When Not To Use It
+
+Do not use `remember` for:
+
+- temporary scratch notes
+- unverified guesses
+- duplicate low-value chatter
+- large repo bootstrap work where `scan` is the better tool
+
+For project-wide repository extraction, use [Scan Command](scan.md).
+For agent-driven task capture, use the repo-local skill workflow described in the developer docs.

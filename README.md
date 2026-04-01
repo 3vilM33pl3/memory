@@ -56,6 +56,8 @@ For shareable backup/restore bundles, use [Memory Bundles](docs/user/cli/bundles
 
 For watcher health states, recovery behavior, and the TUI watcher views, use [Watcher Health](docs/user/cli/watchers.md).
 
+For bootstrap, diagnostics, and the main write path, use [Wizard And Bootstrap](docs/user/cli/wizard.md), [Service Commands](docs/user/cli/service.md), [Doctor Diagnostics](docs/user/cli/doctor.md), and [Remember Command](docs/user/cli/remember.md).
+
 ## What It Does
 
 - stores project memory in PostgreSQL with pgvector-backed chunk embeddings
@@ -85,12 +87,17 @@ Project-local customization now has two layers:
 - [Memory Bundles](docs/user/cli/bundles.md)
 - [Watcher Health](docs/user/cli/watchers.md)
 - [Resume Briefings](docs/user/cli/resume.md)
+- [Wizard And Bootstrap](docs/user/cli/wizard.md)
+- [Service Commands](docs/user/cli/service.md)
+- [Doctor Diagnostics](docs/user/cli/doctor.md)
+- [Remember Command](docs/user/cli/remember.md)
 - [Scan Command](docs/user/cli/scan.md)
 - [Commit History](docs/user/cli/commits.md)
 
 ### Developer Docs
 
 - [Developer Documentation Index](docs/developer/README.md)
+- [How Skills Work](docs/developer/skills/how-skills-work.md)
 - [Architecture Overview](docs/developer/architecture/overview.md)
 - [How Memory Layer Works](docs/developer/architecture/how-it-works.md)
 - [Hidden Memory Daemon](docs/developer/architecture/hidden-memory-daemon.md)

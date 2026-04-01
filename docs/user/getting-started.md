@@ -277,6 +277,9 @@ mem-cli export --project my-project --out my-project.mlbundle.zip
 For semantic-search maintenance commands such as `reindex`, `reembed`, and `prune-embeddings`, see [Embedding Operations](cli/embeddings.md).
 For project memory backup and restore, see [Memory Bundles](cli/bundles.md).
 For watcher health states, restart behavior, and recovery signals in the TUI, see [Watcher Health](cli/watchers.md).
+For the direct write command, see [Remember Command](cli/remember.md).
+For service management and setup diagnostics, see [Service Commands](cli/service.md) and [Doctor Diagnostics](cli/doctor.md).
+For bootstrap behavior, see [Wizard And Bootstrap](cli/wizard.md).
 
 For getting back into flow after an interruption, see [Resume Briefings](cli/resume.md).
 

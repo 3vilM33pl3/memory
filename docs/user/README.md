@@ -14,6 +14,10 @@ This section is for people installing, configuring, and using Memory Layer in re
 
 ## Reference
 
+- [Wizard And Bootstrap](cli/wizard.md)
+- [Service Commands](cli/service.md)
+- [Doctor Diagnostics](cli/doctor.md)
+- [Remember Command](cli/remember.md)
 - [Embedding Operations](cli/embeddings.md)
 - [Memory Bundles](cli/bundles.md)
 - [Watcher Health](cli/watchers.md)
