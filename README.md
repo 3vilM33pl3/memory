@@ -6,7 +6,7 @@ It captures durable project knowledge, stores it in PostgreSQL with pgvector, an
 
 It supports multiple developers, multiple projects, and multiple coding agents at the same time through a distributed watcher system and a shared memory backend.
 
-![Memory Layer TUI](docs/img/tui-overview.png)
+![Memory Layer TUI](docs/img/tui/overview.png)
 
 ## Table of Contents
 
@@ -58,6 +58,8 @@ For watcher health states, recovery behavior, and the TUI watcher views, use [Wa
 
 For bootstrap, diagnostics, and the main write path, use [Wizard And Bootstrap](docs/user/cli/wizard.md), [Service Commands](docs/user/cli/service.md), [Doctor Diagnostics](docs/user/cli/doctor.md), and [Remember Command](docs/user/cli/remember.md).
 
+For a visual walkthrough of the interface, use the [TUI Guide](docs/user/tui/README.md).
+
 ## What It Does
 
 - stores project memory in PostgreSQL with pgvector-backed chunk embeddings
@@ -83,6 +85,7 @@ Project-local customization now has two layers:
 
 - [User Documentation Index](docs/user/README.md)
 - [Getting Started](docs/user/getting-started.md)
+- [TUI Guide](docs/user/tui/README.md)
 - [Embedding Operations](docs/user/cli/embeddings.md)
 - [Memory Bundles](docs/user/cli/bundles.md)
 - [Watcher Health](docs/user/cli/watchers.md)

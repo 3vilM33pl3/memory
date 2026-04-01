@@ -14,6 +14,13 @@ This section is for people installing, configuring, and using Memory Layer in re
 
 ## Reference
 
+- [TUI Guide](tui/README.md)
+- [Resume Tab](tui/resume.md)
+- [Memories Tab](tui/memories.md)
+- [Query Tab](tui/query.md)
+- [Activity Tab](tui/activity.md)
+- [Project Tab](tui/project.md)
+- [Watchers Tab](tui/watchers.md)
 - [Wizard And Bootstrap](cli/wizard.md)
 - [Service Commands](cli/service.md)
 - [Doctor Diagnostics](cli/doctor.md)

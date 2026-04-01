@@ -257,6 +257,8 @@ Open the TUI:
 mem-cli tui
 ```
 
+For a visual walkthrough of each tab, use the [TUI Guide](tui/README.md).
+
 Open the web UI:
 
 ```text
