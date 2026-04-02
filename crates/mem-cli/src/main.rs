@@ -318,6 +318,7 @@ enum CheckpointCommand {
     Save(CheckpointSaveArgs),
     Show(CheckpointShowArgs),
     StartExecution(CheckpointStartExecutionArgs),
+    FinishExecution(CheckpointFinishExecutionArgs),
 }
 
 #[derive(Debug, Args)]
@@ -348,6 +349,20 @@ struct CheckpointStartExecutionArgs {
     title: Option<String>,
     #[arg(long)]
     thread_key: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct CheckpointFinishExecutionArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    thread_key: Option<String>,
+    #[arg(long)]
+    plan_file: Option<PathBuf>,
+    #[arg(long)]
+    plan_stdin: bool,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -769,18 +784,20 @@ async fn main() -> Result<()> {
                 CheckpointCommand::StartExecution(args) => {
                     let project = resolve_project_slug(args.project, &cwd)?;
                     let api = ApiClient::new(client.clone(), config.clone());
+                    let (plan_markdown, source_path) =
+                        load_plan_content(args.plan_file.as_deref(), args.plan_stdin)?;
+                    let plan_items = parse_plan_checkboxes(&plan_markdown);
+                    ensure_checkbox_plan(&plan_items)?;
                     let note = args
                         .note
                         .unwrap_or_else(|| "Plan approved; starting implementation".to_string());
+                    let title = derive_plan_title(args.title.as_deref(), &plan_markdown, &project);
+                    let thread_key =
+                        derive_plan_thread_key(args.thread_key.as_deref(), &title, &project);
                     let (checkpoint, path) =
                         save_checkpoint_with_activity(&api, &project, &repo_root, Some(note))
                             .await?;
                     let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
-                    let (plan_markdown, source_path) =
-                        load_plan_content(args.plan_file.as_deref(), args.plan_stdin)?;
-                    let title = derive_plan_title(args.title.as_deref(), &plan_markdown, &project);
-                    let thread_key =
-                        derive_plan_thread_key(args.thread_key.as_deref(), &title, &project);
                     let request = build_plan_execution_request(
                         &project,
                         &writer,
@@ -829,11 +846,65 @@ async fn main() -> Result<()> {
                             "plan": {
                                 "title": title,
                                 "thread_key": thread_key,
+                                "total_items": plan_items.len(),
                             },
                             "capture": capture,
                             "curate": curate,
                         }))?
                     );
+                }
+                CheckpointCommand::FinishExecution(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    let api = ApiClient::new(client.clone(), config.clone());
+                    let selection =
+                        resolve_active_plan_selection(&api, &project, args.thread_key.as_deref())
+                            .await?;
+
+                    let detail = if args.plan_file.is_some() || args.plan_stdin {
+                        let (plan_markdown, source_path) =
+                            load_plan_content(args.plan_file.as_deref(), args.plan_stdin)?;
+                        let plan_items = parse_plan_checkboxes(&plan_markdown);
+                        ensure_checkbox_plan(&plan_items)?;
+                        let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
+                        let request = build_plan_execution_request(
+                            &project,
+                            &writer,
+                            &selection.title,
+                            &selection.thread_key,
+                            &plan_markdown,
+                            source_path.as_deref(),
+                            repo_git_head(&repo_root).as_deref(),
+                        );
+                        api.capture_task(&request)
+                            .await
+                            .context("sync updated plan before finish verification")?;
+                        api.curate(&project, repo_replacement_policy(&repo_root))
+                            .await
+                            .context("curate updated plan before finish verification")?;
+                        let refreshed = resolve_active_plan_selection(
+                            &api,
+                            &project,
+                            Some(selection.thread_key.as_str()),
+                        )
+                        .await?;
+                        api.memory_detail(&refreshed.memory_id.to_string())
+                            .await
+                            .context("load refreshed active plan")?
+                    } else {
+                        api.memory_detail(&selection.memory_id.to_string())
+                            .await
+                            .context("load active plan")?
+                    };
+
+                    let report = build_plan_execution_finish_report(&project, &detail)?;
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        print_plan_execution_finish_report(&report);
+                    }
+                    if !report.verified_complete {
+                        anyhow::bail!("approved plan still has unchecked items");
+                    }
                 }
             }
         }
@@ -4131,6 +4202,31 @@ fn print_resume_response(response: &ResumeResponse) {
     }
 }
 
+fn print_plan_execution_finish_report(report: &PlanExecutionFinishReport) {
+    if report.verified_complete {
+        println!(
+            "Verified approved plan for `{}`\n- Thread: {}\n- Plan: {}\n- Completed: {}/{} items",
+            report.project,
+            report.thread_key,
+            report.plan_title,
+            report.completed_items,
+            report.total_items
+        );
+    } else {
+        println!(
+            "Approved plan is still in progress for `{}`\n- Thread: {}\n- Plan: {}\n- Completed: {}/{} items\n- Remaining items:",
+            report.project,
+            report.thread_key,
+            report.plan_title,
+            report.completed_items,
+            report.total_items
+        );
+        for item in &report.remaining_items {
+            println!("  - {item}");
+        }
+    }
+}
+
 fn print_scan_report(report: &scan::ScanReport) {
     println!("Scan summary:\n{}\n", report.summary);
     println!(
@@ -4483,6 +4579,83 @@ async fn save_checkpoint_with_activity(
     Ok((checkpoint, path))
 }
 
+#[derive(Debug, Clone)]
+struct ActivePlanSelection {
+    memory_id: Uuid,
+    title: String,
+    thread_key: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PlanChecklistItem {
+    text: String,
+    checked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PlanExecutionFinishReport {
+    project: String,
+    thread_key: String,
+    plan_title: String,
+    total_items: usize,
+    completed_items: usize,
+    remaining_items: Vec<String>,
+    verified_complete: bool,
+}
+
+async fn resolve_active_plan_selection(
+    api: &ApiClient,
+    project: &str,
+    thread_key: Option<&str>,
+) -> Result<ActivePlanSelection> {
+    let memories = api.project_memories(project).await?;
+    let mut plans = memories
+        .items
+        .into_iter()
+        .filter(|item| item.status == mem_api::MemoryStatus::Active)
+        .filter(|item| item.memory_type == mem_api::MemoryType::Plan)
+        .filter_map(|item| {
+            extract_plan_thread_key(&item.tags).map(|key| ActivePlanSelection {
+                memory_id: item.id,
+                title: item.summary,
+                thread_key: key.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(thread_key) = thread_key {
+        plans.retain(|plan| plan.thread_key == thread_key);
+        return match plans.as_slice() {
+            [] => anyhow::bail!("no active plan found for thread `{thread_key}`"),
+            [plan] => Ok(plan.clone()),
+            _ => anyhow::bail!(
+                "multiple active plans found for thread `{thread_key}`; review plan memories first"
+            ),
+        };
+    }
+
+    match plans.as_slice() {
+        [] => anyhow::bail!("no active plan memory found for `{project}`"),
+        [plan] => Ok(plan.clone()),
+        _ => {
+            let available = plans
+                .iter()
+                .map(|plan| format!("{} ({})", plan.title, plan.thread_key))
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::bail!(
+                "multiple active plan memories found; rerun with --thread-key. Available threads: {available}"
+            );
+        }
+    }
+}
+
+fn extract_plan_thread_key(tags: &[String]) -> Option<&str> {
+    tags.iter()
+        .find_map(|tag| tag.strip_prefix("plan-thread:"))
+        .filter(|value| !value.trim().is_empty())
+}
+
 fn load_plan_content(
     plan_file: Option<&Path>,
     plan_stdin: bool,
@@ -4546,6 +4719,51 @@ fn derive_plan_thread_key(explicit_key: Option<&str>, title: &str, project: &str
     } else {
         sanitized
     }
+}
+
+fn parse_plan_checkboxes(markdown: &str) -> Vec<PlanChecklistItem> {
+    markdown
+        .lines()
+        .filter_map(|line| parse_plan_checkbox_line(line))
+        .collect()
+}
+
+fn parse_plan_checkbox_line(line: &str) -> Option<PlanChecklistItem> {
+    let trimmed = line.trim_start();
+    let mut chars = trimmed.chars();
+    let bullet = chars.next()?;
+    if !matches!(bullet, '-' | '*' | '+') {
+        return None;
+    }
+    if chars.next()? != ' ' || chars.next()? != '[' {
+        return None;
+    }
+    let marker = chars.next()?;
+    if chars.next()? != ']' || chars.next()? != ' ' {
+        return None;
+    }
+    let checked = matches!(marker, 'x' | 'X');
+    if !matches!(marker, ' ' | 'x' | 'X') {
+        return None;
+    }
+    let text = chars.as_str().trim();
+    Some(PlanChecklistItem {
+        text: if text.is_empty() {
+            "(empty checkbox item)".to_string()
+        } else {
+            text.to_string()
+        },
+        checked,
+    })
+}
+
+fn ensure_checkbox_plan(items: &[PlanChecklistItem]) -> Result<()> {
+    if items.is_empty() {
+        anyhow::bail!(
+            "approved plans must contain Markdown checkbox items like `- [ ] task` before execution starts"
+        );
+    }
+    Ok(())
 }
 
 fn normalize_plan_markdown_for_hash(input: &str) -> String {
@@ -4641,6 +4859,33 @@ fn build_plan_execution_request(
             git_head,
         )),
     }
+}
+
+fn build_plan_execution_finish_report(
+    project: &str,
+    detail: &mem_api::MemoryEntryResponse,
+) -> Result<PlanExecutionFinishReport> {
+    let items = parse_plan_checkboxes(&detail.canonical_text);
+    ensure_checkbox_plan(&items)?;
+    let completed_items = items.iter().filter(|item| item.checked).count();
+    let remaining_items = items
+        .iter()
+        .filter(|item| !item.checked)
+        .map(|item| item.text.clone())
+        .collect::<Vec<_>>();
+    let thread_key = extract_plan_thread_key(&detail.tags)
+        .ok_or_else(|| anyhow::anyhow!("active plan is missing a `plan-thread:` tag"))?
+        .to_string();
+
+    Ok(PlanExecutionFinishReport {
+        project: project.to_string(),
+        thread_key,
+        plan_title: detail.summary.clone(),
+        total_items: items.len(),
+        completed_items,
+        verified_complete: remaining_items.is_empty(),
+        remaining_items,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -4797,11 +5042,14 @@ impl SourceKindString for mem_api::SourceKind {
 mod tests {
     use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
 
+    use uuid::Uuid;
+
     use super::{
         DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction,
-        build_plan_execution_request, build_remember_request, derive_plan_thread_key,
-        derive_plan_title, ensure_shared_service_api_token, initialize_repo,
-        is_placeholder_database_url, mask_database_url, render_agent_project_config,
+        build_plan_execution_finish_report, build_plan_execution_request, build_remember_request,
+        derive_plan_thread_key, derive_plan_title, ensure_checkbox_plan,
+        ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
+        mask_database_url, parse_plan_checkboxes, render_agent_project_config,
         repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
         root_gitignore_contains_mem, shared_env_lookup, write_headers,
     };
@@ -4923,6 +5171,62 @@ mod tests {
                 .tags
                 .contains(&"plan-thread:resume-redesign".to_string())
         );
+    }
+
+    #[test]
+    fn parse_plan_checkboxes_extracts_checked_and_unchecked_items() {
+        let items = parse_plan_checkboxes(
+            "# Plan\n\n- [ ] first task\n* [x] second task\n+ [X] third task\nplain bullet",
+        );
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].text, "first task");
+        assert!(!items[0].checked);
+        assert_eq!(items[1].text, "second task");
+        assert!(items[1].checked);
+        assert_eq!(items[2].text, "third task");
+        assert!(items[2].checked);
+    }
+
+    #[test]
+    fn ensure_checkbox_plan_rejects_plans_without_checkboxes() {
+        let items = parse_plan_checkboxes("# Plan\n\n- regular bullet");
+        let error = ensure_checkbox_plan(&items).expect_err("should reject non-checkbox plan");
+        assert!(
+            error
+                .to_string()
+                .contains("approved plans must contain Markdown checkbox items")
+        );
+    }
+
+    #[test]
+    fn finish_report_lists_remaining_items() {
+        let report = build_plan_execution_finish_report(
+            "memory",
+            &mem_api::MemoryEntryResponse {
+                id: Uuid::new_v4(),
+                project: "memory".to_string(),
+                canonical_text: "# Plan\n\n- [x] done\n- [ ] remaining".to_string(),
+                summary: "Execution plan".to_string(),
+                memory_type: mem_api::MemoryType::Plan,
+                importance: 4,
+                confidence: 0.95,
+                status: mem_api::MemoryStatus::Active,
+                tags: vec![
+                    "plan".to_string(),
+                    "plan-thread:resume-redesign".to_string(),
+                ],
+                sources: Vec::new(),
+                related_memories: Vec::new(),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+        )
+        .expect("build finish report");
+
+        assert_eq!(report.total_items, 2);
+        assert_eq!(report.completed_items, 1);
+        assert!(!report.verified_complete);
+        assert_eq!(report.remaining_items, vec!["remaining".to_string()]);
     }
 
     #[test]
