@@ -40,8 +40,9 @@ The current live workflow is:
 
 1. Query memory before answering project-specific questions.
 2. If the user is returning after an interruption, use the resume workflow instead of a generic query.
-3. If a plan was approved and execution is about to start, run `memory checkpoint start-execution` through the skill helper so the checkpoint and approved plan are both stored before implementation begins.
-4. After meaningful work is complete, use the automatic remember workflow.
+3. If a plan was approved and execution is about to start, run `memory checkpoint start-execution` through the skill helper so the checkpoint and full approved plan are both stored before implementation begins.
+4. For plan-backed work, run `memory checkpoint finish-execution` through the skill helper before claiming the task is done.
+5. After meaningful work is complete, use the automatic remember workflow.
 5. Prefer insufficient evidence over unsupported conclusions.
 6. Never invent provenance.
 
@@ -58,7 +59,9 @@ The main scripts are:
 - `checkpoint-project.sh`
   - save a checkpoint explicitly when you want to mark a point in time without storing a plan
 - `start-plan-execution.sh`
-  - save the checkpoint and store the approved execution plan as `plan` memory before implementation starts
+  - save the checkpoint and store the full approved execution plan as `plan` memory before implementation starts
+- `finish-plan-execution.sh`
+  - verify that every checkbox item in the active approved plan is complete before the agent can claim the task is finished
 - `remember-task.sh`
   - capture completed work and curate it immediately into durable memory
 
@@ -82,6 +85,7 @@ The current skill has moved beyond that. It now also covers:
 
 - interruption recovery with `resume`
 - plan-to-execution checkpointing with approved-plan capture
+- strict plan-completion verification before the agent may conclude plan-backed work
 - automatic post-task remembering with `remember-task.sh`
 
 If you are updating other documentation or examples, align them to the live skill instead of treating the older manual capture/curate flow as the default.

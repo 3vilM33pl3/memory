@@ -44,6 +44,12 @@ Save the approved plan and the execution checkpoint together:
   --plan-file /tmp/approved-plan.md
 ```
 
+Verify the approved plan is fully executed before saying the task is finished:
+```bash
+./.agents/skills/memory-layer/scripts/finish-plan-execution.sh \
+  --project <project-slug>
+```
+
 Remember task context automatically:
 ```bash
 ./.agents/skills/memory-layer/scripts/remember-task.sh \
@@ -58,10 +64,11 @@ Remember task context automatically:
 1. Query memory before answering project-specific questions.
 2. For "get me back into flow" or "what changed since I was last here?" prompts, use the resume script instead of a generic query.
 3. If you produce a proposed plan and the user approves execution, run the start-plan-execution helper immediately before starting implementation.
-4. Use the automatic remember workflow once work is complete.
-5. The remember workflow captures and curates in one step.
-6. Prefer insufficient evidence over unsupported conclusions.
-7. Never invent provenance.
+4. For plan-backed work, run the finish-plan-execution helper before claiming the task is done.
+5. Use the automatic remember workflow once work is complete.
+6. The remember workflow captures and curates in one step.
+7. Prefer insufficient evidence over unsupported conclusions.
+8. Never invent provenance.
 
 ## Mandatory post-task rule
 
@@ -79,7 +86,8 @@ When a turn has a real planning phase and the user then approves execution, run 
 That helper:
 - saves the checkpoint
 - logs the checkpoint activity
-- stores the approved plan as `plan` memory before work begins
+- stores the whole approved plan as `plan` memory before work begins
+- requires Markdown checkbox items so completion can be verified later
 
 Use a short note that explains the transition, for example:
 - `Plan approved; starting implementation`
@@ -87,6 +95,20 @@ Use a short note that explains the transition, for example:
 - `Plan approved; moving to execution`
 
 This makes `memory resume` useful when the user returns after delegating or switching projects.
+
+## Completion gate
+
+Before an agent says plan-backed work is finished, it must verify the active approved plan with:
+
+```bash
+./.agents/skills/memory-layer/scripts/finish-plan-execution.sh \
+  --project <project-slug>
+```
+
+Rules:
+- do not present the task as finished if any checkbox item in the active approved plan remains unchecked
+- if the plan changed materially during execution, save the revised approved plan first with the same thread key
+- only after finish verification succeeds should the agent run the remember workflow and send a completed final response
 
 ## Remember guidance
 

@@ -18,7 +18,29 @@ memory checkpoint start-execution \
   --plan-file /tmp/approved-plan.md
 ```
 
-That command saves the checkpoint first and then stores the approved plan as `plan` memory for the active work thread.
+That command saves the checkpoint first and then stores the full approved plan as `plan` memory for the active work thread.
+
+Use Markdown checkbox items in the approved plan:
+
+```md
+- [ ] implement the API
+- [ ] update the skill
+- [ ] verify the tests
+```
+
+Before plan-backed work is treated as finished, verify the active approved plan:
+
+```bash
+memory checkpoint finish-execution --project my-project
+```
+
+If the plan changed during execution, sync the updated checkbox state and verify in one step:
+
+```bash
+memory checkpoint finish-execution \
+  --project my-project \
+  --plan-file /tmp/approved-plan.md
+```
 
 Show the current checkpoint:
 
