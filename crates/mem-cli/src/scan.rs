@@ -717,7 +717,7 @@ async fn analyze_dossier(
                     "Return strict JSON with keys summary and candidates.",
                     "Each candidate must be repo-specific, durable, and grounded in provenance_files and/or provenance_commits.",
                     "Do not include speculative claims, transient task notes, or generic software advice.",
-                    "memory_type must be one of architecture, convention, decision, incident, debugging, environment, domain_fact.",
+                    "memory_type must be one of architecture, convention, decision, incident, debugging, environment, domain_fact, plan.",
                     "Keep candidates concise and high-signal.",
                 ]
                 .join(" "),

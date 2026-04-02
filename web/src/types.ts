@@ -7,7 +7,8 @@ export type MemoryType =
   | "incident"
   | "debugging"
   | "environment"
-  | "domain_fact";
+  | "domain_fact"
+  | "plan";
 
 export type QueryMatchKind = "lexical" | "semantic" | "hybrid";
 

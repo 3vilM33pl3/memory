@@ -443,6 +443,7 @@ export default function App() {
                 <option value="debugging">Debugging</option>
                 <option value="environment">Environment</option>
                 <option value="domain_fact">Domain fact</option>
+                <option value="plan">Plan</option>
               </select>
             </div>
             <div className="list-view">

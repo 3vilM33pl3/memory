@@ -66,7 +66,10 @@ pub fn extract_candidates(request: &CaptureTaskRequest) -> Vec<CandidateAssertio
             .structured_candidates
             .iter()
             .map(|candidate| CandidateAssertion {
-                canonical_text: normalize_sentence(&candidate.canonical_text),
+                canonical_text: normalize_candidate_canonical_text(
+                    &candidate.memory_type,
+                    &candidate.canonical_text,
+                ),
                 summary: normalize_summary(&candidate.summary, request),
                 memory_type: candidate.memory_type.clone(),
                 confidence: candidate.confidence,
@@ -231,6 +234,21 @@ fn build_sources(
     sources
 }
 
+fn normalize_candidate_canonical_text(memory_type: &MemoryType, input: &str) -> String {
+    match memory_type {
+        MemoryType::Plan => normalize_markdown_block(input),
+        _ => normalize_sentence(input),
+    }
+}
+
+fn normalize_markdown_block(input: &str) -> String {
+    input
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim()
+        .to_string()
+}
+
 fn normalize_sentence(input: &str) -> String {
     let mut value = input.trim().replace('\n', " ");
     while value.contains("  ") {
@@ -301,5 +319,28 @@ mod tests {
                 .canonical_text
                 .contains("Project memory is stored")
         );
+    }
+
+    #[test]
+    fn structured_plan_candidates_preserve_multiline_markdown() {
+        let mut request = sample_request();
+        request.notes.clear();
+        request.structured_candidates = vec![mem_api::CaptureCandidateInput {
+            canonical_text: "# Plan\n\n- Step one\n- Step two\n".to_string(),
+            summary: "Approved plan".to_string(),
+            memory_type: MemoryType::Plan,
+            confidence: 0.95,
+            importance: 4,
+            tags: vec!["plan".to_string()],
+            sources: Vec::new(),
+        }];
+
+        let candidates = extract_candidates(&request);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].canonical_text,
+            "# Plan\n\n- Step one\n- Step two"
+        );
+        assert_eq!(candidates[0].memory_type, MemoryType::Plan);
     }
 }

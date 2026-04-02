@@ -2754,14 +2754,17 @@ async fn project_resume(
     let commits_fut = fetch_project_commits_since(pool, &slug, since, request.limit);
     let changed_memories_fut = fetch_recent_project_memories(pool, &slug, since, request.limit);
     let durable_context_fut = fetch_durable_resume_context(pool, &slug, request.limit.min(8));
-    let (overview, timeline, commits, changed_memories, durable_context) = tokio::try_join!(
-        overview_fut,
-        timeline_fut,
-        commits_fut,
-        changed_memories_fut,
-        durable_context_fut,
-    )
-    .map_err(ApiError::sql)?;
+    let active_plan_fut = fetch_latest_active_plan_memory(pool, &slug);
+    let (overview, timeline, commits, changed_memories, durable_context, active_plan) =
+        tokio::try_join!(
+            overview_fut,
+            timeline_fut,
+            commits_fut,
+            changed_memories_fut,
+            durable_context_fut,
+            active_plan_fut,
+        )
+        .map_err(ApiError::sql)?;
     let warnings = resume_warnings(&overview);
     let actions = resume_actions(
         &slug,
@@ -2776,10 +2779,12 @@ async fn project_resume(
         &timeline,
         &commits,
         &changed_memories,
+        active_plan.as_ref(),
     );
     let change_summary = build_change_summary(&timeline, &commits, &changed_memories);
     let attention_items = build_attention_items(&overview, &timeline);
-    let context_items = select_resume_context(&changed_memories, &durable_context);
+    let context_items =
+        select_resume_context(&changed_memories, &durable_context, active_plan.as_ref());
     let primary_next_step = actions.first().cloned();
     let secondary_next_steps = actions.iter().skip(1).take(2).cloned().collect::<Vec<_>>();
     let deterministic = build_resume_briefing(
@@ -2936,6 +2941,70 @@ async fn fetch_durable_resume_context(
     Ok(items)
 }
 
+async fn fetch_latest_active_plan_memory(
+    pool: &PgPool,
+    slug: &str,
+) -> Result<Option<mem_api::ProjectMemoryListItem>, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            m.id,
+            m.summary,
+            left(m.canonical_text, 240) AS preview,
+            m.memory_type,
+            m.status,
+            m.confidence,
+            m.importance,
+            m.updated_at,
+            COALESCE((
+                SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
+                FROM memory_tags mt
+                WHERE mt.memory_entry_id = m.id
+            ), ARRAY[]::text[]) AS tags,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM memory_tags mt
+                WHERE mt.memory_entry_id = m.id
+            ), 0) AS tag_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM memory_sources ms
+                WHERE ms.memory_entry_id = m.id
+            ), 0) AS source_count
+        FROM memory_entries m
+        JOIN projects p ON p.id = m.project_id
+        WHERE p.slug = $1
+          AND m.status = 'active'
+          AND m.memory_type = 'plan'
+        ORDER BY m.updated_at DESC, m.id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(slug)
+    .fetch_optional(pool)
+    .await?;
+
+    row.map(|row| {
+        Ok(mem_api::ProjectMemoryListItem {
+            id: row.try_get("id")?,
+            summary: row.try_get("summary")?,
+            preview: row.try_get("preview")?,
+            memory_type: mem_search::parse_memory_type(&row.try_get::<String, _>("memory_type")?),
+            status: match row.try_get::<String, _>("status")?.as_str() {
+                "archived" => mem_api::MemoryStatus::Archived,
+                _ => mem_api::MemoryStatus::Active,
+            },
+            confidence: row.try_get("confidence")?,
+            importance: row.try_get("importance")?,
+            updated_at: row.try_get("updated_at")?,
+            tags: row.try_get("tags")?,
+            tag_count: row.try_get("tag_count")?,
+            source_count: row.try_get("source_count")?,
+        })
+    })
+    .transpose()
+}
+
 fn resume_warnings(overview: &ProjectOverviewResponse) -> Vec<String> {
     let mut warnings = Vec::new();
     if overview.uncurated_raw_captures > 0 {
@@ -3064,7 +3133,24 @@ fn infer_current_thread(
     timeline: &[ActivityEvent],
     commits: &[mem_api::CommitRecord],
     changed_memories: &[mem_api::ProjectMemoryListItem],
+    active_plan: Option<&mem_api::ProjectMemoryListItem>,
 ) -> Option<String> {
+    if let Some(plan) = active_plan {
+        if overview.pending_replacement_proposals > 0 {
+            return Some(format!(
+                "Approved plan in execution: {}. Curation left {} queued memory update proposal(s) to review.",
+                plan.summary, overview.pending_replacement_proposals
+            ));
+        }
+        if overview.uncurated_raw_captures > 0 {
+            return Some(format!(
+                "Approved plan in execution: {}. {} raw capture(s) are still waiting to be curated.",
+                plan.summary, overview.uncurated_raw_captures
+            ));
+        }
+        return Some(format!("Approved plan in execution: {}.", plan.summary));
+    }
+
     let active_task_title = latest_capture_task_title(timeline);
     if overview.pending_replacement_proposals > 0 {
         return Some(
@@ -3110,9 +3196,15 @@ fn infer_current_thread(
         .find(|event| !matches!(event.kind, ActivityKind::Checkpoint))
     {
         let thread = match event.kind {
-            ActivityKind::Scan => "Recent work focused on refreshing project memory from a repo scan.",
-            ActivityKind::Curate => "Recent work focused on curating new captures into canonical memory.",
-            ActivityKind::CaptureTask => "Recent work captured fresh project evidence that may need follow-up.",
+            ActivityKind::Scan => {
+                "Recent work focused on refreshing project memory from a repo scan."
+            }
+            ActivityKind::Curate => {
+                "Recent work focused on curating new captures into canonical memory."
+            }
+            ActivityKind::CaptureTask => {
+                "Recent work captured fresh project evidence that may need follow-up."
+            }
             ActivityKind::MemoryReplacement => {
                 "Recent work replaced outdated memory with a newer canonical version."
             }
@@ -3136,7 +3228,10 @@ fn infer_current_thread(
             ActivityKind::Checkpoint => "",
         };
         if !thread.is_empty() {
-            return Some(format!("{thread} Latest event: {}", event.summary.trim_end_matches('.')));
+            return Some(format!(
+                "{thread} Latest event: {}",
+                event.summary.trim_end_matches('.')
+            ));
         }
     }
     if let Some(commit) = commits.first() {
@@ -3315,7 +3410,9 @@ fn build_attention_items(
             .as_ref()
             .map(|watchers| watchers.unhealthy_count)
             .unwrap_or(0);
-        items.push(format!("{unhealthy} watcher(s) are unhealthy or restarting."));
+        items.push(format!(
+            "{unhealthy} watcher(s) are unhealthy or restarting."
+        ));
     }
     if timeline
         .iter()
@@ -3341,27 +3438,39 @@ fn build_attention_items(
 fn select_resume_context(
     changed_memories: &[mem_api::ProjectMemoryListItem],
     durable_context: &[mem_api::ProjectMemoryListItem],
+    active_plan: Option<&mem_api::ProjectMemoryListItem>,
 ) -> Vec<mem_api::ProjectMemoryListItem> {
     let mut selected = Vec::new();
+
+    if let Some(plan) = active_plan {
+        selected.push(plan.clone());
+    }
 
     if let Some(item) = changed_memories.iter().find(|item| {
         matches!(
             item.memory_type,
-            mem_api::MemoryType::Decision
+            mem_api::MemoryType::Plan
+                | mem_api::MemoryType::Decision
                 | mem_api::MemoryType::Architecture
                 | mem_api::MemoryType::Convention
                 | mem_api::MemoryType::Debugging
-        )
+        ) && !selected.iter().any(|existing| existing.id == item.id)
     }) {
         selected.push(item.clone());
-    } else if let Some(item) = changed_memories.first() {
+    } else if let Some(item) = changed_memories
+        .iter()
+        .find(|item| !selected.iter().any(|existing| existing.id == item.id))
+    {
         selected.push(item.clone());
     }
 
     if let Some(item) = durable_context.iter().find(|item| {
         matches!(
             item.memory_type,
-            mem_api::MemoryType::Architecture | mem_api::MemoryType::Convention
+            mem_api::MemoryType::Decision
+                | mem_api::MemoryType::Architecture
+                | mem_api::MemoryType::Convention
+                | mem_api::MemoryType::Environment
         ) && !selected.iter().any(|existing| existing.id == item.id)
     }) {
         selected.push(item.clone());
@@ -3432,11 +3541,7 @@ fn build_resume_briefing(
         lines.push(String::new());
         lines.push("Keep in mind:".to_string());
         for item in context_items.iter().take(3) {
-            lines.push(format!(
-                "- [{}] {}",
-                item.memory_type,
-                item.summary
-            ));
+            lines.push(format!("- [{}] {}", item.memory_type, item.summary));
         }
     }
     if !secondary_next_steps.is_empty() {

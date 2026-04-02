@@ -269,6 +269,20 @@ async fn determine_replacement_decision(
     candidate: &CandidateAssertion,
     policy: ReplacementPolicy,
 ) -> Result<ReplacementDecision, sqlx::Error> {
+    if candidate.memory_type == mem_api::MemoryType::Plan {
+        if let Some(thread_tag) = plan_thread_tag(candidate) {
+            if let Some(target) =
+                load_existing_plan_for_thread(tx, project_id, thread_tag, candidate).await?
+            {
+                return Ok(ReplacementDecision::Replace {
+                    target,
+                    score: i32::MAX,
+                    reasons: vec!["same plan thread".to_string()],
+                });
+            }
+        }
+    }
+
     let profiles = load_candidate_replacement_targets(tx, project_id, candidate).await?;
     let mut scored = profiles
         .into_iter()
@@ -319,6 +333,75 @@ async fn determine_replacement_decision(
     }
 
     Ok(ReplacementDecision::InsertNew)
+}
+
+fn plan_thread_tag(candidate: &CandidateAssertion) -> Option<&str> {
+    candidate
+        .tags
+        .iter()
+        .find_map(|tag| tag.strip_prefix("plan-thread:"))
+        .filter(|tag| !tag.trim().is_empty())
+}
+
+async fn load_existing_plan_for_thread(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    project_id: Uuid,
+    thread_tag: &str,
+    candidate: &CandidateAssertion,
+) -> Result<Option<MemoryProfile>, sqlx::Error> {
+    let full_tag = format!("plan-thread:{thread_tag}");
+    sqlx::query(
+        r#"
+        SELECT
+            m.id,
+            m.summary,
+            m.canonical_text,
+            m.memory_type,
+            m.scope,
+            COALESCE((
+                SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
+                FROM memory_tags mt
+                WHERE mt.memory_entry_id = m.id
+            ), ARRAY[]::text[]) AS tags,
+            COALESCE((
+                SELECT ARRAY_AGG(ms.file_path ORDER BY ms.file_path)
+                FROM memory_sources ms
+                WHERE ms.memory_entry_id = m.id
+                  AND ms.file_path IS NOT NULL
+            ), ARRAY[]::text[]) AS files
+        FROM memory_entries m
+        JOIN memory_tags thread_tag
+          ON thread_tag.memory_entry_id = m.id
+         AND thread_tag.tag = $3
+        LEFT JOIN imported_memory_entries ime ON ime.memory_entry_id = m.id
+        WHERE m.project_id = $1
+          AND m.status = 'active'
+          AND ime.memory_entry_id IS NULL
+          AND m.memory_type = $2
+          AND m.scope = 'project'
+          AND lower(m.canonical_text) <> lower($4)
+        ORDER BY m.updated_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(project_id)
+    .bind(candidate.memory_type.to_string())
+    .bind(full_tag)
+    .bind(&candidate.canonical_text)
+    .fetch_optional(&mut **tx)
+    .await?
+    .map(|row| {
+        Ok(MemoryProfile {
+            id: row.try_get("id")?,
+            summary: row.try_get("summary")?,
+            canonical_text: row.try_get("canonical_text")?,
+            memory_type: row.try_get("memory_type")?,
+            scope: row.try_get("scope")?,
+            tags: row.try_get("tags")?,
+            files: row.try_get("files")?,
+        })
+    })
+    .transpose()
 }
 
 async fn load_candidate_replacement_targets(
@@ -1117,5 +1200,23 @@ mod tests {
             classify_relation(&left, &right),
             Some(MemoryRelationType::Supports)
         );
+    }
+
+    #[test]
+    fn plan_thread_tag_extracts_thread_key() {
+        let candidate = CandidateAssertion {
+            canonical_text: "Approved plan".to_string(),
+            summary: "Approved plan".to_string(),
+            memory_type: mem_api::MemoryType::Plan,
+            confidence: 0.95,
+            importance: 4,
+            tags: vec![
+                "plan".to_string(),
+                "plan-thread:resume-redesign".to_string(),
+            ],
+            sources: Vec::new(),
+        };
+
+        assert_eq!(plan_thread_tag(&candidate), Some("resume-redesign"));
     }
 }

@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::os::unix::{fs::PermissionsExt, net::UnixStream};
 use std::{
     env, fs,
+    io::Read,
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
@@ -38,6 +39,7 @@ use reqwest::{
     header::{HeaderMap, ORIGIN},
 };
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use sqlx::{Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
@@ -315,6 +317,7 @@ struct CheckpointArgs {
 enum CheckpointCommand {
     Save(CheckpointSaveArgs),
     Show(CheckpointShowArgs),
+    StartExecution(CheckpointStartExecutionArgs),
 }
 
 #[derive(Debug, Args)]
@@ -329,6 +332,22 @@ struct CheckpointSaveArgs {
 struct CheckpointShowArgs {
     #[arg(long)]
     project: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct CheckpointStartExecutionArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    note: Option<String>,
+    #[arg(long)]
+    plan_file: Option<PathBuf>,
+    #[arg(long)]
+    plan_stdin: bool,
+    #[arg(long)]
+    title: Option<String>,
+    #[arg(long)]
+    thread_key: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -572,9 +591,7 @@ async fn main() -> Result<()> {
         Command::Service(_) => unreachable!("service management is handled before config loading"),
         Command::Watcher(WatcherArgs {
             command:
-                WatcherCommand::Enable(_)
-                | WatcherCommand::Disable(_)
-                | WatcherCommand::Status(_),
+                WatcherCommand::Enable(_) | WatcherCommand::Disable(_) | WatcherCommand::Status(_),
         }) => unreachable!("watcher lifecycle commands are handled before config loading"),
         Command::Doctor(_) => unreachable!("doctor is handled before config loading"),
         Command::Commits(args) => {
@@ -731,18 +748,10 @@ async fn main() -> Result<()> {
             match args.command {
                 CheckpointCommand::Save(args) => {
                     let project = resolve_project_slug(args.project, &cwd)?;
-                    let (checkpoint, path) =
-                        resume::save_checkpoint(&project, &repo_root, args.note)?;
                     let api = ApiClient::new(client.clone(), config.clone());
-                    let request = CheckpointActivityRequest {
-                        project: project.clone(),
-                        checkpoint: checkpoint.clone(),
-                    };
-                    if let Err(error) = api.log_checkpoint_activity(&request).await {
-                        eprintln!(
-                            "warning: failed to log checkpoint activity for `{project}`: {error}"
-                        );
-                    }
+                    let (checkpoint, path) =
+                        save_checkpoint_with_activity(&api, &project, &repo_root, args.note)
+                            .await?;
                     println!(
                         "Saved checkpoint for `{project}` to {}\n\n{}",
                         path.display(),
@@ -756,6 +765,75 @@ async fn main() -> Result<()> {
                     } else {
                         println!("No checkpoint stored for `{project}`.");
                     }
+                }
+                CheckpointCommand::StartExecution(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    let api = ApiClient::new(client.clone(), config.clone());
+                    let note = args
+                        .note
+                        .unwrap_or_else(|| "Plan approved; starting implementation".to_string());
+                    let (checkpoint, path) =
+                        save_checkpoint_with_activity(&api, &project, &repo_root, Some(note))
+                            .await?;
+                    let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
+                    let (plan_markdown, source_path) =
+                        load_plan_content(args.plan_file.as_deref(), args.plan_stdin)?;
+                    let title = derive_plan_title(args.title.as_deref(), &plan_markdown, &project);
+                    let thread_key =
+                        derive_plan_thread_key(args.thread_key.as_deref(), &title, &project);
+                    let request = build_plan_execution_request(
+                        &project,
+                        &writer,
+                        &title,
+                        &thread_key,
+                        &plan_markdown,
+                        source_path.as_deref(),
+                        repo_git_head(&repo_root).as_deref(),
+                    );
+                    let capture = match api.capture_task(&request).await {
+                        Ok(capture) => capture,
+                        Err(error) => {
+                            eprintln!(
+                                "Saved checkpoint for `{project}` to {}\n\n{}",
+                                path.display(),
+                                resume::format_checkpoint(&checkpoint)
+                            );
+                            return Err(
+                                error.context("checkpoint saved, but approved plan capture failed")
+                            );
+                        }
+                    };
+                    let curate = match api
+                        .curate(&project, repo_replacement_policy(&repo_root))
+                        .await
+                    {
+                        Ok(curate) => curate,
+                        Err(error) => {
+                            eprintln!(
+                                "Saved checkpoint for `{project}` to {}\n\n{}",
+                                path.display(),
+                                resume::format_checkpoint(&checkpoint)
+                            );
+                            return Err(error.context(
+                                "checkpoint saved and plan captured, but curation failed",
+                            ));
+                        }
+                    };
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "checkpoint": {
+                                "path": path.display().to_string(),
+                                "data": checkpoint,
+                            },
+                            "plan": {
+                                "title": title,
+                                "thread_key": thread_key,
+                            },
+                            "capture": capture,
+                            "curate": curate,
+                        }))?
+                    );
                 }
             }
         }
@@ -977,9 +1055,7 @@ async fn main() -> Result<()> {
                 )
                 .await?;
             }
-            WatcherCommand::Enable(_)
-            | WatcherCommand::Disable(_)
-            | WatcherCommand::Status(_) => {
+            WatcherCommand::Enable(_) | WatcherCommand::Disable(_) | WatcherCommand::Status(_) => {
                 unreachable!("watcher lifecycle commands are handled before config loading")
             }
         },
@@ -1161,10 +1237,7 @@ fn backend_start_hint(config_path: &Path) -> String {
     if backend_service_available() {
         "memory service enable".to_string()
     } else {
-        format!(
-            "memory --config {} service run",
-            config_path.display()
-        )
+        format!("memory --config {} service run", config_path.display())
     }
 }
 
@@ -4287,6 +4360,7 @@ fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
         "debugging" => Ok(mem_api::MemoryType::Debugging),
         "environment" => Ok(mem_api::MemoryType::Environment),
         "domain_fact" => Ok(mem_api::MemoryType::DomainFact),
+        "plan" => Ok(mem_api::MemoryType::Plan),
         _ => anyhow::bail!("unknown memory type: {input}"),
     }
 }
@@ -4390,6 +4464,183 @@ fn build_remember_request(
         command_output,
         idempotency_key: None,
     })
+}
+
+async fn save_checkpoint_with_activity(
+    api: &ApiClient,
+    project: &str,
+    repo_root: &Path,
+    note: Option<String>,
+) -> Result<(mem_api::ResumeCheckpoint, PathBuf)> {
+    let (checkpoint, path) = resume::save_checkpoint(project, repo_root, note)?;
+    let request = CheckpointActivityRequest {
+        project: project.to_string(),
+        checkpoint: checkpoint.clone(),
+    };
+    if let Err(error) = api.log_checkpoint_activity(&request).await {
+        eprintln!("warning: failed to log checkpoint activity for `{project}`: {error}");
+    }
+    Ok((checkpoint, path))
+}
+
+fn load_plan_content(
+    plan_file: Option<&Path>,
+    plan_stdin: bool,
+) -> Result<(String, Option<PathBuf>)> {
+    match (plan_file, plan_stdin) {
+        (Some(_), true) => anyhow::bail!("use either --plan-file or --plan-stdin, not both"),
+        (None, false) => anyhow::bail!("provide --plan-file <path> or --plan-stdin"),
+        (Some(path), false) => Ok((
+            fs::read_to_string(path)
+                .with_context(|| format!("read plan file {}", path.display()))?,
+            Some(path.to_path_buf()),
+        )),
+        (None, true) => {
+            let mut buffer = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buffer)
+                .context("read plan content from stdin")?;
+            Ok((buffer, None))
+        }
+    }
+}
+
+fn derive_plan_title(explicit_title: Option<&str>, plan_markdown: &str, project: &str) -> String {
+    if let Some(title) = explicit_title
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return title.to_string();
+    }
+    for line in plan_markdown.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(heading) = trimmed.strip_prefix('#') {
+            let heading = heading.trim_start_matches('#').trim();
+            if !heading.is_empty() {
+                return heading.to_string();
+            }
+        }
+        return trimmed.to_string();
+    }
+    format!("Approved plan for {project}")
+}
+
+fn derive_plan_thread_key(explicit_key: Option<&str>, title: &str, project: &str) -> String {
+    let candidate = explicit_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(title);
+    let sanitized = platform::sanitize_service_fragment(candidate)
+        .trim_matches('-')
+        .to_ascii_lowercase();
+    if sanitized.is_empty() {
+        format!(
+            "approved-plan-{}",
+            platform::sanitize_service_fragment(project)
+                .trim_matches('-')
+                .to_ascii_lowercase()
+        )
+    } else {
+        sanitized
+    }
+}
+
+fn normalize_plan_markdown_for_hash(input: &str) -> String {
+    input
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim()
+        .to_string()
+}
+
+fn build_plan_execution_idempotency_key(
+    project: &str,
+    thread_key: &str,
+    plan_markdown: &str,
+    git_head: Option<&str>,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"plan-execution");
+    hasher.update(project.as_bytes());
+    hasher.update(thread_key.as_bytes());
+    hasher.update(normalize_plan_markdown_for_hash(plan_markdown).as_bytes());
+    if let Some(git_head) = git_head.map(str::trim).filter(|value| !value.is_empty()) {
+        hasher.update(git_head.as_bytes());
+    }
+    format!("plan-execution:{:x}", hasher.finalize())
+}
+
+fn build_plan_execution_request(
+    project: &str,
+    writer: &WriterIdentity,
+    title: &str,
+    thread_key: &str,
+    plan_markdown: &str,
+    source_path: Option<&Path>,
+    git_head: Option<&str>,
+) -> CaptureTaskRequest {
+    let normalized_plan = normalize_plan_markdown_for_hash(plan_markdown);
+    let mut sources = vec![
+        mem_api::CaptureCandidateSourceInput {
+            file_path: None,
+            source_kind: mem_api::SourceKind::TaskPrompt,
+            excerpt: Some("Approved execution plan entered implementation.".to_string()),
+        },
+        mem_api::CaptureCandidateSourceInput {
+            file_path: None,
+            source_kind: mem_api::SourceKind::Note,
+            excerpt: Some(normalized_plan.clone()),
+        },
+    ];
+    if let Some(source_path) = source_path {
+        sources.insert(
+            0,
+            mem_api::CaptureCandidateSourceInput {
+                file_path: Some(source_path.display().to_string()),
+                source_kind: mem_api::SourceKind::File,
+                excerpt: Some(format!(
+                    "Approved plan source file: {}",
+                    source_path.display()
+                )),
+            },
+        );
+    }
+
+    CaptureTaskRequest {
+        project: project.to_string(),
+        task_title: format!("Approved plan: {title}"),
+        user_prompt: format!("Approved execution plan for project {project}."),
+        writer_id: writer.id.clone(),
+        writer_name: writer.name.clone(),
+        agent_summary: title.to_string(),
+        files_changed: Vec::new(),
+        git_diff_summary: git_head.map(|head| format!("Execution started from git HEAD {head}")),
+        tests: Vec::new(),
+        notes: Vec::new(),
+        structured_candidates: vec![mem_api::CaptureCandidateInput {
+            canonical_text: normalized_plan.clone(),
+            summary: title.to_string(),
+            memory_type: mem_api::MemoryType::Plan,
+            confidence: 0.95,
+            importance: 4,
+            tags: vec![
+                "plan".to_string(),
+                format!("plan-thread:{thread_key}"),
+                "execution-started".to_string(),
+            ],
+            sources,
+        }],
+        command_output: None,
+        idempotency_key: Some(build_plan_execution_idempotency_key(
+            project,
+            thread_key,
+            &normalized_plan,
+            git_head,
+        )),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -4506,6 +4757,25 @@ fn detect_changed_files() -> Result<Vec<String>> {
     Ok(files)
 }
 
+fn repo_git_head(repo_root: &Path) -> Option<String> {
+    let output = ProcessCommand::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo_root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let head = stdout.trim();
+    if head.is_empty() {
+        None
+    } else {
+        Some(head.to_string())
+    }
+}
+
 pub(crate) trait SourceKindString {
     fn source_kind_string(&self) -> &'static str;
 }
@@ -4529,7 +4799,8 @@ mod tests {
 
     use super::{
         DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction,
-        build_remember_request, ensure_shared_service_api_token, initialize_repo,
+        build_plan_execution_request, build_remember_request, derive_plan_thread_key,
+        derive_plan_title, ensure_shared_service_api_token, initialize_repo,
         is_placeholder_database_url, mask_database_url, render_agent_project_config,
         repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
         root_gitignore_contains_mem, shared_env_lookup, write_headers,
@@ -4612,6 +4883,46 @@ mod tests {
         assert_eq!(request.writer_id, "codex-writer");
         assert!(request.user_prompt.contains("Auto-captured"));
         assert!(request.agent_summary.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn derive_plan_title_prefers_markdown_heading() {
+        let title = derive_plan_title(None, "# Resume Redesign\n\n- step", "memory");
+        assert_eq!(title, "Resume Redesign");
+    }
+
+    #[test]
+    fn derive_plan_thread_key_sanitizes_title() {
+        let thread_key = derive_plan_thread_key(None, "Resume Redesign!", "memory");
+        assert_eq!(thread_key, "resume-redesign");
+    }
+
+    #[test]
+    fn plan_execution_request_uses_plan_type_and_thread_tag() {
+        let writer = super::WriterIdentity {
+            id: "writer".to_string(),
+            name: Some("Writer".to_string()),
+        };
+        let request = build_plan_execution_request(
+            "memory",
+            &writer,
+            "Resume Redesign",
+            "resume-redesign",
+            "# Resume Redesign\n\n- step",
+            None,
+            Some("abc123"),
+        );
+
+        assert_eq!(request.task_title, "Approved plan: Resume Redesign");
+        assert_eq!(request.structured_candidates.len(), 1);
+        let candidate = &request.structured_candidates[0];
+        assert_eq!(candidate.memory_type, mem_api::MemoryType::Plan);
+        assert!(candidate.tags.contains(&"plan".to_string()));
+        assert!(
+            candidate
+                .tags
+                .contains(&"plan-thread:resume-redesign".to_string())
+        );
     }
 
     #[test]
@@ -4913,7 +5224,9 @@ mod tests {
         let headers = write_headers(&config).unwrap();
 
         assert_eq!(
-            headers.get("x-api-token").and_then(|value| value.to_str().ok()),
+            headers
+                .get("x-api-token")
+                .and_then(|value| value.to_str().ok()),
             Some("ml_testtoken")
         );
         assert!(headers.get("origin").is_none());

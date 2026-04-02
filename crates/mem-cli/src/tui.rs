@@ -105,9 +105,8 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
                         app.refresh(&api, RefreshMode::Full).await;
                     }
                     Err(error) => {
-                        app.status_message = format!(
-                            "Backend reachable, but stream subscription failed: {error}"
-                        );
+                        app.status_message =
+                            format!("Backend reachable, but stream subscription failed: {error}");
                         app.ui_status = UiStatus::Error;
                     }
                 },
@@ -1403,6 +1402,7 @@ enum TypeFilter {
     Debugging,
     Environment,
     DomainFact,
+    Plan,
 }
 
 impl TypeFilter {
@@ -1415,7 +1415,8 @@ impl TypeFilter {
             Self::Incident => Self::Debugging,
             Self::Debugging => Self::Environment,
             Self::Environment => Self::DomainFact,
-            Self::DomainFact => Self::All,
+            Self::DomainFact => Self::Plan,
+            Self::Plan => Self::All,
         }
     }
 
@@ -1430,6 +1431,7 @@ impl TypeFilter {
                 | (Self::Debugging, MemoryType::Debugging)
                 | (Self::Environment, MemoryType::Environment)
                 | (Self::DomainFact, MemoryType::DomainFact)
+                | (Self::Plan, MemoryType::Plan)
         )
     }
 
@@ -1443,6 +1445,7 @@ impl TypeFilter {
             Self::Debugging => "debugging",
             Self::Environment => "environment",
             Self::DomainFact => "domain_fact",
+            Self::Plan => "plan",
         }
     }
 }
@@ -3600,11 +3603,17 @@ fn format_timestamp_medium(value: DateTime<Utc>) -> String {
 }
 
 fn format_timestamp_short(value: DateTime<Utc>) -> String {
-    value.with_timezone(&Local).format("%H:%M:%S %Z").to_string()
+    value
+        .with_timezone(&Local)
+        .format("%H:%M:%S %Z")
+        .to_string()
 }
 
 fn format_timestamp_timeline(value: DateTime<Utc>) -> String {
-    value.with_timezone(&Local).format("%m-%d %H:%M %Z").to_string()
+    value
+        .with_timezone(&Local)
+        .format("%m-%d %H:%M %Z")
+        .to_string()
 }
 
 fn display_filter(value: &str) -> String {
@@ -3904,6 +3913,7 @@ fn memory_type_span_from_label(label: &str) -> Span<'static> {
         "debugging" => Color::Rgb(255, 170, 110),
         "environment" => Color::Rgb(190, 170, 255),
         "domain_fact" => Color::Rgb(130, 225, 220),
+        "plan" => Color::Rgb(255, 120, 200),
         "all" => Theme::TEXT,
         _ => Theme::TEXT,
     };
@@ -4026,9 +4036,9 @@ mod tests {
     use chrono::{Local, TimeZone, Utc};
 
     use super::{
-        empty_overview, format_timestamp, format_timestamp_full, format_timestamp_medium,
-        format_timestamp_short, format_timestamp_timeline, service_status_label,
-        should_attempt_stream_reconnect, watcher_bar_status_label, App, ToolVersions, UiStatus,
+        App, ToolVersions, UiStatus, empty_overview, format_timestamp, format_timestamp_full,
+        format_timestamp_medium, format_timestamp_short, format_timestamp_timeline,
+        service_status_label, should_attempt_stream_reconnect, watcher_bar_status_label,
     };
     use mem_api::WatcherPresenceSummary;
     use std::path::PathBuf;
