@@ -29,7 +29,7 @@ It tells the agent when to:
 
 - query project memory before answering repo-specific questions
 - use `resume` to get back into flow after an interruption
-- save a checkpoint when a planning phase turns into approved execution
+- save the approved plan and checkpoint when a planning phase turns into approved execution
 - remember meaningful completed work automatically
 
 The skill decides **when** to use memory. The helper scripts under `.agents/skills/memory-layer/scripts/` are the execution path that actually calls `memory`.
@@ -40,7 +40,7 @@ The current live workflow is:
 
 1. Query memory before answering project-specific questions.
 2. If the user is returning after an interruption, use the resume workflow instead of a generic query.
-3. If a plan was approved and execution is about to start, save a checkpoint immediately.
+3. If a plan was approved and execution is about to start, run `memory checkpoint start-execution` through the skill helper so the checkpoint and approved plan are both stored before implementation begins.
 4. After meaningful work is complete, use the automatic remember workflow.
 5. Prefer insufficient evidence over unsupported conclusions.
 6. Never invent provenance.
@@ -56,7 +56,9 @@ The main scripts are:
 - `resume-project.sh`
   - build a resume briefing from the saved checkpoint and project timeline
 - `checkpoint-project.sh`
-  - save a checkpoint after plan approval and before implementation starts
+  - save a checkpoint explicitly when you want to mark a point in time without storing a plan
+- `start-plan-execution.sh`
+  - save the checkpoint and store the approved execution plan as `plan` memory before implementation starts
 - `remember-task.sh`
   - capture completed work and curate it immediately into durable memory
 
@@ -79,7 +81,7 @@ Older documentation in this repo focused on:
 The current skill has moved beyond that. It now also covers:
 
 - interruption recovery with `resume`
-- plan-to-execution checkpointing
+- plan-to-execution checkpointing with approved-plan capture
 - automatic post-task remembering with `remember-task.sh`
 
 If you are updating other documentation or examples, align them to the live skill instead of treating the older manual capture/curate flow as the default.

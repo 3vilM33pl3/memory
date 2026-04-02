@@ -13,8 +13,12 @@ memory checkpoint save --project my-project --note "Waiting on agent review"
 For agent-driven workflows, a good checkpoint moment is right after a planning session ends and execution is approved:
 
 ```bash
-memory checkpoint save --project my-project --note "Plan approved; starting implementation"
+memory checkpoint start-execution \
+  --project my-project \
+  --plan-file /tmp/approved-plan.md
 ```
+
+That command saves the checkpoint first and then stores the approved plan as `plan` memory for the active work thread.
 
 Show the current checkpoint:
 

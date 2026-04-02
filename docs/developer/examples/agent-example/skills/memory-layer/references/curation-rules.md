@@ -75,6 +75,7 @@ At minimum, classify into one of:
 - `debugging`
 - `environment`
 - `domain_fact`
+- `plan`
 
 ### Suggested meanings
 
@@ -98,6 +99,9 @@ Facts about tooling, setup, build, or runtime environment.
 
 #### domain_fact
 Stable fact about the business or product domain.
+
+#### plan
+An approved execution plan that should guide the current implementation thread.
 
 ---
 

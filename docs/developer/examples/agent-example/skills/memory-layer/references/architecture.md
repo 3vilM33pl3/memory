@@ -450,6 +450,7 @@ At minimum:
 - `debugging`
 - `environment`
 - `domain_fact`
+- `plan`
 
 ### Dedupe Strategy
 Use:

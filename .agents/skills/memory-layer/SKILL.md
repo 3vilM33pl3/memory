@@ -1,6 +1,6 @@
 ---
 name: memory-layer
-description: Query project memory before answering project-specific questions; capture completed task context; curate raw captures into durable canonical memory with provenance; checkpoint plans before execution; use memory to get back into flow after interruptions
+description: Query project memory before answering project-specific questions; capture completed task context; curate raw captures into durable canonical memory with provenance; save plans before execution; use memory to get back into flow after interruptions
 ---
 
 # Memory Layer Skill
@@ -11,7 +11,7 @@ Use this skill when:
 - you complete meaningful work in this repository
 - the user explicitly asks to store or query memory
 - the user returns after an interruption and wants to get back into flow
-- you transition from planning to execution and want to checkpoint the plan for later resumption
+- you transition from planning to execution and want to know when it started
 
 Do not use this skill for:
 - generic questions with no project-specific context
@@ -37,6 +37,13 @@ Save a checkpoint after a planning session transitions into approved execution:
   --note "Plan approved; starting implementation"
 ```
 
+Save the approved plan and the execution checkpoint together:
+```bash
+./.agents/skills/memory-layer/scripts/start-plan-execution.sh \
+  --project <project-slug> \
+  --plan-file /tmp/approved-plan.md
+```
+
 Remember task context automatically:
 ```bash
 ./.agents/skills/memory-layer/scripts/remember-task.sh \
@@ -50,7 +57,7 @@ Remember task context automatically:
 
 1. Query memory before answering project-specific questions.
 2. For "get me back into flow" or "what changed since I was last here?" prompts, use the resume script instead of a generic query.
-3. If you produce a proposed plan and the user approves execution, save a checkpoint immediately before starting implementation.
+3. If you produce a proposed plan and the user approves execution, run the start-plan-execution helper immediately before starting implementation.
 4. Use the automatic remember workflow once work is complete.
 5. The remember workflow captures and curates in one step.
 6. Prefer insufficient evidence over unsupported conclusions.
@@ -67,7 +74,12 @@ This skill should default to storing durable project knowledge, not waiting for 
 
 ## Planning transition rule
 
-When a turn has a real planning phase and the user then approves execution, save a checkpoint before implementation starts.
+When a turn has a real planning phase and the user then approves execution, run the start-plan-execution helper before implementation starts.
+
+That helper:
+- saves the checkpoint
+- logs the checkpoint activity
+- stores the approved plan as `plan` memory before work begins
 
 Use a short note that explains the transition, for example:
 - `Plan approved; starting implementation`
