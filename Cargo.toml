@@ -41,7 +41,7 @@ sha2 = "0.10.9"
 humantime-serde = "1.1.1"
 ratatui = "0.29.0"
 crossterm = "0.28.1"
-capnp = "0.19.8"
+capnp = "0.24.0"
 pgvector = { version = "0.4.1", features = ["sqlx"] }
 tree-sitter = "0.24.7"
 tree-sitter-rust = "0.23.3"
