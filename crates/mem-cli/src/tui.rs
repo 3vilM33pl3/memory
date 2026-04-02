@@ -4130,9 +4130,9 @@ mod tests {
             "memory".to_string(),
             PathBuf::from("/tmp/memory"),
             ToolVersions {
-                mem_cli: "0.4.1".to_string(),
-                mem_service: "0.4.1".to_string(),
-                memory_watch: "0.4.1".to_string(),
+                mem_cli: "0.4.2".to_string(),
+                mem_service: "0.4.2".to_string(),
+                memory_watch: "0.4.2".to_string(),
             },
             tx,
         );
