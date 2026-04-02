@@ -45,21 +45,20 @@ The repo-local skill in `.agents/skills/memory-layer/` tells Codex when to:
 
 This skill is the main driver for coding agent interaction with Memory Layer. In practice, the
 skill workflow decides when the agent should use memory, while the helper scripts in
-`.agents/skills/memory-layer/scripts/` are the execution path that actually calls `mem-cli` or
-`memctl`.
+`.agents/skills/memory-layer/scripts/` are the execution path that actually calls `memory`.
 
 For the detailed runtime model of skill discovery, selection, and template bootstrapping, use
 [How Skills Work](../skills/how-skills-work.md).
 
-### CLI (`mem-cli`)
+### CLI (`memory`)
 
-`mem-cli` is the main user entrypoint for:
+`memory` is the main user entrypoint for:
 - repo bootstrap (`init`)
 - query
 - remember
-- capture-task
+- `capture task`
 - curate
-- reindex
+- `embeddings reindex`
 - TUI views
 - automation status and controls
 
@@ -69,7 +68,7 @@ The CLI currently uses two transports:
 
 Initialized repositories keep local project metadata and overrides under `.mem/`. Shared defaults live in the global config and repo-local values can override them when needed.
 
-### Backend Service (`mem-service`)
+### Backend Service (`memory service`)
 
 The backend owns:
 - API routes
@@ -92,9 +91,9 @@ PostgreSQL stores:
 - search chunks
 - curation runs
 
-### Automation Daemon (`memory-watch`)
+### Automation Daemon (`memory watcher`)
 
-`memory-watch` is an optional background process. It watches a repository, creates raw captures as work progresses, and can curate them later in batches.
+`memory watcher` is an optional background process. It watches a repository, creates raw captures as work progresses, and can curate them later in batches.
 
 It does not write directly to database tables. It only orchestrates the existing persistence path.
 
@@ -103,13 +102,13 @@ It does not write directly to database tables. It only orchestrates the existing
 ### Query Flow
 
 1. User asks a project-specific question
-2. Skill or CLI runs `mem-cli query`
+2. Skill or CLI runs `memory query`
 3. Backend retrieves project memory from PostgreSQL
 4. Ranked results and provenance are returned
 
 ### Live TUI Flow
 
-1. `mem-cli tui` loads an initial project snapshot
+1. `memory tui` loads an initial project snapshot
 2. It opens a persistent Cap'n Proto connection to the backend
 3. It subscribes to project-level and selected-memory updates
 4. Backend pushes snapshot refreshes after relevant writes
@@ -118,7 +117,7 @@ It does not write directly to database tables. It only orchestrates the existing
 ### Remember Flow
 
 1. Meaningful work is completed
-2. Skill, user, or automation daemon runs `mem-cli remember`
+2. Skill, user, or automation daemon runs `memory remember`
 3. CLI builds a capture request
 4. Backend stores a raw capture
 5. Backend curates it into canonical memory
@@ -126,7 +125,7 @@ It does not write directly to database tables. It only orchestrates the existing
 
 ### Automation Flow
 
-1. `memory-watch` observes file and command activity for a repo
+1. `memory watcher` observes file and command activity for a repo
 2. It accumulates a task window
 3. After idle time or explicit flush, it decides whether to create a raw capture
 4. After enough raw captures accumulate, it can trigger curation

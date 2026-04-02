@@ -58,7 +58,7 @@ The daemon should:
 - track optional wrapped command and test events
 - build an in-memory task window
 - evaluate whether the work is meaningful enough to remember
-- call `memctl remember` or the equivalent API flow
+- call `memory remember` or the equivalent API flow
 - write an audit log of persisted and skipped decisions
 
 ## Observed Signals

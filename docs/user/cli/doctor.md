@@ -1,4 +1,4 @@
-# `mem-cli doctor`
+# `memory doctor`
 
 Use `doctor` when Memory Layer is installed but something is not working the way you expect.
 
@@ -12,7 +12,7 @@ Use `doctor` when Memory Layer is installed but something is not working the way
 
 ## What It Checks
 
-`mem-cli doctor` checks the current setup for common problems such as:
+`memory doctor` checks the current setup for common problems such as:
 
 - missing or placeholder database URL
 - missing or placeholder service API token
@@ -29,7 +29,7 @@ The exact output is meant to be actionable, not just descriptive.
 Run it any time setup looks suspicious:
 
 ```bash
-mem-cli doctor
+memory doctor
 ```
 
 It is especially useful after:
@@ -49,10 +49,10 @@ Typical remediation paths are:
 - missing `pgvector`
   - install the PostgreSQL package for your server version and enable the `vector` extension
 - repo not initialized
-  - run `mem-cli wizard` or `mem-cli init`
+  - run `memory wizard` or `memory init`
 - backend unreachable
   - start the shared backend service or the local development backend
 - placeholder service API token
-  - run `mem-cli service ensure-api-token --rotate-placeholder` or `mem-cli wizard --global`
+  - run `memory service ensure-api-token --rotate-placeholder` or `memory wizard --global`
 
 Use `doctor` first before assuming the memory database or watcher system is broken.

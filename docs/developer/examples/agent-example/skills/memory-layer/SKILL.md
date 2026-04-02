@@ -245,7 +245,7 @@ If provenance is weak, do not present the result as a durable fact.
 ### You should:
 1. Complete the implementation.
 2. Create a capture payload.
-3. Run capture-task.
+3. Run `memory capture task`.
 4. Run curate-memory.
 5. Report success or failure honestly.
 

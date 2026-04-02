@@ -4,7 +4,7 @@
 
 This document defines the expected input, output, behavior, and failure modes for project-memory queries.
 
-The goal is to make `memctl query` predictable for:
+The goal is to make `memory query` predictable for:
 - Codex Skill scripts
 - humans using the CLI directly
 - backend API clients
@@ -25,7 +25,7 @@ The goal is to make `memctl query` predictable for:
 ### Command
 
 ```bash
-memctl query --project <project-slug> --question "<question>"
+memory query --project <project-slug> --question "<question>"
 ```
 
 ### Required Inputs

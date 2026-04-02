@@ -31,13 +31,13 @@ By default, a bundle does **not** export:
 CLI:
 
 ```bash
-mem-cli export --project my-project --out my-project.mlbundle.zip
+memory bundle export --project my-project --out my-project.mlbundle.zip
 ```
 
 Optional source/provenance fields:
 
 ```bash
-mem-cli export \
+memory bundle export \
   --project my-project \
   --out my-project.mlbundle.zip \
   --include-archived \
@@ -57,13 +57,13 @@ Web UI:
 Preview first:
 
 ```bash
-mem-cli import --project target-project ./my-project.mlbundle.zip --preview
+memory bundle import --project target-project ./my-project.mlbundle.zip --preview
 ```
 
 Import:
 
 ```bash
-mem-cli import --project target-project ./my-project.mlbundle.zip
+memory bundle import --project target-project ./my-project.mlbundle.zip
 ```
 
 Import behavior:

@@ -28,7 +28,7 @@ Build the project as a Rust monorepo with:
 ## Acceptance
 
 - `mem-service` boots and runs migrations
-- `memctl capture-task` stores a raw capture
-- `memctl curate` creates canonical memory
-- `memctl query` returns stored memory with provenance
+- `memory capture task` stores a raw capture
+- `memory curate` creates canonical memory
+- `memory query` returns stored memory with provenance
 - the shipped skill scripts call the CLI correctly

@@ -1,4 +1,4 @@
-# `mem-cli wizard`
+# `memory wizard`
 
 Use `wizard` to bootstrap Memory Layer configuration either globally for the machine or locally for the current repository.
 
@@ -11,7 +11,7 @@ Use `wizard` to bootstrap Memory Layer configuration either globally for the mac
 
 ## Global vs Repo-Local
 
-`mem-cli wizard --global` configures shared machine-level settings such as:
+`memory wizard --global` configures shared machine-level settings such as:
 
 - `database.url`
 - optional shared `writer.id`
@@ -20,7 +20,7 @@ Use `wizard` to bootstrap Memory Layer configuration either globally for the mac
 The shared service API token is usually generated automatically into the adjacent `memory-layer.env` file. The wizard only needs an explicit token value if you want to override that generated token.
 If you leave `writer.id` unset, Memory Layer derives a stable writer identity automatically at runtime.
 
-`mem-cli wizard` inside a repository is local-first and bootstraps project files such as:
+`memory wizard` inside a repository is local-first and bootstraps project files such as:
 
 - `.mem/config.toml`
 - `.mem/project.toml`
@@ -44,14 +44,14 @@ The skill copy is created from the packaged `skill-template`, or from the repo-l
 First machine setup:
 
 ```bash
-mem-cli wizard --global
+memory wizard --global
 ```
 
 Then inside each repo:
 
 ```bash
 cd /path/to/your-project
-mem-cli wizard
+memory wizard
 ```
 
 ## How It Differs From `init`

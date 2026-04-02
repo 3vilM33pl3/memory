@@ -1,12 +1,12 @@
-# `mem-cli scan`
+# `memory scan`
 
-`mem-cli scan` is a repository bootstrap command.
+`memory scan` is a repository bootstrap command.
 
 Its job is to inspect an existing codebase, ask an LLM for durable project knowledge, validate the result, and then write that knowledge into Memory Layer through the normal capture and curate pipeline.
 
 This is not a generic "summarize my repo" command. It is specifically trying to extract project memory that should still be useful later.
 
-`scan` now sits on top of a local repository index. You can build that index explicitly with `mem-cli index repo` and inspect it with `mem-cli index status`.
+`scan` now sits on top of a local repository index. You can build that index explicitly with `memory repo index` and inspect it with `memory repo status`.
 
 ## Table of Contents
 
@@ -60,8 +60,8 @@ Before `scan` asks the LLM anything, it now works from a local repository index 
 You can manage that index directly:
 
 ```bash
-mem-cli index repo --project my-project
-mem-cli index status --project my-project
+memory repo index --project my-project
+memory repo status --project my-project
 ```
 
 The current index includes:
@@ -81,12 +81,12 @@ Analyzer enablement comes from `.agents/memory-layer.toml`:
 analyzers = ["rust", "typescript", "python"]
 ```
 
-When you run `mem-cli scan`, it reuses the existing index if it still matches the current repo `HEAD` and the same `--since` window. Otherwise it rebuilds the index first.
+When you run `memory scan`, it reuses the existing index if it still matches the current repo `HEAD` and the same `--since` window. Otherwise it rebuilds the index first.
 
 If you want to force a fresh index before scanning, use:
 
 ```bash
-mem-cli scan --project my-project --rebuild-index
+memory scan --project my-project --rebuild-index
 ```
 
 ## What It Reads
@@ -136,13 +136,13 @@ The current implementation:
 You can bound this with:
 
 ```bash
-mem-cli scan --since "2 weeks ago"
+memory scan --since "2 weeks ago"
 ```
 
 or:
 
 ```bash
-mem-cli scan --since "2026-03-01"
+memory scan --since "2026-03-01"
 ```
 
 ## What It Sends To The LLM
@@ -220,7 +220,7 @@ That request contains:
 
 Then `scan` does exactly what a normal high-level write should do:
 
-1. call `capture-task`
+1. call `memory capture task`
 2. call `curate`
 
 That means scan output goes through the same:
@@ -253,7 +253,7 @@ This means:
 Use this first if you want to inspect what `scan` is going to do:
 
 ```bash
-mem-cli scan --project my-project --dry-run
+memory scan --project my-project --dry-run
 ```
 
 In dry-run mode, `scan` still:
@@ -365,7 +365,7 @@ It is only as good as:
 
 Recommended usage:
 
-1. initialize the repo with `mem-cli wizard` or `mem-cli init`
+1. initialize the repo with `memory wizard` or `memory init`
 2. make sure `[llm]` is configured
 3. run a dry run first
 4. inspect the generated report
@@ -375,9 +375,9 @@ Recommended usage:
 Example:
 
 ```bash
-mem-cli scan --project my-project --dry-run
-mem-cli scan --project my-project
-mem-cli tui --project my-project
+memory scan --project my-project --dry-run
+memory scan --project my-project
+memory tui --project my-project
 ```
 
 ## Troubleshooting
@@ -393,8 +393,8 @@ Common failure cases:
 Useful checks:
 
 ```bash
-mem-cli doctor
-mem-cli scan --project my-project --dry-run
+memory doctor
+memory scan --project my-project --dry-run
 ```
 
 If you are debugging a specific scan result, the most useful artifact is the JSON report in `.mem/runtime/scan/`.

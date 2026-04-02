@@ -32,7 +32,7 @@ It tells the agent when to:
 - save a checkpoint when a planning phase turns into approved execution
 - remember meaningful completed work automatically
 
-The skill decides **when** to use memory. The helper scripts under `.agents/skills/memory-layer/scripts/` are the execution path that actually calls `mem-cli` or `memctl`.
+The skill decides **when** to use memory. The helper scripts under `.agents/skills/memory-layer/scripts/` are the execution path that actually calls `memory`.
 
 ## Current Workflow
 
@@ -45,7 +45,7 @@ The current live workflow is:
 5. Prefer insufficient evidence over unsupported conclusions.
 6. Never invent provenance.
 
-The important change is that the skill is no longer centered on a manual `capture-task -> curate-memory` sequence for normal work. The preferred path is now `remember-task.sh`, which captures and curates in one step.
+The important change is that the skill is no longer centered on a manual `memory capture task -> curate-memory` sequence for normal work. The preferred path is now `remember-task.sh`, which captures and curates in one step.
 
 ## Helper Scripts
 
@@ -73,7 +73,7 @@ Older documentation in this repo focused on:
 
 - query memory
 - build a capture payload manually
-- run `capture-task`
+- run `memory capture task`
 - run `curate-memory`
 
 The current skill has moved beyond that. It now also covers:

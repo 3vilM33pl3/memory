@@ -1,4 +1,4 @@
-# `mem-cli service`
+# `memory service`
 
 Use the `service` commands to enable, start, and inspect the shared backend service installed on your machine.
 
@@ -11,12 +11,12 @@ Use the `service` commands to enable, start, and inspect the shared backend serv
 
 ## What It Controls
 
-These commands manage the installed shared `mem-service` backend.
+These commands manage the installed shared `memory service` backend.
 
 They are for the normal packaged setup, not for temporary source-level development runs like:
 
 ```bash
-cargo run --bin mem-service
+cargo run --bin memory -- service run
 ```
 
 ## Common Commands
@@ -24,7 +24,7 @@ cargo run --bin mem-service
 Enable or start the service:
 
 ```bash
-mem-cli service enable
+memory service enable
 ```
 
 This command also provisions the shared service API token automatically if it is missing or still set to the old development placeholder.
@@ -32,25 +32,25 @@ This command also provisions the shared service API token automatically if it is
 Check service status:
 
 ```bash
-mem-cli service status
+memory service status
 ```
 
 Rotate an old placeholder token manually:
 
 ```bash
-mem-cli service ensure-api-token --rotate-placeholder
+memory service ensure-api-token --rotate-placeholder
 ```
 
 Health checks from the client side:
 
 ```bash
-mem-cli health
-mem-cli doctor
+memory health
+memory doctor
 ```
 
 ## Platform Notes
 
-On macOS, `mem-cli service enable` manages the LaunchAgent.
+On macOS, `memory service enable` manages the LaunchAgent.
 
 On Linux, the packaged service is usually managed with:
 
@@ -66,7 +66,7 @@ Use the system service directly for restart operations during upgrades.
 When working from source in this repository, you may run a backend manually instead of using the installed service:
 
 ```bash
-cargo run --bin mem-service
+cargo run --bin memory -- service run
 ```
 
 That path is useful for local development, but it is separate from the packaged service-management flow.

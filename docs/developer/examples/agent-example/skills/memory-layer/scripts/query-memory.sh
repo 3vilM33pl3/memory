@@ -8,7 +8,7 @@ fi
 
 QUESTION="$1"
 PROJECT="${2:-${MEMORY_LAYER_PROJECT:-$(basename "$PWD")}}"
-MEMCTL_BIN="${MEMCTL_BIN:-memctl}"
+MEMCTL_BIN="${MEMCTL_BIN:-memory}"
 EXTRA_ARGS=()
 
 if [[ "${MEMORY_LAYER_JSON:-0}" == "1" ]]; then

@@ -53,7 +53,7 @@ A repo-local Skill in `.agents/skills/memory-layer/` tells Codex when to:
 
 The Skill calls local scripts, which in turn invoke the CLI.
 
-#### 2. CLI (`memctl`)
+#### 2. CLI (`memory`)
 A Rust CLI that acts as the user and agent entrypoint.
 
 Responsibilities:
@@ -100,7 +100,7 @@ Responsibilities:
 
 1. User asks a project-specific question
 2. Codex Skill decides to query memory first
-3. Skill script calls `memctl query`
+3. Skill script calls `memory query`
 4. CLI sends request to backend
 5. Backend performs PostgreSQL BM25 retrieval
 6. Backend ranks and groups results
@@ -116,7 +116,7 @@ Responsibilities:
 
 1. Task completes or meaningful knowledge is discovered
 2. Codex Skill decides to capture the task
-3. Skill script calls `memctl capture-task`
+3. Skill script calls `memory capture task`
 4. CLI sends structured payload to backend
 5. Backend stores raw capture in PostgreSQL
 6. Raw capture is available for later curation and replay
@@ -124,7 +124,7 @@ Responsibilities:
 ### Curation Flow
 
 1. Task is complete or user explicitly requests memory update
-2. Skill script calls `memctl curate`
+2. Skill script calls `memory curate`
 3. Backend loads uncured raw captures
 4. Backend normalizes and extracts candidate assertions
 5. Backend deduplicates against existing memory
@@ -213,7 +213,7 @@ Contains:
 - config types if shared
 
 ### `mem-cli`
-Rust CLI binary `memctl`.
+Rust crate behind the public `memory` CLI binary.
 
 Contains:
 - command parsing

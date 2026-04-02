@@ -1,4 +1,4 @@
-# `mem-cli resume`
+# `memory resume`
 
 Use `resume` when you return to a project after an interruption and want a fast briefing instead of manually reading activity, commits, and memory state.
 
@@ -7,31 +7,31 @@ Use `resume` when you return to a project after an interruption and want a fast 
 Save a checkpoint before leaving:
 
 ```bash
-mem-cli checkpoint save --project my-project --note "Waiting on agent review"
+memory checkpoint save --project my-project --note "Waiting on agent review"
 ```
 
 For agent-driven workflows, a good checkpoint moment is right after a planning session ends and execution is approved:
 
 ```bash
-mem-cli checkpoint save --project my-project --note "Plan approved; starting implementation"
+memory checkpoint save --project my-project --note "Plan approved; starting implementation"
 ```
 
 Show the current checkpoint:
 
 ```bash
-mem-cli checkpoint show --project my-project
+memory checkpoint show --project my-project
 ```
 
 Generate a resume briefing:
 
 ```bash
-mem-cli resume --project my-project
+memory resume --project my-project
 ```
 
 JSON output for tools and agents:
 
 ```bash
-mem-cli resume --project my-project --json
+memory resume --project my-project --json
 ```
 
 ## What it uses

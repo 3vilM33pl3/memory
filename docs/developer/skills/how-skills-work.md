@@ -13,7 +13,7 @@ It covers two different things:
 - [Short Description vs `SKILL.md`](#short-description-vs-skillmd)
 - [When A Skill Is Selected](#when-a-skill-is-selected)
 - [When `SKILL.md` Is Read](#when-skillmd-is-read)
-- [What `mem-cli` Does And Does Not Do](#what-mem-cli-does-and-does-not-do)
+- [What `memory` Does And Does Not Do](#what-memory-does-and-does-not-do)
 - [Canonical Skill vs Template vs Example](#canonical-skill-vs-template-vs-example)
 - [Bootstrap And Packaging](#bootstrap-and-packaging)
 - [Related Docs](#related-docs)
@@ -30,7 +30,7 @@ The important split is:
 
 - the **agent runtime** selects and reads skills
 - the **skill** tells the agent what to do
-- `mem-cli` does **not** decide whether the agent should use a skill
+- `memory` does **not** decide whether the agent should use a skill
 
 ## Short Description vs `SKILL.md`
 
@@ -67,23 +67,23 @@ For the `memory-layer` skill, those matches are things like:
 
 That means:
 
-- it is **not** read on every `mem-cli` command
+- it is **not** read on every `memory` command
 - it is **not** necessarily read on every chat turn
 - it is read on turns where the runtime has decided the skill applies
 
 In practice, changes to the live repo-local `SKILL.md` are picked up the next time the runtime selects and reads that skill.
 
-## What `mem-cli` Does And Does Not Do
+## What `memory` Does And Does Not Do
 
-`mem-cli` provides the commands and bootstrap logic, but it does not make skill-selection decisions.
+`memory` provides the commands and bootstrap logic, but it does not make skill-selection decisions.
 
-`mem-cli` does:
+`memory` does:
 
 - initialize a repo-local skill directory during bootstrap
 - copy the packaged or repo-local `skill-template` into `.agents/skills/memory-layer/`
 - provide the command surface the skill scripts call
 
-`mem-cli` does not:
+`memory` does not:
 
 - parse `SKILL.md` on every CLI invocation
 - decide that an agent should use the skill for a turn
@@ -97,7 +97,7 @@ There are three important skill copies in this repository:
    - this is the repo-local skill the agent uses in this repository
 2. packaged template
    - installed as `skill-template`
-   - used by `mem-cli init` / `mem-cli wizard` to copy the skill into a repo
+   - used by `memory init` / `memory wizard` to copy the skill into a repo
 3. developer example skill
    - `docs/developer/examples/agent-example/skills/memory-layer/`
    - useful as a reference, but not the canonical current live skill
@@ -106,7 +106,7 @@ When these drift, the live repo-local skill should be treated as authoritative.
 
 ## Bootstrap And Packaging
 
-During repo bootstrap, `mem-cli` copies the skill template into:
+During repo bootstrap, `memory` copies the skill template into:
 
 - `.agents/skills/memory-layer/`
 

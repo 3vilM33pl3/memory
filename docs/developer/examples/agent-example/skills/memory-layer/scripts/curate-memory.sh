@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT="${1:-${MEMORY_LAYER_PROJECT:-$(basename "$PWD")}}"
-MEMCTL_BIN="${MEMCTL_BIN:-memctl}"
+MEMCTL_BIN="${MEMCTL_BIN:-memory}"
 EXTRA_ARGS=()
 
 if [[ -n "${MEMORY_LAYER_BATCH_SIZE:-}" ]]; then

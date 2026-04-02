@@ -20,32 +20,32 @@ It supports multiple developers, multiple projects, and multiple coding agents a
 The fastest path is:
 
 1. Install the package.
-2. Run `mem-cli wizard --global` once per machine.
-3. Run `mem-cli wizard` inside each repository.
+2. Run `memory wizard --global` once per machine.
+3. Run `memory wizard` inside each repository.
 4. Let Memory Layer auto-derive a writer identity, or set `writer.id` only if you want a custom shared label.
-5. Start `mem-service`.
+5. Start `memory service run` or enable the packaged service.
 6. Open the TUI or web UI.
 
 Debian:
 
 ```bash
 sudo dpkg -i memory-layer_<version>_amd64.deb
-mem-cli wizard --global
+memory wizard --global
 cd /path/to/your-project
-mem-cli wizard
+memory wizard
 sudo systemctl enable --now memory-layer.service
-mem-cli tui
+memory tui
 ```
 
 macOS:
 
 ```bash
 brew install --HEAD ./packaging/macos/homebrew/memory-layer.rb
-mem-cli wizard --global
+memory wizard --global
 cd /path/to/your-project
-mem-cli wizard
-mem-cli service enable
-mem-cli tui
+memory wizard
+memory service enable
+memory tui
 ```
 
 For the full onboarding flow, prerequisites, upgrade path, and troubleshooting, use [Getting Started](docs/user/getting-started.md).
@@ -110,15 +110,15 @@ Project-local customization now has two layers:
 For working on this repository itself, start with the developer docs. The short version is:
 
 ```bash
-cargo run --bin mem-cli -- wizard
-cargo run --bin mem-service
-cargo run --bin mem-cli -- tui --project memory
+cargo run --bin memory -- wizard
+cargo run --bin memory -- service run
+cargo run --bin memory -- tui --project memory
 ```
 
 Optional watcher:
 
 ```bash
-cargo run --bin memory-watch -- run --project memory
+cargo run --bin memory -- watcher run --project memory
 ```
 
 Packaging and implementation details now live under [Developer Documentation](docs/developer/README.md).

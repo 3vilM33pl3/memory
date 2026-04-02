@@ -26,12 +26,12 @@ brew install --HEAD ./packaging/macos/homebrew/memory-layer.rb
 After install:
 
 ```bash
-mem-cli wizard
-mem-cli service enable
-mem-cli watch enable --project <slug>
+memory wizard
+memory service enable
+memory watcher enable --project <slug>
 ```
 
-`mem-cli service enable` provisions the shared service API token automatically if it is missing or still set to the development placeholder.
+`memory service enable` provisions the shared service API token automatically if it is missing or still set to the development placeholder.
 
 ## Service labels
 

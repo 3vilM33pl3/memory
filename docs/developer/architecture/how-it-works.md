@@ -121,7 +121,7 @@ The loader in `mem-api` also normalizes some legacy config keys during deseriali
 
 ## Repository Bootstrap
 
-`mem-cli init` and `mem-cli wizard` both prepare a repository for Memory Layer.
+`memory init` and `memory wizard` both prepare a repository for Memory Layer.
 
 The repo-local bootstrap creates:
 
@@ -244,7 +244,7 @@ The critical integrity rule is that canonical memory is not just loose text. It 
 
 ## Write Path: Explicit Remember
 
-The simplest write path is `mem-cli remember`.
+The simplest write path is `memory remember`.
 
 That path looks like this:
 
@@ -381,7 +381,7 @@ That makes the watcher materially more useful than a naive “check git status e
 
 ## Scan Flow
 
-`mem-cli scan` is a bootstrap path for existing repositories.
+`memory scan` is a bootstrap path for existing repositories.
 
 It:
 
@@ -402,7 +402,7 @@ For the exact current behavior, limits, dossier contents, validation rules, and 
 
 The system exposes several layers of observability:
 
-- `mem-cli doctor` for setup diagnostics
+- `memory doctor` for setup diagnostics
 - `GET /healthz` for backend/database health
 - project overview endpoints for counts and recent activity
 - watcher audit logs in `.mem/runtime/`
@@ -417,7 +417,7 @@ Commit history is stored as project-scoped evidence, not as canonical memory by 
 
 The intended flow is:
 
-1. `mem-cli commits sync` reads local git history in the current repository.
+1. `memory commits sync` reads local git history in the current repository.
 2. The CLI sends structured commit records to the backend.
 3. The backend stores them in `project_commits`.
 4. Those commits become searchable and inspectable project history.

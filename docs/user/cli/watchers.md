@@ -12,18 +12,18 @@ This page explains how watcher liveness and recovery show up in Memory Layer.
 
 ## What The Watcher Does
 
-`memory-watch` is the optional background process that watches a project and sends useful work context to `mem-service`.
+`memory watcher` is the optional background process that watches a project and sends useful work context to `memory service`.
 
 Service-managed watchers can be installed with:
 
 ```bash
-mem-cli watch enable --project my-project
+memory watcher enable --project my-project
 ```
 
 Manual watchers can be run with:
 
 ```bash
-memory-watch run --project my-project
+memory watcher run --project my-project
 ```
 
 ## Watcher Health States
@@ -75,23 +75,23 @@ That makes it easier to tell the difference between:
 Enable a service-managed watcher:
 
 ```bash
-mem-cli watch enable --project my-project
+memory watcher enable --project my-project
 ```
 
 Check watcher service status:
 
 ```bash
-mem-cli watch status --project my-project
+memory watcher status --project my-project
 ```
 
 Disable the service-managed watcher:
 
 ```bash
-mem-cli watch disable --project my-project
+memory watcher disable --project my-project
 ```
 
 Run a watcher manually:
 
 ```bash
-memory-watch run --project my-project
+memory watcher run --project my-project
 ```

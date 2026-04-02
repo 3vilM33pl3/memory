@@ -1,6 +1,6 @@
-# `mem-cli commits`
+# `memory commits`
 
-`mem-cli commits` manages stored git history for a project.
+`memory commits` manages stored git history for a project.
 
 It does **not** turn every commit into canonical memory.
 Instead, it stores commits as project-scoped evidence so Memory Layer can keep:
@@ -24,26 +24,26 @@ while still keeping `memory_entries` selective and curated.
 Sync commit history into Memory Layer:
 
 ```bash
-mem-cli commits sync --project my-project
+memory commits sync --project my-project
 ```
 
 Limit the import:
 
 ```bash
-mem-cli commits sync --project my-project --limit 100
-mem-cli commits sync --project my-project --since "2 weeks ago"
+memory commits sync --project my-project --limit 100
+memory commits sync --project my-project --since "2 weeks ago"
 ```
 
 List stored commits:
 
 ```bash
-mem-cli commits list --project my-project
+memory commits list --project my-project
 ```
 
 Show one stored commit:
 
 ```bash
-mem-cli commits show --project my-project <commit-hash>
+memory commits show --project my-project <commit-hash>
 ```
 
 ## What Gets Stored
@@ -66,7 +66,7 @@ This feature is meant to preserve git history as evidence without degrading norm
 
 Default query behavior remains memory-first:
 
-- normal `mem-cli query` returns curated memories
+- normal `memory query` returns curated memories
 - commit history is separate evidence you can inspect directly
 - curated memories can still cite commits as provenance
 

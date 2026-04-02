@@ -1,6 +1,6 @@
 # Query Contract
 
-`memctl query --project <slug> --question "<text>"` sends `POST /v1/query` and expects:
+`memory query --project <slug> --question "<text>"` sends `POST /v1/query` and expects:
 - `answer`
 - `confidence`
 - `results`

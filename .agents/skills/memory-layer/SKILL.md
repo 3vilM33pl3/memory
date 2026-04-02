@@ -74,7 +74,7 @@ Use a short note that explains the transition, for example:
 - `Plan approved; beginning refactor`
 - `Plan approved; moving to execution`
 
-This makes `mem-cli resume` useful when the user returns after delegating or switching projects.
+This makes `memory resume` useful when the user returns after delegating or switching projects.
 
 ## Remember guidance
 

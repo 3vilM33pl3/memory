@@ -1,4 +1,4 @@
-# `mem-cli remember`
+# `memory remember`
 
 Use `remember` when you want to store a durable project fact or task outcome directly from the CLI.
 
@@ -36,8 +36,8 @@ By default, Memory Layer derives a stable writer identity from:
 
 Examples:
 
-- `mem-cli-olivier-monolith`
-- `memory-watch-olivier-monolith`
+- `memory-olivier-monolith`
+- `memory-watcher-olivier-monolith`
 
 Set an explicit writer only when you want a custom shared label across tools or machines.
 
@@ -61,13 +61,13 @@ CLI and environment overrides still take precedence over config and the derived 
 Store one durable fact:
 
 ```bash
-mem-cli remember --project my-project --note "Deployment uses a systemd service."
+memory remember --project my-project --note "Deployment uses a systemd service."
 ```
 
 Store a more explicit remembered task:
 
 ```bash
-mem-cli remember \
+memory remember \
   --project my-project \
   --title "Document deploy convention" \
   --summary "Captured the deploy convention for later reuse." \

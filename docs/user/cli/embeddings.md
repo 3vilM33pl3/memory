@@ -33,14 +33,14 @@ In practice:
 
 - `reindex` rebuilds chunks and materializes embeddings for the active space
 - `reembed` materializes or refreshes embeddings for the active space only
-- `prune-embeddings` deletes non-active spaces for a project
+- `memory embeddings prune` deletes non-active spaces for a project
 
 ## Commands
 
 Build chunks and embeddings for a project:
 
 ```bash
-mem-cli reindex --project my-project
+memory embeddings reindex --project my-project
 ```
 
 Use this when:
@@ -52,7 +52,7 @@ Use this when:
 Refresh only the active embedding space:
 
 ```bash
-mem-cli reembed --project my-project
+memory embeddings reembed --project my-project
 ```
 
 Use this when:
@@ -64,7 +64,7 @@ Use this when:
 Delete non-active embedding spaces:
 
 ```bash
-mem-cli prune-embeddings --project my-project
+memory embeddings prune --project my-project
 ```
 
 Use this only when:
@@ -77,8 +77,8 @@ Use this only when:
 Enable embeddings for the first time:
 
 ```bash
-mem-cli doctor
-mem-cli reindex --project my-project
+memory doctor
+memory embeddings reindex --project my-project
 ```
 
 Switch to a new embedding model but keep the old one available:
@@ -87,7 +87,7 @@ Switch to a new embedding model but keep the old one available:
 2. Run:
 
 ```bash
-mem-cli reembed --project my-project
+memory embeddings reembed --project my-project
 ```
 
 3. Query normally. Semantic retrieval will use the new active space.
@@ -95,15 +95,15 @@ mem-cli reembed --project my-project
 Switch models and later remove the old vectors:
 
 ```bash
-mem-cli reembed --project my-project
-mem-cli prune-embeddings --project my-project
+memory embeddings reembed --project my-project
+memory embeddings prune --project my-project
 ```
 
 ## Troubleshooting
 
 If semantic search is not working:
 
-- run `mem-cli doctor`
+- run `memory doctor`
 - make sure `pgvector` is installed and the `vector` extension exists in the database
 - make sure `[embeddings].model` is configured
 - make sure the configured API key env var is present
@@ -111,13 +111,13 @@ If semantic search is not working:
 If you just enabled embeddings and old memories still are not searchable semantically, run:
 
 ```bash
-mem-cli reindex --project my-project
+memory embeddings reindex --project my-project
 ```
 
 If you changed models and want the new model to be usable immediately, run:
 
 ```bash
-mem-cli reembed --project my-project
+memory embeddings reembed --project my-project
 ```
 
 ## Related Docs

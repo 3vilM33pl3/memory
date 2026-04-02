@@ -7,11 +7,11 @@ if [[ $# -lt 1 ]]; then
 fi
 
 PAYLOAD_FILE="$1"
-MEMCTL_BIN="${MEMCTL_BIN:-memctl}"
+MEMCTL_BIN="${MEMCTL_BIN:-memory}"
 
 if [[ ! -f "$PAYLOAD_FILE" ]]; then
   echo "Payload file not found: $PAYLOAD_FILE" >&2
   exit 2
 fi
 
-exec "$MEMCTL_BIN" capture-task --file "$PAYLOAD_FILE"
+exec "$MEMCTL_BIN" capture task --file "$PAYLOAD_FILE"
