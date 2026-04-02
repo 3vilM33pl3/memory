@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+autobins = false
 
 [dependencies]
 anyhow.workspace = true
@@ -21,10 +22,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 toml.workspace = true
-
-[[bin]]
-name = "memory-watch"
-path = "src/main.rs"
 
 [lints]
 workspace = true

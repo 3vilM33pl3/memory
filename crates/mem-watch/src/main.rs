@@ -47,11 +47,11 @@ enum WatchCommand {
 }
 
 #[derive(Debug, Args)]
-struct RunArgs {
+pub struct RunArgs {
     #[arg(long)]
-    project: Option<String>,
+    pub project: Option<String>,
     #[arg(long)]
-    repo_root: Option<PathBuf>,
+    pub repo_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run_loop(
+pub async fn run_loop(
     config: AppConfig,
     args: RunArgs,
     writer_id: String,

@@ -141,19 +141,12 @@ const WATCHER_RESTART_BACKOFF_SECONDS: u64 = 120;
 const WATCHER_EXPIRY_AFTER_SECONDS: u64 = 600;
 const WATCHER_MAX_RESTART_ATTEMPTS: u32 = 3;
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    if std::env::args().any(|arg| arg == "--version" || arg == "-V") {
-        println!("mem-service {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
-    }
-
+pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .with(tracing_subscriber::fmt::layer().json())
         .init();
 
-    let config_path = std::env::args().nth(1).map(PathBuf::from);
     let mut config_fingerprint = config_path_fingerprint(config_path.as_deref())
         .await
         .context("inspect config file")?;
@@ -243,6 +236,16 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    if std::env::args().any(|arg| arg == "--version" || arg == "-V") {
+        println!("memory service {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    run_service(std::env::args().nth(1).map(PathBuf::from)).await
 }
 
 async fn build_state(
@@ -2994,7 +2997,7 @@ fn resume_actions(
                         overview.pending_replacement_proposals
                     )
                 }),
-            command_hint: Some(format!("mem-cli tui --project {project}")),
+            command_hint: Some(format!("memory tui --project {project}")),
         });
     }
     if overview.uncurated_raw_captures > 0 {
@@ -3004,7 +3007,7 @@ fn resume_actions(
                 "{} raw capture(s) are waiting to be curated into canonical memory.",
                 overview.uncurated_raw_captures
             ),
-            command_hint: Some(format!("mem-cli curate --project {project}")),
+            command_hint: Some(format!("memory curate --project {project}")),
         });
     }
     if overview
@@ -3015,7 +3018,7 @@ fn resume_actions(
         actions.push(ResumeAction {
             title: "Inspect watcher health".to_string(),
             rationale: "At least one watcher is unhealthy or restarting.".to_string(),
-            command_hint: Some(format!("mem-cli watch status --project {project}")),
+            command_hint: Some(format!("memory watcher status --project {project}")),
         });
     }
     if timeline
@@ -3025,7 +3028,7 @@ fn resume_actions(
         actions.push(ResumeAction {
             title: "Review recent failed queries".to_string(),
             rationale: "Recent agent or user queries failed and may indicate blockers.".to_string(),
-            command_hint: Some(format!("mem-cli tui --project {project}")),
+            command_hint: Some(format!("memory tui --project {project}")),
         });
     }
     if !changed_memories.is_empty() {
@@ -3035,21 +3038,21 @@ fn resume_actions(
                 "{} memory entry/entries changed since the last checkpoint.",
                 changed_memories.len()
             ),
-            command_hint: Some(format!("mem-cli resume --project {project}")),
+            command_hint: Some(format!("memory resume --project {project}")),
         });
     }
     if let Some(note) = checkpoint.and_then(|checkpoint| checkpoint.note.as_deref()) {
         actions.push(ResumeAction {
             title: "Resume the last approved thread".to_string(),
             rationale: format!("Your last checkpoint note was: {note}"),
-            command_hint: Some(format!("mem-cli resume --project {project}")),
+            command_hint: Some(format!("memory resume --project {project}")),
         });
     }
     if actions.is_empty() {
         actions.push(ResumeAction {
             title: "Ask the next scoped question".to_string(),
             rationale: "The project looks stable; use the resume pack as the launch point for your next task.".to_string(),
-            command_hint: Some(format!("mem-cli query --project {project} --question \"What should I work on next?\"")),
+            command_hint: Some(format!("memory query --project {project} --question \"What should I work on next?\"")),
         });
     }
     actions

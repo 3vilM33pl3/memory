@@ -19,14 +19,12 @@ mkdir -p \
   "$PKG_ROOT/usr/share/memory-layer/web"
 
 echo "Building release binaries..."
-cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin mem-cli --bin mem-service --bin memory-watch
+cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin memory
 echo "Building web UI..."
 npm --prefix "$ROOT_DIR/web" ci
 npm --prefix "$ROOT_DIR/web" run build
 
-install -m 0755 "$ROOT_DIR/target/release/mem-cli" "$PKG_ROOT/usr/bin/mem-cli"
-install -m 0755 "$ROOT_DIR/target/release/mem-service" "$PKG_ROOT/usr/bin/mem-service"
-install -m 0755 "$ROOT_DIR/target/release/memory-watch" "$PKG_ROOT/usr/bin/memory-watch"
+install -m 0755 "$ROOT_DIR/target/release/memory" "$PKG_ROOT/usr/bin/memory"
 install -m 0644 "$ROOT_DIR/packaging/debian/memory-layer.service" "$PKG_ROOT/lib/systemd/system/memory-layer.service"
 install -m 0644 "$ROOT_DIR/packaging/debian/memory-watch.service" "$PKG_ROOT/lib/systemd/system/memory-watch.service"
 install -m 0644 "$ROOT_DIR/packaging/debian/memory-layer.env" "$PKG_ROOT/etc/memory-layer/memory-layer.env"

@@ -1,3 +1,11 @@
+extern crate self as mem_watch;
+
+#[allow(dead_code)]
+#[path = "main.rs"]
+mod cli_runtime;
+
+pub use cli_runtime::{RunArgs as WatcherRunArgs, run_loop as run_watcher_daemon};
+
 use std::{
     collections::BTreeSet,
     fs,

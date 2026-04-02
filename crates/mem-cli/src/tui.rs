@@ -1,7 +1,6 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    process::Command,
     time::{Duration, Instant},
 };
 
@@ -1963,7 +1962,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             "Tool versions",
             Span::styled(
                 format!(
-                    "mem-cli {} / mem-service {} / memory-watch {}",
+                    "memory {} / service {} / watcher {}",
                     app.versions.mem_cli, app.versions.mem_service, app.versions.memory_watch
                 ),
                 Style::default().fg(Theme::TEXT),
@@ -2138,7 +2137,7 @@ fn draw_watchers_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         metric_line(
             "Guidance",
             Span::styled(
-                "Use `mem-cli watch enable --project <slug>` or `memory-watch run --project <slug>`.",
+                "Use `memory watcher enable --project <slug>` or `memory watcher run --project <slug>`.",
                 Style::default().fg(Theme::MUTED),
             ),
         ),
@@ -2482,7 +2481,7 @@ fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             }
         } else {
             lines.push(Line::from(Span::styled(
-                "No checkpoint stored yet. Use `mem-cli checkpoint save --project <slug>` when you leave a project.",
+                "No checkpoint stored yet. Use `memory checkpoint save --project <slug>` when you leave a project.",
                 Style::default().fg(Theme::MUTED),
             )));
         }
@@ -2759,7 +2758,7 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "Start a watcher with `mem-cli watch enable --project <slug>` or `memory-watch run --project <slug>`.",
+                "Start a watcher with `memory watcher enable --project <slug>` or `memory watcher run --project <slug>`.",
                 Style::default().fg(Theme::MUTED),
             )),
         ];
@@ -2774,7 +2773,7 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
                 Style::default().fg(Theme::MUTED),
             )),
             Line::from(Span::styled(
-                "Start a watcher with `mem-cli watch enable --project <slug>` or `memory-watch run --project <slug>`.",
+                "Start a watcher with `memory watcher enable --project <slug>` or `memory watcher run --project <slug>`.",
                 Style::default().fg(Theme::MUTED),
             )),
         ];
@@ -4002,39 +4001,9 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
 fn detect_tool_versions() -> ToolVersions {
     ToolVersions {
         mem_cli: env!("CARGO_PKG_VERSION").to_string(),
-        mem_service: "unknown".to_string(),
-        memory_watch: detect_binary_version("memory-watch"),
+        mem_service: env!("CARGO_PKG_VERSION").to_string(),
+        memory_watch: env!("CARGO_PKG_VERSION").to_string(),
     }
-}
-
-fn detect_binary_version(binary: &str) -> String {
-    let current_exe = std::env::current_exe().ok();
-    let sibling = current_exe
-        .as_ref()
-        .and_then(|path| path.parent())
-        .map(|dir| dir.join(binary));
-
-    let candidates = sibling
-        .into_iter()
-        .chain(std::iter::once(std::path::PathBuf::from(binary)));
-
-    for candidate in candidates {
-        let output = Command::new(&candidate).arg("--version").output();
-        if let Ok(output) = output {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let version = stdout.trim();
-                if !version.is_empty() {
-                    return version
-                        .strip_prefix(&format!("{binary} "))
-                        .unwrap_or(version)
-                        .to_string();
-                }
-            }
-        }
-    }
-
-    "unknown".to_string()
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {

@@ -1384,6 +1384,7 @@ dependencies = [
  "mem-analyze",
  "mem-api",
  "mem-platform",
+ "mem-service",
  "mem-watch",
  "ratatui",
  "reqwest",

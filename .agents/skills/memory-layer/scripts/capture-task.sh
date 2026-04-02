@@ -17,4 +17,4 @@ if [[ ! -f "$PAYLOAD_FILE" ]]; then
   exit 2
 fi
 
-exec "${MEMCTL_CMD[@]}" capture-task --file "$PAYLOAD_FILE"
+exec "${MEMCTL_CMD[@]}" capture task --file "$PAYLOAD_FILE"

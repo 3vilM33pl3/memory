@@ -205,7 +205,7 @@ pub fn current_exe_sibling_binary(name: &str) -> Option<PathBuf> {
 pub fn packaged_system_service_available() -> bool {
     #[cfg(target_os = "macos")]
     {
-        current_exe_sibling_binary("mem-service").is_some()
+        current_exe_sibling_binary("memory").is_some() || env::current_exe().ok().is_some()
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -347,11 +347,11 @@ mod tests {
             std::env::set_var("MEMORY_LAYER_WRITER_IDENTITY_HOST", "dev-box.local");
         }
 
-        let writer_id = derive_default_writer_id("mem cli");
+        let writer_id = derive_default_writer_id("memory");
 
         restore_env_var("MEMORY_LAYER_WRITER_IDENTITY_USER", old_user);
         restore_env_var("MEMORY_LAYER_WRITER_IDENTITY_HOST", old_host);
 
-        assert_eq!(writer_id, "mem-cli-olivier-smith-dev-box-local");
+        assert_eq!(writer_id, "memory-olivier-smith-dev-box-local");
     }
 }

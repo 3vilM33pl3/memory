@@ -30,6 +30,8 @@ use mem_api::{
     discover_repo_env_path, load_repo_replacement_policy, read_repo_project_slug,
 };
 use mem_platform as platform;
+use mem_service as service_runtime;
+use mem_watch::{WatcherRunArgs, run_watcher_daemon};
 use mem_watch::{flush_path, load_state, run_once, to_status};
 use reqwest::{
     Client,
@@ -40,7 +42,7 @@ use sqlx::{Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 #[derive(Debug, Parser)]
-#[command(name = "memctl", version)]
+#[command(name = "memory", version)]
 struct Cli {
     #[arg(long, env = "MEMORY_LAYER_CONFIG")]
     config: Option<PathBuf>,
@@ -59,22 +61,19 @@ enum Command {
     Wizard(WizardArgs),
     Init(InitArgs),
     Service(ServiceArgs),
-    Watch(WatchArgs),
+    Watcher(WatcherArgs),
     Doctor(DoctorArgs),
     Commits(CommitsArgs),
-    Index(IndexArgs),
-    Export(ExportArgs),
-    Import(ImportArgs),
+    Repo(RepoArgs),
+    Bundle(BundleArgs),
     Checkpoint(CheckpointArgs),
     Resume(ResumeArgs),
     Query(QueryArgs),
     Scan(ScanArgs),
-    CaptureTask(CaptureTaskArgs),
+    Capture(CaptureArgs),
     Remember(RememberArgs),
     Curate(CurateArgs),
-    Reindex(ProjectArgs),
-    Reembed(ProjectArgs),
-    PruneEmbeddings(ProjectArgs),
+    Embeddings(EmbeddingsArgs),
     Health,
     Stats,
     Archive(ArchiveArgs),
@@ -108,6 +107,7 @@ struct ServiceArgs {
 
 #[derive(Debug, Subcommand)]
 enum ServiceCommand {
+    Run,
     Enable,
     Disable,
     Status,
@@ -135,13 +135,14 @@ struct DoctorArgs {
 }
 
 #[derive(Debug, Args)]
-struct WatchArgs {
+struct WatcherArgs {
     #[command(subcommand)]
-    command: WatchCommand,
+    command: WatcherCommand,
 }
 
 #[derive(Debug, Subcommand)]
-enum WatchCommand {
+enum WatcherCommand {
+    Run(WatcherRunCliArgs),
     Enable(WatchProjectArgs),
     Disable(WatchProjectArgs),
     Status(WatchProjectArgs),
@@ -151,6 +152,14 @@ enum WatchCommand {
 struct WatchProjectArgs {
     #[arg(long)]
     project: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct WatcherRunCliArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    repo_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -218,14 +227,14 @@ struct CommitShowArgs {
 }
 
 #[derive(Debug, Args)]
-struct IndexArgs {
+struct RepoArgs {
     #[command(subcommand)]
-    command: IndexCommand,
+    command: RepoCommand,
 }
 
 #[derive(Debug, Subcommand)]
-enum IndexCommand {
-    Repo(IndexRepoArgs),
+enum RepoCommand {
+    Index(IndexRepoArgs),
     Status(IndexStatusArgs),
 }
 
@@ -245,6 +254,18 @@ struct IndexStatusArgs {
     project: Option<String>,
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct BundleArgs {
+    #[command(subcommand)]
+    command: BundleCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum BundleCommand {
+    Export(ExportArgs),
+    Import(ImportArgs),
 }
 
 #[derive(Debug, Args)]
@@ -311,6 +332,17 @@ struct CheckpointShowArgs {
 }
 
 #[derive(Debug, Args)]
+struct CaptureArgs {
+    #[command(subcommand)]
+    command: CaptureCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum CaptureCommand {
+    Task(CaptureTaskArgs),
+}
+
+#[derive(Debug, Args)]
 struct CaptureTaskArgs {
     #[arg(long)]
     file: PathBuf,
@@ -360,6 +392,19 @@ struct CurateArgs {
     project: String,
     #[arg(long)]
     batch_size: Option<i64>,
+}
+
+#[derive(Debug, Args)]
+struct EmbeddingsArgs {
+    #[command(subcommand)]
+    command: EmbeddingsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum EmbeddingsCommand {
+    Reindex(ProjectArgs),
+    Reembed(ProjectArgs),
+    Prune(ProjectArgs),
 }
 
 #[derive(Debug, Args)]
@@ -437,6 +482,9 @@ async fn main() -> Result<()> {
                 .clone()
                 .unwrap_or_else(default_global_config_path);
             match &args.command {
+                ServiceCommand::Run => {
+                    service_runtime::run_service(cli_config.clone()).await?;
+                }
                 ServiceCommand::Enable => {
                     let token_result =
                         ensure_shared_service_api_token_for_config(&config_path, None, true)?;
@@ -463,27 +511,30 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
-        Command::Watch(args) => {
+        Command::Watcher(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let repo_root = resolve_repo_root(&cwd)?;
             match &args.command {
-                WatchCommand::Enable(args) => {
+                WatcherCommand::Run(_) => {}
+                WatcherCommand::Enable(args) => {
                     let project = resolve_project_slug(args.project.clone(), &cwd)?;
                     let output = enable_watch_service(&repo_root, &project)?;
                     println!("{output}");
                 }
-                WatchCommand::Disable(args) => {
+                WatcherCommand::Disable(args) => {
                     let project = resolve_project_slug(args.project.clone(), &cwd)?;
                     let output = disable_watch_service(&project)?;
                     println!("{output}");
                 }
-                WatchCommand::Status(args) => {
+                WatcherCommand::Status(args) => {
                     let project = resolve_project_slug(args.project.clone(), &cwd)?;
                     let output = watch_service_status(&repo_root, &project)?;
                     println!("{output}");
                 }
             }
-            return Ok(());
+            if !matches!(args.command, WatcherCommand::Run(_)) {
+                return Ok(());
+            }
         }
         Command::Doctor(args) => {
             let cwd = env::current_dir().context("read current directory")?;
@@ -515,8 +566,16 @@ async fn main() -> Result<()> {
     match command {
         Command::Wizard(_) => unreachable!("wizard is handled before config loading"),
         Command::Init(_) => unreachable!("init is handled before config loading"),
-        Command::Service(_) => unreachable!("service is handled before config loading"),
-        Command::Watch(_) => unreachable!("watch is handled before config loading"),
+        Command::Service(ServiceArgs {
+            command: ServiceCommand::Run,
+        }) => unreachable!("service run is handled before config loading"),
+        Command::Service(_) => unreachable!("service management is handled before config loading"),
+        Command::Watcher(WatcherArgs {
+            command:
+                WatcherCommand::Enable(_)
+                | WatcherCommand::Disable(_)
+                | WatcherCommand::Status(_),
+        }) => unreachable!("watcher lifecycle commands are handled before config loading"),
         Command::Doctor(_) => unreachable!("doctor is handled before config loading"),
         Command::Commits(args) => {
             let cwd = env::current_dir().context("read current directory")?;
@@ -595,11 +654,11 @@ async fn main() -> Result<()> {
                 print_query_response(payload);
             }
         }
-        Command::Index(args) => {
+        Command::Repo(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let repo_root = resolve_repo_root(&cwd)?;
             match args.command {
-                IndexCommand::Repo(args) => {
+                RepoCommand::Index(args) => {
                     let project = resolve_project_slug(args.project, &cwd)?;
                     let report =
                         scan::run_index(&repo_root, &project, args.since.as_deref(), &config)?;
@@ -609,7 +668,7 @@ async fn main() -> Result<()> {
                         print_index_report(&report);
                     }
                 }
-                IndexCommand::Status(args) => {
+                RepoCommand::Status(args) => {
                     let project = resolve_project_slug(args.project, &cwd)?;
                     let status = scan::read_index_status(&repo_root, &project)?;
                     if args.json {
@@ -620,45 +679,49 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Command::Export(args) => {
+        Command::Bundle(args) => {
             let api = ApiClient::new(client, config);
-            let options = ProjectMemoryExportOptions {
-                include_archived: args.include_archived,
-                include_tags: true,
-                include_relations: true,
-                include_source_file_paths: args.include_source_file_paths,
-                include_git_commits: args.include_git_commits,
-                include_source_excerpts: args.include_source_excerpts,
-            };
-            let preview = api.export_bundle_preview(&args.project, &options).await?;
-            let bytes = api.export_bundle(&args.project, &options).await?;
-            fs::write(&args.out, bytes).with_context(|| format!("write {}", args.out.display()))?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "project": args.project,
-                    "output": args.out.display().to_string(),
-                    "preview": preview
-                }))?
-            );
-        }
-        Command::Import(args) => {
-            let api = ApiClient::new(client, config);
-            let bytes = fs::read(&args.bundle)
-                .with_context(|| format!("read {}", args.bundle.display()))?;
-            if args.preview {
-                let preview = api.import_bundle_preview(&args.project, bytes).await?;
-                if args.json {
-                    println!("{}", serde_json::to_string_pretty(&preview)?);
-                } else {
-                    print_bundle_import_preview(&preview);
+            match args.command {
+                BundleCommand::Export(args) => {
+                    let options = ProjectMemoryExportOptions {
+                        include_archived: args.include_archived,
+                        include_tags: true,
+                        include_relations: true,
+                        include_source_file_paths: args.include_source_file_paths,
+                        include_git_commits: args.include_git_commits,
+                        include_source_excerpts: args.include_source_excerpts,
+                    };
+                    let preview = api.export_bundle_preview(&args.project, &options).await?;
+                    let bytes = api.export_bundle(&args.project, &options).await?;
+                    fs::write(&args.out, bytes)
+                        .with_context(|| format!("write {}", args.out.display()))?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "project": args.project,
+                            "output": args.out.display().to_string(),
+                            "preview": preview
+                        }))?
+                    );
                 }
-            } else {
-                let response = api.import_bundle(&args.project, bytes).await?;
-                if args.json {
-                    println!("{}", serde_json::to_string_pretty(&response)?);
-                } else {
-                    print_bundle_import_response(&response);
+                BundleCommand::Import(args) => {
+                    let bytes = fs::read(&args.bundle)
+                        .with_context(|| format!("read {}", args.bundle.display()))?;
+                    if args.preview {
+                        let preview = api.import_bundle_preview(&args.project, bytes).await?;
+                        if args.json {
+                            println!("{}", serde_json::to_string_pretty(&preview)?);
+                        } else {
+                            print_bundle_import_preview(&preview);
+                        }
+                    } else {
+                        let response = api.import_bundle(&args.project, bytes).await?;
+                        if args.json {
+                            println!("{}", serde_json::to_string_pretty(&response)?);
+                        } else {
+                            print_bundle_import_response(&response);
+                        }
+                    }
                 }
             }
         }
@@ -740,22 +803,25 @@ async fn main() -> Result<()> {
                 print_scan_report(&report);
             }
         }
-        Command::CaptureTask(args) => {
-            let mut request: CaptureTaskRequest =
-                serde_json::from_str(&fs::read_to_string(args.file).context("read payload file")?)?;
-            if request.writer_id.trim().is_empty() {
-                let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
-                request.writer_id = writer.id;
-                request.writer_name = request.writer_name.or(writer.name);
+        Command::Capture(args) => match args.command {
+            CaptureCommand::Task(args) => {
+                let mut request: CaptureTaskRequest = serde_json::from_str(
+                    &fs::read_to_string(args.file).context("read payload file")?,
+                )?;
+                if request.writer_id.trim().is_empty() {
+                    let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
+                    request.writer_id = writer.id;
+                    request.writer_name = request.writer_name.or(writer.name);
+                }
+                let response = client
+                    .post(service_url(&config, "/v1/capture/task"))
+                    .headers(write_headers(&config)?)
+                    .json(&request)
+                    .send()
+                    .await?;
+                print_json_response(response).await?;
             }
-            let response = client
-                .post(service_url(&config, "/v1/capture/task"))
-                .headers(write_headers(&config)?)
-                .json(&request)
-                .send()
-                .await?;
-            print_json_response(response).await?;
-        }
+        },
         Command::Remember(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let repo_root = resolve_repo_root(&cwd)?;
@@ -792,35 +858,37 @@ async fn main() -> Result<()> {
                 .await?;
             print_json_response(response).await?;
         }
-        Command::Reindex(args) => {
-            let response = client
-                .post(service_url(&config, "/v1/reindex"))
-                .headers(write_headers(&config)?)
-                .json(&ReindexRequest {
-                    project: args.project,
-                })
-                .send()
-                .await?;
-            print_json_response(response).await?;
-        }
-        Command::Reembed(args) => {
-            let response = client
-                .post(service_url(&config, "/v1/reembed"))
-                .headers(write_headers(&config)?)
-                .json(&ReembedRequest {
-                    project: args.project,
-                })
-                .send()
-                .await?;
-            print_json_response(response).await?;
-        }
-        Command::PruneEmbeddings(args) => {
-            let api = ApiClient::new(client, config);
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&api.prune_embeddings(&args.project).await?)?
-            );
-        }
+        Command::Embeddings(args) => match args.command {
+            EmbeddingsCommand::Reindex(args) => {
+                let response = client
+                    .post(service_url(&config, "/v1/reindex"))
+                    .headers(write_headers(&config)?)
+                    .json(&ReindexRequest {
+                        project: args.project,
+                    })
+                    .send()
+                    .await?;
+                print_json_response(response).await?;
+            }
+            EmbeddingsCommand::Reembed(args) => {
+                let response = client
+                    .post(service_url(&config, "/v1/reembed"))
+                    .headers(write_headers(&config)?)
+                    .json(&ReembedRequest {
+                        project: args.project,
+                    })
+                    .send()
+                    .await?;
+                print_json_response(response).await?;
+            }
+            EmbeddingsCommand::Prune(args) => {
+                let api = ApiClient::new(client, config);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&api.prune_embeddings(&args.project).await?)?
+                );
+            }
+        },
         Command::Health => {
             let response = client.get(service_url(&config, "/healthz")).send().await?;
             print_json_response(response).await?;
@@ -891,6 +959,30 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        Command::Watcher(args) => match args.command {
+            WatcherCommand::Run(args) => {
+                let writer = resolve_writer_identity_for_tool(
+                    &config,
+                    cli_writer_id.as_deref(),
+                    "memory-watcher",
+                )?;
+                run_watcher_daemon(
+                    config,
+                    WatcherRunArgs {
+                        project: args.project,
+                        repo_root: args.repo_root,
+                    },
+                    writer.id,
+                    writer.name,
+                )
+                .await?;
+            }
+            WatcherCommand::Enable(_)
+            | WatcherCommand::Disable(_)
+            | WatcherCommand::Status(_) => {
+                unreachable!("watcher lifecycle commands are handled before config loading")
+            }
+        },
         Command::Tui(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let repo_root = resolve_repo_root(&cwd)?;
@@ -1067,9 +1159,12 @@ fn default_shared_capnp_unix_socket() -> String {
 
 fn backend_start_hint(config_path: &Path) -> String {
     if backend_service_available() {
-        "mem-cli service enable".to_string()
+        "memory service enable".to_string()
     } else {
-        format!("mem-service {}", config_path.display())
+        format!(
+            "memory --config {} service run",
+            config_path.display()
+        )
     }
 }
 
@@ -1211,7 +1306,7 @@ async fn run_doctor(
         if mem_dir.exists() || init_fix_applied {
             None
         } else {
-            Some("memctl init".to_string())
+            Some("memory init".to_string())
         },
         init_fix_applied,
     ));
@@ -1238,7 +1333,7 @@ async fn run_doctor(
         if config_path.exists() || config_fix_applied {
             None
         } else {
-            Some("memctl init".to_string())
+            Some("memory init".to_string())
         },
         config_fix_applied,
     ));
@@ -1265,7 +1360,7 @@ async fn run_doctor(
         if project_path.exists() || project_fix_applied {
             None
         } else {
-            Some("memctl init".to_string())
+            Some("memory init".to_string())
         },
         project_fix_applied,
     ));
@@ -1318,7 +1413,7 @@ async fn run_doctor(
         if root_gitignore_contains_mem(repo_root)? {
             None
         } else {
-            Some("memctl doctor --fix".to_string())
+            Some("memory doctor --fix".to_string())
         },
         gitignore_fix_applied,
     ));
@@ -1491,12 +1586,12 @@ async fn run_doctor(
             None,
             if config.service.api_token.trim().is_empty() {
                 Some(
-                    "Run `mem-cli wizard --global` or `mem-cli service ensure-api-token --rotate-placeholder` to provision a machine-local token."
+                    "Run `memory wizard --global` or `memory service ensure-api-token --rotate-placeholder` to provision a machine-local token."
                         .to_string(),
                 )
             } else if config.service.api_token == DEV_API_TOKEN {
                 Some(
-                    "Run `mem-cli wizard --global` or `mem-cli service ensure-api-token --rotate-placeholder` to provision a machine-local token."
+                    "Run `memory wizard --global` or `memory service ensure-api-token --rotate-placeholder` to provision a machine-local token."
                         .to_string(),
                 )
             } else {
@@ -1654,7 +1749,7 @@ async fn run_doctor(
             if runtime_dir.exists() {
                 None
             } else {
-                Some("memctl doctor --fix".to_string())
+                Some("memory doctor --fix".to_string())
             },
             runtime_fix_applied,
         ));
@@ -1736,7 +1831,7 @@ async fn run_doctor(
                             .is_none()
                     {
                         Some(
-                            "Start a database-connected mem-service on the local network or fix the local database connection."
+                            "Start a database-connected Memory service on the local network or fix the local database connection."
                                 .to_string(),
                         )
                     } else {
@@ -1782,7 +1877,7 @@ async fn run_doctor(
                                 if active_watchers.unwrap_or(0) > 0 {
                                     None
                                 } else {
-                                    Some(format!("memctl watch enable --project {}", project))
+                                    Some(format!("memory watcher enable --project {}", project))
                                 },
                                 false,
                             ));
@@ -1806,7 +1901,7 @@ async fn run_doctor(
                                     if commits.total > 0 {
                                         None
                                     } else {
-                                        Some(format!("memctl commits sync --project {}", project))
+                                        Some(format!("memory commits sync --project {}", project))
                                     },
                                     false,
                                 )),
@@ -1815,7 +1910,7 @@ async fn run_doctor(
                                     DoctorStatus::Warn,
                                     "Could not load project commit history.",
                                     Some(error.to_string()),
-                                    Some(format!("memctl commits sync --project {}", project)),
+                                    Some(format!("memory commits sync --project {}", project)),
                                     false,
                                 )),
                             }
@@ -1826,7 +1921,7 @@ async fn run_doctor(
                         DoctorStatus::Warn,
                         "Project overview endpoint did not return data.",
                         Some(error.to_string()),
-                        Some(format!("memctl init --project {}", project)),
+                        Some(format!("memory init --project {}", project)),
                         false,
                     )),
                 }
@@ -1976,7 +2071,7 @@ async fn run_doctor(
                     "Skipped automation state because automation is disabled."
                 },
                 Some(error.to_string()),
-                Some("memctl doctor --fix".to_string()),
+                Some("memory doctor --fix".to_string()),
                 false,
             )),
         }
@@ -2525,7 +2620,7 @@ fn enable_watch_service(repo_root: &Path, project: &str) -> Result<String> {
         )?;
         bootstrap_launch_agent(&plist_path, &watch_launch_agent_label(project))?;
         Ok(format!(
-            "Installed and started watcher LaunchAgent {}.\nPlist: {}\nRepo: {}\nProject: {}\n\nManage it with:\n- mem-cli watch status --project {}\n- mem-cli watch disable --project {}\n- launchctl kickstart -k {}/{}",
+            "Installed and started watcher LaunchAgent {}.\nPlist: {}\nRepo: {}\nProject: {}\n\nManage it with:\n- memory watcher status --project {}\n- memory watcher disable --project {}\n- launchctl kickstart -k {}/{}",
             watch_launch_agent_label(project),
             plist_path.display(),
             repo_root.display(),
@@ -2548,7 +2643,7 @@ fn enable_watch_service(repo_root: &Path, project: &str) -> Result<String> {
         run_systemctl_user(["daemon-reload"])?;
         run_systemctl_user(["enable", "--now", &unit_name])?;
         Ok(format!(
-            "Installed and started user service {}.\nUnit: {}\nRepo: {}\nProject: {}\n\nManage it with:\n- mem-cli watch status --project {}\n- mem-cli watch disable --project {}\n- systemctl --user restart {}",
+            "Installed and started user service {}.\nUnit: {}\nRepo: {}\nProject: {}\n\nManage it with:\n- memory watcher status --project {}\n- memory watcher disable --project {}\n- systemctl --user restart {}",
             unit_name,
             unit_path.display(),
             repo_root.display(),
@@ -2636,16 +2731,17 @@ fn watch_service_status(repo_root: &Path, project: &str) -> Result<String> {
 
 #[cfg(not(target_os = "macos"))]
 fn render_watch_unit(repo_root: &Path, project: &str) -> Result<String> {
-    let watch_binary = memory_watch_binary_path()?;
+    let memory_binary = memory_binary_path()?;
     let env_file = user_memory_layer_env_file()?;
     let working_directory = repo_root
         .canonicalize()
         .with_context(|| format!("canonicalize {}", repo_root.display()))?;
     Ok(format!(
-        "[Unit]\nDescription=Memory Layer Watcher ({project})\nAfter=default.target\n\n[Service]\nType=simple\nEnvironmentFile=-{}\nEnvironment=MEMORY_LAYER_WATCH_SERVICE_MANAGED=1\nWorkingDirectory={}\nExecStart={} run --project {}\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Memory Layer Watcher ({project})\nAfter=default.target\n\n[Service]\nType=simple\nEnvironmentFile=-{}\nEnvironment=MEMORY_LAYER_WATCH_SERVICE_MANAGED=1\nWorkingDirectory={}\nExecStart={} --config {} watcher run --project {}\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
         shell_escape_path(&env_file),
         working_directory.display(),
-        shell_escape_path(&watch_binary),
+        shell_escape_path(&memory_binary),
+        shell_escape_path(&default_global_config_path()),
         shell_escape_str(project),
     ))
 }
@@ -2666,15 +2762,10 @@ fn user_memory_layer_env_file() -> Result<PathBuf> {
     platform::preferred_user_env_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))
 }
 
-#[cfg(target_os = "macos")]
-fn mem_service_binary_path() -> Result<PathBuf> {
-    Ok(platform::current_exe_sibling_binary("mem-service")
-        .unwrap_or_else(|| PathBuf::from("mem-service")))
-}
-
-fn memory_watch_binary_path() -> Result<PathBuf> {
-    Ok(platform::current_exe_sibling_binary("memory-watch")
-        .unwrap_or_else(|| PathBuf::from("memory-watch")))
+fn memory_binary_path() -> Result<PathBuf> {
+    Ok(platform::current_exe_sibling_binary("memory")
+        .or_else(|| std::env::current_exe().ok())
+        .unwrap_or_else(|| PathBuf::from("memory")))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2853,14 +2944,17 @@ fn run_launchctl<const N: usize>(args: [&str; N]) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 fn render_backend_launch_agent(config_path: &Path) -> Result<String> {
-    let binary = mem_service_binary_path()?;
+    let binary = memory_binary_path()?;
     let working_directory =
         macos_app_support_dir().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
     let stdout_path = user_memory_layer_log_dir()?.join("mem-service.stdout.log");
     let stderr_path = user_memory_layer_log_dir()?.join("mem-service.stderr.log");
     let command = launch_agent_shell_command(&[
         binary.display().to_string(),
+        "--config".to_string(),
         config_path.display().to_string(),
+        "service".to_string(),
+        "run".to_string(),
     ])?;
     render_launch_agent_plist(
         backend_launch_agent_label(),
@@ -2873,7 +2967,7 @@ fn render_backend_launch_agent(config_path: &Path) -> Result<String> {
 
 #[cfg(target_os = "macos")]
 fn render_watch_launch_agent(repo_root: &Path, project: &str) -> Result<String> {
-    let binary = memory_watch_binary_path()?;
+    let binary = memory_binary_path()?;
     let working_directory = repo_root
         .canonicalize()
         .with_context(|| format!("canonicalize {}", repo_root.display()))?;
@@ -2885,6 +2979,7 @@ fn render_watch_launch_agent(repo_root: &Path, project: &str) -> Result<String> 
         binary.display().to_string(),
         "--config".to_string(),
         default_global_config_path().display().to_string(),
+        "watcher".to_string(),
         "run".to_string(),
         "--project".to_string(),
         project.to_string(),
@@ -3223,7 +3318,7 @@ fn render_repo_config(repo_root: &Path) -> String {
         r#"# Repo-local overrides for this project.
 # Put shared defaults and secrets in the global config:
 #   {}
-# Shared LLM settings for `memctl scan` should also live there under [llm].
+# Shared LLM settings for `memory scan` should also live there under [llm].
 
 # Uncomment [service] to run a repo-local dev backend alongside the shared one.
 # Example dev endpoints:
@@ -3319,7 +3414,7 @@ fn render_init_summary(
         "Created"
     };
     format!(
-        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} for repo-specific runtime overrides\n3. Use {} to customize project memory behavior\n4. Start the shared backend if it is not already running:\n   mem-service\n5. Optional: configure repo-local [service] overrides if you want a parallel dev backend for this repo\n6. Optional: run a project scan:\n   mem-cli scan --project {}\n7. Optional: enable the per-repo watcher user service:\n   mem-cli watch enable --project {}\n8. Open the TUI:\n   mem-cli tui --project {}\n9. Use the repo-local skill from {}",
+        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} for repo-specific runtime overrides\n3. Use {} to customize project memory behavior\n4. Start the shared backend if it is not already running:\n   memory service run --config {}\n5. Optional: configure repo-local [service] overrides if you want a parallel dev backend for this repo\n6. Optional: run a project scan:\n   memory scan --project {}\n7. Optional: enable the per-repo watcher user service:\n   memory watcher enable --project {}\n8. Open the TUI:\n   memory tui --project {}\n9. Use the repo-local skill from {}",
         repo_root.display(),
         config_path.display(),
         project_path.display(),
@@ -3329,6 +3424,7 @@ fn render_init_summary(
         default_global_config_path_label(),
         config_path.display(),
         agent_config_path.display(),
+        default_global_config_path().display(),
         project,
         project,
         project,
@@ -4064,7 +4160,7 @@ fn print_index_report(report: &scan::RepoIndexReport) {
 fn print_index_status(status: &Option<scan::RepoIndexStatus>, project: &str) {
     let Some(status) = status else {
         println!("No repository index found for {project}.");
-        println!("Build one with: mem-cli index repo --project {project}");
+        println!("Build one with: memory repo index --project {project}");
         return;
     };
     println!("Repository index status for {}\n", status.project);
@@ -4306,6 +4402,14 @@ fn resolve_writer_identity(
     config: &AppConfig,
     cli_writer_id: Option<&str>,
 ) -> Result<WriterIdentity> {
+    resolve_writer_identity_for_tool(config, cli_writer_id, "memory")
+}
+
+fn resolve_writer_identity_for_tool(
+    config: &AppConfig,
+    cli_writer_id: Option<&str>,
+    tool_name: &str,
+) -> Result<WriterIdentity> {
     if let Some(writer_id) = cli_writer_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -4341,7 +4445,7 @@ fn resolve_writer_identity(
         });
     }
     Ok(WriterIdentity {
-        id: platform::derive_default_writer_id("mem-cli"),
+        id: platform::derive_default_writer_id(tool_name),
         name: config.writer.name.clone(),
     })
 }
@@ -4535,7 +4639,7 @@ mod tests {
         restore_env_var("MEMORY_LAYER_WRITER_ID", old_writer);
         restore_env_var("MEMORY_LAYER_AGENT_ID", old_agent);
 
-        assert_eq!(writer.id, "mem-cli-cli-user-cli-host");
+        assert_eq!(writer.id, "memory-cli-user-cli-host");
         assert_eq!(writer.name, None);
     }
 
@@ -4547,8 +4651,8 @@ mod tests {
         assert!(summary.contains(".mem/config.toml"));
         assert!(summary.contains(".agents/memory-layer.toml"));
         assert!(summary.contains(".agents/skills/memory-layer"));
-        assert!(summary.contains("mem-cli watch enable --project memory"));
-        assert!(summary.contains("mem-service"));
+        assert!(summary.contains("memory watcher enable --project memory"));
+        assert!(summary.contains("memory service run"));
     }
 
     #[test]

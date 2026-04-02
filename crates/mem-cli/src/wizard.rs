@@ -1497,7 +1497,7 @@ async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
                 let trimmed = api.config.writer.id.trim();
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
             })
-            .unwrap_or_else(|| platform::derive_default_writer_id("mem-cli"));
+            .unwrap_or_else(|| platform::derive_default_writer_id("memory"));
         let report = scan::run_scan(
             &api,
             repo_root,

@@ -1,3 +1,11 @@
+extern crate self as mem_service;
+
+#[allow(dead_code)]
+#[path = "main.rs"]
+mod runtime;
+
+pub use runtime::run_service;
+
 use std::path::PathBuf;
 
 use mem_api::{

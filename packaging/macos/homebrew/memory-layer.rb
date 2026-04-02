@@ -7,11 +7,9 @@ class MemoryLayer < Formula
 
   def install
     system "cargo", "build", "--release", "--locked", "--manifest-path", "Cargo.toml",
-           "--bin", "mem-cli", "--bin", "mem-service", "--bin", "memory-watch"
+           "--bin", "memory"
 
-    bin.install "target/release/mem-cli"
-    bin.install "target/release/mem-service"
-    bin.install "target/release/memory-watch"
+    bin.install "target/release/memory"
     pkgshare.install ".agents/skills/memory-layer" => "skill-template"
     pkgshare.install "memory-layer.toml.example"
   end
@@ -25,18 +23,18 @@ class MemoryLayer < Formula
         ~/Library/Application Support/memory-layer/memory-layer.env
 
       First run:
-        mem-cli wizard
-        mem-cli service enable
+        memory wizard
+        memory service enable
 
-      `mem-cli service enable` provisions the shared service API token
+      `memory service enable` provisions the shared service API token
       automatically if it is missing or still set to the development placeholder.
 
       Optional watcher:
-        mem-cli watch enable --project <slug>
+        memory watcher enable --project <slug>
     EOS
   end
 
   test do
-    assert_match "memctl", shell_output("#{bin}/mem-cli --help")
+    assert_match "Usage: memory", shell_output("#{bin}/memory --help")
   end
 end

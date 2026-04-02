@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+autobins = false
 
 [dependencies]
 anyhow.workspace = true
@@ -13,6 +14,7 @@ crossterm.workspace = true
 mem-analyze = { path = "../mem-analyze" }
 mem-api = { path = "../mem-api" }
 mem-platform = { path = "../mem-platform" }
+mem-service = { path = "../mem-service" }
 mem-watch = { path = "../mem-watch" }
 ratatui.workspace = true
 reqwest.workspace = true
@@ -24,3 +26,7 @@ tokio.workspace = true
 capnp.workspace = true
 uuid.workspace = true
 toml.workspace = true
+
+[[bin]]
+name = "memory"
+path = "src/main.rs"

@@ -16,9 +16,10 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parent.parent
 TMUX = os.environ.get("TMUX_BIN", "/home/olivier/bin/tmux")
 PROJECT = os.environ.get("MEMORY_LAYER_SCREENSHOT_PROJECT", "memory")
-TUI_BIN = os.environ.get("MEMORY_LAYER_TUI_BIN", str(ROOT / "target" / "debug" / "mem-cli"))
-WATCH_BIN = os.environ.get(
-    "MEMORY_LAYER_WATCH_BIN", str(ROOT / "target" / "debug" / "memory-watch")
+TUI_BIN = os.environ.get("MEMORY_LAYER_TUI_BIN", str(ROOT / "target" / "debug" / "memory"))
+WATCH_CMD = os.environ.get(
+    "MEMORY_LAYER_WATCH_CMD",
+    f"{ROOT / 'target' / 'debug' / 'memory'} watcher run --project {PROJECT}",
 )
 WIDTH = 184
 HEIGHT = 48
@@ -224,7 +225,7 @@ def render_screen(payload: bytes, output_path: Path) -> None:
 
 
 def main() -> int:
-    run("cargo", "build", "--bin", "mem-cli", "--bin", "memory-watch", capture=False)
+    run("cargo", "build", "--bin", "memory", capture=False)
 
     tui_session = f"memory-docs-{uuid.uuid4().hex[:8]}"
     watcher_session = f"memory-watch-docs-{uuid.uuid4().hex[:8]}"
@@ -260,7 +261,7 @@ def main() -> int:
 
         kill_session(tui_session)
 
-        start_session(watcher_session, f"{WATCH_BIN} run --project {PROJECT}")
+        start_session(watcher_session, WATCH_CMD)
         sleep_for(3.0)
         start_session(tui_session, f"{TUI_BIN} tui --project {PROJECT}")
         sleep_for(4.0)
