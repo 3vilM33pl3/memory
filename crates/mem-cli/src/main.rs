@@ -22,12 +22,13 @@ use clap::{Args, Parser, Subcommand};
 use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest,
     CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest, CurateResponse,
-    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, ProjectCommitsResponse,
-    ProjectMemoriesResponse, ProjectMemoryBundlePreview, ProjectMemoryExportOptions,
-    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectOverviewResponse,
-    PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse,
-    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, ReplacementPolicy,
-    ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult, discover_global_config_path,
+    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, PlanActivityAction,
+    PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse,
+    ProjectMemoryBundlePreview, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
+    ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
+    PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse, ReembedRequest,
+    ReembedResponse, ReindexRequest, ReindexResponse, ReplacementPolicy, ResumeRequest,
+    ResumeResponse, ScanActivityRequest, TestResult, discover_global_config_path,
     discover_repo_env_path, load_repo_replacement_policy, read_repo_project_slug,
 };
 use mem_platform as platform;
@@ -836,6 +837,23 @@ async fn main() -> Result<()> {
                             ));
                         }
                     };
+                    let start_request = build_plan_activity_request(
+                        &project,
+                        PlanActivityAction::Started,
+                        &title,
+                        &thread_key,
+                        plan_items.len(),
+                        plan_items.iter().filter(|item| item.checked).count(),
+                        plan_items
+                            .iter()
+                            .filter(|item| !item.checked)
+                            .map(|item| item.text.clone())
+                            .collect(),
+                        source_path.as_ref().map(|path| path.display().to_string()),
+                    );
+                    if let Err(error) = api.log_plan_activity(&start_request).await {
+                        eprintln!("warning: failed to log plan activity for `{project}`: {error}");
+                    }
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
@@ -859,6 +877,8 @@ async fn main() -> Result<()> {
                     let selection =
                         resolve_active_plan_selection(&api, &project, args.thread_key.as_deref())
                             .await?;
+                    let mut synced_plan = false;
+                    let mut synced_source_path = None;
 
                     let detail = if args.plan_file.is_some() || args.plan_stdin {
                         let (plan_markdown, source_path) =
@@ -881,6 +901,9 @@ async fn main() -> Result<()> {
                         api.curate(&project, repo_replacement_policy(&repo_root))
                             .await
                             .context("curate updated plan before finish verification")?;
+                        synced_plan = true;
+                        synced_source_path =
+                            source_path.as_ref().map(|path| path.display().to_string());
                         let refreshed = resolve_active_plan_selection(
                             &api,
                             &project,
@@ -897,6 +920,40 @@ async fn main() -> Result<()> {
                     };
 
                     let report = build_plan_execution_finish_report(&project, &detail)?;
+                    if synced_plan {
+                        let sync_request = build_plan_activity_request(
+                            &project,
+                            PlanActivityAction::Synced,
+                            &report.plan_title,
+                            &report.thread_key,
+                            report.total_items,
+                            report.completed_items,
+                            report.remaining_items.clone(),
+                            synced_source_path,
+                        );
+                        if let Err(error) = api.log_plan_activity(&sync_request).await {
+                            eprintln!(
+                                "warning: failed to log plan activity for `{project}`: {error}"
+                            );
+                        }
+                    }
+                    let finish_request = build_plan_activity_request(
+                        &project,
+                        if report.verified_complete {
+                            PlanActivityAction::FinishVerified
+                        } else {
+                            PlanActivityAction::FinishBlocked
+                        },
+                        &report.plan_title,
+                        &report.thread_key,
+                        report.total_items,
+                        report.completed_items,
+                        report.remaining_items.clone(),
+                        None,
+                    );
+                    if let Err(error) = api.log_plan_activity(&finish_request).await {
+                        eprintln!("warning: failed to log plan activity for `{project}`: {error}");
+                    }
                     if args.json {
                         println!("{}", serde_json::to_string_pretty(&report)?);
                     } else {
@@ -3873,6 +3930,22 @@ impl ApiClient {
         Ok(())
     }
 
+    pub(crate) async fn log_plan_activity(&self, request: &PlanActivityRequest) -> Result<()> {
+        let response = self
+            .client
+            .post(service_url(&self.config, "/v1/plan/activity"))
+            .headers(write_headers(&self.config)?)
+            .json(request)
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            anyhow::bail!("{status} {body}");
+        }
+        Ok(())
+    }
+
     pub(crate) async fn memory_detail(&self, memory_id: &str) -> Result<MemoryEntryResponse> {
         get_json(
             self.client
@@ -4577,6 +4650,28 @@ async fn save_checkpoint_with_activity(
         eprintln!("warning: failed to log checkpoint activity for `{project}`: {error}");
     }
     Ok((checkpoint, path))
+}
+
+fn build_plan_activity_request(
+    project: &str,
+    action: PlanActivityAction,
+    title: &str,
+    thread_key: &str,
+    total_items: usize,
+    completed_items: usize,
+    remaining_items: Vec<String>,
+    source_path: Option<String>,
+) -> PlanActivityRequest {
+    PlanActivityRequest {
+        project: project.to_string(),
+        action,
+        title: title.to_string(),
+        thread_key: thread_key.to_string(),
+        total_items,
+        completed_items,
+        remaining_items,
+        source_path,
+    }
 }
 
 #[derive(Debug, Clone)]

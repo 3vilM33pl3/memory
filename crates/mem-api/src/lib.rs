@@ -849,6 +849,7 @@ pub enum StreamResponse {
 pub enum ActivityKind {
     Checkpoint,
     Scan,
+    Plan,
     CommitSync,
     BundleExport,
     BundleImport,
@@ -876,6 +877,18 @@ pub enum ActivityDetails {
         git_branch: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         git_head: Option<String>,
+    },
+    Plan {
+        action: PlanActivityAction,
+        title: String,
+        thread_key: String,
+        total_items: usize,
+        completed_items: usize,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        remaining_items: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_path: Option<String>,
+        verified_complete: bool,
     },
     Scan {
         dry_run: bool,
@@ -981,6 +994,66 @@ pub struct ActivityEvent {
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<ActivityDetails>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanActivityAction {
+    Started,
+    Synced,
+    FinishBlocked,
+    FinishVerified,
+}
+
+impl fmt::Display for PlanActivityAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Started => "started",
+            Self::Synced => "synced",
+            Self::FinishBlocked => "finish_blocked",
+            Self::FinishVerified => "finish_verified",
+        };
+        f.write_str(value)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanActivityRequest {
+    pub project: String,
+    pub action: PlanActivityAction,
+    pub title: String,
+    pub thread_key: String,
+    pub total_items: usize,
+    pub completed_items: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining_items: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+}
+
+impl PlanActivityRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self.title.trim().is_empty() {
+            return Err(ValidationError::new("title must be non-empty"));
+        }
+        if self.thread_key.trim().is_empty() {
+            return Err(ValidationError::new("thread_key must be non-empty"));
+        }
+        if self.completed_items > self.total_items {
+            return Err(ValidationError::new(
+                "completed_items must not exceed total_items",
+            ));
+        }
+        if self.remaining_items.len() > self.total_items {
+            return Err(ValidationError::new(
+                "remaining_items must not exceed total_items",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2087,6 +2160,38 @@ mod tests {
             project: "memory".to_string(),
             repo_root: "/repo".to_string(),
             commits: Vec::new(),
+        };
+
+        assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn plan_activity_request_requires_valid_counts() {
+        let request = PlanActivityRequest {
+            project: "memory".to_string(),
+            action: PlanActivityAction::FinishBlocked,
+            title: "Plan".to_string(),
+            thread_key: "thread".to_string(),
+            total_items: 1,
+            completed_items: 2,
+            remaining_items: vec!["left".to_string()],
+            source_path: None,
+        };
+
+        assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn plan_activity_request_requires_thread_key() {
+        let request = PlanActivityRequest {
+            project: "memory".to_string(),
+            action: PlanActivityAction::Started,
+            title: "Plan".to_string(),
+            thread_key: String::new(),
+            total_items: 1,
+            completed_items: 0,
+            remaining_items: vec!["left".to_string()],
+            source_path: None,
         };
 
         assert!(request.validate().is_err());

@@ -25,12 +25,13 @@ use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse,
     CaptureTaskRequest, CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest,
     CommitSyncResponse, CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse,
-    MemoryEntryResponse, MemorySourceRecord, ProjectCommitsResponse, ProjectMemoriesResponse,
-    ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest,
-    ProjectMemoryBundlePreview, ProjectMemoryBundleSource, ProjectMemoryExportOptions,
-    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectOverviewResponse,
-    PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryRequest, ReembedRequest, ReembedResponse,
-    ReindexRequest, ReindexResponse, RelatedMemorySummary, ReplacementProposalListResponse,
+    MemoryEntryResponse, MemorySourceRecord, PlanActivityAction, PlanActivityRequest,
+    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
+    ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
+    ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
+    ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
+    PruneEmbeddingsResponse, QueryRequest, ReembedRequest, ReembedResponse, ReindexRequest,
+    ReindexResponse, RelatedMemorySummary, ReplacementProposalListResponse,
     ReplacementProposalResolutionResponse, ResumeAction, ResumeRequest, ResumeResponse,
     ScanActivityRequest, SourceKind, StatsResponse, StreamRequest, StreamResponse, ValidationError,
     WatcherHealth, WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary,
@@ -362,6 +363,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/admin/shutdown", post(admin_shutdown))
         .route("/v1/query", post(query))
         .route("/v1/checkpoint/activity", post(checkpoint_activity))
+        .route("/v1/plan/activity", post(plan_activity))
         .route("/v1/scan/activity", post(scan_activity))
         .route("/v1/commits/sync", post(sync_commits))
         .route("/v1/capture/task", post(capture_task))
@@ -1976,6 +1978,56 @@ async fn checkpoint_activity(
     Ok(Json(serde_json::json!({ "logged": true })))
 }
 
+async fn plan_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<PlanActivityRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/plan/activity", &request, true).await?,
+        ));
+    }
+
+    let remaining_count = request.remaining_items.len();
+    let verified_complete = matches!(request.action, PlanActivityAction::FinishVerified);
+    let summary = match &request.action {
+        PlanActivityAction::Started => {
+            format!("Recorded approved plan for execution: {}", request.title)
+        }
+        PlanActivityAction::Synced => {
+            format!("Synced approved plan state: {}", request.title)
+        }
+        PlanActivityAction::FinishBlocked => format!(
+            "Plan completion blocked: {} ({} remaining item(s))",
+            request.title, remaining_count
+        ),
+        PlanActivityAction::FinishVerified => {
+            format!("Verified approved plan complete: {}", request.title)
+        }
+    };
+    notify_project_changed(
+        &state,
+        request.project.clone(),
+        None,
+        ActivityKind::Plan,
+        summary,
+        Some(ActivityDetails::Plan {
+            action: request.action.clone(),
+            title: request.title.clone(),
+            thread_key: request.thread_key.clone(),
+            total_items: request.total_items,
+            completed_items: request.completed_items,
+            remaining_items: request.remaining_items.clone(),
+            source_path: request.source_path.clone(),
+            verified_complete,
+        }),
+    );
+    Ok(Json(serde_json::json!({ "logged": true })))
+}
+
 async fn curate_memory(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -3199,6 +3251,9 @@ fn infer_current_thread(
             ActivityKind::Scan => {
                 "Recent work focused on refreshing project memory from a repo scan."
             }
+            ActivityKind::Plan => {
+                "Recent work focused on an approved execution plan for the current task."
+            }
             ActivityKind::Curate => {
                 "Recent work focused on curating new captures into canonical memory."
             }
@@ -3347,6 +3402,15 @@ fn extract_capture_task_title(event: &ActivityEvent) -> Option<String> {
 
 fn format_resume_event_summary(event: &ActivityEvent) -> String {
     let base = match &event.details {
+        Some(ActivityDetails::Plan { action, title, .. }) => {
+            let prefix = match action {
+                PlanActivityAction::Started => "Approved plan recorded",
+                PlanActivityAction::Synced => "Approved plan synced",
+                PlanActivityAction::FinishBlocked => "Plan completion blocked",
+                PlanActivityAction::FinishVerified => "Plan completion verified",
+            };
+            format!("{prefix}: {}", title.trim())
+        }
         Some(ActivityDetails::Query { query, .. }) => {
             format!("Query explored: {}", query.trim())
         }
@@ -3619,6 +3683,7 @@ fn parse_activity_kind(value: &str) -> ActivityKind {
     match value {
         "checkpoint" => ActivityKind::Checkpoint,
         "scan" => ActivityKind::Scan,
+        "plan" => ActivityKind::Plan,
         "commit_sync" => ActivityKind::CommitSync,
         "bundle_export" => ActivityKind::BundleExport,
         "bundle_import" => ActivityKind::BundleImport,
@@ -3941,6 +4006,7 @@ fn activity_kind_label(kind: &ActivityKind) -> &'static str {
     match kind {
         ActivityKind::Checkpoint => "checkpoint",
         ActivityKind::Scan => "scan",
+        ActivityKind::Plan => "plan",
         ActivityKind::CommitSync => "commit_sync",
         ActivityKind::BundleExport => "bundle_export",
         ActivityKind::BundleImport => "bundle_import",

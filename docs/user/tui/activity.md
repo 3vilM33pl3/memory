@@ -7,6 +7,7 @@ The `Activity` tab shows the recent operational history for the project so you c
 ## What It Shows
 
 - recent backend events such as capture, curate, scan, reindex, re-embed, replacement, and checkpoint activity
+- explicit plan lifecycle events for approved plan recording, plan sync, blocked completion, and verified completion
 - recent queries and whether they succeeded
 - watcher-health transitions such as stale, restarting, failed, and recovered
 - a detail pane for the selected event
@@ -22,6 +23,7 @@ This is the fastest way to answer "what just happened?" in the current project.
 ## When To Use It
 
 - verifying that a `scan`, `remember`, or curate action actually ran
+- confirming that `checkpoint start-execution` or `checkpoint finish-execution` actually recorded the approved plan lifecycle
 - reviewing the latest query and backend write history
 - understanding watcher failures or recovery events
 

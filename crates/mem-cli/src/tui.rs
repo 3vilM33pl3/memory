@@ -13,11 +13,11 @@ use crossterm::{
 };
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
-    NamedCount, ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse,
-    QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, ReplacementPolicy,
-    ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest, ResumeResponse, StreamRequest,
-    StreamResponse, WatcherHealth, load_repo_replacement_policy, read_capnp_text_frame,
-    repo_agent_settings_path, write_capnp_text_frame,
+    NamedCount, PlanActivityAction, ProjectMemoriesResponse, ProjectMemoryListItem,
+    ProjectOverviewResponse, QueryFilters, QueryMatchKind, QueryRequest, QueryResponse,
+    QueryResult, ReplacementPolicy, ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest,
+    ResumeResponse, StreamRequest, StreamResponse, WatcherHealth, load_repo_replacement_policy,
+    read_capnp_text_frame, repo_agent_settings_path, write_capnp_text_frame,
 };
 use ratatui::{
     Terminal,
@@ -3256,6 +3256,46 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![section_span("Operation Detail")]));
         match details {
+            ActivityDetails::Plan {
+                action,
+                title,
+                thread_key,
+                total_items,
+                completed_items,
+                remaining_items,
+                source_path,
+                verified_complete,
+            } => {
+                lines.push(Line::from(vec![
+                    label_span("Action: "),
+                    plan_activity_action_span(action),
+                ]));
+                lines.push(activity_kv_line("Title", title.clone()));
+                lines.push(activity_kv_line("Thread", thread_key.clone()));
+                lines.push(activity_kv_line("Total items", total_items.to_string()));
+                lines.push(activity_kv_line("Completed", completed_items.to_string()));
+                lines.push(activity_kv_line(
+                    "Remaining",
+                    remaining_items.len().to_string(),
+                ));
+                lines.push(activity_kv_line(
+                    "Verified complete",
+                    verified_complete.to_string(),
+                ));
+                if let Some(source_path) = source_path {
+                    lines.push(activity_kv_line("Source path", source_path.clone()));
+                }
+                if !remaining_items.is_empty() {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(vec![section_span("Remaining Items")]));
+                    for item in remaining_items {
+                        lines.push(Line::from(Span::styled(
+                            format!("- {item}"),
+                            Style::default().fg(Theme::TEXT),
+                        )));
+                    }
+                }
+            }
             ActivityDetails::Scan {
                 dry_run,
                 candidate_count,
@@ -3684,6 +3724,7 @@ fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
     let (label, color) = match kind {
         ActivityKind::Checkpoint => ("checkpoint", Theme::ACCENT_STRONG),
         ActivityKind::Scan => ("scan", Theme::ACCENT_STRONG),
+        ActivityKind::Plan => ("plan", Theme::ACCENT_STRONG),
         ActivityKind::CommitSync => ("commit-sync", Theme::ACCENT_STRONG),
         ActivityKind::BundleExport => ("bundle-export", Theme::ACCENT_STRONG),
         ActivityKind::BundleImport => ("bundle-import", Theme::ACCENT_STRONG),
@@ -3697,6 +3738,19 @@ fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
         ActivityKind::Archive => ("archive", Theme::WARNING),
         ActivityKind::DeleteMemory => ("delete", Theme::DANGER),
         ActivityKind::WatcherHealth => ("watcher-health", Theme::WARNING),
+    };
+    Span::styled(
+        label,
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn plan_activity_action_span(action: &PlanActivityAction) -> Span<'static> {
+    let (label, color) = match action {
+        PlanActivityAction::Started => ("started", Theme::ACCENT_STRONG),
+        PlanActivityAction::Synced => ("synced", Theme::ACCENT),
+        PlanActivityAction::FinishBlocked => ("finish-blocked", Theme::WARNING),
+        PlanActivityAction::FinishVerified => ("finish-verified", Theme::SUCCESS),
     };
     Span::styled(
         label,
@@ -3741,6 +3795,9 @@ fn query_match_span(kind: &QueryMatchKind) -> Span<'static> {
 fn activity_entry_kind_span(item: &ActivityEntry) -> Span<'static> {
     match item {
         ActivityEntry::Backend(event) => {
+            if let Some(ActivityDetails::Plan { action, .. }) = event.details.as_ref() {
+                return plan_activity_action_span(action);
+            }
             if let Some(ActivityDetails::WatcherHealth {
                 health: WatcherHealth::Healthy,
                 previous_health: Some(previous_health),
