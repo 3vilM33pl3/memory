@@ -93,11 +93,20 @@ Project-local customization now has two layers:
 - [Watcher Health](docs/user/cli/watchers.md)
 - [Resume Briefings](docs/user/cli/resume.md)
 - [Wizard And Bootstrap](docs/user/cli/wizard.md)
+- [Init Bootstrap](docs/user/cli/init.md)
 - [Service Commands](docs/user/cli/service.md)
 - [Doctor Diagnostics](docs/user/cli/doctor.md)
+- [Health And Stats](docs/user/cli/health.md)
+- [Query Command](docs/user/cli/query.md)
+- [Checkpoint Workflow](docs/user/cli/checkpoint.md)
+- [Capture Command](docs/user/cli/capture.md)
 - [Remember Command](docs/user/cli/remember.md)
+- [Curate Command](docs/user/cli/curate.md)
+- [Repository Index](docs/user/cli/repo.md)
 - [Scan Command](docs/user/cli/scan.md)
 - [Commit History](docs/user/cli/commits.md)
+- [Archive Command](docs/user/cli/archive.md)
+- [Automation Commands](docs/user/cli/automation.md)
 
 ### Developer Docs
 
