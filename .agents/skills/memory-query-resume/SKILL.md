@@ -21,19 +21,19 @@ Do not use this skill for:
 Query curated project memory:
 
 ```bash
-./.agents/skills/memory-layer/scripts/query-memory.sh "<question>"
+go run ./.agents/skills/memory-layer/scripts query-memory "<question>"
 ```
 
 Resume a project after an interruption:
 
 ```bash
-./.agents/skills/memory-layer/scripts/resume-project.sh [project-slug]
+go run ./.agents/skills/memory-layer/scripts resume-project [project-slug]
 ```
 
 ## Workflow
 
 1. Query memory before answering project-specific questions.
-2. For interruption-recovery prompts, use `resume-project.sh` instead of a generic query.
+2. For interruption-recovery prompts, use `resume-project` instead of a generic query.
 3. Use the returned evidence or resume pack in your answer.
 4. Prefer insufficient evidence over unsupported conclusions.
 5. Never invent provenance.
@@ -41,3 +41,8 @@ Resume a project after an interruption:
 ## Model Routing
 
 Keep this skill on the stronger engineering path.
+
+## Runtime Requirement
+
+This focused skill uses the shared Go helper under `.agents/skills/memory-layer/scripts/`.
+`go` must be available on `PATH` for these helper commands to run.

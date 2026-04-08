@@ -1459,6 +1459,20 @@ fn doctor_check(
     }
 }
 
+fn repo_uses_go_skill_runtime(repo_root: &Path) -> bool {
+    repo_root
+        .join(".agents/skills/memory-layer/scripts/go.mod")
+        .is_file()
+}
+
+fn go_runtime_available() -> bool {
+    ProcessCommand::new("go")
+        .arg("version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 async fn run_doctor(
     cli_config: Option<PathBuf>,
     repo_root: &Path,
@@ -2298,6 +2312,42 @@ async fn run_doctor(
             },
             false,
         ));
+
+        if repo_uses_go_skill_runtime(repo_root) {
+            let go_available = go_runtime_available();
+            report.push(doctor_check(
+                "workflow.skill_runtime_go",
+                if go_available {
+                    DoctorStatus::Ok
+                } else {
+                    DoctorStatus::Warn
+                },
+                if go_available {
+                    "Go runtime is available for the repo-local memory skill helper."
+                } else {
+                    "Repo-local memory skills require `go run`, but Go is not available."
+                },
+                None,
+                if go_available {
+                    None
+                } else {
+                    Some(
+                        "Install Go and ensure `go` is on PATH before using the repo-local memory skills."
+                            .to_string(),
+                    )
+                },
+                false,
+            ));
+        } else {
+            report.push(doctor_check(
+                "workflow.skill_runtime_go",
+                DoctorStatus::Skipped,
+                "Skipped Go runtime check because the repo-local memory skill helper is not installed.",
+                None,
+                None,
+                false,
+            ));
+        }
     } else {
         for (id, summary) in [
             (
@@ -2339,6 +2389,10 @@ async fn run_doctor(
             (
                 "workflow.remember_ready",
                 "Skipped remember readiness check because config could not load.",
+            ),
+            (
+                "workflow.skill_runtime_go",
+                "Skipped skill helper Go runtime check because config could not load.",
             ),
         ] {
             report.push(doctor_check(
@@ -3481,10 +3535,7 @@ fn copy_directory_tree(src: &Path, dest: &Path) -> Result<()> {
             fs::copy(&src_path, &dest_path).with_context(|| {
                 format!("copy {} -> {}", src_path.display(), dest_path.display())
             })?;
-            let mode = if src_path
-                .components()
-                .any(|component| component.as_os_str() == "scripts")
-            {
+            let mode = if src_path.extension().and_then(|ext| ext.to_str()) == Some("sh") {
                 0o755
             } else {
                 0o644
@@ -5404,7 +5455,12 @@ mod tests {
         );
         assert!(
             repo_root
-                .join(".agents/skills/memory-layer/scripts/remember-task.sh")
+                .join(".agents/skills/memory-layer/scripts/go.mod")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-layer/scripts/main.go")
                 .is_file()
         );
         assert!(

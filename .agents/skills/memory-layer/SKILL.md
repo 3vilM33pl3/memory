@@ -61,6 +61,11 @@ The shared scripts and references still live here:
 
 The focused skills call into those shared scripts instead of duplicating them.
 
+The shared helper is now Go-based:
+
+- run helpers with `go run ./.agents/skills/memory-layer/scripts <command> ...`
+- `go` must be available on `PATH`
+
 ## Model Routing
 
 For docs/admin subtasks about Memory Layer itself, prefer a cheaper docs/admin model when available.

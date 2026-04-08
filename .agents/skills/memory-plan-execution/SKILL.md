@@ -20,7 +20,7 @@ Do not use this skill for:
 Save the approved plan and checkpoint together:
 
 ```bash
-./.agents/skills/memory-layer/scripts/start-plan-execution.sh \
+go run ./.agents/skills/memory-layer/scripts start-plan-execution \
   --project <project-slug> \
   --plan-file /tmp/approved-plan.md
 ```
@@ -28,26 +28,31 @@ Save the approved plan and checkpoint together:
 Verify the approved plan is fully executed:
 
 ```bash
-./.agents/skills/memory-layer/scripts/finish-plan-execution.sh \
+go run ./.agents/skills/memory-layer/scripts finish-plan-execution \
   --project <project-slug>
 ```
 
 Optional explicit checkpoint-only helper:
 
 ```bash
-./.agents/skills/memory-layer/scripts/checkpoint-project.sh \
+go run ./.agents/skills/memory-layer/scripts checkpoint-project \
   --project <project-slug> \
   --note "Plan approved; starting implementation"
 ```
 
 ## Workflow
 
-1. When the user approves a real plan, run `start-plan-execution.sh` before implementation starts.
+1. When the user approves a real plan, run `start-plan-execution` before implementation starts.
 2. The approved plan must contain Markdown checkbox items so completion can be verified later.
 3. If the plan changes materially during execution, save the revised approved plan first with the same thread key.
-4. Before claiming plan-backed work is finished, run `finish-plan-execution.sh`.
+4. Before claiming plan-backed work is finished, run `finish-plan-execution`.
 5. Do not present the task as finished if any checkbox item remains unchecked.
 
 ## Model Routing
 
 Keep this skill on the stronger engineering path.
+
+## Runtime Requirement
+
+This focused skill uses the shared Go helper under `.agents/skills/memory-layer/scripts/`.
+`go` must be available on `PATH` for these helper commands to run.

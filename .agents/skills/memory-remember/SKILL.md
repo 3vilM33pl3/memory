@@ -20,7 +20,7 @@ Do not use this skill for:
 Remember task context automatically:
 
 ```bash
-./.agents/skills/memory-layer/scripts/remember-task.sh \
+go run ./.agents/skills/memory-layer/scripts remember-task \
   --title "<task title>" \
   --prompt "<user prompt>" \
   --summary "<what changed>" \
@@ -38,3 +38,8 @@ Remember task context automatically:
 ## Model Routing
 
 Keep this skill on the stronger engineering path.
+
+## Runtime Requirement
+
+This focused skill uses the shared Go helper under `.agents/skills/memory-layer/scripts/`.
+`go` must be available on `PATH` for these helper commands to run.
