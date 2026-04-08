@@ -3286,7 +3286,7 @@ fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>>
                 Span::styled(rate_limit.source.clone(), Style::default().fg(Theme::TEXT)),
             ]));
             if let Some(percent) = rate_limit.five_hour_pct {
-                lines.push(usage_bar_line(
+                lines.push(quota_bar_line(
                     "5h",
                     percent,
                     20,
@@ -3294,7 +3294,7 @@ fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>>
                 ));
             }
             if let Some(percent) = rate_limit.seven_day_pct {
-                lines.push(usage_bar_line(
+                lines.push(quota_bar_line(
                     "7d",
                     percent,
                     20,
@@ -4410,6 +4410,33 @@ fn filled_bar_cells(percent: f64, width: usize) -> usize {
     ((normalized / 100.0) * width as f64).round() as usize
 }
 
+fn remaining_bar_cells(percent_used: f64, width: usize) -> usize {
+    let width = width.max(1);
+    let remaining = 100.0 - normalized_percent(percent_used);
+    ((remaining / 100.0) * width as f64).round() as usize
+}
+
+fn interpolate_theme_color(start: Color, end: Color, factor: f64) -> Color {
+    let factor = factor.clamp(0.0, 1.0);
+    match (start, end) {
+        (Color::Rgb(sr, sg, sb), Color::Rgb(er, eg, eb)) => {
+            let lerp = |s: u8, e: u8| -> u8 {
+                (s as f64 + (e as f64 - s as f64) * factor).round() as u8
+            };
+            Color::Rgb(lerp(sr, er), lerp(sg, eg), lerp(sb, eb))
+        }
+        _ => end,
+    }
+}
+
+fn context_gradient_color(percent: f64) -> Color {
+    interpolate_theme_color(
+        Theme::SUCCESS,
+        Theme::DANGER,
+        normalized_percent(percent) / 100.0,
+    )
+}
+
 fn usage_bar_line(
     label: &str,
     percent: f64,
@@ -4419,13 +4446,54 @@ fn usage_bar_line(
     let width = width.max(1);
     let filled = filled_bar_cells(percent, width).min(width);
     let empty = width.saturating_sub(filled);
-    let style = context_percent_style(percent);
-    let mut spans = vec![
-        label_span(&format!("{label}: ")),
-        Span::styled("█".repeat(filled), style),
+    let percent_color = context_gradient_color(percent);
+    let mut spans = vec![label_span(&format!("{label}: "))];
+    for idx in 0..filled {
+        let cell_percent = ((idx + 1) as f64 / width as f64) * 100.0;
+        spans.push(Span::styled(
+            "█",
+            Style::default()
+                .fg(context_gradient_color(cell_percent))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans.extend([
         Span::styled("░".repeat(empty), Style::default().fg(Theme::BORDER)),
         Span::raw(" "),
-        Span::styled(format_context_percent(percent), style),
+        Span::styled(
+            format_context_percent(percent),
+            Style::default()
+                .fg(percent_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    if let Some(suffix) = suffix {
+        spans.push(Span::raw("   "));
+        spans.push(Span::styled(suffix, Style::default().fg(Theme::MUTED)));
+    }
+    Line::from(spans)
+}
+
+fn quota_bar_line(
+    label: &str,
+    percent_used: f64,
+    width: usize,
+    suffix: Option<String>,
+) -> Line<'static> {
+    let width = width.max(1);
+    let remaining_cells = remaining_bar_cells(percent_used, width).min(width);
+    let used_cells = width.saturating_sub(remaining_cells);
+    let remaining_percent = 100.0 - normalized_percent(percent_used);
+    let remaining_style = context_percent_style(100.0 - remaining_percent);
+    let mut spans = vec![
+        label_span(&format!("{label}: ")),
+        Span::styled("█".repeat(remaining_cells), remaining_style),
+        Span::styled("░".repeat(used_cells), Style::default().fg(Theme::BORDER)),
+        Span::raw(" "),
+        Span::styled(
+            format!("{remaining_percent:.0}% left"),
+            remaining_style,
+        ),
     ];
     if let Some(suffix) = suffix {
         spans.push(Span::raw("   "));
@@ -4615,11 +4683,11 @@ mod tests {
     use chrono::{Local, TimeZone, Utc};
 
     use super::{
-        App, ToolVersions, UiStatus, empty_overview, filled_bar_cells,
+        App, Theme, ToolVersions, UiStatus, context_gradient_color, empty_overview, filled_bar_cells,
         format_context_percent, format_epoch_reset_time, format_timestamp,
         format_timestamp_full, format_timestamp_medium, format_timestamp_short,
-        format_timestamp_timeline, normalized_percent, service_status_label,
-        should_attempt_stream_reconnect, watcher_bar_status_label,
+        format_timestamp_timeline, normalized_percent, remaining_bar_cells,
+        service_status_label, should_attempt_stream_reconnect, watcher_bar_status_label,
     };
     use mem_api::WatcherPresenceSummary;
     use std::path::PathBuf;
@@ -4702,6 +4770,9 @@ mod tests {
         assert_eq!(filled_bar_cells(0.0, 20), 0);
         assert_eq!(filled_bar_cells(50.0, 20), 10);
         assert_eq!(filled_bar_cells(182.3, 20), 20);
+        assert_eq!(remaining_bar_cells(0.0, 20), 20);
+        assert_eq!(remaining_bar_cells(50.0, 20), 10);
+        assert_eq!(remaining_bar_cells(100.0, 20), 0);
     }
 
     #[test]
@@ -4709,5 +4780,11 @@ mod tests {
         let epoch_seconds = 1_775_352_000_u64;
         let timestamp = Utc.timestamp_opt(epoch_seconds as i64, 0).unwrap();
         assert_eq!(format_epoch_reset_time(epoch_seconds), format_timestamp_short(timestamp));
+    }
+
+    #[test]
+    fn context_gradient_spans_success_to_danger() {
+        assert_eq!(context_gradient_color(0.0), Theme::SUCCESS);
+        assert_eq!(context_gradient_color(100.0), Theme::DANGER);
     }
 }
