@@ -3084,7 +3084,7 @@ async fn run_doctor(
                     Some(error.to_string()),
                     Some(if database_connect_error.is_some() && !config.cluster.enabled {
                         format!(
-                            "{} or enable relay discovery in {} and rerun `mem-cli service enable`",
+                            "{} or enable relay discovery in {} and rerun `memory service enable`",
                             backend_start_hint(&config_path),
                             global_config_path
                                 .as_ref()
@@ -3653,7 +3653,7 @@ async fn enable_backend_service(config_path: &Path) -> Result<String> {
                     ));
                 }
                 anyhow::bail!(
-                    "Backend did not become healthy after startup.\nLikely cause: {database_error}\nRecovery: enable relay discovery by setting [cluster].enabled = true in {} and rerun `mem-cli service enable`.",
+                    "Backend did not become healthy after startup.\nLikely cause: {database_error}\nRecovery: enable relay discovery by setting [cluster].enabled = true in {} and rerun `memory service enable`.",
                     config_path.display()
                 );
             }
@@ -3676,7 +3676,7 @@ fn start_backend_service_once(config_path: &Path) -> Result<String> {
         )?;
         bootstrap_launch_agent(&plist_path, label)?;
         Ok(format!(
-            "Installed and started backend LaunchAgent {}.\nPlist: {}\nConfig: {}\nLogs:\n- {}\n- {}\n\nManage it with:\n- mem-cli service status\n- mem-cli service disable\n- launchctl kickstart -k {}/{}",
+            "Installed and started backend LaunchAgent {}.\nPlist: {}\nConfig: {}\nLogs:\n- {}\n- {}\n\nManage it with:\n- memory service status\n- memory service disable\n- launchctl kickstart -k {}/{}",
             label,
             plist_path.display(),
             config_path.display(),
@@ -3698,14 +3698,15 @@ fn start_backend_service_once(config_path: &Path) -> Result<String> {
 fn preview_enable_backend_service(config_path: &Path) -> String {
     #[cfg(target_os = "macos")]
     {
-        match backend_pid_file_path() {
-            Ok(pid_path) => format!(
-                "Dry run: would enable/start the backend process.\nPID file: {}\nConfig: {}",
-                pid_path.display(),
+        match backend_launch_agent_path() {
+            Ok(plist_path) => format!(
+                "Dry run: would install and start backend LaunchAgent {}.\nPlist: {}\nConfig: {}",
+                backend_launch_agent_label(),
+                plist_path.display(),
                 config_path.display()
             ),
             Err(_) => format!(
-                "Dry run: would enable/start the backend process with config {}",
+                "Dry run: would install and start the backend LaunchAgent with config {}",
                 config_path.display()
             ),
         }
@@ -3754,14 +3755,15 @@ fn disable_backend_service() -> Result<String> {
 fn preview_disable_backend_service(config_path: &Path) -> String {
     #[cfg(target_os = "macos")]
     {
-        match backend_pid_file_path() {
-            Ok(pid_path) => format!(
-                "Dry run: would stop the backend process and remove pid file {}\nConfig: {}",
-                pid_path.display(),
+        match backend_launch_agent_path() {
+            Ok(plist_path) => format!(
+                "Dry run: would disable backend LaunchAgent {} and remove {}\nConfig: {}",
+                backend_launch_agent_label(),
+                plist_path.display(),
                 config_path.display()
             ),
             Err(_) => format!(
-                "Dry run: would stop the backend process configured by {}",
+                "Dry run: would disable the backend LaunchAgent configured by {}",
                 config_path.display()
             ),
         }

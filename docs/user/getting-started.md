@@ -266,7 +266,7 @@ Relay discovery is controlled from shared config:
 enabled = true
 ```
 
-The wizard exposes this as a shared setup option, and `mem-cli service enable` can offer to turn it on after a database-connect failure.
+The wizard exposes this as a shared setup option, and `memory service enable` can offer to turn it on after a database-connect failure.
 
 ## Daily Use
 

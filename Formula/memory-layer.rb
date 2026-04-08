@@ -10,11 +10,10 @@ class MemoryLayer < Formula
     system "npm", "--prefix", "web", "ci"
     system "npm", "--prefix", "web", "run", "build"
     system "cargo", "build", "--release", "--locked", "--manifest-path", "Cargo.toml",
-           "--bin", "mem-cli", "--bin", "mem-service", "--bin", "memory-watch"
+           "--package", "mem-cli", "--bin", "memory"
 
-    bin.install "target/release/mem-cli"
-    bin.install "target/release/mem-service"
-    bin.install "target/release/memory-watch"
+    bin.install "target/release/memory"
+    bin.install_symlink "memory" => "mem-cli"
     pkgshare.install ".agents/skills/memory-layer" => "skill-template"
     pkgshare.install "memory-layer.toml.example"
     pkgshare.install "web/dist" => "web"
@@ -29,19 +28,20 @@ class MemoryLayer < Formula
         ~/Library/Application Support/memory-layer/memory-layer.env
 
       First run:
-        mem-cli wizard --global
-        mem-cli service enable
+        memory wizard --global
+        memory service enable
 
-      `mem-cli service enable` provisions the shared service API token
+      `memory service enable` provisions the shared service API token
       automatically if it is missing or still set to the development placeholder.
 
       Optional watcher:
-        mem-cli watch enable --project <slug>
+        memory watcher enable --project <slug>
     EOS
   end
 
   test do
-    assert_match "mem-cli", shell_output("#{bin}/mem-cli --help")
+    assert_match "memory", shell_output("#{bin}/memory --help")
+    assert_predicate bin/"mem-cli", :exist?
     assert_predicate pkgshare/"skill-template", :directory?
     assert_predicate pkgshare/"web/index.html", :exist?
   end
