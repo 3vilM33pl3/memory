@@ -27,6 +27,14 @@ Enable or start the service:
 memory service enable
 ```
 
+Preview the service action without changing the machine:
+
+```bash
+memory service enable --dry-run
+memory service disable --dry-run
+memory service ensure-api-token --rotate-placeholder --dry-run
+```
+
 This command also provisions the shared service API token automatically if it is missing or still set to the old development placeholder.
 
 Check service status:

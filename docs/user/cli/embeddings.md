@@ -43,6 +43,12 @@ Build chunks and embeddings for a project:
 memory embeddings reindex --project my-project
 ```
 
+Preview how many entries would be rebuilt without changing stored chunks or embeddings:
+
+```bash
+memory embeddings reindex --project my-project --dry-run
+```
+
 Use this when:
 
 - embeddings were just enabled
@@ -55,6 +61,12 @@ Refresh only the active embedding space:
 memory embeddings reembed --project my-project
 ```
 
+Preview how many chunks would be materialized in the active embedding space:
+
+```bash
+memory embeddings reembed --project my-project --dry-run
+```
+
 Use this when:
 
 - you changed the embedding model
@@ -65,6 +77,12 @@ Delete non-active embedding spaces:
 
 ```bash
 memory embeddings prune --project my-project
+```
+
+Preview how many inactive embedding rows would be removed:
+
+```bash
+memory embeddings prune --project my-project --dry-run
 ```
 
 Use this only when:

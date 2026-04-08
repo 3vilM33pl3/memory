@@ -70,6 +70,12 @@ Store one durable fact:
 memory remember --project my-project --note "Deployment uses a systemd service."
 ```
 
+Preview the capture and curate steps without writing:
+
+```bash
+memory remember --project my-project --note "Deployment uses a systemd service." --dry-run
+```
+
 Store a more explicit remembered task:
 
 ```bash

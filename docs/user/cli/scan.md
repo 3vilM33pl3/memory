@@ -262,17 +262,18 @@ In dry-run mode, `scan` still:
 - calls the LLM
 - validates candidates
 - prints a concise preview of the accepted candidate memories
-- writes a scan report
 
 But it does **not**:
 
+- write a scan report file
+- emit a scan activity event
 - create a capture
 - run curation
 - write project memory
 
 ## Scan Reports
 
-Every scan writes a local report under:
+Non-dry-run scans write a local report under:
 
 - `.mem/runtime/scan/`
 

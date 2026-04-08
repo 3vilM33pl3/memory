@@ -58,6 +58,8 @@ For watcher health states, recovery behavior, and the TUI watcher views, use [Wa
 
 For bootstrap, diagnostics, and the main write path, use [Wizard And Bootstrap](docs/user/cli/wizard.md), [Service Commands](docs/user/cli/service.md), [Doctor Diagnostics](docs/user/cli/doctor.md), and [Remember Command](docs/user/cli/remember.md).
 
+Most mutating `memory` commands support `--dry-run` so you can preview writes, service actions, and plan/checkpoint flows before applying them.
+
 For a visual walkthrough of the interface, use the [TUI Guide](docs/user/tui/README.md).
 
 ## What It Does

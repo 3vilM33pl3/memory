@@ -57,7 +57,7 @@ Web UI:
 Preview first:
 
 ```bash
-memory bundle import --project target-project ./my-project.mlbundle.zip --preview
+memory bundle import --project target-project ./my-project.mlbundle.zip --dry-run
 ```
 
 Import:
@@ -74,6 +74,10 @@ Import behavior:
 - if an imported entry changes for the same bundle lineage, the previous imported copy is replaced with a new immutable memory
 
 After import, Memory Layer rebuilds search chunks for the target project. Embeddings are not shipped inside the bundle.
+
+`memory bundle export` and `memory bundle import` both support `--dry-run`.
+For export, dry-run computes the bundle preview and intended output path without writing the archive file.
+For import, dry-run is the preview mode and does not change the target project.
 
 ## Privacy Defaults
 

@@ -34,6 +34,12 @@ memory commits sync --project my-project --limit 100
 memory commits sync --project my-project --since "2 weeks ago"
 ```
 
+Preview the import counts without writing stored commit evidence:
+
+```bash
+memory commits sync --project my-project --since "2 weeks ago" --dry-run
+```
+
 List stored commits:
 
 ```bash

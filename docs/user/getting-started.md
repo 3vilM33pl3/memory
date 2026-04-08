@@ -62,6 +62,8 @@ memory wizard
 
 The repo-local skill bundle that `memory wizard` installs uses a shared Go helper under `.agents/skills/memory-layer/scripts/`, so agent-driven skill usage in that repository requires `go` to be available on `PATH`.
 
+Most mutating `memory` commands also support `--dry-run`, so you can preview setup, write, indexing, bundle, and checkpoint operations before they touch local files, services, or backend state.
+
 6. Start the backend service:
 
 ```bash

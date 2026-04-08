@@ -10,12 +10,27 @@ Save a checkpoint before leaving:
 memory checkpoint save --project my-project --note "Waiting on agent review"
 ```
 
+Preview the checkpoint payload and storage path without saving it:
+
+```bash
+memory checkpoint save --project my-project --note "Waiting on agent review" --dry-run
+```
+
 For agent-driven workflows, a good checkpoint moment is right after a planning session ends and execution is approved:
 
 ```bash
 memory checkpoint start-execution \
   --project my-project \
   --plan-file /tmp/approved-plan.md
+```
+
+Preview the checkpoint, plan capture, and curate actions without persisting them:
+
+```bash
+memory checkpoint start-execution \
+  --project my-project \
+  --plan-file /tmp/approved-plan.md \
+  --dry-run
 ```
 
 That command saves the checkpoint first and then stores the full approved plan as `plan` memory for the active work thread.
@@ -32,6 +47,12 @@ Before plan-backed work is treated as finished, verify the active approved plan:
 
 ```bash
 memory checkpoint finish-execution --project my-project
+```
+
+Check whether the active plan would verify cleanly without syncing or logging anything:
+
+```bash
+memory checkpoint finish-execution --project my-project --dry-run
 ```
 
 If the plan changed during execution, sync the updated checkbox state and verify in one step:

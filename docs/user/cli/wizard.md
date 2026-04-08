@@ -55,6 +55,13 @@ cd /path/to/your-project
 memory wizard
 ```
 
+Preview the resulting file, token, and service actions without writing anything:
+
+```bash
+memory wizard --dry-run
+memory wizard --global --dry-run
+```
+
 ## How It Differs From `init`
 
 `init` is the lower-level repo bootstrap command.
@@ -66,5 +73,7 @@ Use `init` when you want:
 - a more scriptable bootstrap path
 - a non-interactive setup flow
 - direct control over the generated repo-local files
+
+Both `memory wizard` and `memory init` support `--dry-run` for preview-only setup.
 
 For the full onboarding flow, see [Getting Started](../getting-started.md).
