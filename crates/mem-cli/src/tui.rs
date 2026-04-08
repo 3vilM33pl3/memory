@@ -11,6 +11,10 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use mem_agenttop::{
+    AgentSession, AgentSnapshot, ChildProcess as AgentChildProcess, RateLimitInfo as AgentRateLimitInfo,
+    SessionStatus as AgentSessionStatus,
+};
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
     NamedCount, PlanActivityAction, ProjectMemoriesResponse, ProjectMemoryListItem,
@@ -57,6 +61,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
     let (background_tx, mut background_rx) = mpsc::unbounded_channel();
     let mut terminal = setup_terminal()?;
     let mut app = App::new(project, repo_root, detect_tool_versions(), background_tx);
+    start_agent_snapshot_worker(app.background_tx.clone());
     terminal.draw(|frame| draw(frame, &app))?;
     app.refresh(&api, RefreshMode::Startup).await;
     let mut stream = StreamSession::connect(&api).await.ok();
@@ -130,6 +135,24 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
     restore_terminal(terminal)
 }
 
+fn start_agent_snapshot_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
+    std::thread::spawn(move || {
+        let mut collector = mem_agenttop::AgentTop::new();
+        loop {
+            let snapshot = collector.collect_snapshot();
+            if tx
+                .send(BackgroundEvent::AgentsLoaded {
+                    snapshot: Ok(snapshot),
+                })
+                .is_err()
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    });
+}
+
 struct App {
     project: String,
     repo_root: PathBuf,
@@ -147,6 +170,12 @@ struct App {
     query_selected_detail: Option<MemoryEntryResponse>,
     query_selected_index: usize,
     query_table_state: TableState,
+    agent_snapshot: Option<AgentSnapshot>,
+    agent_loading: bool,
+    agent_error: Option<String>,
+    agent_selected_index: usize,
+    agent_table_state: TableState,
+    agent_detail_scroll: u16,
     resume_response: Option<ResumeResponse>,
     resume_loading: bool,
     resume_loaded: bool,
@@ -211,6 +240,9 @@ enum BackgroundEvent {
         has_changes: bool,
         allow_autoselect: bool,
     },
+    AgentsLoaded {
+        snapshot: Result<AgentSnapshot, String>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -230,6 +262,8 @@ impl App {
         table_state.select(Some(0));
         let mut query_table_state = TableState::default();
         query_table_state.select(Some(0));
+        let mut agent_table_state = TableState::default();
+        agent_table_state.select(Some(0));
         let mut activity_table_state = TableState::default();
         activity_table_state.select(Some(0));
         Self {
@@ -249,6 +283,12 @@ impl App {
             query_selected_detail: None,
             query_selected_index: 0,
             query_table_state,
+            agent_snapshot: None,
+            agent_loading: true,
+            agent_error: None,
+            agent_selected_index: 0,
+            agent_table_state,
+            agent_detail_scroll: 0,
             resume_response: None,
             resume_loading: false,
             resume_loaded: false,
@@ -473,7 +513,53 @@ impl App {
                     }
                 }
             }
+            BackgroundEvent::AgentsLoaded { snapshot } => match snapshot {
+                Ok(snapshot) => {
+                    self.agent_loading = false;
+                    self.agent_error = None;
+                    self.agent_snapshot = Some(snapshot);
+                    let session_count = self
+                        .agent_snapshot
+                        .as_ref()
+                        .map(|snapshot| snapshot.sessions.len())
+                        .unwrap_or(0);
+                    if session_count == 0 {
+                        self.agent_selected_index = 0;
+                        self.agent_table_state.select(None);
+                    } else {
+                        self.agent_selected_index =
+                            self.agent_selected_index.min(session_count.saturating_sub(1));
+                        self.agent_table_state
+                            .select(Some(self.agent_selected_index));
+                    }
+                }
+                Err(error) => {
+                    self.agent_loading = false;
+                    self.agent_error = Some(error);
+                }
+            },
         }
+    }
+
+    fn move_agent_selection(&mut self, delta: isize) {
+        let Some(snapshot) = &self.agent_snapshot else {
+            self.agent_selected_index = 0;
+            self.agent_table_state.select(None);
+            return;
+        };
+        let len = snapshot.sessions.len();
+        if len == 0 {
+            self.agent_selected_index = 0;
+            self.agent_table_state.select(None);
+            return;
+        }
+        let next = (self.agent_selected_index as isize + delta).clamp(0, len as isize - 1);
+        self.agent_selected_index = next as usize;
+        self.agent_table_state.select(Some(self.agent_selected_index));
+    }
+
+    fn scroll_agent_detail(&mut self, delta: i16) {
+        self.agent_detail_scroll = self.agent_detail_scroll.saturating_add_signed(delta);
     }
 
     async fn handle_key(
@@ -532,6 +618,12 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Memories => {
                 self.move_selection(-1, api, stream).await;
             }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Agents => {
+                self.move_agent_selection(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Agents => {
+                self.move_agent_selection(-1);
+            }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Query => {
                 self.move_query_selection(1, api).await;
             }
@@ -564,6 +656,15 @@ impl App {
             }
             KeyCode::Home if self.active_tab == TabKind::Memories => {
                 self.memory_detail_scroll = 0;
+            }
+            KeyCode::PageDown if self.active_tab == TabKind::Agents => {
+                self.scroll_agent_detail(8);
+            }
+            KeyCode::PageUp if self.active_tab == TabKind::Agents => {
+                self.scroll_agent_detail(-8);
+            }
+            KeyCode::Home if self.active_tab == TabKind::Agents => {
+                self.agent_detail_scroll = 0;
             }
             KeyCode::PageDown if self.active_tab == TabKind::Resume => {
                 self.scroll_resume(8);
@@ -1254,6 +1355,7 @@ async fn subscribe_stream(stream: &mut StreamSession, app: &App) -> Result<()> {
 enum TabKind {
     Resume,
     Memories,
+    Agents,
     Query,
     Activity,
     Project,
@@ -1264,7 +1366,8 @@ impl TabKind {
     fn next(self) -> Self {
         match self {
             Self::Resume => Self::Memories,
-            Self::Memories => Self::Query,
+            Self::Memories => Self::Agents,
+            Self::Agents => Self::Query,
             Self::Query => Self::Activity,
             Self::Activity => Self::Project,
             Self::Project => Self::Watchers,
@@ -1276,7 +1379,8 @@ impl TabKind {
         match self {
             Self::Resume => Self::Watchers,
             Self::Memories => Self::Resume,
-            Self::Query => Self::Memories,
+            Self::Agents => Self::Memories,
+            Self::Query => Self::Agents,
             Self::Activity => Self::Query,
             Self::Project => Self::Activity,
             Self::Watchers => Self::Project,
@@ -1287,10 +1391,11 @@ impl TabKind {
         match self {
             Self::Resume => 0,
             Self::Memories => 1,
-            Self::Query => 2,
-            Self::Activity => 3,
-            Self::Project => 4,
-            Self::Watchers => 5,
+            Self::Agents => 2,
+            Self::Query => 3,
+            Self::Activity => 4,
+            Self::Project => 5,
+            Self::Watchers => 6,
         }
     }
 }
@@ -1469,7 +1574,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         .split(frame.area());
 
     let titles = [
-        "Resume", "Memories", "Query", "Activity", "Project", "Watchers",
+        "Resume", "Memories", "Agents", "Query", "Activity", "Project", "Watchers",
     ]
     .into_iter()
     .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
@@ -1517,6 +1622,18 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             Span::raw("  "),
             Span::styled(
                 "detail=PgUp/PgDn Home  clear=x curate=c reindex=i reembed=e archive=a delete=D",
+                Style::default().fg(Theme::MUTED),
+            ),
+        ],
+        TabKind::Agents => vec![
+            accent_span("auto-refresh "),
+            Span::styled("2s  ", Style::default().fg(Theme::TEXT)),
+            accent_span("select "),
+            Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+            accent_span("detail "),
+            Span::styled("PgUp/PgDn Home  ", Style::default().fg(Theme::TEXT)),
+            Span::styled(
+                "read-only agent/session monitor inspired by abtop",
                 Style::default().fg(Theme::MUTED),
             ),
         ],
@@ -1589,6 +1706,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     match app.active_tab {
         TabKind::Resume => draw_resume_tab(frame, app, chunks[2]),
         TabKind::Memories => draw_memories_tab(frame, app, chunks[2]),
+        TabKind::Agents => draw_agents_tab(frame, app, chunks[2]),
         TabKind::Query => draw_query_tab(frame, app, chunks[2]),
         TabKind::Activity => draw_activity_tab(frame, app, chunks[2]),
         TabKind::Project => draw_project_tab(frame, app, chunks[2]),
@@ -1857,6 +1975,90 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .scroll((app.memory_detail_scroll, 0))
         .wrap(Wrap { trim: false })
         .block(themed_block("Detail"));
+    frame.render_widget(detail, chunks[1]);
+}
+
+fn draw_agents_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
+        .split(area);
+
+    if app.agent_loading && app.agent_snapshot.is_none() {
+        frame.render_widget(
+            Paragraph::new("Loading agent sessions...")
+                .style(Style::default().fg(Theme::ACCENT).bg(Theme::PANEL_ALT))
+                .block(themed_block("Agents")),
+            area,
+        );
+        return;
+    }
+
+    if let Some(error) = &app.agent_error {
+        if app.agent_snapshot.is_none() {
+            frame.render_widget(
+                Paragraph::new(format!("Agents unavailable: {error}"))
+                    .style(Style::default().fg(Theme::WARNING).bg(Theme::PANEL_ALT))
+                    .wrap(Wrap { trim: false })
+                    .block(themed_block("Agents")),
+                area,
+            );
+            return;
+        }
+    }
+
+    let Some(snapshot) = &app.agent_snapshot else {
+        frame.render_widget(
+            Paragraph::new("No agent data available yet.")
+                .style(Style::default().fg(Theme::MUTED).bg(Theme::PANEL_ALT))
+                .block(themed_block("Agents")),
+            area,
+        );
+        return;
+    };
+
+    let header = Row::new(["Project", "Agent", "Status", "Tok", "Ctx", "Task"]).style(
+        Style::default()
+            .fg(Theme::ACCENT_STRONG)
+            .bg(Theme::PANEL_ALT)
+            .add_modifier(Modifier::BOLD),
+    );
+    let rows = snapshot.sessions.iter().map(agent_row);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(20),
+            Constraint::Length(7),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(7),
+            Constraint::Percentage(100),
+        ],
+    )
+    .column_spacing(1)
+    .header(header)
+    .row_highlight_style(
+        Style::default()
+            .fg(Theme::SELECTION_FG)
+            .bg(Theme::SELECTION_BG)
+            .add_modifier(Modifier::BOLD),
+    )
+    .block(themed_block(format!(
+        "Agents ({} sessions, {} orphan ports)",
+        snapshot.sessions.len(),
+        snapshot.orphan_ports.len()
+    )));
+    let mut state = app.agent_table_state.clone();
+    frame.render_stateful_widget(table, chunks[0], &mut state);
+
+    let detail = Paragraph::new(agent_detail_lines(app, snapshot))
+        .scroll((app.agent_detail_scroll, 0))
+        .wrap(Wrap { trim: false })
+        .style(Style::default().bg(Theme::PANEL))
+        .block(themed_block(format!(
+            "Agent Detail (scroll {})",
+            app.agent_detail_scroll
+        )));
     frame.render_widget(detail, chunks[1]);
 }
 
@@ -2996,6 +3198,32 @@ fn memory_row(item: &ProjectMemoryListItem) -> Row<'static> {
     .style(row_style)
 }
 
+fn agent_row(session: &AgentSession) -> Row<'static> {
+    Row::new(vec![
+        Cell::from(Span::styled(
+            session.project_name.clone(),
+            Style::default().fg(Theme::TEXT),
+        )),
+        Cell::from(Span::styled(
+            session.agent_cli.to_string(),
+            Style::default().fg(Theme::ACCENT),
+        )),
+        Cell::from(agent_status_span(&session.status)),
+        Cell::from(Span::styled(
+            format_token_count(session.total_tokens()),
+            Style::default().fg(Theme::TEXT),
+        )),
+        Cell::from(Span::styled(
+            format!("{:.0}%", session.context_percent),
+            context_percent_style(session.context_percent),
+        )),
+        Cell::from(Span::styled(
+            agent_task_summary(session),
+            Style::default().fg(Theme::TEXT),
+        )),
+    ])
+}
+
 fn query_row(item: &QueryResult) -> Row<'static> {
     Row::new(vec![
         Cell::from(Span::styled(
@@ -3023,6 +3251,144 @@ fn activity_row(item: &ActivityEntry) -> Row<'static> {
             Style::default().fg(Theme::TEXT),
         )),
     ])
+}
+
+fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(vec![
+            label_span("Collected: "),
+            Span::styled(
+                format_timestamp_short(snapshot.collected_at),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Sessions: "),
+            Span::styled(
+                snapshot.sessions.len().to_string(),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Orphan ports: "),
+            Span::styled(
+                snapshot.orphan_ports.len().to_string(),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+    ];
+
+    if !snapshot.rate_limits.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("Rate Limits")]));
+        for rate_limit in &snapshot.rate_limits {
+            lines.push(Line::from(Span::styled(
+                format_rate_limit(rate_limit),
+                Style::default().fg(Theme::TEXT),
+            )));
+        }
+    }
+
+    if !snapshot.orphan_ports.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("Open Orphan Ports")]));
+        for orphan in snapshot.orphan_ports.iter().take(6) {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "- {}:{}  {}",
+                    orphan.project_name, orphan.port, orphan.command
+                ),
+                Style::default().fg(Theme::WARNING),
+            )));
+        }
+    }
+
+    let Some(session) = snapshot.sessions.get(app.agent_selected_index) else {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "No agent sessions are currently visible.",
+            Style::default().fg(Theme::MUTED),
+        )));
+        return lines;
+    };
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![section_span("Selected Session")]));
+    lines.push(Line::from(vec![
+        label_span("Project: "),
+        Span::styled(session.project_name.clone(), Style::default().fg(Theme::TEXT)),
+        Span::raw("   "),
+        label_span("Agent: "),
+        Span::styled(session.agent_cli.to_string(), Style::default().fg(Theme::TEXT)),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("Status: "),
+        agent_status_span(&session.status),
+        Span::raw("   "),
+        label_span("PID: "),
+        Span::styled(session.pid.to_string(), Style::default().fg(Theme::TEXT)),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("Model: "),
+        Span::styled(session.model.clone(), Style::default().fg(Theme::TEXT)),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("Session: "),
+        Span::styled(session.session_id.clone(), Style::default().fg(Theme::TEXT)),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("CWD: "),
+        Span::styled(session.cwd.clone(), Style::default().fg(Theme::TEXT)),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("Started: "),
+        Span::styled(
+            format_elapsed_from_started(session.started_at),
+            Style::default().fg(Theme::TEXT),
+        ),
+        Span::raw("   "),
+        label_span("Version: "),
+        Span::styled(session.version.clone(), Style::default().fg(Theme::TEXT)),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("Context: "),
+        Span::styled(
+            format!("{:.1}%", session.context_percent),
+            context_percent_style(session.context_percent),
+        ),
+        Span::raw("   "),
+        label_span("Tokens: "),
+        Span::styled(
+            format_token_count(session.total_tokens()),
+            Style::default().fg(Theme::TEXT),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("Git: "),
+        Span::styled(
+            format!(
+                "{}  +{} ~{}",
+                session.git_branch, session.git_added, session.git_modified
+            ),
+            Style::default().fg(Theme::TEXT),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        label_span("Task: "),
+        Span::styled(agent_task_summary(session), Style::default().fg(Theme::TEXT)),
+    ]));
+
+    if !session.children.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("Child Processes")]));
+        for child in session.children.iter().take(8) {
+            lines.push(Line::from(Span::styled(
+                format_agent_child(child),
+                Style::default().fg(Theme::TEXT),
+            )));
+        }
+    }
+
+    lines
 }
 
 fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
@@ -3980,6 +4346,98 @@ fn memory_type_span_from_label(label: &str) -> Span<'static> {
         label.to_string(),
         Style::default().fg(color).add_modifier(Modifier::BOLD),
     )
+}
+
+fn agent_status_span(status: &AgentSessionStatus) -> Span<'static> {
+    let (label, color) = match status {
+        AgentSessionStatus::Working => ("working", Theme::SUCCESS),
+        AgentSessionStatus::Waiting => ("waiting", Theme::WARNING),
+        AgentSessionStatus::Done => ("done", Theme::MUTED),
+    };
+    Span::styled(
+        label.to_string(),
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn context_percent_style(percent: f64) -> Style {
+    let color = if percent >= 90.0 {
+        Theme::DANGER
+    } else if percent >= 70.0 {
+        Theme::WARNING
+    } else {
+        Theme::SUCCESS
+    };
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
+}
+
+fn format_token_count(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}k", tokens as f64 / 1_000.0)
+    } else {
+        tokens.to_string()
+    }
+}
+
+fn agent_task_summary(session: &AgentSession) -> String {
+    if let Some(task) = session.current_tasks.first() {
+        task.clone()
+    } else if !session.initial_prompt.is_empty() {
+        session.initial_prompt.clone()
+    } else if !session.first_assistant_text.is_empty() {
+        session.first_assistant_text.clone()
+    } else {
+        "no current task".to_string()
+    }
+}
+
+fn format_agent_child(child: &AgentChildProcess) -> String {
+    match child.port {
+        Some(port) => format!(
+            "- {}  {}  {}  :{}",
+            child.pid,
+            child.command,
+            format_token_count(child.mem_kb / 1024),
+            port
+        ),
+        None => format!(
+            "- {}  {}  {}",
+            child.pid,
+            child.command,
+            format_token_count(child.mem_kb / 1024)
+        ),
+    }
+}
+
+fn format_rate_limit(rate_limit: &AgentRateLimitInfo) -> String {
+    let five_hour = rate_limit
+        .five_hour_pct
+        .map(|value| format!("5h {:.0}%", value))
+        .unwrap_or_else(|| "5h n/a".to_string());
+    let seven_day = rate_limit
+        .seven_day_pct
+        .map(|value| format!("7d {:.0}%", value))
+        .unwrap_or_else(|| "7d n/a".to_string());
+    format!("{}  {}  {}", rate_limit.source, five_hour, seven_day)
+}
+
+fn format_elapsed_from_started(started_at: u64) -> String {
+    if started_at == 0 {
+        return "n/a".to_string();
+    }
+    let Some(started_at) = DateTime::<Utc>::from_timestamp_millis(started_at as i64) else {
+        return "n/a".to_string();
+    };
+    let elapsed = Utc::now().signed_duration_since(started_at);
+    if elapsed.num_seconds() < 60 {
+        format!("{}s", elapsed.num_seconds().max(0))
+    } else if elapsed.num_minutes() < 60 {
+        format!("{}m", elapsed.num_minutes().max(0))
+    } else {
+        format!("{}h {}m", elapsed.num_hours().max(0), elapsed.num_minutes().max(0) % 60)
+    }
 }
 
 fn confidence_style(confidence: f32) -> Style {
