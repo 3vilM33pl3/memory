@@ -57,7 +57,7 @@ The important change is that the bundle is no longer centered on one broad skill
 
 The repo-local skill bundle now uses one shared Go helper:
 
-- `go run ./.agents/skills/memory-layer/scripts <command> ...`
+- `go run ./.agents/skills/memory-layer/scripts/main.go <command> ...`
 
 The supported helper commands are:
 

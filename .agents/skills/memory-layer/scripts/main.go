@@ -79,7 +79,7 @@ func run(args []string) int {
 }
 
 func printUsage(out *os.File) {
-	fmt.Fprintln(out, "Usage: go run ./.agents/skills/memory-layer/scripts <command> [args]")
+	fmt.Fprintln(out, "Usage: go run ./.agents/skills/memory-layer/scripts/main.go <command> [args]")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Commands:")
 	fmt.Fprintln(out, "  query-memory <question> [project-slug]")

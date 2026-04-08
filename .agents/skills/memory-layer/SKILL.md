@@ -63,7 +63,7 @@ The focused skills call into those shared scripts instead of duplicating them.
 
 The shared helper is now Go-based:
 
-- run helpers with `go run ./.agents/skills/memory-layer/scripts <command> ...`
+- run helpers with `go run ./.agents/skills/memory-layer/scripts/main.go <command> ...`
 - `go` must be available on `PATH`
 
 ## Model Routing

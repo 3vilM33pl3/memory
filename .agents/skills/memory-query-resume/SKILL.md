@@ -21,13 +21,13 @@ Do not use this skill for:
 Query curated project memory:
 
 ```bash
-go run ./.agents/skills/memory-layer/scripts query-memory "<question>"
+go run ./.agents/skills/memory-layer/scripts/main.go query-memory "<question>"
 ```
 
 Resume a project after an interruption:
 
 ```bash
-go run ./.agents/skills/memory-layer/scripts resume-project [project-slug]
+go run ./.agents/skills/memory-layer/scripts/main.go resume-project [project-slug]
 ```
 
 ## Workflow

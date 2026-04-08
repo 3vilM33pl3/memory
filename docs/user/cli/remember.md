@@ -25,7 +25,7 @@ Use `remember` for:
 This is the normal direct write command for users. Agents often use the higher-level repo-local helper through:
 
 ```bash
-go run ./.agents/skills/memory-layer/scripts remember-task ...
+go run ./.agents/skills/memory-layer/scripts/main.go remember-task ...
 ```
 
 That helper ultimately drives the same write path.

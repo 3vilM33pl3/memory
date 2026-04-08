@@ -20,7 +20,7 @@ Do not use this skill for:
 Remember task context automatically:
 
 ```bash
-go run ./.agents/skills/memory-layer/scripts remember-task \
+go run ./.agents/skills/memory-layer/scripts/main.go remember-task \
   --title "<task title>" \
   --prompt "<user prompt>" \
   --summary "<what changed>" \

@@ -40,17 +40,17 @@ Do not use this skill for:
 
 ### Query memory
 ```bash
-go run ./.agents/skills/memory-layer/scripts query-memory "<question>"
+go run ./.agents/skills/memory-layer/scripts/main.go query-memory "<question>"
 ```
 
 ### Capture completed task
 ```bash
-go run ./.agents/skills/memory-layer/scripts capture-task <payload.json>
+go run ./.agents/skills/memory-layer/scripts/main.go capture-task <payload.json>
 ```
 
 ### Curate memory
 ```bash
-go run ./.agents/skills/memory-layer/scripts curate-memory
+go run ./.agents/skills/memory-layer/scripts/main.go curate-memory
 ```
 
 This illustrative example also assumes `go` is available on `PATH`, because the shared helper in `scripts/` is Go-based.

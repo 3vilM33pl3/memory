@@ -77,7 +77,7 @@ func run(args []string) int {
 }
 
 func printUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: go run ./.agents/skills/memory-layer/scripts <query-memory|capture-task|curate-memory> [args]")
+	fmt.Fprintln(os.Stderr, "Usage: go run ./.agents/skills/memory-layer/scripts/main.go <query-memory|capture-task|curate-memory> [args]")
 }
 
 func resolveCommand() ([]string, error) {

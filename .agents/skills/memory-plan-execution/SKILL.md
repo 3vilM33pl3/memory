@@ -20,7 +20,7 @@ Do not use this skill for:
 Save the approved plan and checkpoint together:
 
 ```bash
-go run ./.agents/skills/memory-layer/scripts start-plan-execution \
+go run ./.agents/skills/memory-layer/scripts/main.go start-plan-execution \
   --project <project-slug> \
   --plan-file /tmp/approved-plan.md
 ```
@@ -28,14 +28,14 @@ go run ./.agents/skills/memory-layer/scripts start-plan-execution \
 Verify the approved plan is fully executed:
 
 ```bash
-go run ./.agents/skills/memory-layer/scripts finish-plan-execution \
+go run ./.agents/skills/memory-layer/scripts/main.go finish-plan-execution \
   --project <project-slug>
 ```
 
 Optional explicit checkpoint-only helper:
 
 ```bash
-go run ./.agents/skills/memory-layer/scripts checkpoint-project \
+go run ./.agents/skills/memory-layer/scripts/main.go checkpoint-project \
   --project <project-slug> \
   --note "Plan approved; starting implementation"
 ```
