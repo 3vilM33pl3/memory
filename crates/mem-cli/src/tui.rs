@@ -12,7 +12,7 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use mem_agenttop::{
-    AgentSession, AgentSnapshot, ChildProcess as AgentChildProcess, RateLimitInfo as AgentRateLimitInfo,
+    AgentSession, AgentSnapshot, ChildProcess as AgentChildProcess,
     SessionStatus as AgentSessionStatus,
 };
 use mem_api::{
@@ -3281,10 +3281,26 @@ fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>>
         lines.push(Line::from(""));
         lines.push(Line::from(vec![section_span("Rate Limits")]));
         for rate_limit in &snapshot.rate_limits {
-            lines.push(Line::from(Span::styled(
-                format_rate_limit(rate_limit),
-                Style::default().fg(Theme::TEXT),
-            )));
+            lines.push(Line::from(vec![
+                label_span("Source: "),
+                Span::styled(rate_limit.source.clone(), Style::default().fg(Theme::TEXT)),
+            ]));
+            if let Some(percent) = rate_limit.five_hour_pct {
+                lines.push(usage_bar_line(
+                    "5h",
+                    percent,
+                    20,
+                    rate_limit_reset_label(rate_limit.five_hour_resets_at),
+                ));
+            }
+            if let Some(percent) = rate_limit.seven_day_pct {
+                lines.push(usage_bar_line(
+                    "7d",
+                    percent,
+                    20,
+                    rate_limit_reset_label(rate_limit.seven_day_resets_at),
+                ));
+            }
         }
     }
 
@@ -3362,6 +3378,7 @@ fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>>
             Style::default().fg(Theme::TEXT),
         ),
     ]));
+    lines.push(usage_bar_line("Ctx", session.context_percent, 20, None));
     lines.push(Line::from(vec![
         label_span("Git: "),
         Span::styled(
@@ -4379,6 +4396,55 @@ fn format_context_percent(percent: f64) -> String {
     }
 }
 
+fn normalized_percent(percent: f64) -> f64 {
+    if !percent.is_finite() {
+        0.0
+    } else {
+        percent.clamp(0.0, 100.0)
+    }
+}
+
+fn filled_bar_cells(percent: f64, width: usize) -> usize {
+    let width = width.max(1);
+    let normalized = normalized_percent(percent);
+    ((normalized / 100.0) * width as f64).round() as usize
+}
+
+fn usage_bar_line(
+    label: &str,
+    percent: f64,
+    width: usize,
+    suffix: Option<String>,
+) -> Line<'static> {
+    let width = width.max(1);
+    let filled = filled_bar_cells(percent, width).min(width);
+    let empty = width.saturating_sub(filled);
+    let style = context_percent_style(percent);
+    let mut spans = vec![
+        label_span(&format!("{label}: ")),
+        Span::styled("█".repeat(filled), style),
+        Span::styled("░".repeat(empty), Style::default().fg(Theme::BORDER)),
+        Span::raw(" "),
+        Span::styled(format_context_percent(percent), style),
+    ];
+    if let Some(suffix) = suffix {
+        spans.push(Span::raw("   "));
+        spans.push(Span::styled(suffix, Style::default().fg(Theme::MUTED)));
+    }
+    Line::from(spans)
+}
+
+fn rate_limit_reset_label(resets_at: Option<u64>) -> Option<String> {
+    resets_at.map(|resets_at| format!("resets {}", format_epoch_reset_time(resets_at)))
+}
+
+fn format_epoch_reset_time(epoch_seconds: u64) -> String {
+    let Some(timestamp) = DateTime::<Utc>::from_timestamp(epoch_seconds as i64, 0) else {
+        return "n/a".to_string();
+    };
+    format_timestamp_short(timestamp)
+}
+
 fn format_token_count(tokens: u64) -> String {
     if tokens >= 1_000_000 {
         format!("{:.1}M", tokens as f64 / 1_000_000.0)
@@ -4417,18 +4483,6 @@ fn format_agent_child(child: &AgentChildProcess) -> String {
             format_token_count(child.mem_kb / 1024)
         ),
     }
-}
-
-fn format_rate_limit(rate_limit: &AgentRateLimitInfo) -> String {
-    let five_hour = rate_limit
-        .five_hour_pct
-        .map(|value| format!("5h {:.0}%", value))
-        .unwrap_or_else(|| "5h n/a".to_string());
-    let seven_day = rate_limit
-        .seven_day_pct
-        .map(|value| format!("7d {:.0}%", value))
-        .unwrap_or_else(|| "7d n/a".to_string());
-    format!("{}  {}  {}", rate_limit.source, five_hour, seven_day)
 }
 
 fn format_elapsed_from_started(started_at: u64) -> String {
@@ -4561,10 +4615,11 @@ mod tests {
     use chrono::{Local, TimeZone, Utc};
 
     use super::{
-        App, ToolVersions, UiStatus, empty_overview, format_context_percent, format_timestamp,
+        App, ToolVersions, UiStatus, empty_overview, filled_bar_cells,
+        format_context_percent, format_epoch_reset_time, format_timestamp,
         format_timestamp_full, format_timestamp_medium, format_timestamp_short,
-        format_timestamp_timeline, service_status_label, should_attempt_stream_reconnect,
-        watcher_bar_status_label,
+        format_timestamp_timeline, normalized_percent, service_status_label,
+        should_attempt_stream_reconnect, watcher_bar_status_label,
     };
     use mem_api::WatcherPresenceSummary;
     use std::path::PathBuf;
@@ -4637,5 +4692,22 @@ mod tests {
         assert_eq!(format_context_percent(68.4), "68%");
         assert_eq!(format_context_percent(100.0), "100%");
         assert_eq!(format_context_percent(182.3), "100%+");
+    }
+
+    #[test]
+    fn bar_helpers_normalize_and_cap_percentages() {
+        assert_eq!(normalized_percent(-10.0), 0.0);
+        assert_eq!(normalized_percent(42.5), 42.5);
+        assert_eq!(normalized_percent(182.3), 100.0);
+        assert_eq!(filled_bar_cells(0.0, 20), 0);
+        assert_eq!(filled_bar_cells(50.0, 20), 10);
+        assert_eq!(filled_bar_cells(182.3, 20), 20);
+    }
+
+    #[test]
+    fn epoch_reset_time_formats_in_local_timezone() {
+        let epoch_seconds = 1_775_352_000_u64;
+        let timestamp = Utc.timestamp_opt(epoch_seconds as i64, 0).unwrap();
+        assert_eq!(format_epoch_reset_time(epoch_seconds), format_timestamp_short(timestamp));
     }
 }
