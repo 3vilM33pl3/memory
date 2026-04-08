@@ -3663,6 +3663,9 @@ async fn enable_backend_service(config_path: &Path) -> Result<String> {
 }
 
 fn start_backend_service_once(config_path: &Path) -> Result<String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = config_path;
+
     #[cfg(target_os = "macos")]
     {
         let plist_path = backend_launch_agent_path()?;
