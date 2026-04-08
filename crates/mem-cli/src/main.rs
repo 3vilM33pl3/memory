@@ -900,6 +900,9 @@ struct CheckpointSaveArgs {
     /// Preview the checkpoint payload without writing it.
     #[arg(long)]
     dry_run: bool,
+    /// Emit the checkpoint result as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1479,21 +1482,47 @@ async fn main() -> Result<()> {
                     if args.dry_run {
                         let (checkpoint, path) =
                             preview_checkpoint(&project, &repo_root, args.note)?;
-                        println!(
-                            "Would save checkpoint for `{project}` to {}\n\n{}",
-                            path.display(),
-                            resume::format_checkpoint(&checkpoint)
-                        );
+                        if args.json {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&serde_json::json!({
+                                    "checkpoint": {
+                                        "path": path.display().to_string(),
+                                        "data": checkpoint,
+                                    },
+                                    "dry_run": true,
+                                }))?
+                            );
+                        } else {
+                            println!(
+                                "Would save checkpoint for `{project}` to {}\n\n{}",
+                                path.display(),
+                                resume::format_checkpoint(&checkpoint)
+                            );
+                        }
                     } else {
                         let api = ApiClient::new(client.clone(), config.clone());
                         let (checkpoint, path) =
                             save_checkpoint_with_activity(&api, &project, &repo_root, args.note)
                                 .await?;
-                        println!(
-                            "Saved checkpoint for `{project}` to {}\n\n{}",
-                            path.display(),
-                            resume::format_checkpoint(&checkpoint)
-                        );
+                        if args.json {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&serde_json::json!({
+                                    "checkpoint": {
+                                        "path": path.display().to_string(),
+                                        "data": checkpoint,
+                                    },
+                                    "dry_run": false,
+                                }))?
+                            );
+                        } else {
+                            println!(
+                                "Saved checkpoint for `{project}` to {}\n\n{}",
+                                path.display(),
+                                resume::format_checkpoint(&checkpoint)
+                            );
+                        }
                     }
                 }
                 CheckpointCommand::Show(args) => {
