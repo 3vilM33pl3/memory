@@ -244,6 +244,10 @@ def main() -> int:
         screenshots["overview.png"] = memories
         screenshots["memories-tab.png"] = memories
 
+        send_keys(tui_session, "Tab")
+        sleep_for(0.6)
+        screenshots["agents-tab.png"] = capture_pane(tui_session)
+
         send_keys(tui_session, "?")
         sleep_for(0.3)
         send_keys(tui_session, QUERY_TEXT, literal=True)
@@ -254,10 +258,6 @@ def main() -> int:
         send_keys(tui_session, "Tab")
         sleep_for(0.6)
         screenshots["activity-tab.png"] = capture_pane(tui_session)
-
-        send_keys(tui_session, "Tab")
-        sleep_for(0.6)
-        screenshots["agents-tab.png"] = capture_pane(tui_session)
 
         send_keys(tui_session, "Tab")
         sleep_for(0.6)
