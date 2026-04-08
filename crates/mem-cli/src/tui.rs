@@ -176,6 +176,7 @@ struct App {
     agent_selected_index: usize,
     agent_table_state: TableState,
     agent_detail_scroll: u16,
+    agent_initial_selection_done: bool,
     resume_response: Option<ResumeResponse>,
     resume_loading: bool,
     resume_loaded: bool,
@@ -289,6 +290,7 @@ impl App {
             agent_selected_index: 0,
             agent_table_state,
             agent_detail_scroll: 0,
+            agent_initial_selection_done: false,
             resume_response: None,
             resume_loading: false,
             resume_loaded: false,
@@ -527,8 +529,22 @@ impl App {
                         self.agent_selected_index = 0;
                         self.agent_table_state.select(None);
                     } else {
-                        self.agent_selected_index =
-                            self.agent_selected_index.min(session_count.saturating_sub(1));
+                        if !self.agent_initial_selection_done {
+                            self.agent_selected_index = self
+                                .agent_snapshot
+                                .as_ref()
+                                .and_then(|snapshot| {
+                                    snapshot
+                                        .sessions
+                                        .iter()
+                                        .position(|session| session.project_name == self.project)
+                                })
+                                .unwrap_or(0);
+                            self.agent_initial_selection_done = true;
+                        } else {
+                            self.agent_selected_index =
+                                self.agent_selected_index.min(session_count.saturating_sub(1));
+                        }
                         self.agent_table_state
                             .select(Some(self.agent_selected_index));
                     }
@@ -4683,12 +4699,14 @@ mod tests {
     use chrono::{Local, TimeZone, Utc};
 
     use super::{
-        App, Theme, ToolVersions, UiStatus, context_gradient_color, empty_overview, filled_bar_cells,
-        format_context_percent, format_epoch_reset_time, format_timestamp,
-        format_timestamp_full, format_timestamp_medium, format_timestamp_short,
-        format_timestamp_timeline, normalized_percent, remaining_bar_cells,
-        service_status_label, should_attempt_stream_reconnect, watcher_bar_status_label,
+        AgentSnapshot, App, BackgroundEvent, Theme, ToolVersions, UiStatus,
+        context_gradient_color, empty_overview, filled_bar_cells, format_context_percent,
+        format_epoch_reset_time, format_timestamp, format_timestamp_full, format_timestamp_medium,
+        format_timestamp_short, format_timestamp_timeline, normalized_percent,
+        remaining_bar_cells, service_status_label, should_attempt_stream_reconnect,
+        watcher_bar_status_label,
     };
+    use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::WatcherPresenceSummary;
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
@@ -4786,5 +4804,99 @@ mod tests {
     fn context_gradient_spans_success_to_danger() {
         assert_eq!(context_gradient_color(0.0), Theme::SUCCESS);
         assert_eq!(context_gradient_color(100.0), Theme::DANGER);
+    }
+
+    fn test_agent_session(project_name: &str, session_id: &str) -> AgentSession {
+        AgentSession {
+            agent_cli: "codex",
+            pid: 123,
+            session_id: session_id.to_string(),
+            cwd: format!("/tmp/{project_name}"),
+            project_name: project_name.to_string(),
+            started_at: 0,
+            status: AgentSessionStatus::Waiting,
+            model: "gpt-5.4".to_string(),
+            context_percent: 42.0,
+            total_input_tokens: 100,
+            total_output_tokens: 20,
+            total_cache_read: 0,
+            total_cache_create: 0,
+            turn_count: 1,
+            current_tasks: vec!["waiting for input".to_string()],
+            mem_mb: 128,
+            version: "0.4.3".to_string(),
+            git_branch: "main".to_string(),
+            git_added: 0,
+            git_modified: 0,
+            token_history: vec![],
+            subagents: vec![],
+            mem_file_count: 0,
+            mem_line_count: 0,
+            children: vec![],
+            initial_prompt: String::new(),
+            first_assistant_text: String::new(),
+        }
+    }
+
+    #[test]
+    fn agents_tab_initial_selection_prefers_current_project() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.4.3".to_string(),
+                mem_service: "0.4.3".to_string(),
+                memory_watch: "0.4.3".to_string(),
+            },
+            tx,
+        );
+        let snapshot = AgentSnapshot {
+            collected_at: Utc::now(),
+            sessions: vec![
+                test_agent_session("other-project", "session-a"),
+                test_agent_session("memory", "session-b"),
+            ],
+            orphan_ports: vec![],
+            rate_limits: vec![],
+        };
+
+        app.apply_background_event(BackgroundEvent::AgentsLoaded {
+            snapshot: Ok(snapshot),
+        });
+
+        assert_eq!(app.agent_selected_index, 1);
+        assert_eq!(app.agent_table_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn agents_tab_initial_selection_falls_back_to_first_row_without_match() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.4.3".to_string(),
+                mem_service: "0.4.3".to_string(),
+                memory_watch: "0.4.3".to_string(),
+            },
+            tx,
+        );
+        let snapshot = AgentSnapshot {
+            collected_at: Utc::now(),
+            sessions: vec![
+                test_agent_session("alpha", "session-a"),
+                test_agent_session("beta", "session-b"),
+            ],
+            orphan_ports: vec![],
+            rate_limits: vec![],
+        };
+
+        app.apply_background_event(BackgroundEvent::AgentsLoaded {
+            snapshot: Ok(snapshot),
+        });
+
+        assert_eq!(app.agent_selected_index, 0);
+        assert_eq!(app.agent_table_state.selected(), Some(0));
     }
 }
