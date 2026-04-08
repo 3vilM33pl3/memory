@@ -38,13 +38,16 @@ The architecture is split into five parts:
 
 ### Skill
 
-The repo-local skill in `.agents/skills/memory-layer/` tells Codex when to:
+The repo-local Memory Layer skill bundle in `.agents/skills/` tells Codex when to:
 - query memory before answering project-specific questions
+- resume after interruptions
+- save approved plans before execution
+- verify plan-backed work before claiming completion
 - remember meaningful work
-- curate durable project knowledge
 
-This skill is the main driver for coding agent interaction with Memory Layer. In practice, the
-skill workflow decides when the agent should use memory, while the helper scripts in
+The umbrella skill lives in `.agents/skills/memory-layer/`, and the focused skills live beside it.
+The bundle is the main driver for coding agent interaction with Memory Layer. In practice, the
+skill workflow decides when the agent should use memory, while the shared helper scripts in
 `.agents/skills/memory-layer/scripts/` are the execution path that actually calls `memory`.
 
 For the detailed runtime model of skill discovery, selection, and template bootstrapping, use

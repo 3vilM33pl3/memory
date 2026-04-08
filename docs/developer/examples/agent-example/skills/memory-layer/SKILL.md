@@ -5,7 +5,7 @@ description: Query project memory before answering project-specific questions; c
 
 # Memory Layer Skill
 
-This is an example skill for integration reference. The canonical live skill for this repository is:
+This is an illustrative single-skill example for integration reference. The canonical live setup for this repository is now a Memory Layer skill bundle under `.agents/skills/`, with the umbrella skill at:
 
 - [`.agents/skills/memory-layer/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-layer/SKILL.md)
 

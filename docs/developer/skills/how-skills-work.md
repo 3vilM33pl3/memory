@@ -79,8 +79,8 @@ In practice, changes to the live repo-local `SKILL.md` are picked up the next ti
 
 `memory` does:
 
-- initialize a repo-local skill directory during bootstrap
-- copy the packaged or repo-local `skill-template` into `.agents/skills/memory-layer/`
+- initialize a repo-local memory skill bundle during bootstrap
+- copy the packaged or repo-local `skill-template` into `.agents/skills/`
 - provide the command surface the skill scripts call
 
 `memory` does not:
@@ -90,40 +90,45 @@ In practice, changes to the live repo-local `SKILL.md` are picked up the next ti
 
 ## Canonical Skill vs Template vs Example
 
-There are three important skill copies in this repository:
+There are three important memory-skill copies in this repository:
 
-1. canonical live skill
-   - `.agents/skills/memory-layer/`
-   - this is the repo-local skill the agent uses in this repository
+1. canonical live skill bundle
+   - `.agents/skills/`
+   - the umbrella skill is `.agents/skills/memory-layer/`
+   - the focused skills are:
+     - `.agents/skills/memory-query-resume/`
+     - `.agents/skills/memory-plan-execution/`
+     - `.agents/skills/memory-remember/`
+   - this bundle is what the agent uses in this repository
 2. packaged template
    - installed as `skill-template`
-   - used by `memory init` / `memory wizard` to copy the skill into a repo
+   - used by `memory init` / `memory wizard` to copy the bundled skills into a repo
 3. developer example skill
    - `docs/developer/examples/agent-example/skills/memory-layer/`
    - useful as a reference, but not the canonical current live skill
 
-When these drift, the live repo-local skill should be treated as authoritative.
+When these drift, the live repo-local bundle should be treated as authoritative.
 
 ## Bootstrap And Packaging
 
 During repo bootstrap, `memory` copies the skill template into:
 
-- `.agents/skills/memory-layer/`
+- `.agents/skills/`
 
 The relevant logic lives in `crates/mem-cli/src/main.rs`:
 
 - `discover_skill_template_dir()`
-- `copy_skill_template()`
+- `sync_memory_skill_bundle()`
 
 The template is discovered from installed locations such as:
 
 - `/usr/share/memory-layer/skill-template`
 - local data directories
-- or, during source/dev use, the repo-local `.agents/skills/memory-layer/`
+- or, during source/dev use, the repo-local `.agents/skills/`
 
 This is why the same skill can exist in three forms:
 
-- live repo-local copy
+- live repo-local bundle
 - installed template copy
 - documentation/example copy
 

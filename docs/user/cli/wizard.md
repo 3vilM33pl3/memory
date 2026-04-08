@@ -25,7 +25,7 @@ If you leave `writer.id` unset, Memory Layer derives a stable writer identity au
 - `.mem/config.toml`
 - `.mem/project.toml`
 - `.agents/memory-layer.toml`
-- `.agents/skills/memory-layer/`
+- `.agents/skills/`
 
 Inside a repository, the wizard defaults to repo-local scope unless you explicitly choose shared/global setup.
 
@@ -35,9 +35,9 @@ At repo scope, the wizard creates:
 
 - `.mem/` runtime and repo-local config files
 - `.agents/memory-layer.toml`
-- a repo-local copy of the Memory Layer skill
+- a repo-local copy of the Memory Layer skill bundle
 
-The skill copy is created from the packaged `skill-template`, or from the repo-local template during source/dev usage.
+The bundled skills are created from the packaged `skill-template`, or from the repo-local template during source/dev usage.
 
 ## Typical Usage
 
