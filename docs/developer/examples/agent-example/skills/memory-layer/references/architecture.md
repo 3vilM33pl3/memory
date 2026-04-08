@@ -51,7 +51,7 @@ A repo-local Skill in `.agents/skills/memory-layer/` tells Codex when to:
 - capture task context after meaningful work
 - curate raw captures into durable memory
 
-The Skill calls local scripts, which in turn invoke the CLI.
+The Skill calls a local helper, which in turn invokes the CLI. In the current repo-local bundle that helper is Go-based and runs through `go run`.
 
 #### 2. CLI (`memory`)
 A Rust CLI that acts as the user and agent entrypoint.
@@ -170,9 +170,8 @@ memory-layer/
         agents/
           openai.yaml
         scripts/
-          query-memory.sh
-          capture-task.sh
-          curate-memory.sh
+          go.mod
+          main.go
         references/
           architecture.md
           query-contract.md

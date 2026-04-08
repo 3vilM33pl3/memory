@@ -38,6 +38,7 @@ At repo scope, the wizard creates:
 - a repo-local copy of the Memory Layer skill bundle
 
 The bundled skills are created from the packaged `skill-template`, or from the repo-local template during source/dev usage.
+That repo-local bundle now uses a shared Go helper under `.agents/skills/memory-layer/scripts/`, so `go` must be available on `PATH` anywhere you expect the repo-local skills to run.
 
 ## Typical Usage
 

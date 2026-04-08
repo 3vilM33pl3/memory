@@ -22,7 +22,13 @@ Use `remember` for:
 - environment facts that will matter later
 - verified task outcomes worth keeping
 
-This is the normal direct write command for users. Agents often use the higher-level `remember-task.sh` helper, which ultimately drives the same write path.
+This is the normal direct write command for users. Agents often use the higher-level repo-local helper through:
+
+```bash
+go run ./.agents/skills/memory-layer/scripts remember-task ...
+```
+
+That helper ultimately drives the same write path.
 
 ## Requirements
 

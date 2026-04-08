@@ -38,7 +38,7 @@ The bundle as a whole tells the agent when to:
 - save the approved plan and checkpoint when a planning phase turns into approved execution
 - remember meaningful completed work automatically
 
-The umbrella skill handles broad or mixed memory turns. The focused skills handle the narrow workflow phases. The helper scripts under `.agents/skills/memory-layer/scripts/` remain the shared execution path that actually calls `memory`.
+The umbrella skill handles broad or mixed memory turns. The focused skills handle the narrow workflow phases. The shared Go helper under `.agents/skills/memory-layer/scripts/` remains the shared execution path that actually calls `memory`.
 
 ## Current Workflow
 
@@ -51,31 +51,32 @@ The current live bundle workflow is:
 5. Prefer insufficient evidence over unsupported conclusions.
 6. Never invent provenance.
 
-The important change is that the bundle is no longer centered on one broad skill or on a manual `memory capture task -> curate-memory` sequence for normal work. The preferred path is now a focused workflow plus `remember-task.sh`, which captures and curates in one step.
+The important change is that the bundle is no longer centered on one broad skill or on a manual `memory capture task -> curate-memory` sequence for normal work. The preferred path is now a focused workflow plus `remember-task`, which captures and curates in one step.
 
-## Helper Scripts
+## Shared Go Helper
 
-The shared scripts are:
+The repo-local skill bundle now uses one shared Go helper:
 
-- `query-memory.sh`
+- `go run ./.agents/skills/memory-layer/scripts <command> ...`
+
+The supported helper commands are:
+
+- `query-memory`
   - query existing curated project memory before answering
-- `resume-project.sh`
+- `resume-project`
   - build a resume briefing from the saved checkpoint and project timeline
-- `checkpoint-project.sh`
+- `checkpoint-project`
   - save a checkpoint explicitly when you want to mark a point in time without storing a plan
-- `start-plan-execution.sh`
+- `start-plan-execution`
   - save the checkpoint and store the full approved execution plan as `plan` memory before implementation starts
-- `finish-plan-execution.sh`
+- `finish-plan-execution`
   - verify that every checkbox item in the active approved plan is complete before the agent can claim the task is finished
-- `remember-task.sh`
+- `remember-task`
   - capture completed work and curate it immediately into durable memory
+- `capture-task`
+- `curate-memory`
 
-Older lower-level scripts still exist in the shared script directory:
-
-- `capture-task.sh`
-- `curate-memory.sh`
-
-Those are still useful as lower-level building blocks, but they are not the main workflow the current live skill pushes agents toward.
+`go` must be available on `PATH` anywhere the repo-local skill bundle is expected to run. That requirement is specific to the skill helper runtime; the `memory` CLI itself is still the underlying command surface.
 
 ## What Changed From The Older Flow
 
@@ -91,7 +92,7 @@ The current skill bundle has moved beyond that. It now also covers:
 - interruption recovery with `resume`
 - plan-to-execution checkpointing with approved-plan capture
 - strict plan-completion verification before the agent may conclude plan-backed work
-- automatic post-task remembering with `remember-task.sh`
+- automatic post-task remembering with `remember-task`
 
 If you are updating other documentation or examples, align them to the live skill instead of treating the older manual capture/curate flow as the default.
 

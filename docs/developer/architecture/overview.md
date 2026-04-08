@@ -47,8 +47,10 @@ The repo-local Memory Layer skill bundle in `.agents/skills/` tells Codex when t
 
 The umbrella skill lives in `.agents/skills/memory-layer/`, and the focused skills live beside it.
 The bundle is the main driver for coding agent interaction with Memory Layer. In practice, the
-skill workflow decides when the agent should use memory, while the shared helper scripts in
-`.agents/skills/memory-layer/scripts/` are the execution path that actually calls `memory`.
+skill workflow decides when the agent should use memory, while the shared Go helper in
+`.agents/skills/memory-layer/scripts/` is the execution path that actually calls `memory`.
+That repo-local helper runs through `go run`, so `go` must be available on `PATH` anywhere the
+skill bundle is expected to execute.
 
 For the detailed runtime model of skill discovery, selection, and template bootstrapping, use
 [How Skills Work](../skills/how-skills-work.md).

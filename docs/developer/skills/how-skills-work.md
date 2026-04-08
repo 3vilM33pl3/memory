@@ -24,13 +24,15 @@ There are three layers:
 
 1. the agent runtime decides whether a skill matches a turn
 2. the selected skill defines the workflow the agent should follow
-3. Memory Layer commands and scripts do the actual work
+3. Memory Layer commands and the shared Go helper do the actual work
 
 The important split is:
 
 - the **agent runtime** selects and reads skills
 - the **skill** tells the agent what to do
 - `memory` does **not** decide whether the agent should use a skill
+
+The current repo-local Memory Layer bundle uses a Go-based helper under `.agents/skills/memory-layer/scripts/`, so `go` must be available on `PATH` for those helper commands to run.
 
 ## Short Description vs `SKILL.md`
 

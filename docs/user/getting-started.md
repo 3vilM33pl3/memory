@@ -27,6 +27,7 @@ Before you install or run the wizard, have these ready:
 - a PostgreSQL connection string
 - optional: an OpenAI-compatible API key if you want `memory scan`
 - PostgreSQL with `pgvector` installed if you want semantic retrieval
+- `go` on `PATH` if you plan to use the repo-local Memory Layer skills through `go run`
 
 You do not need to invent a Memory Layer service token yourself for normal installs. Setup generates a machine-local token automatically in `memory-layer.env`, and local write-capable tools use that token to authenticate to `mem-service`.
 
@@ -58,6 +59,8 @@ cd /path/to/your-project
 ```bash
 memory wizard
 ```
+
+The repo-local skill bundle that `memory wizard` installs uses a shared Go helper under `.agents/skills/memory-layer/scripts/`, so agent-driven skill usage in that repository requires `go` to be available on `PATH`.
 
 6. Start the backend service:
 
@@ -97,6 +100,8 @@ cd /path/to/your-project
 memory wizard
 ```
 
+The repo-local skill bundle that `memory wizard` installs uses a shared Go helper under `.agents/skills/memory-layer/scripts/`, so agent-driven skill usage in that repository requires `go` to be available on `PATH`.
+
 5. Start the backend LaunchAgent:
 
 ```bash
@@ -126,6 +131,7 @@ The wizard can set up:
 - optional LLM settings for `scan`
 - repo-local `.mem/` files
 - optional watcher setup
+- the repo-local memory skill bundle, which uses a shared Go helper under `.agents/skills/memory-layer/scripts/`
 
 Important detail:
 
