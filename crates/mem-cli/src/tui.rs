@@ -3214,7 +3214,7 @@ fn agent_row(session: &AgentSession) -> Row<'static> {
             Style::default().fg(Theme::TEXT),
         )),
         Cell::from(Span::styled(
-            format!("{:.0}%", session.context_percent),
+            format_context_percent(session.context_percent),
             context_percent_style(session.context_percent),
         )),
         Cell::from(Span::styled(
@@ -3352,7 +3352,7 @@ fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>>
     lines.push(Line::from(vec![
         label_span("Context: "),
         Span::styled(
-            format!("{:.1}%", session.context_percent),
+            format_context_percent(session.context_percent),
             context_percent_style(session.context_percent),
         ),
         Span::raw("   "),
@@ -4371,6 +4371,14 @@ fn context_percent_style(percent: f64) -> Style {
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
+fn format_context_percent(percent: f64) -> String {
+    if percent.is_finite() && percent > 100.0 {
+        "100%+".to_string()
+    } else {
+        format!("{percent:.0}%")
+    }
+}
+
 fn format_token_count(tokens: u64) -> String {
     if tokens >= 1_000_000 {
         format!("{:.1}M", tokens as f64 / 1_000_000.0)
@@ -4553,9 +4561,10 @@ mod tests {
     use chrono::{Local, TimeZone, Utc};
 
     use super::{
-        App, ToolVersions, UiStatus, empty_overview, format_timestamp, format_timestamp_full,
-        format_timestamp_medium, format_timestamp_short, format_timestamp_timeline,
-        service_status_label, should_attempt_stream_reconnect, watcher_bar_status_label,
+        App, ToolVersions, UiStatus, empty_overview, format_context_percent, format_timestamp,
+        format_timestamp_full, format_timestamp_medium, format_timestamp_short,
+        format_timestamp_timeline, service_status_label, should_attempt_stream_reconnect,
+        watcher_bar_status_label,
     };
     use mem_api::WatcherPresenceSummary;
     use std::path::PathBuf;
@@ -4621,5 +4630,12 @@ mod tests {
         let overdue = Instant::now() - Duration::from_secs(2);
         assert!(should_attempt_stream_reconnect(false, overdue));
         assert!(!should_attempt_stream_reconnect(true, overdue));
+    }
+
+    #[test]
+    fn context_percent_display_caps_over_budget_sessions() {
+        assert_eq!(format_context_percent(68.4), "68%");
+        assert_eq!(format_context_percent(100.0), "100%");
+        assert_eq!(format_context_percent(182.3), "100%+");
     }
 }
