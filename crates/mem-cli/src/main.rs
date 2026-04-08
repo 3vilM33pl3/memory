@@ -50,11 +50,405 @@ use sha2::{Digest, Sha256};
 use sqlx::{Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
+const ROOT_AFTER_HELP: &str = "\
+Examples:
+  memory wizard --global
+  memory query --project memory --question \"What changed recently?\"
+  memory remember --project memory --note \"Durable fact\"
+
+See also:
+  docs/user/README.md";
+
+const WIZARD_AFTER_HELP: &str = "\
+Examples:
+  memory wizard --global
+  memory wizard
+  memory wizard --project memory --dry-run
+
+See also:
+  docs/user/cli/wizard.md";
+
+const INIT_AFTER_HELP: &str = "\
+Examples:
+  memory init
+  memory init --project memory --dry-run
+  memory init --force
+
+See also:
+  docs/user/cli/init.md";
+
+const SERVICE_GROUP_AFTER_HELP: &str = "\
+Examples:
+  memory service run
+  memory service enable --dry-run
+  memory service status
+
+See also:
+  docs/user/cli/service.md";
+
+const SERVICE_RUN_AFTER_HELP: &str = "\
+Examples:
+  memory service run
+
+See also:
+  docs/user/cli/service.md";
+
+const SERVICE_ENABLE_AFTER_HELP: &str = "\
+Examples:
+  memory service enable
+  memory service enable --dry-run
+
+See also:
+  docs/user/cli/service.md";
+
+const SERVICE_DISABLE_AFTER_HELP: &str = "\
+Examples:
+  memory service disable
+  memory service disable --dry-run
+
+See also:
+  docs/user/cli/service.md";
+
+const SERVICE_STATUS_AFTER_HELP: &str = "\
+Examples:
+  memory service status
+
+See also:
+  docs/user/cli/service.md";
+
+const SERVICE_TOKEN_AFTER_HELP: &str = "\
+Examples:
+  memory service ensure-api-token --shared
+  memory service ensure-api-token --rotate-placeholder --dry-run
+
+See also:
+  docs/user/cli/service.md";
+
+const DOCTOR_AFTER_HELP: &str = "\
+Examples:
+  memory doctor
+  memory doctor --project memory
+  memory doctor --json
+
+See also:
+  docs/user/cli/doctor.md";
+
+const WATCHER_GROUP_AFTER_HELP: &str = "\
+Examples:
+  memory watcher run --project memory
+  memory watcher enable --project memory
+  memory watcher status --project memory
+
+See also:
+  docs/user/cli/watchers.md";
+
+const WATCHER_RUN_AFTER_HELP: &str = "\
+Examples:
+  memory watcher run --project memory
+  memory watcher run --repo-root /path/to/repo
+
+See also:
+  docs/user/cli/watchers.md";
+
+const WATCHER_ENABLE_AFTER_HELP: &str = "\
+Examples:
+  memory watcher enable --project memory
+  memory watcher enable --project memory --dry-run
+
+See also:
+  docs/user/cli/watchers.md";
+
+const WATCHER_DISABLE_AFTER_HELP: &str = "\
+Examples:
+  memory watcher disable --project memory
+  memory watcher disable --project memory --dry-run
+
+See also:
+  docs/user/cli/watchers.md";
+
+const WATCHER_STATUS_AFTER_HELP: &str = "\
+Examples:
+  memory watcher status --project memory
+
+See also:
+  docs/user/cli/watchers.md";
+
+const QUERY_AFTER_HELP: &str = "\
+Examples:
+  memory query --project memory --question \"How does resume work?\"
+  memory query --project memory --question \"What changed?\" --type plan --tag plan
+
+See also:
+  docs/user/cli/query.md";
+
+const COMMITS_GROUP_AFTER_HELP: &str = "\
+Examples:
+  memory commits sync --project memory
+  memory commits list --project memory
+  memory commits show <commit> --project memory
+
+See also:
+  docs/user/cli/commits.md";
+
+const COMMITS_SYNC_AFTER_HELP: &str = "\
+Examples:
+  memory commits sync --project memory
+  memory commits sync --project memory --since 2026-04-01 --dry-run
+
+See also:
+  docs/user/cli/commits.md";
+
+const COMMITS_LIST_AFTER_HELP: &str = "\
+Examples:
+  memory commits list --project memory
+  memory commits list --project memory --limit 50 --json
+
+See also:
+  docs/user/cli/commits.md";
+
+const COMMITS_SHOW_AFTER_HELP: &str = "\
+Examples:
+  memory commits show abc123 --project memory
+
+See also:
+  docs/user/cli/commits.md";
+
+const REPO_GROUP_AFTER_HELP: &str = "\
+Examples:
+  memory repo index --project memory
+  memory repo status --project memory
+
+See also:
+  docs/user/cli/repo.md";
+
+const REPO_INDEX_AFTER_HELP: &str = "\
+Examples:
+  memory repo index --project memory
+  memory repo index --project memory --since 2026-04-01 --dry-run
+
+See also:
+  docs/user/cli/repo.md";
+
+const REPO_STATUS_AFTER_HELP: &str = "\
+Examples:
+  memory repo status --project memory
+  memory repo status --project memory --json
+
+See also:
+  docs/user/cli/repo.md";
+
+const BUNDLE_GROUP_AFTER_HELP: &str = "\
+Examples:
+  memory bundle export --project memory --out /tmp/memory.mlbundle.zip
+  memory bundle import --project memory /tmp/memory.mlbundle.zip --dry-run
+
+See also:
+  docs/user/cli/bundles.md";
+
+const BUNDLE_EXPORT_AFTER_HELP: &str = "\
+Examples:
+  memory bundle export --project memory --out /tmp/memory.mlbundle.zip
+  memory bundle export --project memory --out /tmp/memory.mlbundle.zip --dry-run
+
+See also:
+  docs/user/cli/bundles.md";
+
+const BUNDLE_IMPORT_AFTER_HELP: &str = "\
+Examples:
+  memory bundle import --project memory /tmp/memory.mlbundle.zip
+  memory bundle import --project memory /tmp/memory.mlbundle.zip --dry-run --json
+
+See also:
+  docs/user/cli/bundles.md";
+
+const RESUME_AFTER_HELP: &str = "\
+Examples:
+  memory resume --project memory
+  memory resume --project memory --json
+
+See also:
+  docs/user/cli/resume.md";
+
+const CHECKPOINT_GROUP_AFTER_HELP: &str = "\
+Examples:
+  memory checkpoint save --project memory
+  memory checkpoint start-execution --project memory --plan-file /tmp/plan.md
+  memory checkpoint finish-execution --project memory
+
+See also:
+  docs/user/cli/checkpoint.md";
+
+const CHECKPOINT_SAVE_AFTER_HELP: &str = "\
+Examples:
+  memory checkpoint save --project memory
+  memory checkpoint save --project memory --note \"Waiting on review\" --dry-run
+
+See also:
+  docs/user/cli/checkpoint.md";
+
+const CHECKPOINT_SHOW_AFTER_HELP: &str = "\
+Examples:
+  memory checkpoint show --project memory
+
+See also:
+  docs/user/cli/checkpoint.md";
+
+const CHECKPOINT_START_AFTER_HELP: &str = "\
+Examples:
+  memory checkpoint start-execution --project memory --plan-file /tmp/plan.md
+  memory checkpoint start-execution --project memory --plan-stdin --thread-key task-123
+
+See also:
+  docs/user/cli/checkpoint.md";
+
+const CHECKPOINT_FINISH_AFTER_HELP: &str = "\
+Examples:
+  memory checkpoint finish-execution --project memory
+  memory checkpoint finish-execution --project memory --plan-file /tmp/plan.md --json
+
+See also:
+  docs/user/cli/checkpoint.md";
+
+const CAPTURE_GROUP_AFTER_HELP: &str = "\
+Examples:
+  memory capture task --file /tmp/task.json
+
+See also:
+  docs/user/cli/capture.md";
+
+const CAPTURE_TASK_AFTER_HELP: &str = "\
+Examples:
+  memory capture task --file /tmp/task.json
+  memory capture task --file /tmp/task.json --dry-run
+
+See also:
+  docs/user/cli/capture.md";
+
+const SCAN_AFTER_HELP: &str = "\
+Examples:
+  memory scan --project memory
+  memory scan --project memory --dry-run
+  memory scan --project memory --rebuild-index
+
+See also:
+  docs/user/cli/scan.md";
+
+const REMEMBER_AFTER_HELP: &str = "\
+Examples:
+  memory remember --project memory --note \"Durable fact\"
+  memory remember --project memory --title \"Task title\" --summary \"What changed\"
+
+See also:
+  docs/user/cli/remember.md";
+
+const CURATE_AFTER_HELP: &str = "\
+Examples:
+  memory curate --project memory
+  memory curate --project memory --batch-size 10 --dry-run
+
+See also:
+  docs/user/cli/curate.md";
+
+const EMBEDDINGS_GROUP_AFTER_HELP: &str = "\
+Examples:
+  memory embeddings reindex --project memory
+  memory embeddings reembed --project memory
+  memory embeddings prune --project memory --dry-run
+
+See also:
+  docs/user/cli/embeddings.md";
+
+const EMBEDDINGS_REINDEX_AFTER_HELP: &str = "\
+Examples:
+  memory embeddings reindex --project memory
+  memory embeddings reindex --project memory --dry-run
+
+See also:
+  docs/user/cli/embeddings.md";
+
+const EMBEDDINGS_REEMBED_AFTER_HELP: &str = "\
+Examples:
+  memory embeddings reembed --project memory
+  memory embeddings reembed --project memory --dry-run
+
+See also:
+  docs/user/cli/embeddings.md";
+
+const EMBEDDINGS_PRUNE_AFTER_HELP: &str = "\
+Examples:
+  memory embeddings prune --project memory
+  memory embeddings prune --project memory --dry-run
+
+See also:
+  docs/user/cli/embeddings.md";
+
+const HEALTH_AFTER_HELP: &str = "\
+Examples:
+  memory health
+  memory stats
+
+See also:
+  docs/user/cli/health.md";
+
+const STATS_AFTER_HELP: &str = "\
+Examples:
+  memory stats
+  memory health
+
+See also:
+  docs/user/cli/health.md";
+
+const ARCHIVE_AFTER_HELP: &str = "\
+Examples:
+  memory archive --project memory
+  memory archive --project memory --max-confidence 0.2 --dry-run
+
+See also:
+  docs/user/cli/archive.md";
+
+const AUTOMATION_GROUP_AFTER_HELP: &str = "\
+Examples:
+  memory automation status --project memory
+  memory automation flush --project memory --curate --dry-run
+
+See also:
+  docs/user/cli/automation.md";
+
+const AUTOMATION_STATUS_AFTER_HELP: &str = "\
+Examples:
+  memory automation status --project memory
+
+See also:
+  docs/user/cli/automation.md";
+
+const AUTOMATION_FLUSH_AFTER_HELP: &str = "\
+Examples:
+  memory automation flush --project memory
+  memory automation flush --project memory --curate --dry-run
+
+See also:
+  docs/user/cli/automation.md";
+
+const TUI_AFTER_HELP: &str = "\
+Examples:
+  memory tui
+  memory tui --project memory
+
+See also:
+  docs/user/tui/README.md";
+
 #[derive(Debug, Parser)]
-#[command(name = "memory", version)]
+#[command(
+    name = "memory",
+    version,
+    about = "Project memory CLI for setup, retrieval, capture, curation, and operations.",
+    after_help = ROOT_AFTER_HELP
+)]
 struct Cli {
+    /// Use a specific config file instead of the discovered default.
     #[arg(long, env = "MEMORY_LAYER_CONFIG")]
     config: Option<PathBuf>,
+    /// Override the writer identity used for write-capable commands.
     #[arg(
         long = "writer-id",
         visible_alias = "agent-id",
@@ -67,50 +461,89 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[command(about = "Run the interactive setup wizard.", after_help = WIZARD_AFTER_HELP)]
     Wizard(WizardArgs),
+    #[command(about = "Bootstrap a repo-local Memory Layer setup.", after_help = INIT_AFTER_HELP)]
     Init(InitArgs),
+    #[command(about = "Manage the Memory Layer backend service.", after_help = SERVICE_GROUP_AFTER_HELP)]
     Service(ServiceArgs),
+    #[command(about = "Manage project watchers and watcher daemons.", after_help = WATCHER_GROUP_AFTER_HELP)]
     Watcher(WatcherArgs),
+    #[command(about = "Inspect configuration and environment health.", after_help = DOCTOR_AFTER_HELP)]
     Doctor(DoctorArgs),
+    #[command(about = "Import and inspect git commit history.", after_help = COMMITS_GROUP_AFTER_HELP)]
     Commits(CommitsArgs),
+    #[command(about = "Build and inspect the local repository index.", after_help = REPO_GROUP_AFTER_HELP)]
     Repo(RepoArgs),
+    #[command(about = "Export and import shareable project memory bundles.", after_help = BUNDLE_GROUP_AFTER_HELP)]
     Bundle(BundleArgs),
+    #[command(about = "Save, inspect, and verify execution checkpoints.", after_help = CHECKPOINT_GROUP_AFTER_HELP)]
     Checkpoint(CheckpointArgs),
+    #[command(about = "Generate a resume briefing for a project.", after_help = RESUME_AFTER_HELP)]
     Resume(ResumeArgs),
+    #[command(about = "Ask a project-specific question against curated memory.", after_help = QUERY_AFTER_HELP)]
     Query(QueryArgs),
+    #[command(about = "Scan a repository for candidate durable memories.", after_help = SCAN_AFTER_HELP)]
     Scan(ScanArgs),
+    #[command(about = "Capture structured task context from a file.", after_help = CAPTURE_GROUP_AFTER_HELP)]
     Capture(CaptureArgs),
+    #[command(about = "Capture and curate completed work into memory.", after_help = REMEMBER_AFTER_HELP)]
     Remember(RememberArgs),
+    #[command(about = "Curate raw captures into canonical memory.", after_help = CURATE_AFTER_HELP)]
     Curate(CurateArgs),
+    #[command(about = "Rebuild and maintain embedding spaces.", after_help = EMBEDDINGS_GROUP_AFTER_HELP)]
     Embeddings(EmbeddingsArgs),
+    #[command(about = "Check backend service health.", after_help = HEALTH_AFTER_HELP)]
     Health,
+    #[command(about = "Show memory and project summary statistics.", after_help = STATS_AFTER_HELP)]
     Stats,
+    #[command(about = "Archive low-signal memories by confidence and importance.", after_help = ARCHIVE_AFTER_HELP)]
     Archive(ArchiveArgs),
+    #[command(about = "Inspect and flush automation state.", after_help = AUTOMATION_GROUP_AFTER_HELP)]
     Automation(AutomationArgs),
+    #[command(about = "Open the terminal UI.", after_help = TUI_AFTER_HELP)]
     Tui(TuiArgs),
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Run the interactive setup wizard for global or repo-local Memory Layer configuration.",
+    after_help = WIZARD_AFTER_HELP
+)]
 struct WizardArgs {
+    /// Override the project slug used for repo-local setup.
     #[arg(long)]
     project: Option<String>,
+    /// Edit shared machine-level configuration instead of only the current repo.
     #[arg(long)]
     global: bool,
+    /// Preview the wizard's file and service actions without applying them.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Create or refresh the repo-local Memory Layer bootstrap files.",
+    after_help = INIT_AFTER_HELP
+)]
 struct InitArgs {
+    /// Override the project slug written into the repo-local bootstrap files.
     #[arg(long)]
     project: Option<String>,
+    /// Replace existing managed bootstrap files instead of preserving them.
     #[arg(long)]
     force: bool,
+    /// Preview the files and skill bundle paths that would be written.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Manage the Memory Layer backend service for local or packaged installs.",
+    after_help = SERVICE_GROUP_AFTER_HELP
+)]
 struct ServiceArgs {
     #[command(subcommand)]
     command: ServiceCommand,
@@ -118,42 +551,63 @@ struct ServiceArgs {
 
 #[derive(Debug, Subcommand)]
 enum ServiceCommand {
+    #[command(about = "Run the backend service in the foreground.", after_help = SERVICE_RUN_AFTER_HELP)]
     Run,
+    #[command(about = "Enable and start the packaged backend service.", after_help = SERVICE_ENABLE_AFTER_HELP)]
     Enable(ServiceLifecycleArgs),
+    #[command(about = "Disable and stop the packaged backend service.", after_help = SERVICE_DISABLE_AFTER_HELP)]
     Disable(ServiceLifecycleArgs),
+    #[command(about = "Show the current packaged service status.", after_help = SERVICE_STATUS_AFTER_HELP)]
     Status,
+    #[command(about = "Provision or rotate the shared service API token.", after_help = SERVICE_TOKEN_AFTER_HELP)]
     EnsureApiToken(ServiceEnsureApiTokenArgs),
 }
 
 #[derive(Debug, Args)]
 struct ServiceLifecycleArgs {
+    /// Preview the service manager actions without changing service state.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 struct ServiceEnsureApiTokenArgs {
+    /// Operate on the shared machine-level env file instead of a repo-local override.
     #[arg(long)]
     shared: bool,
+    /// Replace the development placeholder token if it is still configured.
     #[arg(long)]
     rotate_placeholder: bool,
+    /// Preview the env-file change without writing it.
     #[arg(long)]
     dry_run: bool,
+    /// Emit the result as JSON.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Inspect configuration, connectivity, watchers, and skill runtime prerequisites.",
+    after_help = DOCTOR_AFTER_HELP
+)]
 struct DoctorArgs {
+    /// Limit checks to one project context instead of the inferred current repo.
     #[arg(long)]
     project: Option<String>,
+    /// Attempt automatic repairs for supported problems.
     #[arg(long)]
     fix: bool,
+    /// Emit the diagnostic report as JSON.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Manage project watcher daemons and watcher registration.",
+    after_help = WATCHER_GROUP_AFTER_HELP
+)]
 struct WatcherArgs {
     #[command(subcommand)]
     command: WatcherCommand,
@@ -161,53 +615,77 @@ struct WatcherArgs {
 
 #[derive(Debug, Subcommand)]
 enum WatcherCommand {
+    #[command(about = "Run the watcher daemon in the foreground.", after_help = WATCHER_RUN_AFTER_HELP)]
     Run(WatcherRunCliArgs),
+    #[command(about = "Enable the watcher for a project.", after_help = WATCHER_ENABLE_AFTER_HELP)]
     Enable(WatcherManageArgs),
+    #[command(about = "Disable the watcher for a project.", after_help = WATCHER_DISABLE_AFTER_HELP)]
     Disable(WatcherManageArgs),
+    #[command(about = "Show watcher status for a project.", after_help = WATCHER_STATUS_AFTER_HELP)]
     Status(WatchProjectArgs),
 }
 
 #[derive(Debug, Args)]
 struct WatchProjectArgs {
+    /// Project slug to inspect; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
 }
 
 #[derive(Debug, Args)]
 struct WatcherManageArgs {
+    /// Project slug to manage; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Preview the watcher service action without applying it.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 struct WatcherRunCliArgs {
+    /// Project slug to watch; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Override the repository root used for watcher state and file detection.
     #[arg(long)]
     repo_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Query curated project memory for a project-specific question.",
+    after_help = QUERY_AFTER_HELP
+)]
 struct QueryArgs {
+    /// Project slug to query.
     #[arg(long)]
     project: String,
+    /// Natural-language question to answer from project memory.
     #[arg(long)]
     question: String,
+    /// Restrict results to one or more memory types.
     #[arg(long = "type")]
     types: Vec<String>,
+    /// Restrict results to one or more tags.
     #[arg(long = "tag")]
     tags: Vec<String>,
+    /// Maximum number of memories to retrieve before answer synthesis.
     #[arg(long, default_value_t = 8)]
     limit: i64,
+    /// Ignore memories below this confidence threshold.
     #[arg(long)]
     min_confidence: Option<f32>,
+    /// Emit the query result as JSON.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Import and inspect git commit history for a project.",
+    after_help = COMMITS_GROUP_AFTER_HELP
+)]
 struct CommitsArgs {
     #[command(subcommand)]
     command: CommitsCommand,
@@ -215,47 +693,66 @@ struct CommitsArgs {
 
 #[derive(Debug, Subcommand)]
 enum CommitsCommand {
+    #[command(about = "Import git commits into the project backend.", after_help = COMMITS_SYNC_AFTER_HELP)]
     Sync(CommitSyncArgs),
+    #[command(about = "List imported commits for a project.", after_help = COMMITS_LIST_AFTER_HELP)]
     List(CommitListArgs),
+    #[command(about = "Show one imported commit in detail.", after_help = COMMITS_SHOW_AFTER_HELP)]
     Show(CommitShowArgs),
 }
 
 #[derive(Debug, Args)]
 struct CommitSyncArgs {
+    /// Project slug to sync into; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Limit imported commits to those after this timestamp or revision marker.
     #[arg(long)]
     since: Option<String>,
+    /// Cap the number of commits scanned from git.
     #[arg(long)]
     limit: Option<usize>,
+    /// Preview the sync without persisting commits.
     #[arg(long)]
     dry_run: bool,
+    /// Emit the sync preview or result as JSON.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Debug, Args)]
 struct CommitListArgs {
+    /// Project slug to list commits for; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Maximum number of imported commits to return.
     #[arg(long, default_value_t = 20)]
     limit: i64,
+    /// Number of imported commits to skip before listing.
     #[arg(long, default_value_t = 0)]
     offset: i64,
+    /// Emit the commit list as JSON.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Debug, Args)]
 struct CommitShowArgs {
+    /// Commit SHA or imported commit identifier to show.
     commit: String,
+    /// Project slug to read from; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Emit the commit detail as JSON.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Build and inspect the repository index used by scan and analysis flows.",
+    after_help = REPO_GROUP_AFTER_HELP
+)]
 struct RepoArgs {
     #[command(subcommand)]
     command: RepoCommand,
@@ -263,31 +760,43 @@ struct RepoArgs {
 
 #[derive(Debug, Subcommand)]
 enum RepoCommand {
+    #[command(about = "Build or refresh the local repository index.", after_help = REPO_INDEX_AFTER_HELP)]
     Index(IndexRepoArgs),
+    #[command(about = "Show local repository index status and analyzer coverage.", after_help = REPO_STATUS_AFTER_HELP)]
     Status(IndexStatusArgs),
 }
 
 #[derive(Debug, Args)]
 struct IndexRepoArgs {
+    /// Project slug to index; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Limit indexing to changes after this timestamp or revision marker.
     #[arg(long)]
     since: Option<String>,
+    /// Preview indexing work without writing the local index.
     #[arg(long)]
     dry_run: bool,
+    /// Emit the index preview or result as JSON.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Debug, Args)]
 struct IndexStatusArgs {
+    /// Project slug to inspect; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Emit the status report as JSON.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Export and import portable memory bundles.",
+    after_help = BUNDLE_GROUP_AFTER_HELP
+)]
 struct BundleArgs {
     #[command(subcommand)]
     command: BundleCommand,
@@ -295,50 +804,74 @@ struct BundleArgs {
 
 #[derive(Debug, Subcommand)]
 enum BundleCommand {
+    #[command(about = "Export a project memory bundle to a zip archive.", after_help = BUNDLE_EXPORT_AFTER_HELP)]
     Export(ExportArgs),
+    #[command(about = "Import a project memory bundle from a zip archive.", after_help = BUNDLE_IMPORT_AFTER_HELP)]
     Import(ImportArgs),
 }
 
 #[derive(Debug, Args)]
 struct ExportArgs {
+    /// Project slug to export from.
     #[arg(long)]
     project: String,
+    /// Output bundle path.
     #[arg(long)]
     out: PathBuf,
+    /// Include archived memories in the bundle.
     #[arg(long)]
     include_archived: bool,
+    /// Include source file paths in the bundle provenance.
     #[arg(long)]
     include_source_file_paths: bool,
+    /// Include git commit identifiers in the bundle provenance.
     #[arg(long)]
     include_git_commits: bool,
+    /// Include source excerpts in the bundle provenance.
     #[arg(long)]
     include_source_excerpts: bool,
+    /// Preview the bundle contents without writing the output file.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 struct ImportArgs {
+    /// Project slug to import into.
     #[arg(long)]
     project: String,
+    /// Bundle file to import.
     bundle: PathBuf,
+    /// Preview the import without writing memories.
     #[arg(long)]
     dry_run: bool,
+    /// Emit the import preview or result as JSON.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Build a project resume pack from checkpoints, timeline, and durable memory.",
+    after_help = RESUME_AFTER_HELP
+)]
 struct ResumeArgs {
+    /// Project slug to resume; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Emit the resume pack as JSON.
     #[arg(long)]
     json: bool,
+    /// Include the optional LLM summary in the resume output.
     #[arg(long, default_value_t = true)]
     include_llm_summary: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Manage project checkpoints and plan-backed execution transitions.",
+    after_help = CHECKPOINT_GROUP_AFTER_HELP
+)]
 struct CheckpointArgs {
     #[command(subcommand)]
     command: CheckpointCommand,
@@ -346,63 +879,88 @@ struct CheckpointArgs {
 
 #[derive(Debug, Subcommand)]
 enum CheckpointCommand {
+    #[command(about = "Save a checkpoint for the current project state.", after_help = CHECKPOINT_SAVE_AFTER_HELP)]
     Save(CheckpointSaveArgs),
+    #[command(about = "Show the current saved checkpoint.", after_help = CHECKPOINT_SHOW_AFTER_HELP)]
     Show(CheckpointShowArgs),
+    #[command(about = "Save a checkpoint and record the approved execution plan.", after_help = CHECKPOINT_START_AFTER_HELP)]
     StartExecution(CheckpointStartExecutionArgs),
+    #[command(about = "Verify that the active approved plan is fully complete.", after_help = CHECKPOINT_FINISH_AFTER_HELP)]
     FinishExecution(CheckpointFinishExecutionArgs),
 }
 
 #[derive(Debug, Args)]
 struct CheckpointSaveArgs {
+    /// Project slug to checkpoint; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Optional human note describing the checkpoint.
     #[arg(long)]
     note: Option<String>,
+    /// Preview the checkpoint payload without writing it.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 struct CheckpointShowArgs {
+    /// Project slug to inspect; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
 }
 
 #[derive(Debug, Args)]
 struct CheckpointStartExecutionArgs {
+    /// Project slug to update; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Optional checkpoint note to store alongside the plan transition.
     #[arg(long)]
     note: Option<String>,
+    /// Read the approved plan markdown from a file.
     #[arg(long)]
     plan_file: Option<PathBuf>,
+    /// Read the approved plan markdown from stdin.
     #[arg(long)]
     plan_stdin: bool,
+    /// Explicit title for the saved plan memory.
     #[arg(long)]
     title: Option<String>,
+    /// Stable thread key used to replace later revisions of the same plan.
     #[arg(long)]
     thread_key: Option<String>,
+    /// Validate and preview the execution-start flow without writing checkpoint or memory state.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
 struct CheckpointFinishExecutionArgs {
+    /// Project slug to verify; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Explicit plan thread key when multiple active plans exist.
     #[arg(long)]
     thread_key: Option<String>,
+    /// Optional updated plan file to sync before completion verification.
     #[arg(long)]
     plan_file: Option<PathBuf>,
+    /// Optional updated plan markdown from stdin to sync before verification.
     #[arg(long)]
     plan_stdin: bool,
+    /// Preview whether verification would pass or fail without writing.
     #[arg(long)]
     dry_run: bool,
+    /// Emit the completion report as JSON.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Capture structured task evidence from a file payload.",
+    after_help = CAPTURE_GROUP_AFTER_HELP
+)]
 struct CaptureArgs {
     #[command(subcommand)]
     command: CaptureCommand,
@@ -410,68 +968,106 @@ struct CaptureArgs {
 
 #[derive(Debug, Subcommand)]
 enum CaptureCommand {
+    #[command(about = "Send one structured task capture payload to the backend.", after_help = CAPTURE_TASK_AFTER_HELP)]
     Task(CaptureTaskArgs),
 }
 
 #[derive(Debug, Args)]
 struct CaptureTaskArgs {
+    /// JSON file containing the capture payload.
     #[arg(long)]
     file: PathBuf,
+    /// Validate and preview the capture without writing it.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Scan a repository for durable-memory candidates using the local index and analyzers.",
+    after_help = SCAN_AFTER_HELP
+)]
 struct ScanArgs {
+    /// Project slug to scan; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Limit the scan to files or commits after this timestamp or revision marker.
     #[arg(long)]
     since: Option<String>,
+    /// Force a local repository index rebuild before scanning.
     #[arg(long)]
     rebuild_index: bool,
+    /// Preview candidate memories without persisting anything.
     #[arg(long)]
     dry_run: bool,
+    /// Emit the scan report as JSON.
     #[arg(long)]
     json: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Capture recent work and curate it into durable project memory.",
+    after_help = REMEMBER_AFTER_HELP
+)]
 struct RememberArgs {
+    /// Project slug to write into; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
+    /// Explicit task title for the remember capture.
     #[arg(long)]
     title: Option<String>,
+    /// Original user prompt or task framing to attach to the capture.
     #[arg(long)]
     prompt: Option<String>,
+    /// High-level summary of what changed.
     #[arg(long)]
     summary: Option<String>,
+    /// Durable note to preserve as evidence for curation.
     #[arg(long = "note")]
     notes: Vec<String>,
+    /// File path to attach as changed during the task.
     #[arg(long = "file-changed")]
     files_changed: Vec<String>,
+    /// Test name or command that passed.
     #[arg(long = "test-passed")]
     tests_passed: Vec<String>,
+    /// Test name or command that failed.
     #[arg(long = "test-failed")]
     tests_failed: Vec<String>,
+    /// File containing command output to attach as evidence.
     #[arg(long)]
     command_output_file: Option<PathBuf>,
+    /// Auto-detect changed files from git status when possible.
     #[arg(long, default_value_t = true)]
     auto_files: bool,
+    /// Preview the derived capture and curate actions without writing them.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Curate raw captures into canonical memory entries.",
+    after_help = CURATE_AFTER_HELP
+)]
 struct CurateArgs {
+    /// Project slug to curate.
     #[arg(long)]
     project: String,
+    /// Limit the number of raw captures processed in one run.
     #[arg(long)]
     batch_size: Option<i64>,
+    /// Preview curation decisions without writing memory state.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Manage embedding indexes and spaces for semantic retrieval.",
+    after_help = EMBEDDINGS_GROUP_AFTER_HELP
+)]
 struct EmbeddingsArgs {
     #[command(subcommand)]
     command: EmbeddingsCommand,
@@ -479,44 +1075,67 @@ struct EmbeddingsArgs {
 
 #[derive(Debug, Subcommand)]
 enum EmbeddingsCommand {
+    #[command(about = "Build or refresh the active embedding index.", after_help = EMBEDDINGS_REINDEX_AFTER_HELP)]
     Reindex(EmbeddingsProjectArgs),
+    #[command(about = "Generate embeddings for eligible chunks.", after_help = EMBEDDINGS_REEMBED_AFTER_HELP)]
     Reembed(EmbeddingsProjectArgs),
+    #[command(about = "Delete stale or orphaned embedding rows.", after_help = EMBEDDINGS_PRUNE_AFTER_HELP)]
     Prune(EmbeddingsProjectArgs),
 }
 
 #[derive(Debug, Args)]
 struct ProjectArgs {
+    /// Project slug to operate on.
     #[arg(long)]
     project: String,
 }
 
 #[derive(Debug, Args)]
 struct EmbeddingsProjectArgs {
+    /// Project slug to operate on.
     #[arg(long)]
     project: String,
+    /// Preview the embedding maintenance action without writing it.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Archive low-confidence, low-importance memories in a project.",
+    after_help = ARCHIVE_AFTER_HELP
+)]
 struct ArchiveArgs {
+    /// Project slug to archive within.
     #[arg(long)]
     project: String,
+    /// Maximum confidence allowed for candidate memories.
     #[arg(long, default_value_t = 0.3)]
     max_confidence: f32,
+    /// Maximum importance allowed for candidate memories.
     #[arg(long, default_value_t = 1)]
     max_importance: i32,
+    /// Preview archive candidates without changing memory state.
     #[arg(long)]
     dry_run: bool,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Open the terminal UI for browsing memories, activity, and project state.",
+    after_help = TUI_AFTER_HELP
+)]
 struct TuiArgs {
+    /// Project slug to open initially; defaults to the current repo when available.
     #[arg(long)]
     project: Option<String>,
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Inspect or flush automation state for a project.",
+    after_help = AUTOMATION_GROUP_AFTER_HELP
+)]
 struct AutomationArgs {
     #[command(subcommand)]
     command: AutomationCommand,
@@ -524,7 +1143,9 @@ struct AutomationArgs {
 
 #[derive(Debug, Subcommand)]
 enum AutomationCommand {
+    #[command(about = "Show the current automation state for a project.", after_help = AUTOMATION_STATUS_AFTER_HELP)]
     Status(ProjectArgs),
+    #[command(about = "Flush pending automation work into capture and optional curation.", after_help = AUTOMATION_FLUSH_AFTER_HELP)]
     Flush(AutomationFlushArgs),
 }
 
@@ -532,8 +1153,10 @@ enum AutomationCommand {
 struct AutomationFlushArgs {
     #[command(flatten)]
     project: ProjectArgs,
+    /// Run curation after flushing capture state.
     #[arg(long)]
     curate: bool,
+    /// Preview the flush without creating capture or automation state.
     #[arg(long)]
     dry_run: bool,
 }
@@ -5598,7 +6221,7 @@ impl SourceKindString for mem_api::SourceKind {
 mod tests {
     use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
 
-    use clap::Parser;
+    use clap::{Command, CommandFactory, Parser, error::ErrorKind};
     use uuid::Uuid;
 
     use super::{
@@ -5681,6 +6304,77 @@ mod tests {
     fn init_rejects_print_flag() {
         let result = Cli::try_parse_from(["memory", "init", "--print"]);
         assert!(result.is_err());
+    }
+
+    fn rendered_help(args: &[&str]) -> String {
+        let err = Cli::try_parse_from(args).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+        err.to_string()
+    }
+
+    fn assert_command_metadata(cmd: &Command, path: &str) {
+        if cmd.get_name() != "help" {
+            let about = cmd
+                .get_about()
+                .map(|value| value.to_string())
+                .or_else(|| cmd.get_long_about().map(|value| value.to_string()));
+            assert!(
+                about
+                    .as_deref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false),
+                "command {path} is missing help metadata"
+            );
+        }
+        for subcommand in cmd.get_subcommands() {
+            let sub_path = if path.is_empty() {
+                subcommand.get_name().to_string()
+            } else {
+                format!("{path} {}", subcommand.get_name())
+            };
+            assert_command_metadata(subcommand, &sub_path);
+        }
+    }
+
+    #[test]
+    fn all_public_commands_have_help_metadata() {
+        let command = Cli::command();
+        assert_command_metadata(&command, "memory");
+    }
+
+    #[test]
+    fn root_help_includes_examples_and_docs_hint() {
+        let output = rendered_help(&["memory", "--help"]);
+        assert!(output.contains("Project memory CLI"));
+        assert!(output.contains("Examples:"));
+        assert!(output.contains("docs/user/README.md"));
+        assert!(output.contains("Ask a project-specific question against curated memory"));
+    }
+
+    #[test]
+    fn grouped_help_includes_subcommand_descriptions() {
+        let output = rendered_help(&["memory", "service", "--help"]);
+        assert!(output.contains("Manage the Memory Layer backend service"));
+        assert!(output.contains("Run the backend service in the foreground"));
+        assert!(output.contains("Examples:"));
+        assert!(output.contains("docs/user/cli/service.md"));
+    }
+
+    #[test]
+    fn leaf_help_includes_flag_help_examples_and_docs_hint() {
+        let output = rendered_help(&["memory", "checkpoint", "start-execution", "--help"]);
+        assert!(output.contains("Save a checkpoint and record the approved execution plan"));
+        assert!(output.contains("Read the approved plan markdown from a file"));
+        assert!(output.contains("Examples:"));
+        assert!(output.contains("docs/user/cli/checkpoint.md"));
+    }
+
+    #[test]
+    fn query_help_includes_argument_descriptions() {
+        let output = rendered_help(&["memory", "query", "--help"]);
+        assert!(output.contains("Natural-language question to answer from project memory"));
+        assert!(output.contains("Restrict results to one or more memory types"));
+        assert!(output.contains("docs/user/cli/query.md"));
     }
 
     #[test]
