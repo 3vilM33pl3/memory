@@ -1367,51 +1367,51 @@ async fn subscribe_stream(stream: &mut StreamSession, app: &App) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TabKind {
-    Resume,
     Memories,
     Agents,
     Query,
     Activity,
     Project,
     Watchers,
+    Resume,
 }
 
 impl TabKind {
     fn next(self) -> Self {
         match self {
-            Self::Resume => Self::Memories,
             Self::Memories => Self::Agents,
             Self::Agents => Self::Query,
             Self::Query => Self::Activity,
             Self::Activity => Self::Project,
             Self::Project => Self::Watchers,
             Self::Watchers => Self::Resume,
+            Self::Resume => Self::Memories,
         }
     }
 
     fn prev(self) -> Self {
         match self {
-            Self::Resume => Self::Watchers,
             Self::Memories => Self::Resume,
             Self::Agents => Self::Memories,
             Self::Query => Self::Agents,
             Self::Activity => Self::Query,
             Self::Project => Self::Activity,
             Self::Watchers => Self::Project,
+            Self::Resume => Self::Watchers,
         }
     }
 
     fn index(self) -> usize {
         match self {
-            Self::Resume => 0,
-            Self::Memories => 1,
-            Self::Agents => 2,
-            Self::Query => 3,
-            Self::Activity => 4,
-            Self::Project => 5,
-            Self::Watchers => 6,
+            Self::Memories => 0,
+            Self::Agents => 1,
+            Self::Query => 2,
+            Self::Activity => 3,
+            Self::Project => 4,
+            Self::Watchers => 5,
+            Self::Resume => 6,
         }
     }
 }
@@ -1590,7 +1590,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         .split(frame.area());
 
     let titles = [
-        "Resume", "Memories", "Agents", "Query", "Activity", "Project", "Watchers",
+        "Memories", "Agents", "Query", "Activity", "Project", "Watchers", "Resume",
     ]
     .into_iter()
     .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
@@ -4699,7 +4699,7 @@ mod tests {
     use chrono::{Local, TimeZone, Utc};
 
     use super::{
-        AgentSnapshot, App, BackgroundEvent, Theme, ToolVersions, UiStatus,
+        AgentSnapshot, App, BackgroundEvent, TabKind, Theme, ToolVersions, UiStatus,
         context_gradient_color, empty_overview, filled_bar_cells, format_context_percent,
         format_epoch_reset_time, format_timestamp, format_timestamp_full, format_timestamp_medium,
         format_timestamp_short, format_timestamp_timeline, normalized_percent,
@@ -4898,5 +4898,21 @@ mod tests {
 
         assert_eq!(app.agent_selected_index, 0);
         assert_eq!(app.agent_table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn tab_order_starts_with_memories_and_ends_with_resume() {
+        assert_eq!(TabKind::Memories.index(), 0);
+        assert_eq!(TabKind::Agents.index(), 1);
+        assert_eq!(TabKind::Query.index(), 2);
+        assert_eq!(TabKind::Activity.index(), 3);
+        assert_eq!(TabKind::Project.index(), 4);
+        assert_eq!(TabKind::Watchers.index(), 5);
+        assert_eq!(TabKind::Resume.index(), 6);
+
+        assert_eq!(TabKind::Memories.prev(), TabKind::Resume);
+        assert_eq!(TabKind::Memories.next(), TabKind::Agents);
+        assert_eq!(TabKind::Watchers.next(), TabKind::Resume);
+        assert_eq!(TabKind::Resume.next(), TabKind::Memories);
     }
 }
