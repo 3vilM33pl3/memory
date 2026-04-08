@@ -4920,6 +4920,7 @@ mod tests {
                 mem_service: "0.4.3".to_string(),
                 memory_watch: "0.4.3".to_string(),
             },
+            false,
             tx,
         );
         let snapshot = AgentSnapshot {
@@ -4951,6 +4952,7 @@ mod tests {
                 mem_service: "0.4.3".to_string(),
                 memory_watch: "0.4.3".to_string(),
             },
+            false,
             tx,
         );
         let snapshot = AgentSnapshot {
