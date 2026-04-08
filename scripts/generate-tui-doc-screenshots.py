@@ -257,6 +257,10 @@ def main() -> int:
 
         send_keys(tui_session, "Tab")
         sleep_for(0.6)
+        screenshots["agents-tab.png"] = capture_pane(tui_session)
+
+        send_keys(tui_session, "Tab")
+        sleep_for(0.6)
         screenshots["project-tab.png"] = capture_pane(tui_session)
 
         kill_session(tui_session)
@@ -265,6 +269,7 @@ def main() -> int:
         sleep_for(3.0)
         start_session(tui_session, f"{TUI_BIN} tui --project {PROJECT}")
         sleep_for(4.0)
+        send_keys(tui_session, "Tab")
         send_keys(tui_session, "Tab")
         send_keys(tui_session, "Tab")
         send_keys(tui_session, "Tab")

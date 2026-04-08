@@ -26,6 +26,8 @@ Shared navigation:
   - Start here after an interruption. It shows the current work thread, suggested next step, and recent timeline.
 - [Memories Tab](memories.md)
   - Browse the canonical memory list, filter it, and inspect one memory entry in detail.
+- [Agents Tab](agents.md)
+  - Monitor live Codex and Claude sessions across projects with token, context, rate-limit, process, and port details.
 - [Query Tab](query.md)
   - Ask a question against project memory and inspect the ranked results.
 - [Activity Tab](activity.md)
@@ -40,6 +42,7 @@ Shared navigation:
 - If you are returning after time away, open [Resume Tab](resume.md).
 - If you want to inspect or filter stored memory, open [Memories Tab](memories.md).
 - If you want to ask a question directly, open [Query Tab](query.md).
+- If you want to watch active coding-agent sessions across projects, open [Agents Tab](agents.md).
 - If you want to understand what changed recently, open [Activity Tab](activity.md).
 - If you want high-level health and pending review work, open [Project Tab](project.md).
 - If you want watcher liveness and watchdog status, open [Watchers Tab](watchers.md).

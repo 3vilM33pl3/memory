@@ -17,6 +17,7 @@ This section is for people installing, configuring, and using Memory Layer in re
 - [TUI Guide](tui/README.md)
 - [Resume Tab](tui/resume.md)
 - [Memories Tab](tui/memories.md)
+- [Agents Tab](tui/agents.md)
 - [Query Tab](tui/query.md)
 - [Activity Tab](tui/activity.md)
 - [Project Tab](tui/project.md)
