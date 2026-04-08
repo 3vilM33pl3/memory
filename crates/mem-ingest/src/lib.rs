@@ -295,6 +295,7 @@ mod tests {
             structured_candidates: Vec::new(),
             command_output: None,
             idempotency_key: None,
+            dry_run: false,
         }
     }
 

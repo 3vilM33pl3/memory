@@ -22,6 +22,10 @@ fn checkpoint_store_path() -> Result<PathBuf> {
     Ok(state_dir.join("resume-checkpoints.json"))
 }
 
+pub(crate) fn checkpoint_store_location() -> Result<PathBuf> {
+    checkpoint_store_path()
+}
+
 fn scope_key(project: &str, repo_root: &Path) -> String {
     format!("{}::{}", project, repo_root.display())
 }
@@ -69,19 +73,27 @@ pub(crate) fn save_checkpoint(
     note: Option<String>,
 ) -> Result<(ResumeCheckpoint, PathBuf)> {
     let mut store = load_store()?;
-    let checkpoint = ResumeCheckpoint {
+    let checkpoint = build_checkpoint(project, repo_root, note);
+    store
+        .checkpoints
+        .insert(scope_key(project, repo_root), checkpoint.clone());
+    let path = save_store(&store)?;
+    Ok((checkpoint, path))
+}
+
+pub(crate) fn build_checkpoint(
+    project: &str,
+    repo_root: &Path,
+    note: Option<String>,
+) -> ResumeCheckpoint {
+    ResumeCheckpoint {
         project: project.to_string(),
         repo_root: repo_root.display().to_string(),
         marked_at: Utc::now(),
         note,
         git_branch: git_value(&["branch", "--show-current"]),
         git_head: git_value(&["rev-parse", "--short", "HEAD"]),
-    };
-    store
-        .checkpoints
-        .insert(scope_key(project, repo_root), checkpoint.clone());
-    let path = save_store(&store)?;
-    Ok((checkpoint, path))
+    }
 }
 
 pub(crate) fn format_checkpoint(checkpoint: &ResumeCheckpoint) -> String {

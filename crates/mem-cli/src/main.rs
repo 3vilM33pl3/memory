@@ -18,6 +18,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use clap::{Args, Parser, Subcommand};
 use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest,
@@ -34,7 +35,12 @@ use mem_api::{
 use mem_platform as platform;
 use mem_service as service_runtime;
 use mem_watch::{WatcherRunArgs, run_watcher_daemon};
-use mem_watch::{flush_path, load_state, run_once, to_status};
+use mem_watch::{
+    build_capture_request as build_automation_capture_request,
+    detect_changed_files as watch_detect_changed_files,
+    fetch_project_overview as fetch_automation_overview, flush_path, load_state, run_once,
+    should_capture, should_curate, to_status, update_session_from_repo,
+};
 use reqwest::{
     Client,
     header::{HeaderMap, ORIGIN},
@@ -90,6 +96,8 @@ struct WizardArgs {
     project: Option<String>,
     #[arg(long)]
     global: bool,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -99,7 +107,7 @@ struct InitArgs {
     #[arg(long)]
     force: bool,
     #[arg(long)]
-    print: bool,
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -111,10 +119,16 @@ struct ServiceArgs {
 #[derive(Debug, Subcommand)]
 enum ServiceCommand {
     Run,
-    Enable,
-    Disable,
+    Enable(ServiceLifecycleArgs),
+    Disable(ServiceLifecycleArgs),
     Status,
     EnsureApiToken(ServiceEnsureApiTokenArgs),
+}
+
+#[derive(Debug, Args)]
+struct ServiceLifecycleArgs {
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -123,6 +137,8 @@ struct ServiceEnsureApiTokenArgs {
     shared: bool,
     #[arg(long)]
     rotate_placeholder: bool,
+    #[arg(long)]
+    dry_run: bool,
     #[arg(long)]
     json: bool,
 }
@@ -146,8 +162,8 @@ struct WatcherArgs {
 #[derive(Debug, Subcommand)]
 enum WatcherCommand {
     Run(WatcherRunCliArgs),
-    Enable(WatchProjectArgs),
-    Disable(WatchProjectArgs),
+    Enable(WatcherManageArgs),
+    Disable(WatcherManageArgs),
     Status(WatchProjectArgs),
 }
 
@@ -155,6 +171,14 @@ enum WatcherCommand {
 struct WatchProjectArgs {
     #[arg(long)]
     project: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct WatcherManageArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -205,6 +229,8 @@ struct CommitSyncArgs {
     #[arg(long)]
     limit: Option<usize>,
     #[arg(long)]
+    dry_run: bool,
+    #[arg(long)]
     json: bool,
 }
 
@@ -248,6 +274,8 @@ struct IndexRepoArgs {
     #[arg(long)]
     since: Option<String>,
     #[arg(long)]
+    dry_run: bool,
+    #[arg(long)]
     json: bool,
 }
 
@@ -285,6 +313,8 @@ struct ExportArgs {
     include_git_commits: bool,
     #[arg(long)]
     include_source_excerpts: bool,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -293,7 +323,7 @@ struct ImportArgs {
     project: String,
     bundle: PathBuf,
     #[arg(long)]
-    preview: bool,
+    dry_run: bool,
     #[arg(long)]
     json: bool,
 }
@@ -328,6 +358,8 @@ struct CheckpointSaveArgs {
     project: Option<String>,
     #[arg(long)]
     note: Option<String>,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -350,6 +382,8 @@ struct CheckpointStartExecutionArgs {
     title: Option<String>,
     #[arg(long)]
     thread_key: Option<String>,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -362,6 +396,8 @@ struct CheckpointFinishExecutionArgs {
     plan_file: Option<PathBuf>,
     #[arg(long)]
     plan_stdin: bool,
+    #[arg(long)]
+    dry_run: bool,
     #[arg(long)]
     json: bool,
 }
@@ -381,6 +417,8 @@ enum CaptureCommand {
 struct CaptureTaskArgs {
     #[arg(long)]
     file: PathBuf,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -419,6 +457,8 @@ struct RememberArgs {
     command_output_file: Option<PathBuf>,
     #[arg(long, default_value_t = true)]
     auto_files: bool,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -427,6 +467,8 @@ struct CurateArgs {
     project: String,
     #[arg(long)]
     batch_size: Option<i64>,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -437,15 +479,23 @@ struct EmbeddingsArgs {
 
 #[derive(Debug, Subcommand)]
 enum EmbeddingsCommand {
-    Reindex(ProjectArgs),
-    Reembed(ProjectArgs),
-    Prune(ProjectArgs),
+    Reindex(EmbeddingsProjectArgs),
+    Reembed(EmbeddingsProjectArgs),
+    Prune(EmbeddingsProjectArgs),
 }
 
 #[derive(Debug, Args)]
 struct ProjectArgs {
     #[arg(long)]
     project: String,
+}
+
+#[derive(Debug, Args)]
+struct EmbeddingsProjectArgs {
+    #[arg(long)]
+    project: String,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -456,6 +506,8 @@ struct ArchiveArgs {
     max_confidence: f32,
     #[arg(long, default_value_t = 1)]
     max_importance: i32,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -482,6 +534,8 @@ struct AutomationFlushArgs {
     project: ProjectArgs,
     #[arg(long)]
     curate: bool,
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[tokio::main]
@@ -501,14 +555,14 @@ async fn main() -> Result<()> {
             } else {
                 args.project.clone()
             };
-            wizard::run(&cwd, &repo_root, project, args.global).await?;
+            wizard::run(&cwd, &repo_root, project, args.global, args.dry_run).await?;
             return Ok(());
         }
         Command::Init(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let project = resolve_project_slug(args.project.clone(), &cwd)?;
             let repo_root = resolve_repo_root(&cwd)?;
-            let output = initialize_repo(&repo_root, &project, args.force, args.print)?;
+            let output = initialize_repo(&repo_root, &project, args.force, args.dry_run)?;
             println!("{output}");
             return Ok(());
         }
@@ -520,23 +574,41 @@ async fn main() -> Result<()> {
                 ServiceCommand::Run => {
                     service_runtime::run_service(cli_config.clone()).await?;
                 }
-                ServiceCommand::Enable => {
-                    let token_result =
-                        ensure_shared_service_api_token_for_config(&config_path, None, true)?;
-                    if token_result.changed {
-                        println!("{}", token_result.summary_line());
+                ServiceCommand::Enable(args) => {
+                    if args.dry_run {
+                        println!("{}", preview_enable_backend_service(&config_path));
+                    } else {
+                        let token_result =
+                            ensure_shared_service_api_token_for_config(&config_path, None, true)?;
+                        if token_result.changed {
+                            println!("{}", token_result.summary_line());
+                        }
+                        println!("{}", enable_backend_service(&config_path)?);
                     }
-                    println!("{}", enable_backend_service(&config_path)?);
                 }
-                ServiceCommand::Disable => println!("{}", disable_backend_service()?),
+                ServiceCommand::Disable(args) => {
+                    if args.dry_run {
+                        println!("{}", preview_disable_backend_service(&config_path));
+                    } else {
+                        println!("{}", disable_backend_service()?);
+                    }
+                }
                 ServiceCommand::Status => println!("{}", backend_service_status(&config_path)?),
                 ServiceCommand::EnsureApiToken(args) => {
                     let _ = args.shared;
-                    let result = ensure_shared_service_api_token_for_config(
-                        &config_path,
-                        None,
-                        args.rotate_placeholder,
-                    )?;
+                    let result = if args.dry_run {
+                        preview_shared_service_api_token_for_config(
+                            &config_path,
+                            None,
+                            args.rotate_placeholder,
+                        )?
+                    } else {
+                        ensure_shared_service_api_token_for_config(
+                            &config_path,
+                            None,
+                            args.rotate_placeholder,
+                        )?
+                    };
                     if args.json {
                         println!("{}", serde_json::to_string_pretty(&result)?);
                     } else {
@@ -553,12 +625,20 @@ async fn main() -> Result<()> {
                 WatcherCommand::Run(_) => {}
                 WatcherCommand::Enable(args) => {
                     let project = resolve_project_slug(args.project.clone(), &cwd)?;
-                    let output = enable_watch_service(&repo_root, &project)?;
+                    let output = if args.dry_run {
+                        preview_enable_watch_service(&repo_root, &project)?
+                    } else {
+                        enable_watch_service(&repo_root, &project)?
+                    };
                     println!("{output}");
                 }
                 WatcherCommand::Disable(args) => {
                     let project = resolve_project_slug(args.project.clone(), &cwd)?;
-                    let output = disable_watch_service(&project)?;
+                    let output = if args.dry_run {
+                        preview_disable_watch_service(&project)?
+                    } else {
+                        disable_watch_service(&project)?
+                    };
                     println!("{output}");
                 }
                 WatcherCommand::Status(args) => {
@@ -627,6 +707,7 @@ async fn main() -> Result<()> {
                             project,
                             repo_root: repo_root.display().to_string(),
                             commits,
+                            dry_run: args.dry_run,
                         })
                         .await?;
                     if args.json {
@@ -693,8 +774,13 @@ async fn main() -> Result<()> {
             match args.command {
                 RepoCommand::Index(args) => {
                     let project = resolve_project_slug(args.project, &cwd)?;
-                    let report =
-                        scan::run_index(&repo_root, &project, args.since.as_deref(), &config)?;
+                    let report = scan::run_index(
+                        &repo_root,
+                        &project,
+                        args.since.as_deref(),
+                        &config,
+                        args.dry_run,
+                    )?;
                     if args.json {
                         println!("{}", serde_json::to_string_pretty(&report)?);
                     } else {
@@ -725,22 +811,25 @@ async fn main() -> Result<()> {
                         include_source_excerpts: args.include_source_excerpts,
                     };
                     let preview = api.export_bundle_preview(&args.project, &options).await?;
-                    let bytes = api.export_bundle(&args.project, &options).await?;
-                    fs::write(&args.out, bytes)
-                        .with_context(|| format!("write {}", args.out.display()))?;
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "project": args.project,
                             "output": args.out.display().to_string(),
-                            "preview": preview
+                            "preview": preview,
+                            "dry_run": args.dry_run,
                         }))?
                     );
+                    if !args.dry_run {
+                        let bytes = api.export_bundle(&args.project, &options).await?;
+                        fs::write(&args.out, bytes)
+                            .with_context(|| format!("write {}", args.out.display()))?;
+                    }
                 }
                 BundleCommand::Import(args) => {
                     let bytes = fs::read(&args.bundle)
                         .with_context(|| format!("read {}", args.bundle.display()))?;
-                    if args.preview {
+                    if args.dry_run {
                         let preview = api.import_bundle_preview(&args.project, bytes).await?;
                         if args.json {
                             println!("{}", serde_json::to_string_pretty(&preview)?);
@@ -764,15 +853,25 @@ async fn main() -> Result<()> {
             match args.command {
                 CheckpointCommand::Save(args) => {
                     let project = resolve_project_slug(args.project, &cwd)?;
-                    let api = ApiClient::new(client.clone(), config.clone());
-                    let (checkpoint, path) =
-                        save_checkpoint_with_activity(&api, &project, &repo_root, args.note)
-                            .await?;
-                    println!(
-                        "Saved checkpoint for `{project}` to {}\n\n{}",
-                        path.display(),
-                        resume::format_checkpoint(&checkpoint)
-                    );
+                    if args.dry_run {
+                        let (checkpoint, path) =
+                            preview_checkpoint(&project, &repo_root, args.note)?;
+                        println!(
+                            "Would save checkpoint for `{project}` to {}\n\n{}",
+                            path.display(),
+                            resume::format_checkpoint(&checkpoint)
+                        );
+                    } else {
+                        let api = ApiClient::new(client.clone(), config.clone());
+                        let (checkpoint, path) =
+                            save_checkpoint_with_activity(&api, &project, &repo_root, args.note)
+                                .await?;
+                        println!(
+                            "Saved checkpoint for `{project}` to {}\n\n{}",
+                            path.display(),
+                            resume::format_checkpoint(&checkpoint)
+                        );
+                    }
                 }
                 CheckpointCommand::Show(args) => {
                     let project = resolve_project_slug(args.project, &cwd)?;
@@ -795,11 +894,14 @@ async fn main() -> Result<()> {
                     let title = derive_plan_title(args.title.as_deref(), &plan_markdown, &project);
                     let thread_key =
                         derive_plan_thread_key(args.thread_key.as_deref(), &title, &project);
-                    let (checkpoint, path) =
+                    let (checkpoint, path) = if args.dry_run {
+                        preview_checkpoint(&project, &repo_root, Some(note))?
+                    } else {
                         save_checkpoint_with_activity(&api, &project, &repo_root, Some(note))
-                            .await?;
+                            .await?
+                    };
                     let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
-                    let request = build_plan_execution_request(
+                    let mut request = build_plan_execution_request(
                         &project,
                         &writer,
                         &title,
@@ -808,30 +910,47 @@ async fn main() -> Result<()> {
                         source_path.as_deref(),
                         repo_git_head(&repo_root).as_deref(),
                     );
+                    request.dry_run = args.dry_run;
                     let capture = match api.capture_task(&request).await {
                         Ok(capture) => capture,
                         Err(error) => {
-                            eprintln!(
-                                "Saved checkpoint for `{project}` to {}\n\n{}",
-                                path.display(),
-                                resume::format_checkpoint(&checkpoint)
-                            );
+                            if args.dry_run {
+                                eprintln!(
+                                    "Would save checkpoint for `{project}` to {}\n\n{}",
+                                    path.display(),
+                                    resume::format_checkpoint(&checkpoint)
+                                );
+                            } else {
+                                eprintln!(
+                                    "Saved checkpoint for `{project}` to {}\n\n{}",
+                                    path.display(),
+                                    resume::format_checkpoint(&checkpoint)
+                                );
+                            }
                             return Err(
                                 error.context("checkpoint saved, but approved plan capture failed")
                             );
                         }
                     };
                     let curate = match api
-                        .curate(&project, repo_replacement_policy(&repo_root))
+                        .curate(&project, repo_replacement_policy(&repo_root), args.dry_run)
                         .await
                     {
                         Ok(curate) => curate,
                         Err(error) => {
-                            eprintln!(
-                                "Saved checkpoint for `{project}` to {}\n\n{}",
-                                path.display(),
-                                resume::format_checkpoint(&checkpoint)
-                            );
+                            if args.dry_run {
+                                eprintln!(
+                                    "Would save checkpoint for `{project}` to {}\n\n{}",
+                                    path.display(),
+                                    resume::format_checkpoint(&checkpoint)
+                                );
+                            } else {
+                                eprintln!(
+                                    "Saved checkpoint for `{project}` to {}\n\n{}",
+                                    path.display(),
+                                    resume::format_checkpoint(&checkpoint)
+                                );
+                            }
                             return Err(error.context(
                                 "checkpoint saved and plan captured, but curation failed",
                             ));
@@ -851,8 +970,12 @@ async fn main() -> Result<()> {
                             .collect(),
                         source_path.as_ref().map(|path| path.display().to_string()),
                     );
-                    if let Err(error) = api.log_plan_activity(&start_request).await {
-                        eprintln!("warning: failed to log plan activity for `{project}`: {error}");
+                    if !args.dry_run {
+                        if let Err(error) = api.log_plan_activity(&start_request).await {
+                            eprintln!(
+                                "warning: failed to log plan activity for `{project}`: {error}"
+                            );
+                        }
                     }
                     println!(
                         "{}",
@@ -868,6 +991,7 @@ async fn main() -> Result<()> {
                             },
                             "capture": capture,
                             "curate": curate,
+                            "dry_run": args.dry_run,
                         }))?
                     );
                 }
@@ -883,36 +1007,49 @@ async fn main() -> Result<()> {
                     let detail = if args.plan_file.is_some() || args.plan_stdin {
                         let (plan_markdown, source_path) =
                             load_plan_content(args.plan_file.as_deref(), args.plan_stdin)?;
-                        let plan_items = parse_plan_checkboxes(&plan_markdown);
-                        ensure_checkbox_plan(&plan_items)?;
-                        let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
-                        let request = build_plan_execution_request(
-                            &project,
-                            &writer,
-                            &selection.title,
-                            &selection.thread_key,
-                            &plan_markdown,
-                            source_path.as_deref(),
-                            repo_git_head(&repo_root).as_deref(),
-                        );
-                        api.capture_task(&request)
-                            .await
-                            .context("sync updated plan before finish verification")?;
-                        api.curate(&project, repo_replacement_policy(&repo_root))
-                            .await
-                            .context("curate updated plan before finish verification")?;
-                        synced_plan = true;
-                        synced_source_path =
-                            source_path.as_ref().map(|path| path.display().to_string());
-                        let refreshed = resolve_active_plan_selection(
-                            &api,
-                            &project,
-                            Some(selection.thread_key.as_str()),
-                        )
-                        .await?;
-                        api.memory_detail(&refreshed.memory_id.to_string())
-                            .await
-                            .context("load refreshed active plan")?
+                        if args.dry_run {
+                            synced_plan = true;
+                            synced_source_path =
+                                source_path.as_ref().map(|path| path.display().to_string());
+                            plan_detail_from_markdown(
+                                &selection,
+                                &plan_markdown,
+                                selection.memory_id,
+                            )?
+                        } else {
+                            let plan_items = parse_plan_checkboxes(&plan_markdown);
+                            ensure_checkbox_plan(&plan_items)?;
+                            let writer =
+                                resolve_writer_identity(&config, cli_writer_id.as_deref())?;
+                            let mut request = build_plan_execution_request(
+                                &project,
+                                &writer,
+                                &selection.title,
+                                &selection.thread_key,
+                                &plan_markdown,
+                                source_path.as_deref(),
+                                repo_git_head(&repo_root).as_deref(),
+                            );
+                            request.dry_run = false;
+                            api.capture_task(&request)
+                                .await
+                                .context("sync updated plan before finish verification")?;
+                            api.curate(&project, repo_replacement_policy(&repo_root), false)
+                                .await
+                                .context("curate updated plan before finish verification")?;
+                            synced_plan = true;
+                            synced_source_path =
+                                source_path.as_ref().map(|path| path.display().to_string());
+                            let refreshed = resolve_active_plan_selection(
+                                &api,
+                                &project,
+                                Some(selection.thread_key.as_str()),
+                            )
+                            .await?;
+                            api.memory_detail(&refreshed.memory_id.to_string())
+                                .await
+                                .context("load refreshed active plan")?
+                        }
                     } else {
                         api.memory_detail(&selection.memory_id.to_string())
                             .await
@@ -920,7 +1057,7 @@ async fn main() -> Result<()> {
                     };
 
                     let report = build_plan_execution_finish_report(&project, &detail)?;
-                    if synced_plan {
+                    if synced_plan && !args.dry_run {
                         let sync_request = build_plan_activity_request(
                             &project,
                             PlanActivityAction::Synced,
@@ -937,27 +1074,42 @@ async fn main() -> Result<()> {
                             );
                         }
                     }
-                    let finish_request = build_plan_activity_request(
-                        &project,
-                        if report.verified_complete {
-                            PlanActivityAction::FinishVerified
-                        } else {
-                            PlanActivityAction::FinishBlocked
-                        },
-                        &report.plan_title,
-                        &report.thread_key,
-                        report.total_items,
-                        report.completed_items,
-                        report.remaining_items.clone(),
-                        None,
-                    );
-                    if let Err(error) = api.log_plan_activity(&finish_request).await {
-                        eprintln!("warning: failed to log plan activity for `{project}`: {error}");
+                    if !args.dry_run {
+                        let finish_request = build_plan_activity_request(
+                            &project,
+                            if report.verified_complete {
+                                PlanActivityAction::FinishVerified
+                            } else {
+                                PlanActivityAction::FinishBlocked
+                            },
+                            &report.plan_title,
+                            &report.thread_key,
+                            report.total_items,
+                            report.completed_items,
+                            report.remaining_items.clone(),
+                            None,
+                        );
+                        if let Err(error) = api.log_plan_activity(&finish_request).await {
+                            eprintln!(
+                                "warning: failed to log plan activity for `{project}`: {error}"
+                            );
+                        }
                     }
                     if args.json {
-                        println!("{}", serde_json::to_string_pretty(&report)?);
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "report": report,
+                                "dry_run": args.dry_run,
+                            }))?
+                        );
                     } else {
                         print_plan_execution_finish_report(&report);
+                        if args.dry_run {
+                            println!(
+                                "\nDry run only: no plan state was synced, logged, or persisted."
+                            );
+                        }
                     }
                     if !report.verified_complete {
                         anyhow::bail!("approved plan still has unchecked items");
@@ -1019,6 +1171,7 @@ async fn main() -> Result<()> {
                     request.writer_id = writer.id;
                     request.writer_name = request.writer_name.or(writer.name);
                 }
+                request.dry_run = args.dry_run;
                 let response = client
                     .post(service_url(&config, "/v1/capture/task"))
                     .headers(write_headers(&config)?)
@@ -1033,18 +1186,21 @@ async fn main() -> Result<()> {
             let repo_root = resolve_repo_root(&cwd)?;
             let project = resolve_project_slug(args.project.clone(), &cwd)?;
             let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
-            let request =
+            let dry_run = args.dry_run;
+            let mut request =
                 build_remember_request(args, &project, &writer.id, writer.name.as_deref())?;
+            request.dry_run = dry_run;
             let api = ApiClient::new(client, config);
             let capture = api.capture_task(&request).await?;
             let curate = api
-                .curate(&project, repo_replacement_policy(&repo_root))
+                .curate(&project, repo_replacement_policy(&repo_root), dry_run)
                 .await?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "capture": capture,
-                    "curate": curate
+                    "curate": curate,
+                    "dry_run": dry_run,
                 }))?
             );
         }
@@ -1059,6 +1215,7 @@ async fn main() -> Result<()> {
                     project: args.project,
                     batch_size: args.batch_size,
                     replacement_policy: Some(replacement_policy),
+                    dry_run: args.dry_run,
                 })
                 .send()
                 .await?;
@@ -1071,6 +1228,7 @@ async fn main() -> Result<()> {
                     .headers(write_headers(&config)?)
                     .json(&ReindexRequest {
                         project: args.project,
+                        dry_run: args.dry_run,
                     })
                     .send()
                     .await?;
@@ -1082,6 +1240,7 @@ async fn main() -> Result<()> {
                     .headers(write_headers(&config)?)
                     .json(&ReembedRequest {
                         project: args.project,
+                        dry_run: args.dry_run,
                     })
                     .send()
                     .await?;
@@ -1091,7 +1250,9 @@ async fn main() -> Result<()> {
                 let api = ApiClient::new(client, config);
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&api.prune_embeddings(&args.project).await?)?
+                    serde_json::to_string_pretty(
+                        &api.prune_embeddings(&args.project, args.dry_run).await?
+                    )?
                 );
             }
         },
@@ -1111,6 +1272,7 @@ async fn main() -> Result<()> {
                     project: args.project,
                     max_confidence: args.max_confidence,
                     max_importance: args.max_importance,
+                    dry_run: args.dry_run,
                 })
                 .send()
                 .await?;
@@ -1140,6 +1302,20 @@ async fn main() -> Result<()> {
                         .unwrap_or(cwd);
                     let api = ApiClient::new(client.clone(), config.clone());
                     let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
+                    if args.dry_run {
+                        let preview = preview_automation_flush(
+                            &api.config,
+                            &api.client,
+                            &project,
+                            &repo_root,
+                            args.curate,
+                            &writer.id,
+                            writer.name.as_deref(),
+                        )
+                        .await?;
+                        println!("{}", serde_json::to_string_pretty(&preview)?);
+                        return Ok(());
+                    }
                     tokio::fs::write(flush_path(&repo_root), b"flush\n")
                         .await
                         .ok();
@@ -1283,6 +1459,32 @@ fn ensure_shared_service_api_token(
     preferred_token: Option<&str>,
     rotate_placeholder: bool,
 ) -> Result<ServiceApiTokenEnsureResult> {
+    plan_shared_service_api_token(shared_env_path, rotate_placeholder).and_then(|result| {
+        let token = preferred_token
+            .map(str::trim)
+            .filter(|value| !is_placeholder_service_api_token(value))
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(generate_service_api_token);
+        if result.changed {
+            write_shared_env_file(shared_env_path, SERVICE_API_TOKEN_KEY, &token)?;
+        }
+        Ok(result)
+    })
+}
+
+fn preview_shared_service_api_token_for_config(
+    config_path: &Path,
+    preferred_token: Option<&str>,
+    rotate_placeholder: bool,
+) -> Result<ServiceApiTokenEnsureResult> {
+    let _ = preferred_token;
+    plan_shared_service_api_token(&shared_env_path_for_config(config_path), rotate_placeholder)
+}
+
+fn plan_shared_service_api_token(
+    shared_env_path: &Path,
+    rotate_placeholder: bool,
+) -> Result<ServiceApiTokenEnsureResult> {
     let existing = shared_env_lookup(shared_env_path, SERVICE_API_TOKEN_KEY);
     if let Some(token) = existing.as_deref() {
         if !is_placeholder_service_api_token(token) {
@@ -1300,13 +1502,6 @@ fn ensure_shared_service_api_token(
             });
         }
     }
-
-    let token = preferred_token
-        .map(str::trim)
-        .filter(|value| !is_placeholder_service_api_token(value))
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(generate_service_api_token);
-    write_shared_env_file(shared_env_path, SERVICE_API_TOKEN_KEY, &token)?;
     Ok(ServiceApiTokenEnsureResult {
         path: shared_env_path.display().to_string(),
         changed: true,
@@ -2780,6 +2975,31 @@ fn enable_backend_service(_config_path: &Path) -> Result<String> {
     }
 }
 
+fn preview_enable_backend_service(config_path: &Path) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        match backend_pid_file_path() {
+            Ok(pid_path) => format!(
+                "Dry run: would enable/start the backend process.\nPID file: {}\nConfig: {}",
+                pid_path.display(),
+                config_path.display()
+            ),
+            Err(_) => format!(
+                "Dry run: would enable/start the backend process with config {}",
+                config_path.display()
+            ),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        format!(
+            "Dry run: would run `systemctl enable --now memory-layer.service` using config {}",
+            config_path.display()
+        )
+    }
+}
+
 fn disable_backend_service() -> Result<String> {
     #[cfg(target_os = "macos")]
     {
@@ -2812,6 +3032,31 @@ fn disable_backend_service() -> Result<String> {
     {
         run_systemctl_system(["disable", "--now", "memory-layer.service"])?;
         Ok("Disabled memory-layer.service".to_string())
+    }
+}
+
+fn preview_disable_backend_service(config_path: &Path) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        match backend_pid_file_path() {
+            Ok(pid_path) => format!(
+                "Dry run: would stop the backend process and remove pid file {}\nConfig: {}",
+                pid_path.display(),
+                config_path.display()
+            ),
+            Err(_) => format!(
+                "Dry run: would stop the backend process configured by {}",
+                config_path.display()
+            ),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        format!(
+            "Dry run: would run `systemctl disable --now memory-layer.service` using config {}",
+            config_path.display()
+        )
     }
 }
 
@@ -2895,6 +3140,32 @@ fn enable_watch_service(repo_root: &Path, project: &str) -> Result<String> {
     }
 }
 
+fn preview_enable_watch_service(repo_root: &Path, project: &str) -> Result<String> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(format!(
+            "Dry run: would install and start watcher LaunchAgent {}.\nPlist: {}\nRepo: {}\nProject: {}",
+            watch_launch_agent_label(project),
+            watch_launch_agent_path(project)?.display(),
+            repo_root.display(),
+            project,
+        ))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let unit_name = watch_unit_name(project);
+        let unit_path = user_systemd_unit_dir()?.join(&unit_name);
+        Ok(format!(
+            "Dry run: would install and start user service {}.\nUnit: {}\nRepo: {}\nProject: {}",
+            unit_name,
+            unit_path.display(),
+            repo_root.display(),
+            project,
+        ))
+    }
+}
+
 fn disable_watch_service(project: &str) -> Result<String> {
     #[cfg(target_os = "macos")]
     {
@@ -2926,6 +3197,28 @@ fn disable_watch_service(project: &str) -> Result<String> {
             "Disabled user service {}.\nRemoved unit: {}",
             unit_name,
             unit_path.display()
+        ))
+    }
+}
+
+fn preview_disable_watch_service(project: &str) -> Result<String> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(format!(
+            "Dry run: would disable watcher LaunchAgent {} and remove {}",
+            watch_launch_agent_label(project),
+            watch_launch_agent_path(project)?.display(),
+        ))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let unit_name = watch_unit_name(project);
+        let unit_path = user_systemd_unit_dir()?.join(&unit_name);
+        Ok(format!(
+            "Dry run: would disable user service {} and remove {}",
+            unit_name,
+            unit_path.display(),
         ))
     }
 }
@@ -4049,6 +4342,7 @@ impl ApiClient {
         &self,
         project: &str,
         replacement_policy: ReplacementPolicy,
+        dry_run: bool,
     ) -> Result<CurateResponse> {
         get_json(
             self.client
@@ -4058,6 +4352,7 @@ impl ApiClient {
                     project: project.to_string(),
                     batch_size: None,
                     replacement_policy: Some(replacement_policy),
+                    dry_run,
                 })
                 .send()
                 .await?,
@@ -4065,13 +4360,14 @@ impl ApiClient {
         .await
     }
 
-    pub(crate) async fn reindex(&self, project: &str) -> Result<ReindexResponse> {
+    pub(crate) async fn reindex(&self, project: &str, dry_run: bool) -> Result<ReindexResponse> {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/reindex"))
                 .headers(write_headers(&self.config)?)
                 .json(&ReindexRequest {
                     project: project.to_string(),
+                    dry_run,
                 })
                 .send()
                 .await?,
@@ -4079,13 +4375,14 @@ impl ApiClient {
         .await
     }
 
-    pub(crate) async fn reembed(&self, project: &str) -> Result<ReembedResponse> {
+    pub(crate) async fn reembed(&self, project: &str, dry_run: bool) -> Result<ReembedResponse> {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/reembed"))
                 .headers(write_headers(&self.config)?)
                 .json(&ReembedRequest {
                     project: project.to_string(),
+                    dry_run,
                 })
                 .send()
                 .await?,
@@ -4093,13 +4390,18 @@ impl ApiClient {
         .await
     }
 
-    pub(crate) async fn prune_embeddings(&self, project: &str) -> Result<PruneEmbeddingsResponse> {
+    pub(crate) async fn prune_embeddings(
+        &self,
+        project: &str,
+        dry_run: bool,
+    ) -> Result<PruneEmbeddingsResponse> {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/prune-embeddings"))
                 .headers(write_headers(&self.config)?)
                 .json(&PruneEmbeddingsRequest {
                     project: project.to_string(),
+                    dry_run,
                 })
                 .send()
                 .await?,
@@ -4107,7 +4409,11 @@ impl ApiClient {
         .await
     }
 
-    pub(crate) async fn archive_low_value(&self, project: &str) -> Result<ArchiveResponse> {
+    pub(crate) async fn archive_low_value(
+        &self,
+        project: &str,
+        dry_run: bool,
+    ) -> Result<ArchiveResponse> {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/archive"))
@@ -4116,6 +4422,7 @@ impl ApiClient {
                     project: project.to_string(),
                     max_confidence: 0.3,
                     max_importance: 1,
+                    dry_run,
                 })
                 .send()
                 .await?,
@@ -4382,6 +4689,11 @@ fn print_scan_report(report: &scan::ScanReport) {
     );
     println!("Index: {}", report.index_path);
     println!("Report: {}", report.report_path);
+    if !report.written {
+        println!(
+            "Dry run: no scan report file, activity event, capture, or curate run was written."
+        );
+    }
     if !report.candidate_previews.is_empty() {
         println!("\nCandidates:");
         for preview in &report.candidate_previews {
@@ -4404,7 +4716,11 @@ fn print_scan_report(report: &scan::ScanReport) {
 }
 
 fn print_index_report(report: &scan::RepoIndexReport) {
-    println!("Repository index built for {}\n", report.project);
+    println!(
+        "Repository index {} for {}\n",
+        if report.dry_run { "preview" } else { "built" },
+        report.project
+    );
     println!(
         "Files: {} selected / {} tracked | Commits: {} | Evidence bundles: {}",
         report.files_indexed,
@@ -4453,6 +4769,9 @@ fn print_index_report(report: &scan::RepoIndexReport) {
         println!("Since: {since}");
     }
     println!("Index: {}", report.index_path);
+    if report.dry_run {
+        println!("Dry run: no index file was written.");
+    }
 }
 
 fn print_index_status(status: &Option<scan::RepoIndexStatus>, project: &str) {
@@ -4515,8 +4834,15 @@ fn print_index_status(status: &Option<scan::RepoIndexStatus>, project: &str) {
 
 fn print_commit_sync_response(response: &CommitSyncResponse) {
     println!(
-        "Commit sync complete: {} imported, {} updated, {} received.",
-        response.imported_count, response.updated_count, response.total_received
+        "{}: {} imported, {} updated, {} received.",
+        if response.dry_run {
+            "Commit sync dry run"
+        } else {
+            "Commit sync complete"
+        },
+        response.imported_count,
+        response.updated_count,
+        response.total_received
     );
     if let Some(newest) = &response.newest_commit {
         println!("Newest commit: {newest}");
@@ -4688,6 +5014,7 @@ fn build_remember_request(
         structured_candidates: Vec::new(),
         command_output,
         idempotency_key: None,
+        dry_run: false,
     })
 }
 
@@ -4706,6 +5033,56 @@ async fn save_checkpoint_with_activity(
         eprintln!("warning: failed to log checkpoint activity for `{project}`: {error}");
     }
     Ok((checkpoint, path))
+}
+
+fn preview_checkpoint(
+    project: &str,
+    repo_root: &Path,
+    note: Option<String>,
+) -> Result<(mem_api::ResumeCheckpoint, PathBuf)> {
+    Ok((
+        resume::build_checkpoint(project, repo_root, note),
+        resume::checkpoint_store_location()?,
+    ))
+}
+
+async fn preview_automation_flush(
+    config: &AppConfig,
+    client: &Client,
+    project: &str,
+    repo_root: &Path,
+    force_curate: bool,
+    writer_id: &str,
+    writer_name: Option<&str>,
+) -> Result<serde_json::Value> {
+    let mut state = load_state(project, repo_root, &config.automation).await?;
+    let changed = watch_detect_changed_files(repo_root, &config.automation.ignored_paths)?;
+    update_session_from_repo(&mut state, changed, &config.automation);
+    let (capture, capture_reason) = should_capture(&state, &config.automation, true);
+    let overview = fetch_automation_overview(client, config, project).await?;
+    let (curate, curate_reason) = should_curate(
+        &config.automation,
+        overview.uncurated_raw_captures,
+        true,
+        force_curate,
+    );
+    let capture_request =
+        capture.then(|| build_automation_capture_request(&state, writer_id, writer_name));
+    Ok(serde_json::json!({
+        "project": project,
+        "dry_run": true,
+        "capture": {
+            "would_run": capture,
+            "reason": capture_reason,
+            "request": capture_request,
+        },
+        "curate": {
+            "would_run": curate,
+            "reason": curate_reason,
+            "force": force_curate,
+            "uncurated_raw_captures": overview.uncurated_raw_captures,
+        }
+    }))
 }
 
 fn build_plan_activity_request(
@@ -5009,6 +5386,7 @@ fn build_plan_execution_request(
             &normalized_plan,
             git_head,
         )),
+        dry_run: false,
     }
 }
 
@@ -5036,6 +5414,33 @@ fn build_plan_execution_finish_report(
         completed_items,
         verified_complete: remaining_items.is_empty(),
         remaining_items,
+    })
+}
+
+fn plan_detail_from_markdown(
+    selection: &ActivePlanSelection,
+    markdown: &str,
+    memory_id: Uuid,
+) -> Result<mem_api::MemoryEntryResponse> {
+    let items = parse_plan_checkboxes(markdown);
+    ensure_checkbox_plan(&items)?;
+    Ok(mem_api::MemoryEntryResponse {
+        id: memory_id,
+        canonical_text: normalize_plan_markdown_for_hash(markdown),
+        summary: selection.title.clone(),
+        memory_type: mem_api::MemoryType::Plan,
+        importance: 4,
+        confidence: 0.95,
+        status: mem_api::MemoryStatus::Active,
+        tags: vec![
+            "plan".to_string(),
+            format!("plan-thread:{}", selection.thread_key),
+        ],
+        sources: Vec::new(),
+        related_memories: Vec::new(),
+        project: String::new(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
     })
 }
 
@@ -5193,10 +5598,11 @@ impl SourceKindString for mem_api::SourceKind {
 mod tests {
     use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
 
+    use clap::Parser;
     use uuid::Uuid;
 
     use super::{
-        DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction,
+        Cli, DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction,
         build_plan_execution_finish_report, build_plan_execution_request, build_remember_request,
         derive_plan_thread_key, derive_plan_title, ensure_checkbox_plan,
         ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
@@ -5258,6 +5664,26 @@ mod tests {
     }
 
     #[test]
+    fn bundle_import_rejects_preview_flag() {
+        let result = Cli::try_parse_from([
+            "memory",
+            "bundle",
+            "import",
+            "--project",
+            "memory",
+            "bundle.zip",
+            "--preview",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn init_rejects_print_flag() {
+        let result = Cli::try_parse_from(["memory", "init", "--print"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn remember_request_uses_defaults() {
         let request = build_remember_request(
             RememberArgs {
@@ -5271,6 +5697,7 @@ mod tests {
                 tests_failed: vec![],
                 command_output_file: None,
                 auto_files: false,
+                dry_run: false,
             },
             "memory",
             "codex-writer",

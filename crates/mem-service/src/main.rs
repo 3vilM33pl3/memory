@@ -39,8 +39,8 @@ use mem_api::{
     write_capnp_text_frame,
 };
 use mem_curate::{
-    approve_replacement_proposal, curate, list_replacement_proposals, refresh_memory_relations,
-    reject_replacement_proposal, store_capture,
+    approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
+    preview_curate, refresh_memory_relations, reject_replacement_proposal, store_capture,
 };
 use mem_platform::restart_local_watcher_service;
 use mem_search::{
@@ -49,7 +49,7 @@ use mem_search::{
 };
 use mem_service::{
     fetch_project_commit, fetch_project_commits, fetch_project_memories, fetch_project_overview,
-    parse_status_filter, sync_project_commits,
+    parse_status_filter, preview_project_commit_sync, sync_project_commits,
 };
 use regex::Regex;
 use serde::Deserialize;
@@ -1878,9 +1878,18 @@ async fn capture_task(
     }
     let task_title = request.task_title.clone();
     let project = request.project.clone();
-    let response = store_capture(state.pool()?, &request)
-        .await
-        .map_err(ApiError::sql)?;
+    let response = if request.dry_run {
+        preview_capture(state.pool()?, &request)
+            .await
+            .map_err(ApiError::sql)?
+    } else {
+        store_capture(state.pool()?, &request)
+            .await
+            .map_err(ApiError::sql)?
+    };
+    if request.dry_run {
+        return Ok(Json(response));
+    }
     notify_project_changed(
         &state,
         project,
@@ -2041,9 +2050,18 @@ async fn curate_memory(
         ));
     }
     let project = request.project.clone();
-    let response = curate(state.pool()?, &request)
-        .await
-        .map_err(ApiError::sql)?;
+    let response = if request.dry_run {
+        preview_curate(state.pool()?, &request)
+            .await
+            .map_err(ApiError::sql)?
+    } else {
+        curate(state.pool()?, &request)
+            .await
+            .map_err(ApiError::sql)?
+    };
+    if request.dry_run {
+        return Ok(Json(response));
+    }
     if state.embedder.is_some() {
         rebuild_chunks(state.pool()?, &request.project, state.embedder.as_ref())
             .await
@@ -2105,9 +2123,32 @@ async fn reindex(
         ));
     }
     let project = request.project.clone();
-    let count = rebuild_chunks(state.pool()?, &request.project, state.embedder.as_ref())
+    let count = if request.dry_run {
+        sqlx::query(
+            r#"
+            SELECT COUNT(*) AS count
+            FROM memory_entries m
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1
+            "#,
+        )
+        .bind(&request.project)
+        .fetch_one(state.pool()?)
         .await
-        .map_err(ApiError::io)?;
+        .map_err(ApiError::sql)?
+        .try_get::<i64, _>("count")
+        .map_err(ApiError::sql)? as u64
+    } else {
+        rebuild_chunks(state.pool()?, &request.project, state.embedder.as_ref())
+            .await
+            .map_err(ApiError::io)?
+    };
+    if request.dry_run {
+        return Ok(Json(ReindexResponse {
+            reindexed_entries: count,
+            dry_run: true,
+        }));
+    }
     notify_project_changed(
         &state,
         project,
@@ -2120,6 +2161,7 @@ async fn reindex(
     );
     Ok(Json(ReindexResponse {
         reindexed_entries: count,
+        dry_run: false,
     }))
 }
 
@@ -2141,9 +2183,42 @@ async fn reembed(
         )));
     };
     let project = request.project.clone();
-    let count = reembed_project_chunks(state.pool()?, &request.project, embedder)
+    let count = if request.dry_run {
+        sqlx::query(
+            r#"
+            SELECT COUNT(*) AS count
+            FROM memory_chunks mc
+            JOIN memory_entries m ON m.id = mc.memory_entry_id
+            JOIN projects p ON p.id = m.project_id
+            LEFT JOIN memory_chunk_embeddings mce
+              ON mce.chunk_id = mc.id
+             AND mce.embedding_space = $2
+            WHERE p.slug = $1
+              AND m.status = 'active'
+              AND (
+                    mce.chunk_id IS NULL
+                    OR mce.embedding_dimension IS NULL
+                  )
+            "#,
+        )
+        .bind(&request.project)
+        .bind(embedder.embedding_space_key())
+        .fetch_one(state.pool()?)
         .await
-        .map_err(ApiError::io)?;
+        .map_err(ApiError::sql)?
+        .try_get::<i64, _>("count")
+        .map_err(ApiError::sql)? as u64
+    } else {
+        reembed_project_chunks(state.pool()?, &request.project, embedder)
+            .await
+            .map_err(ApiError::io)?
+    };
+    if request.dry_run {
+        return Ok(Json(ReembedResponse {
+            reembedded_chunks: count,
+            dry_run: true,
+        }));
+    }
     notify_project_changed(
         &state,
         project,
@@ -2156,6 +2231,7 @@ async fn reembed(
     );
     Ok(Json(ReembedResponse {
         reembedded_chunks: count,
+        dry_run: false,
     }))
 }
 
@@ -2177,9 +2253,37 @@ async fn prune_embeddings(
         )));
     };
     let project = request.project.clone();
-    let count = prune_project_embeddings(state.pool()?, &request.project, embedder)
+    let count = if request.dry_run {
+        sqlx::query(
+            r#"
+            SELECT COUNT(*) AS count
+            FROM memory_chunk_embeddings mce
+            JOIN memory_chunks mc ON mc.id = mce.chunk_id
+            JOIN memory_entries m ON m.id = mc.memory_entry_id
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1
+              AND m.status = 'active'
+              AND mce.embedding_space <> $2
+            "#,
+        )
+        .bind(&request.project)
+        .bind(embedder.embedding_space_key())
+        .fetch_one(state.pool()?)
         .await
-        .map_err(ApiError::io)?;
+        .map_err(ApiError::sql)?
+        .try_get::<i64, _>("count")
+        .map_err(ApiError::sql)? as u64
+    } else {
+        prune_project_embeddings(state.pool()?, &request.project, embedder)
+            .await
+            .map_err(ApiError::io)?
+    };
+    if request.dry_run {
+        return Ok(Json(PruneEmbeddingsResponse {
+            pruned_embeddings: count,
+            dry_run: true,
+        }));
+    }
     notify_project_changed(
         &state,
         project,
@@ -2192,6 +2296,7 @@ async fn prune_embeddings(
     );
     Ok(Json(PruneEmbeddingsResponse {
         pruned_embeddings: count,
+        dry_run: false,
     }))
 }
 
@@ -2263,9 +2368,18 @@ async fn sync_commits(
         ));
     }
     let project = request.project.clone();
-    let response = sync_project_commits(state.pool()?, &request)
-        .await
-        .map_err(ApiError::sql)?;
+    let response = if request.dry_run {
+        preview_project_commit_sync(state.pool()?, &request)
+            .await
+            .map_err(ApiError::sql)?
+    } else {
+        sync_project_commits(state.pool()?, &request)
+            .await
+            .map_err(ApiError::sql)?
+    };
+    if request.dry_run {
+        return Ok(Json(response));
+    }
     notify_project_changed(
         &state,
         project,
@@ -3817,24 +3931,53 @@ async fn archive(
         ));
     }
     let project = request.project.clone();
-    let result = sqlx::query(
-        r#"
-        UPDATE memory_entries m
-        SET status = 'archived', archived_at = now(), updated_at = now()
-        FROM projects p
-        WHERE p.id = m.project_id
-          AND p.slug = $1
-          AND m.status = 'active'
-          AND m.confidence <= $2
-          AND m.importance <= $3
-        "#,
-    )
-    .bind(&request.project)
-    .bind(request.max_confidence)
-    .bind(request.max_importance)
-    .execute(state.pool()?)
-    .await
-    .map_err(ApiError::sql)?;
+    let archived_count = if request.dry_run {
+        sqlx::query(
+            r#"
+            SELECT COUNT(*) AS count
+            FROM memory_entries m
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1
+              AND m.status = 'active'
+              AND m.confidence <= $2
+              AND m.importance <= $3
+            "#,
+        )
+        .bind(&request.project)
+        .bind(request.max_confidence)
+        .bind(request.max_importance)
+        .fetch_one(state.pool()?)
+        .await
+        .map_err(ApiError::sql)?
+        .try_get::<i64, _>("count")
+        .map_err(ApiError::sql)? as u64
+    } else {
+        sqlx::query(
+            r#"
+            UPDATE memory_entries m
+            SET status = 'archived', archived_at = now(), updated_at = now()
+            FROM projects p
+            WHERE p.id = m.project_id
+              AND p.slug = $1
+              AND m.status = 'active'
+              AND m.confidence <= $2
+              AND m.importance <= $3
+            "#,
+        )
+        .bind(&request.project)
+        .bind(request.max_confidence)
+        .bind(request.max_importance)
+        .execute(state.pool()?)
+        .await
+        .map_err(ApiError::sql)?
+        .rows_affected()
+    };
+    if request.dry_run {
+        return Ok(Json(ArchiveResponse {
+            archived_count,
+            dry_run: true,
+        }));
+    }
     notify_project_changed(
         &state,
         project,
@@ -3842,17 +3985,18 @@ async fn archive(
         ActivityKind::Archive,
         format!(
             "Archived {} low-value memory entry/entries.",
-            result.rows_affected()
+            archived_count
         ),
         Some(ActivityDetails::Archive {
-            archived_count: result.rows_affected(),
+            archived_count,
             max_confidence: request.max_confidence,
             max_importance: request.max_importance,
         }),
     );
 
     Ok(Json(ArchiveResponse {
-        archived_count: result.rows_affected(),
+        archived_count,
+        dry_run: false,
     }))
 }
 

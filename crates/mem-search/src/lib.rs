@@ -120,6 +120,10 @@ impl EmbeddingService {
             space_key,
         }
     }
+
+    pub fn embedding_space_key(&self) -> String {
+        self.embedding_space().space_key
+    }
 }
 
 fn empty_embedding_batch() -> EmbeddingBatch {

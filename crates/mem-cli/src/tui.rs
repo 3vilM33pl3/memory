@@ -659,7 +659,9 @@ impl App {
                 self.status_message = "Cleared filters.".to_string();
             }
             KeyCode::Char('c') if key.modifiers.is_empty() => {
-                let response = api.curate(&self.project, self.replacement_policy).await?;
+                let response = api
+                    .curate(&self.project, self.replacement_policy, false)
+                    .await?;
                 self.status_message = format!(
                     "Curated {} captures into {} memories with {} replacement(s) and {} queued proposal(s).",
                     response.input_count,
@@ -670,13 +672,13 @@ impl App {
                 self.refresh(api, RefreshMode::Full).await;
             }
             KeyCode::Char('i') if key.modifiers.is_empty() => {
-                let response = api.reindex(&self.project).await?;
+                let response = api.reindex(&self.project, false).await?;
                 self.status_message =
                     format!("Reindexed {} memory entries.", response.reindexed_entries);
                 self.refresh(api, RefreshMode::Full).await;
             }
             KeyCode::Char('e') if key.modifiers.is_empty() => {
-                let response = api.reembed(&self.project).await?;
+                let response = api.reembed(&self.project, false).await?;
                 self.status_message = format!(
                     "Materialized {} chunk embeddings for the active space.",
                     response.reembedded_chunks
@@ -684,7 +686,7 @@ impl App {
                 self.refresh(api, RefreshMode::Full).await;
             }
             KeyCode::Char('a') if key.modifiers.is_empty() => {
-                let response = api.archive_low_value(&self.project).await?;
+                let response = api.archive_low_value(&self.project, false).await?;
                 self.status_message = format!(
                     "Archived {} low-value memories using default thresholds.",
                     response.archived_count

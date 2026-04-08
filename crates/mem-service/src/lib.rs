@@ -6,7 +6,7 @@ mod runtime;
 
 pub use runtime::run_service;
 
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use mem_api::{
     CommitRecord, CommitSyncRequest, CommitSyncResponse, MemoryStatus, MemoryTypeCount, NamedCount,
@@ -440,6 +440,58 @@ pub async fn sync_project_commits(
         total_received: request.commits.len(),
         newest_commit,
         oldest_commit,
+        dry_run: false,
+    })
+}
+
+pub async fn preview_project_commit_sync(
+    pool: &PgPool,
+    request: &CommitSyncRequest,
+) -> Result<CommitSyncResponse, sqlx::Error> {
+    let project_id = sqlx::query("SELECT id FROM projects WHERE slug = $1 LIMIT 1")
+        .bind(&request.project)
+        .fetch_optional(pool)
+        .await?
+        .and_then(|row| row.try_get("id").ok())
+        .unwrap_or_else(Uuid::nil);
+
+    let existing_hashes = if project_id.is_nil() {
+        HashSet::new()
+    } else {
+        sqlx::query("SELECT commit_hash FROM project_commits WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .filter_map(|row| row.try_get::<String, _>("commit_hash").ok())
+            .collect::<HashSet<_>>()
+    };
+
+    let updated_count = request
+        .commits
+        .iter()
+        .filter(|commit| existing_hashes.contains(&commit.hash))
+        .count();
+    let imported_count = request.commits.len().saturating_sub(updated_count);
+    let newest_commit = request
+        .commits
+        .iter()
+        .max_by_key(|commit| commit.committed_at)
+        .map(|commit| commit.hash.clone());
+    let oldest_commit = request
+        .commits
+        .iter()
+        .min_by_key(|commit| commit.committed_at)
+        .map(|commit| commit.hash.clone());
+
+    Ok(CommitSyncResponse {
+        project_id,
+        imported_count,
+        updated_count,
+        total_received: request.commits.len(),
+        newest_commit,
+        oldest_commit,
+        dry_run: true,
     })
 }
 

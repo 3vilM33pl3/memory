@@ -161,6 +161,8 @@ pub struct CaptureTaskRequest {
     pub command_output: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl CaptureTaskRequest {
@@ -191,6 +193,8 @@ pub struct CurateRequest {
     pub batch_size: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement_policy: Option<ReplacementPolicy>,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl CurateRequest {
@@ -390,6 +394,8 @@ pub struct CaptureTaskResponse {
     pub task_id: Uuid,
     pub raw_capture_id: Uuid,
     pub idempotency_key: String,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,6 +410,8 @@ pub struct CurateResponse {
     pub proposal_count: i64,
     #[serde(default)]
     pub replacements: Vec<AppliedMemoryReplacement>,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -709,6 +717,8 @@ pub struct CommitSyncRequest {
     pub repo_root: String,
     #[serde(default)]
     pub commits: Vec<CommitSyncItem>,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl CommitSyncRequest {
@@ -747,6 +757,8 @@ pub struct CommitSyncResponse {
     pub newest_commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_commit: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1113,6 +1125,8 @@ pub struct ArchiveRequest {
     pub max_confidence: f32,
     #[serde(default = "default_archive_importance")]
     pub max_importance: i32,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl ArchiveRequest {
@@ -1143,6 +1157,8 @@ fn default_resume_limit() -> usize {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchiveResponse {
     pub archived_count: u64,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1170,6 +1186,8 @@ pub struct DeleteMemoryResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReindexRequest {
     pub project: String,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl ReindexRequest {
@@ -1184,11 +1202,15 @@ impl ReindexRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReindexResponse {
     pub reindexed_entries: u64,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReembedRequest {
     pub project: String,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl ReembedRequest {
@@ -1203,11 +1225,15 @@ impl ReembedRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReembedResponse {
     pub reembedded_chunks: u64,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PruneEmbeddingsRequest {
     pub project: String,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 impl PruneEmbeddingsRequest {
@@ -1222,6 +1248,8 @@ impl PruneEmbeddingsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PruneEmbeddingsResponse {
     pub pruned_embeddings: u64,
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2149,6 +2177,7 @@ mod tests {
             structured_candidates: Vec::new(),
             command_output: None,
             idempotency_key: None,
+            dry_run: false,
         };
 
         assert!(request.validate().is_err());
@@ -2160,6 +2189,7 @@ mod tests {
             project: "memory".to_string(),
             repo_root: "/repo".to_string(),
             commits: Vec::new(),
+            dry_run: false,
         };
 
         assert!(request.validate().is_err());

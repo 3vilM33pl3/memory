@@ -64,6 +64,7 @@ pub async fn store_capture(
             task_id: existing.try_get("task_id")?,
             raw_capture_id: existing.try_get("id")?,
             idempotency_key: computed_key,
+            dry_run: false,
         });
     }
 
@@ -89,6 +90,27 @@ pub async fn store_capture(
         task_id,
         raw_capture_id,
         idempotency_key: computed_key,
+        dry_run: false,
+    })
+}
+
+pub async fn preview_capture(
+    pool: &PgPool,
+    request: &CaptureTaskRequest,
+) -> Result<CaptureTaskResponse, sqlx::Error> {
+    let project_id = sqlx::query("SELECT id FROM projects WHERE slug = $1 LIMIT 1")
+        .bind(&request.project)
+        .fetch_optional(pool)
+        .await?
+        .and_then(|row| row.try_get("id").ok())
+        .unwrap_or_else(Uuid::nil);
+    Ok(CaptureTaskResponse {
+        project_id,
+        session_id: Uuid::nil(),
+        task_id: Uuid::nil(),
+        raw_capture_id: Uuid::nil(),
+        idempotency_key: idempotency_key(request),
+        dry_run: true,
     })
 }
 
@@ -245,6 +267,87 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
         replaced_count,
         proposal_count,
         replacements,
+        dry_run: false,
+    })
+}
+
+pub async fn preview_curate(
+    pool: &PgPool,
+    request: &CurateRequest,
+) -> Result<CurateResponse, sqlx::Error> {
+    let project_row = sqlx::query("SELECT id FROM projects WHERE slug = $1")
+        .bind(&request.project)
+        .fetch_one(pool)
+        .await?;
+    let project_id: Uuid = project_row.try_get("id")?;
+
+    let limit = request.batch_size.unwrap_or(25);
+    let captures = sqlx::query(
+        r#"
+        SELECT rc.id, rc.task_id, rc.payload_json
+        FROM raw_captures rc
+        JOIN tasks t ON t.id = rc.task_id
+        JOIN sessions s ON s.id = t.session_id
+        WHERE s.project_id = $1
+          AND rc.curated_at IS NULL
+        ORDER BY rc.created_at ASC
+        LIMIT $2
+        "#,
+    )
+    .bind(project_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    let mut tx = pool.begin().await?;
+    let mut output_count = 0_i64;
+    let mut replaced_count = 0_i64;
+    let mut proposal_count = 0_i64;
+    let policy = request.replacement_policy.unwrap_or_default();
+
+    for capture in &captures {
+        let payload: sqlx::types::Json<CaptureTaskRequest> = capture.try_get("payload_json")?;
+        for candidate in extract_candidates(&payload.0) {
+            let existing = sqlx::query(
+                r#"
+                SELECT id
+                FROM memory_entries
+                WHERE project_id = $1
+                  AND lower(canonical_text) = lower($2)
+                LIMIT 1
+                "#,
+            )
+            .bind(project_id)
+            .bind(&candidate.canonical_text)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            if existing.is_some() {
+                continue;
+            }
+
+            match determine_replacement_decision(&mut tx, project_id, &candidate, policy).await? {
+                ReplacementDecision::InsertNew => output_count += 1,
+                ReplacementDecision::Replace { .. } => {
+                    output_count += 1;
+                    replaced_count += 1;
+                }
+                ReplacementDecision::Queue { .. } => proposal_count += 1,
+            }
+        }
+    }
+
+    tx.rollback().await?;
+
+    Ok(CurateResponse {
+        project_id,
+        run_id: Uuid::nil(),
+        input_count: captures.len() as i64,
+        output_count,
+        replaced_count,
+        proposal_count,
+        replacements: Vec::new(),
+        dry_run: true,
     })
 }
 

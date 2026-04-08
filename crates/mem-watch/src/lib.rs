@@ -350,6 +350,7 @@ pub async fn run_curate_flow(
                 project: project.to_string(),
                 batch_size: None,
                 replacement_policy: Some(replacement_policy),
+                dry_run: false,
             })
             .send()
             .await?,
@@ -510,6 +511,7 @@ pub fn build_capture_request(
         structured_candidates: Vec::new(),
         command_output: None,
         idempotency_key: None,
+        dry_run: false,
     }
 }
 

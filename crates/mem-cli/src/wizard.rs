@@ -37,9 +37,10 @@ pub(crate) async fn run(
     repo_root: &Path,
     project: Option<String>,
     prefer_global: bool,
+    dry_run: bool,
 ) -> Result<()> {
     let mut terminal = setup_terminal()?;
-    let mut app = WizardApp::new(cwd, repo_root, project, prefer_global);
+    let mut app = WizardApp::new(cwd, repo_root, project, prefer_global, dry_run);
 
     loop {
         terminal.draw(|frame| draw(frame, &app))?;
@@ -489,6 +490,7 @@ struct WizardResult {
 
 struct WizardApp {
     draft: WizardDraft,
+    dry_run: bool,
     step: Step,
     selected: usize,
     input_mode: InputMode,
@@ -498,7 +500,13 @@ struct WizardApp {
 }
 
 impl WizardApp {
-    fn new(cwd: &Path, repo_root: &Path, project: Option<String>, prefer_global: bool) -> Self {
+    fn new(
+        cwd: &Path,
+        repo_root: &Path,
+        project: Option<String>,
+        prefer_global: bool,
+        dry_run: bool,
+    ) -> Self {
         let draft = WizardDraft::new(cwd, repo_root, project, prefer_global);
         let status = if draft.repo_available() {
             "Step 1 of 5. Choose whether this run should also edit shared/global settings."
@@ -509,6 +517,7 @@ impl WizardApp {
         };
         Self {
             draft,
+            dry_run,
             step: Step::Welcome,
             selected: 0,
             input_mode: InputMode::Normal,
@@ -672,7 +681,7 @@ impl WizardApp {
     }
 
     async fn apply(&mut self) {
-        match apply_draft(&self.draft).await {
+        match apply_draft(&self.draft, self.dry_run).await {
             Ok(result) => {
                 self.result = Some(result);
                 self.step = Step::Result;
@@ -1405,31 +1414,53 @@ fn next_step_label(step: Step) -> &'static str {
     }
 }
 
-async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
+async fn apply_draft(draft: &WizardDraft, dry_run: bool) -> Result<WizardResult> {
     let mut lines = Vec::new();
 
     if draft.includes_global() {
-        write_global_config(draft)?;
-        lines.push(format!(
-            "Updated shared config at {}",
-            draft.global_config_path.display()
-        ));
-        let token_result = ensure_shared_service_api_token_for_config(
-            &draft.global_config_path,
-            Some(&draft.api_token),
-            true,
-        )?;
+        if dry_run {
+            lines.push(format!(
+                "Would update shared config at {}",
+                draft.global_config_path.display()
+            ));
+        } else {
+            write_global_config(draft)?;
+            lines.push(format!(
+                "Updated shared config at {}",
+                draft.global_config_path.display()
+            ));
+        }
+        let token_result = if dry_run {
+            super::preview_shared_service_api_token_for_config(
+                &draft.global_config_path,
+                Some(&draft.api_token),
+                true,
+            )?
+        } else {
+            ensure_shared_service_api_token_for_config(
+                &draft.global_config_path,
+                Some(&draft.api_token),
+                true,
+            )?
+        };
         lines.push(token_result.summary_line());
         if !draft.llm_api_key_value.trim().is_empty() {
-            write_shared_env_file(
-                &draft.shared_env_path,
-                &draft.llm_api_key_env,
-                &draft.llm_api_key_value,
-            )?;
-            lines.push(format!(
-                "Updated shared env file at {}",
-                draft.shared_env_path.display()
-            ));
+            if dry_run {
+                lines.push(format!(
+                    "Would update shared env file at {}",
+                    draft.shared_env_path.display()
+                ));
+            } else {
+                write_shared_env_file(
+                    &draft.shared_env_path,
+                    &draft.llm_api_key_env,
+                    &draft.llm_api_key_value,
+                )?;
+                lines.push(format!(
+                    "Updated shared env file at {}",
+                    draft.shared_env_path.display()
+                ));
+            }
         }
     } else {
         lines.push("Left shared/global files unchanged.".to_string());
@@ -1437,31 +1468,49 @@ async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
 
     if let Some(repo_root) = &draft.repo_root {
         if draft.applies_repo_setup() {
-            apply_repo_setup(repo_root, draft)?;
-            lines.push(format!(
-                "Updated repo-local Memory Layer config for project `{}` at {}.",
-                draft.project,
-                repo_root.display()
-            ));
-            write_optional_env_file(
-                &repo_root.join(".mem").join("memory-layer.env"),
-                &draft.llm_api_key_env,
-                &draft.local_llm_api_key_value,
-            )?;
-            if draft.local_llm_api_key_value.trim().is_empty() {
-                lines.push("Cleared repo-local LLM API key override.".to_string());
-            } else {
+            if dry_run {
                 lines.push(format!(
-                    "Updated repo-local env override at {}",
-                    repo_root.join(".mem").join("memory-layer.env").display()
+                    "Would update repo-local Memory Layer config for project `{}` at {}.",
+                    draft.project,
+                    repo_root.display()
                 ));
+                if draft.local_llm_api_key_value.trim().is_empty() {
+                    lines.push("Would clear repo-local LLM API key override.".to_string());
+                } else {
+                    lines.push(format!(
+                        "Would update repo-local env override at {}",
+                        repo_root.join(".mem").join("memory-layer.env").display()
+                    ));
+                }
+            } else {
+                apply_repo_setup(repo_root, draft)?;
+                lines.push(format!(
+                    "Updated repo-local Memory Layer config for project `{}` at {}.",
+                    draft.project,
+                    repo_root.display()
+                ));
+                write_optional_env_file(
+                    &repo_root.join(".mem").join("memory-layer.env"),
+                    &draft.llm_api_key_env,
+                    &draft.local_llm_api_key_value,
+                )?;
+                if draft.local_llm_api_key_value.trim().is_empty() {
+                    lines.push("Cleared repo-local LLM API key override.".to_string());
+                } else {
+                    lines.push(format!(
+                        "Updated repo-local env override at {}",
+                        repo_root.join(".mem").join("memory-layer.env").display()
+                    ));
+                }
             }
         }
         if draft.enable_watcher_service.is_yes() {
-            lines.extend(split_lines(enable_watch_service(
-                repo_root,
-                &draft.project,
-            )?));
+            let service_output = if dry_run {
+                super::preview_enable_watch_service(repo_root, &draft.project)?
+            } else {
+                enable_watch_service(repo_root, &draft.project)?
+            };
+            lines.extend(split_lines(service_output));
         }
     }
 
@@ -1469,47 +1518,61 @@ async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
         && draft.enable_backend_service.is_yes()
         && backend_service_available()
     {
-        lines.extend(split_lines(enable_backend_service(
-            &draft.global_config_path,
-        )?));
+        let backend_output = if dry_run {
+            super::preview_enable_backend_service(&draft.global_config_path)
+        } else {
+            enable_backend_service(&draft.global_config_path)?
+        };
+        lines.extend(split_lines(backend_output));
     }
 
     if !matches!(draft.scan_choice, ScanChoice::Skip) {
-        let config = AppConfig::load_from_path(None).context("reload config after wizard")?;
-        let client = Client::builder()
-            .timeout(config.service.request_timeout)
-            .build()
-            .context("build http client")?;
-        let api = ApiClient::new(client, config);
-        let repo_root = draft
-            .repo_root
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("scan requested without a repository"))?;
-        let writer_id = std::env::var("MEMORY_LAYER_WRITER_ID")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| {
-                std::env::var("MEMORY_LAYER_AGENT_ID")
-                    .ok()
-                    .filter(|value| !value.trim().is_empty())
-            })
-            .or_else(|| {
-                let trimmed = api.config.writer.id.trim();
-                (!trimmed.is_empty()).then(|| trimmed.to_string())
-            })
-            .unwrap_or_else(|| platform::derive_default_writer_id("memory"));
-        let report = scan::run_scan(
-            &api,
-            repo_root,
-            &draft.project,
-            None,
-            false,
-            matches!(draft.scan_choice, ScanChoice::DryRun),
-            &writer_id,
-            api.config.writer.name.as_deref(),
-        )
-        .await?;
-        lines.extend(format_scan_report(&report));
+        if dry_run {
+            let mode = if matches!(draft.scan_choice, ScanChoice::DryRun) {
+                "dry-run"
+            } else {
+                "write"
+            };
+            lines.push(format!(
+                "Would run project scan after setup apply ({mode} mode)."
+            ));
+        } else {
+            let config = AppConfig::load_from_path(None).context("reload config after wizard")?;
+            let client = Client::builder()
+                .timeout(config.service.request_timeout)
+                .build()
+                .context("build http client")?;
+            let api = ApiClient::new(client, config);
+            let repo_root = draft
+                .repo_root
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("scan requested without a repository"))?;
+            let writer_id = std::env::var("MEMORY_LAYER_WRITER_ID")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    std::env::var("MEMORY_LAYER_AGENT_ID")
+                        .ok()
+                        .filter(|value| !value.trim().is_empty())
+                })
+                .or_else(|| {
+                    let trimmed = api.config.writer.id.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                })
+                .unwrap_or_else(|| platform::derive_default_writer_id("memory"));
+            let report = scan::run_scan(
+                &api,
+                repo_root,
+                &draft.project,
+                None,
+                false,
+                dry_run || matches!(draft.scan_choice, ScanChoice::DryRun),
+                &writer_id,
+                api.config.writer.name.as_deref(),
+            )
+            .await?;
+            lines.extend(format_scan_report(&report));
+        }
     }
 
     if draft.run_doctor.is_yes() {
@@ -1520,7 +1583,11 @@ async fn apply_draft(draft: &WizardDraft) -> Result<WizardResult> {
     }
 
     Ok(WizardResult {
-        title: "Wizard applied".to_string(),
+        title: if dry_run {
+            "Wizard dry run".to_string()
+        } else {
+            "Wizard applied".to_string()
+        },
         lines,
         success: true,
     })

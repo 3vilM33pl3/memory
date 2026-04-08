@@ -77,6 +77,7 @@ pub(crate) struct RepoIndexReport {
     pub call_count: usize,
     pub test_link_count: usize,
     pub index_path: String,
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -145,6 +146,7 @@ pub(crate) async fn run_scan(
         since,
         api.config.llm.max_input_bytes,
         rebuild_index,
+        dry_run,
     )?;
     let dossier = index.dossier.clone();
     let response = analyze_dossier(&api.client, &api.config, &dossier).await?;
@@ -159,11 +161,14 @@ pub(crate) async fn run_scan(
         writer_name,
     )?;
     let candidate_previews = build_candidate_previews(&candidates);
-    let report_path =
-        write_scan_report(repo_root, project, &dossier, &summary, &candidates, dry_run)?;
+    let report_path = if dry_run {
+        preview_scan_report_path(repo_root, project)?
+    } else {
+        write_scan_report(repo_root, project, &dossier, &summary, &candidates, false)?
+    };
 
     if dry_run {
-        let report = ScanReport {
+        return Ok(ScanReport {
             project: project.to_string(),
             repo_root: repo_root.display().to_string(),
             files_considered: dossier.files.len(),
@@ -178,9 +183,7 @@ pub(crate) async fn run_scan(
             report_path: report_path.display().to_string(),
             summary,
             candidate_previews,
-        };
-        log_scan_activity(api, &report).await;
-        return Ok(report);
+        });
     }
 
     let capture = api.capture_task(&request).await?;
@@ -188,6 +191,7 @@ pub(crate) async fn run_scan(
         .curate(
             project,
             load_repo_replacement_policy(repo_root).unwrap_or_default(),
+            false,
         )
         .await?;
     let report = ScanReport {
@@ -215,9 +219,15 @@ pub(crate) fn run_index(
     project: &str,
     since: Option<&str>,
     config: &AppConfig,
+    dry_run: bool,
 ) -> Result<RepoIndexReport> {
-    let (index, index_path) =
-        build_and_write_repo_index(repo_root, project, since, config.llm.max_input_bytes)?;
+    let (index, index_path) = if dry_run {
+        let index = build_repo_index(repo_root, project, since, config.llm.max_input_bytes)?;
+        let index_path = repo_index_path(repo_root, project);
+        (index, index_path)
+    } else {
+        build_and_write_repo_index(repo_root, project, since, config.llm.max_input_bytes)?
+    };
     Ok(RepoIndexReport {
         project: index.project,
         repo_root: index.repo_root,
@@ -237,6 +247,7 @@ pub(crate) fn run_index(
         call_count: index.analysis.calls.len(),
         test_link_count: index.analysis.test_links.len(),
         index_path: index_path.display().to_string(),
+        dry_run,
     })
 }
 
@@ -413,6 +424,7 @@ fn resolve_repo_index(
     since: Option<&str>,
     max_input_bytes: usize,
     rebuild_index: bool,
+    dry_run: bool,
 ) -> Result<(PersistedRepoIndex, PathBuf, bool)> {
     let index_path = repo_index_path(repo_root, project);
     let current_head = git_output(repo_root, ["rev-parse", "HEAD"])
@@ -431,7 +443,11 @@ fn resolve_repo_index(
         }
     }
 
-    let (index, _) = build_and_write_repo_index(repo_root, project, since, max_input_bytes)?;
+    let index = if dry_run {
+        build_repo_index(repo_root, project, since, max_input_bytes)?
+    } else {
+        build_and_write_repo_index(repo_root, project, since, max_input_bytes)?.0
+    };
     Ok((index, index_path, false))
 }
 
@@ -441,6 +457,18 @@ fn build_and_write_repo_index(
     since: Option<&str>,
     max_input_bytes: usize,
 ) -> Result<(PersistedRepoIndex, PathBuf)> {
+    let index = build_repo_index(repo_root, project, since, max_input_bytes)?;
+    let index_path = repo_index_path(repo_root, project);
+    write_repo_index(&index_path, &index)?;
+    Ok((index, index_path))
+}
+
+fn build_repo_index(
+    repo_root: &Path,
+    project: &str,
+    since: Option<&str>,
+    max_input_bytes: usize,
+) -> Result<PersistedRepoIndex> {
     let tracked_paths = list_tracked_files(repo_root);
     let language_coverage = derive_language_coverage(&tracked_paths);
     let settings = load_repo_agent_settings(repo_root).unwrap_or_default();
@@ -459,9 +487,7 @@ fn build_and_write_repo_index(
         analysis,
         dossier,
     };
-    let index_path = repo_index_path(repo_root, project);
-    write_repo_index(&index_path, &index)?;
-    Ok((index, index_path))
+    Ok(index)
 }
 
 fn repo_index_path(repo_root: &Path, project: &str) -> PathBuf {
@@ -1002,6 +1028,7 @@ fn build_capture_request(
         structured_candidates: candidates.to_vec(),
         command_output: None,
         idempotency_key: Some(idempotency_key),
+        dry_run: false,
     })
 }
 
@@ -1035,6 +1062,12 @@ fn write_scan_report(
     fs::write(&path, serde_json::to_string_pretty(&payload)?)
         .with_context(|| format!("write {}", path.display()))?;
     Ok(path)
+}
+
+fn preview_scan_report_path(repo_root: &Path, project: &str) -> Result<PathBuf> {
+    let scan_dir = repo_root.join(".mem").join("runtime").join("scan");
+    let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+    Ok(scan_dir.join(format!("{project}-scan-{stamp}-dry-run.json")))
 }
 
 fn git_output<I, S>(repo_root: &Path, args: I) -> Result<String>
