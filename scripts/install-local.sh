@@ -28,7 +28,7 @@ npm --prefix "$ROOT_DIR/web" run build
 install -m 0755 "$ROOT_DIR/target/release/memory" "$BIN_DIR/memory"
 rm -rf "$SKILL_TEMPLATE_DIR"
 mkdir -p "$SKILL_TEMPLATE_DIR"
-cp -R "$ROOT_DIR/.agents/skills/memory-layer/." "$SKILL_TEMPLATE_DIR/"
+cp -R "$ROOT_DIR/.agents/skills/." "$SKILL_TEMPLATE_DIR/"
 find "$SKILL_TEMPLATE_DIR" -type f -path '*/scripts/*' -exec chmod 0755 {} +
 rm -rf "$WEB_DIR"
 mkdir -p "$WEB_DIR"

@@ -10,7 +10,7 @@ class MemoryLayer < Formula
            "--bin", "memory"
 
     bin.install "target/release/memory"
-    pkgshare.install ".agents/skills/memory-layer" => "skill-template"
+    pkgshare.install ".agents/skills" => "skill-template"
     pkgshare.install "memory-layer.toml.example"
   end
 

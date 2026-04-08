@@ -30,7 +30,7 @@ install -m 0644 "$ROOT_DIR/packaging/debian/memory-watch.service" "$PKG_ROOT/lib
 install -m 0644 "$ROOT_DIR/packaging/debian/memory-layer.env" "$PKG_ROOT/etc/memory-layer/memory-layer.env"
 install -m 0644 "$ROOT_DIR/memory-layer.toml.example" "$PKG_ROOT/etc/memory-layer/memory-layer.toml"
 install -m 0644 "$ROOT_DIR/README.md" "$PKG_ROOT/usr/share/doc/memory-layer/README.md"
-cp -R "$ROOT_DIR/.agents/skills/memory-layer/." "$PKG_ROOT/usr/share/memory-layer/skill-template/"
+cp -R "$ROOT_DIR/.agents/skills/." "$PKG_ROOT/usr/share/memory-layer/skill-template/"
 find "$PKG_ROOT/usr/share/memory-layer/skill-template" -type f -path '*/scripts/*' -exec chmod 0755 {} +
 cp -R "$ROOT_DIR/web/dist/." "$PKG_ROOT/usr/share/memory-layer/web/"
 

@@ -1,74 +1,47 @@
 ---
 name: memory-layer
-description: Query project memory before answering project-specific questions; capture completed task context; curate raw captures into durable canonical memory with provenance; save plans before execution; use memory to get back into flow after interruptions
+description: Umbrella entrypoint for Memory Layer workflows; use for broad memory-related turns, shared invariants, and docs/admin work, while focused query/resume, plan-execution, and remember skills handle the narrow workflows
 ---
 
-# Memory Layer Skill
+# Memory Layer Umbrella Skill
 
 Use this skill when:
-- the user asks how this repository works
-- you discover a durable convention, decision, or debugging lesson
-- you complete meaningful work in this repository
-- the user explicitly asks to store or query memory
-- the user returns after an interruption and wants to get back into flow
-- you transition from planning to execution and want to know when it started
+- the turn is broadly about Memory Layer behavior rather than one narrow workflow phase
+- the user explicitly asks about the memory system or how the memory skills work
+- the task spans multiple memory phases in one turn
+- the task is docs/admin oriented and clearly about Memory Layer itself
 
 Do not use this skill for:
 - generic questions with no project-specific context
 - speculative facts without provenance
-- trivial temporary notes
+- turns that clearly belong to one focused memory skill
 
-## Scripts
+## Focused Skills
 
-Query memory:
-```bash
-./.agents/skills/memory-layer/scripts/query-memory.sh "<question>"
-```
+Prefer the focused skills when the task is clearly one of these:
 
-Resume a project after an interruption:
-```bash
-./.agents/skills/memory-layer/scripts/resume-project.sh [project-slug]
-```
+- `memory-query-resume`
+  - query project memory before repo-specific answers
+  - resume a project after an interruption
+- `memory-plan-execution`
+  - save the approved plan and checkpoint at execution start
+  - verify all plan checkbox items are complete before claiming the task is finished
+- `memory-remember`
+  - remember meaningful completed work after the task is done
 
-Save a checkpoint after a planning session transitions into approved execution:
-```bash
-./.agents/skills/memory-layer/scripts/checkpoint-project.sh \
-  --project <project-slug> \
-  --note "Plan approved; starting implementation"
-```
+Use this umbrella skill when the turn is mixed, ambiguous, or about the Memory Layer workflow itself.
 
-Save the approved plan and the execution checkpoint together:
-```bash
-./.agents/skills/memory-layer/scripts/start-plan-execution.sh \
-  --project <project-slug> \
-  --plan-file /tmp/approved-plan.md
-```
+## Shared Invariants
 
-Verify the approved plan is fully executed before saying the task is finished:
-```bash
-./.agents/skills/memory-layer/scripts/finish-plan-execution.sh \
-  --project <project-slug>
-```
-
-Remember task context automatically:
-```bash
-./.agents/skills/memory-layer/scripts/remember-task.sh \
-  --title "<task title>" \
-  --prompt "<user prompt>" \
-  --summary "<what changed>" \
-  --note "<durable fact>"
-```
-
-## Workflow
+These rules apply across the whole memory skill bundle:
 
 1. Query memory before answering project-specific questions.
-2. For "get me back into flow" or "what changed since I was last here?" prompts, use the resume script instead of a generic query.
-3. If you produce a proposed plan and the user approves execution, run the start-plan-execution helper immediately before starting implementation.
-4. For plan-backed work, run the finish-plan-execution helper before claiming the task is done.
-5. Use the automatic remember workflow once work is complete.
-6. The remember workflow captures and curates in one step.
-7. Prefer insufficient evidence over unsupported conclusions.
-8. Never invent provenance.
+2. Use `resume` instead of a generic query for interruption-recovery prompts.
+3. Save the approved plan before implementation begins when a planning phase turns into execution.
+4. Verify plan-backed work is complete before claiming the task is finished.
+5. Remember meaningful work after it is actually done.
+6. Prefer insufficient evidence over unsupported conclusions.
+7. Never invent provenance.
 
 ## Mandatory post-task rule
 
@@ -79,56 +52,22 @@ After any meaningful repository work, run the remember workflow before sending t
 
 This skill should default to storing durable project knowledge, not waiting for the user to ask again.
 
-## Planning transition rule
+## Shared Script Home
 
-When a turn has a real planning phase and the user then approves execution, run the start-plan-execution helper before implementation starts.
+The shared scripts and references still live here:
 
-That helper:
-- saves the checkpoint
-- logs the checkpoint activity
-- stores the whole approved plan as `plan` memory before work begins
-- requires Markdown checkbox items so completion can be verified later
+- `./.agents/skills/memory-layer/scripts/`
+- `./.agents/skills/memory-layer/references/`
 
-Use a short note that explains the transition, for example:
-- `Plan approved; starting implementation`
-- `Plan approved; beginning refactor`
-- `Plan approved; moving to execution`
+The focused skills call into those shared scripts instead of duplicating them.
 
-This makes `memory resume` useful when the user returns after delegating or switching projects.
+## Model Routing
 
-## Completion gate
+For docs/admin subtasks about Memory Layer itself, prefer a cheaper docs/admin model when available.
 
-Before an agent says plan-backed work is finished, it must verify the active approved plan with:
+Keep these on the stronger engineering path:
 
-```bash
-./.agents/skills/memory-layer/scripts/finish-plan-execution.sh \
-  --project <project-slug>
-```
-
-Rules:
-- do not present the task as finished if any checkbox item in the active approved plan remains unchecked
-- if the plan changed materially during execution, save the revised approved plan first with the same thread key
-- only after finish verification succeeds should the agent run the remember workflow and send a completed final response
-
-## Remember guidance
-
-The automatic remember workflow should be used after meaningful work. It:
-- defaults the project slug from the current directory
-- auto-detects changed files from `git status` when possible
-- captures task context
-- immediately curates it into canonical memory
-
-Provide:
-- one or more `--note` values for durable facts
-
-Optionally provide:
-- `--title`
-- `--prompt`
-- `--summary`
-- `--test-passed "<command>"`
-- `--test-failed "<command>"`
-- `--command-output-file <path>`
-
-Only store verified outcomes and durable lessons.
-
-If title, prompt, or summary are omitted, the remember command derives sensible defaults from the current project and changed files. Use that defaulting so memory capture stays lightweight and automatic.
+- query and resume
+- plan start/finish verification
+- remember/capture/curate
+- debugging or memory-behavior investigation

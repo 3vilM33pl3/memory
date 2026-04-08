@@ -2362,10 +2362,7 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
     let project_path = mem_dir.join("project.toml");
     let local_gitignore_path = mem_dir.join(".gitignore");
     let agent_config_path = repo_root.join(".agents").join("memory-layer.toml");
-    let skill_dir = repo_root
-        .join(".agents")
-        .join("skills")
-        .join("memory-layer");
+    let skill_root = repo_root.join(".agents").join("skills");
 
     fs::create_dir_all(&runtime_dir).context("create .mem/runtime")?;
     if !config_path.exists() {
@@ -2388,11 +2385,11 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
         )
         .context("write .agents/memory-layer.toml")?;
     }
-    if !skill_dir.exists() {
+    if missing_memory_skill_dirs(&skill_root).next().is_some() {
         let skill_template_dir = discover_skill_template_dir().ok_or_else(|| {
             anyhow::anyhow!("could not locate packaged memory-layer skill template")
         })?;
-        copy_skill_template(&skill_template_dir, &skill_dir, false)?;
+        sync_memory_skill_bundle(&skill_template_dir, &skill_root, false)?;
     }
     ensure_root_gitignore_entry(&repo_root.join(".gitignore"), "/.mem\n")?;
     Ok(())
@@ -2623,29 +2620,9 @@ fn initialize_repo(
     let local_gitignore_path = mem_dir.join(".gitignore");
     let root_gitignore_path = repo_root.join(".gitignore");
     let agent_config_path = repo_root.join(".agents").join("memory-layer.toml");
-    let skill_dir = repo_root
-        .join(".agents")
-        .join("skills")
-        .join("memory-layer");
+    let skill_root = repo_root.join(".agents").join("skills");
     let skill_template_dir = discover_skill_template_dir()
         .ok_or_else(|| anyhow::anyhow!("could not locate packaged memory-layer skill template"))?;
-
-    if !force {
-        for path in [&config_path, &project_path, &agent_config_path] {
-            if path.exists() {
-                anyhow::bail!(
-                    "{} already exists; rerun with --force to overwrite generated files",
-                    path.display()
-                );
-            }
-        }
-        if skill_dir.exists() {
-            anyhow::bail!(
-                "{} already exists; rerun with --force to overwrite generated files",
-                skill_dir.display()
-            );
-        }
-    }
 
     let config_contents = render_repo_config(repo_root);
     let project_contents = render_project_metadata(project, repo_root);
@@ -2655,16 +2632,24 @@ fn initialize_repo(
 
     if !print_only {
         fs::create_dir_all(&runtime_dir).context("create .mem/runtime")?;
-        fs::write(&config_path, config_contents).context("write .mem/config.toml")?;
-        fs::write(&project_path, project_contents).context("write .mem/project.toml")?;
+        if force || !config_path.exists() {
+            fs::write(&config_path, config_contents).context("write .mem/config.toml")?;
+        }
+        if force || !project_path.exists() {
+            fs::write(&project_path, project_contents).context("write .mem/project.toml")?;
+        }
         if let Some(parent) = agent_config_path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         }
-        fs::write(&agent_config_path, agent_project_contents)
-            .context("write .agents/memory-layer.toml")?;
-        fs::write(&local_gitignore_path, mem_gitignore_contents)
-            .context("write .mem/.gitignore")?;
-        copy_skill_template(&skill_template_dir, &skill_dir, force)?;
+        if force || !agent_config_path.exists() {
+            fs::write(&agent_config_path, agent_project_contents)
+                .context("write .agents/memory-layer.toml")?;
+        }
+        if force || !local_gitignore_path.exists() {
+            fs::write(&local_gitignore_path, mem_gitignore_contents)
+                .context("write .mem/.gitignore")?;
+        }
+        sync_memory_skill_bundle(&skill_template_dir, &skill_root, force)?;
         ensure_root_gitignore_entry(&root_gitignore_path, root_gitignore_line)?;
     }
 
@@ -2674,7 +2659,7 @@ fn initialize_repo(
         &config_path,
         &project_path,
         &agent_config_path,
-        &skill_dir,
+        &skill_root,
         print_only,
     ))
 }
@@ -3405,8 +3390,29 @@ fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
 
+const MEMORY_SKILL_NAMES: &[&str] = &[
+    "memory-layer",
+    "memory-query-resume",
+    "memory-plan-execution",
+    "memory-remember",
+];
+
+fn missing_memory_skill_dirs<'a>(skill_root: &'a Path) -> impl Iterator<Item = PathBuf> + 'a {
+    MEMORY_SKILL_NAMES
+        .iter()
+        .map(|name| skill_root.join(name))
+        .filter(|path| !path.is_dir())
+}
+
 fn discover_skill_template_dir() -> Option<PathBuf> {
     let mut candidates = Vec::new();
+    candidates.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join(".agents")
+            .join("skills"),
+    );
     if let Ok(exe) = env::current_exe() {
         if let Some(bin_dir) = exe.parent() {
             if let Some(prefix) = bin_dir.parent() {
@@ -3436,30 +3442,28 @@ fn discover_skill_template_dir() -> Option<PathBuf> {
         );
     }
     candidates.push(PathBuf::from("/usr/share/memory-layer/skill-template"));
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join(".agents")
-            .join("skills")
-            .join("memory-layer"),
-    );
 
     candidates.into_iter().find(|path| path.is_dir())
 }
 
-fn copy_skill_template(src: &Path, dest: &Path, force: bool) -> Result<()> {
-    if dest.exists() {
-        if force {
-            fs::remove_dir_all(dest).with_context(|| format!("remove {}", dest.display()))?;
-        } else {
-            anyhow::bail!(
-                "{} already exists; rerun with --force to overwrite generated files",
-                dest.display()
-            );
+fn sync_memory_skill_bundle(src_root: &Path, dest_root: &Path, force: bool) -> Result<()> {
+    fs::create_dir_all(dest_root).with_context(|| format!("create {}", dest_root.display()))?;
+    for skill_name in MEMORY_SKILL_NAMES {
+        let src = src_root.join(skill_name);
+        if !src.is_dir() {
+            anyhow::bail!("skill template is missing {}", src.display());
         }
+        let dest = dest_root.join(skill_name);
+        if dest.exists() {
+            if force {
+                fs::remove_dir_all(&dest).with_context(|| format!("remove {}", dest.display()))?;
+            } else {
+                continue;
+            }
+        }
+        copy_directory_tree(&src, &dest)?;
     }
-    copy_directory_tree(src, dest)
+    Ok(())
 }
 
 fn copy_directory_tree(src: &Path, dest: &Path) -> Result<()> {
@@ -3606,22 +3610,22 @@ fn render_init_summary(
     config_path: &Path,
     project_path: &Path,
     agent_config_path: &Path,
-    skill_path: &Path,
+    skills_root: &Path,
     print_only: bool,
 ) -> String {
     let action = if print_only {
-        "Would create"
+        "Would prepare"
     } else {
-        "Created"
+        "Prepared"
     };
     format!(
-        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}\n- {}/runtime/\n- {}\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} for repo-specific runtime overrides\n3. Use {} to customize project memory behavior\n4. Start the shared backend if it is not already running:\n   memory service run --config {}\n5. Optional: configure repo-local [service] overrides if you want a parallel dev backend for this repo\n6. Optional: run a project scan:\n   memory scan --project {}\n7. Optional: enable the per-repo watcher user service:\n   memory watcher enable --project {}\n8. Open the TUI:\n   memory tui --project {}\n9. Use the repo-local skill from {}",
+        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}\n- {}/runtime/\n- {} (bundled memory skills)\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} for repo-specific runtime overrides\n3. Use {} to customize project memory behavior\n4. Start the shared backend if it is not already running:\n   memory service run --config {}\n5. Optional: configure repo-local [service] overrides if you want a parallel dev backend for this repo\n6. Optional: run a project scan:\n   memory scan --project {}\n7. Optional: enable the per-repo watcher user service:\n   memory watcher enable --project {}\n8. Open the TUI:\n   memory tui --project {}\n9. Use the repo-local memory skill bundle from {} (umbrella skill at {}/memory-layer)",
         repo_root.display(),
         config_path.display(),
         project_path.display(),
         agent_config_path.display(),
         config_path.parent().unwrap_or(repo_root).display(),
-        skill_path.display(),
+        skills_root.display(),
         default_global_config_path_label(),
         config_path.display(),
         agent_config_path.display(),
@@ -3629,7 +3633,8 @@ fn render_init_summary(
         project,
         project,
         project,
-        skill_path.display()
+        skills_root.display(),
+        skills_root.display()
     )
 }
 
@@ -5360,7 +5365,8 @@ mod tests {
 
         assert!(summary.contains(".mem/config.toml"));
         assert!(summary.contains(".agents/memory-layer.toml"));
-        assert!(summary.contains(".agents/skills/memory-layer"));
+        assert!(summary.contains(".agents/skills"));
+        assert!(summary.contains("bundled memory skills"));
         assert!(summary.contains("memory watcher enable --project memory"));
         assert!(summary.contains("memory service run"));
     }
@@ -5379,6 +5385,21 @@ mod tests {
         assert!(
             repo_root
                 .join(".agents/skills/memory-layer/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-query-resume/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-plan-execution/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-remember/SKILL.md")
                 .is_file()
         );
         assert!(
@@ -5444,7 +5465,47 @@ mod tests {
                 .join(".agents/skills/memory-layer/SKILL.md")
                 .is_file()
         );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-query-resume/SKILL.md")
+                .is_file()
+        );
         assert!(root_gitignore_contains_mem(&repo_root).unwrap());
+
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[test]
+    fn init_preserves_existing_memory_skills_without_force() {
+        let repo_root = unique_temp_dir("mem-init-skill-bundle");
+        fs::create_dir_all(repo_root.join(".agents/skills/memory-layer")).unwrap();
+        fs::write(
+            repo_root.join(".agents/skills/memory-layer/SKILL.md"),
+            "custom umbrella skill\n",
+        )
+        .unwrap();
+
+        initialize_repo(&repo_root, "memory", false, false).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(repo_root.join(".agents/skills/memory-layer/SKILL.md")).unwrap(),
+            "custom umbrella skill\n"
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-query-resume/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-plan-execution/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-remember/SKILL.md")
+                .is_file()
+        );
 
         let _ = fs::remove_dir_all(repo_root);
     }
