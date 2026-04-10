@@ -76,6 +76,21 @@ impl CodexCollector {
             }
         }
 
+        for (pid, is_exec) in &pid_is_exec {
+            if pid_to_jsonl.contains_key(pid) {
+                continue;
+            }
+            if let Some(session) = self.load_pending_session(
+                *pid,
+                *is_exec,
+                &shared.process_info,
+                &shared.children_map,
+                &shared.ports,
+            ) {
+                sessions.push(session);
+            }
+        }
+
         // Recently finished sessions: scan today's JSONL files not owned by any running process.
         // This ensures Codex sessions transition to Done instead of vanishing.
         if let Some(recent_dir) = Self::today_session_dir(&self.sessions_dir) {
@@ -262,6 +277,90 @@ impl CodexCollector {
         }, rate_limit))
     }
 
+    fn load_pending_session(
+        &self,
+        pid: u32,
+        is_exec: bool,
+        process_info: &HashMap<u32, ProcInfo>,
+        children_map: &HashMap<u32, Vec<u32>>,
+        ports: &HashMap<u32, Vec<u16>>,
+    ) -> Option<AgentSession> {
+        let proc = process_info.get(&pid)?;
+        let cwd = read_proc_cwd(pid)?;
+        let (started_at, start_ticks) = read_proc_started_at(pid)?;
+        let project_name = cwd
+            .rsplit('/')
+            .next()
+            .unwrap_or("?")
+            .to_string();
+        let since_start = std::time::SystemTime::now()
+            .duration_since(
+                std::time::UNIX_EPOCH + std::time::Duration::from_millis(started_at),
+            )
+            .unwrap_or_default();
+        let status = if is_exec && since_start.as_secs() > 10 {
+            SessionStatus::Waiting
+        } else if proc.cpu_pct > 1.0
+            || process::has_active_descendant(pid, children_map, process_info, 5.0)
+        {
+            SessionStatus::Working
+        } else {
+            SessionStatus::Waiting
+        };
+        let waiting = matches!(status, SessionStatus::Waiting);
+
+        let mut children = Vec::new();
+        let mut stack: Vec<u32> = children_map.get(&pid).cloned().unwrap_or_default();
+        while let Some(cpid) = stack.pop() {
+            if let Some(cproc) = process_info.get(&cpid) {
+                let port = ports.get(&cpid).and_then(|v| v.first().copied());
+                children.push(ChildProcess {
+                    pid: cpid,
+                    command: cproc.command.clone(),
+                    mem_kb: cproc.rss_kb,
+                    port,
+                });
+            }
+            if let Some(grandchildren) = children_map.get(&cpid) {
+                stack.extend(grandchildren);
+            }
+        }
+
+        Some(AgentSession {
+            agent_cli: "codex",
+            pid,
+            session_id: format!("pending-{pid}-{start_ticks}"),
+            cwd,
+            project_name,
+            started_at,
+            status,
+            model: "-".to_string(),
+            context_percent: 0.0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_read: 0,
+            total_cache_create: 0,
+            turn_count: 0,
+            current_tasks: if waiting {
+                vec!["waiting for first turn".to_string()]
+            } else {
+                vec!["starting...".to_string()]
+            },
+            mem_mb: proc.rss_kb / 1024,
+            version: String::new(),
+            git_branch: String::new(),
+            git_added: 0,
+            git_modified: 0,
+            token_history: Vec::new(),
+            subagents: vec![],
+            mem_file_count: 0,
+            mem_line_count: 0,
+            children,
+            initial_prompt: String::new(),
+            first_assistant_text: String::new(),
+        })
+    }
+
     /// Find PIDs of running codex processes from shared process data (no extra ps call).
     /// Returns (pid, is_exec) tuples — `is_exec` is true for one-shot `codex exec` runs.
     fn find_codex_pids_from_shared(process_info: &HashMap<u32, ProcInfo>) -> Vec<(u32, bool)> {
@@ -270,7 +369,18 @@ impl CodexCollector {
             let cmd = &info.command;
             let is_exec = cmd.contains(" exec");
             let is_codex = process::cmd_has_binary(cmd, "codex");
+            let is_node_wrapper = cmd
+                .split_whitespace()
+                .take(2)
+                .collect::<Vec<_>>()
+                .first()
+                .is_some_and(|value| value.rsplit('/').next().unwrap_or(value) == "node")
+                && cmd
+                    .split_whitespace()
+                    .nth(1)
+                    .is_some_and(|value| value.rsplit('/').next().unwrap_or(value) == "codex");
             if is_codex
+                && !is_node_wrapper
                 && !cmd.contains("app-server")
                 && !cmd.contains("grep")
             {
@@ -317,6 +427,33 @@ impl CodexCollector {
         map
     }
 
+}
+
+fn read_proc_cwd(pid: u32) -> Option<String> {
+    std::fs::read_link(format!("/proc/{pid}/cwd"))
+        .ok()
+        .map(|path| path.display().to_string())
+}
+
+fn read_proc_started_at(pid: u32) -> Option<(u64, u64)> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let parts = stat.split_whitespace().collect::<Vec<_>>();
+    let start_ticks = parts.get(21)?.parse::<u64>().ok()?;
+    let boot_time = fs::read_to_string("/proc/stat")
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("btime "))?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    let ticks_per_second = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if ticks_per_second <= 0 {
+        return None;
+    }
+    let started_at = boot_time
+        .saturating_mul(1000)
+        .saturating_add(start_ticks.saturating_mul(1000) / ticks_per_second as u64);
+    Some((started_at, start_ticks))
 }
 
 impl super::AgentCollector for CodexCollector {
