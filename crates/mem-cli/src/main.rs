@@ -4323,7 +4323,14 @@ async fn reconcile_watcher_manager(_config: &AppConfig) -> Result<()> {
         }
 
         let unit_name = watch_agent_unit_name(&session.session_id);
-        if !state.sessions.contains_key(&session.session_id) || !unit_is_active(&unit_name) {
+        if should_start_agent_watcher(
+            state.sessions.contains_key(&session.session_id),
+            unit_is_loaded(&unit_name),
+            unit_is_active(&unit_name),
+        ) {
+            if unit_is_loaded(&unit_name) {
+                let _ = stop_unit_if_present(&unit_name);
+            }
             start_agent_watcher_transient_unit(&repo_root, &project, &session, &unit_name)?;
         }
 
@@ -4506,6 +4513,9 @@ fn start_agent_watcher_transient_unit(
     if output.status.success() {
         return Ok(());
     }
+    if unit_is_loaded(unit_name) {
+        return Ok(());
+    }
     anyhow::bail!(
         "systemd-run failed for {}: {}",
         unit_name,
@@ -4668,9 +4678,33 @@ fn unit_is_active(unit_name: &str) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
+fn unit_is_loaded(unit_name: &str) -> bool {
+    let output = ProcessCommand::new("systemctl")
+        .args(["--user", "show", unit_name, "--property", "LoadState", "--value"])
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let load_state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    !load_state.is_empty() && load_state != "not-found"
+}
+
+fn should_start_agent_watcher(
+    session_tracked: bool,
+    unit_loaded: bool,
+    unit_active: bool,
+) -> bool {
+    !session_tracked || !unit_loaded || !unit_active
+}
+
+#[cfg(not(target_os = "macos"))]
 fn stop_unit_if_present(unit_name: &str) -> Result<()> {
-    if unit_is_active(unit_name) {
-        run_systemctl_user(["stop", unit_name])?;
+    if unit_is_loaded(unit_name) {
+        let _ = run_systemctl_user(["stop", unit_name]);
+        let _ = run_systemctl_user(["reset-failed", unit_name]);
     }
     Ok(())
 }
@@ -7518,6 +7552,15 @@ mod tests {
         let unit = super::render_watch_manager_unit(Path::new("/tmp/memory-layer.toml")).unwrap();
         assert!(unit.contains("watcher manager run"));
         assert!(unit.contains("Restart=always"));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn agent_watcher_start_logic_reuses_loaded_active_units() {
+        assert!(!super::should_start_agent_watcher(true, true, true));
+        assert!(super::should_start_agent_watcher(true, true, false));
+        assert!(super::should_start_agent_watcher(true, false, false));
+        assert!(super::should_start_agent_watcher(false, true, true));
     }
 
     #[cfg(target_os = "macos")]
