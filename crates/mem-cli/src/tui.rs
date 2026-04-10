@@ -165,10 +165,6 @@ fn start_agent_snapshot_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
 }
 
 fn start_manager_status_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
-    #[cfg(target_os = "macos")]
-    let _ = tx;
-
-    #[cfg(not(target_os = "macos"))]
     std::thread::spawn(move || {
         loop {
             if tx
@@ -5447,11 +5443,10 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
 fn load_manager_footer_status() -> ManagerFooterStatus {
     let unit_installed = manager_unit_path().is_some_and(|path| path.exists());
-    let unit_enabled = systemctl_user_check("is-enabled", "memory-watch-manager.service");
-    let unit_active = systemctl_user_check("is-active", "memory-watch-manager.service");
+    let unit_enabled = manager_service_enabled();
+    let unit_active = manager_service_running();
     let foreground_active = foreground_manager_process_running();
     let state_file = load_manager_state_file();
     let tracked_sessions = state_file
@@ -5484,7 +5479,6 @@ fn load_manager_footer_status() -> ManagerFooterStatus {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
 fn derive_manager_state(
     unit_installed: bool,
     unit_enabled: bool,
@@ -5503,35 +5497,42 @@ fn derive_manager_state(
     }
 }
 
-#[cfg(not(target_os = "macos"))]
 fn foreground_manager_process_running() -> bool {
-    let Ok(entries) = fs::read_dir("/proc") else {
+    #[cfg(target_os = "macos")]
+    let output = ProcessCommand::new("ps")
+        .args(["-ww", "-axo", "pid=,command="])
+        .output();
+
+    #[cfg(not(target_os = "macos"))]
+    let output = ProcessCommand::new("ps")
+        .args(["-ww", "-eo", "pid=,command="])
+        .output();
+
+    let Ok(output) = output else {
         return false;
     };
+    if !output.status.success() {
+        return false;
+    }
     let current_pid = std::process::id().to_string();
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let pid = name.to_string_lossy();
-        if !pid.chars().all(|ch| ch.is_ascii_digit()) || pid == current_pid {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             continue;
         }
-        let cmdline_path = entry.path().join("cmdline");
-        let Ok(raw) = fs::read(cmdline_path) else {
+        let mut parts = trimmed.split_whitespace();
+        let Some(pid) = parts.next() else {
             continue;
         };
-        if raw.is_empty() {
+        if pid == current_pid {
             continue;
         }
-        let parts = raw
-            .split(|byte| *byte == 0)
-            .filter(|part| !part.is_empty())
-            .map(|part| String::from_utf8_lossy(part).to_string())
-            .collect::<Vec<_>>();
-        if parts.len() < 4 {
-            continue;
-        }
-        let tail = &parts[parts.len().saturating_sub(3)..];
-        if tail == ["watcher", "manager", "run"] {
+        let command = parts.collect::<Vec<_>>().join(" ");
+        if command.contains(" watcher manager run")
+            || command.ends_with("watcher manager run")
+            || command.contains("watcher manager run ")
+        {
             return true;
         }
     }
@@ -5539,7 +5540,7 @@ fn foreground_manager_process_running() -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn manager_unit_path() -> Option<PathBuf> {
+fn linux_manager_unit_path() -> Option<PathBuf> {
     let config_home = std::env::var("XDG_CONFIG_HOME")
         .ok()
         .map(PathBuf::from)
@@ -5556,7 +5557,18 @@ fn manager_unit_path() -> Option<PathBuf> {
     )
 }
 
-#[cfg(not(target_os = "macos"))]
+fn manager_unit_path() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        mem_platform::watch_manager_launch_agent_path()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        linux_manager_unit_path()
+    }
+}
+
 fn load_manager_state_file() -> Option<ManagerStateFile> {
     let path = preferred_user_state_dir()?.join("watcher-manager-state.json");
     let content = fs::read_to_string(path).ok()?;
@@ -5567,6 +5579,53 @@ fn load_manager_state_file() -> Option<ManagerStateFile> {
 fn systemctl_user_check(action: &str, unit: &str) -> bool {
     ProcessCommand::new("systemctl")
         .args(["--user", action, unit])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn manager_service_enabled() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let Some(path) = mem_platform::watch_manager_launch_agent_path() else {
+            return false;
+        };
+        path.exists()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        systemctl_user_check("is-enabled", "memory-watch-manager.service")
+    }
+}
+
+fn manager_service_running() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let Some(label) = Some(mem_platform::watch_manager_launch_agent_label()) else {
+            return false;
+        };
+        launchctl_print_succeeds(label)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        systemctl_user_check("is-active", "memory-watch-manager.service")
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn launchctl_print_succeeds(label: &str) -> bool {
+    let Ok(output) = ProcessCommand::new("id").arg("-u").output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let target = format!("gui/{uid}/{label}");
+    ProcessCommand::new("launchctl")
+        .args(["print", &target])
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false)
@@ -5600,6 +5659,7 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> Res
 mod tests {
     use chrono::{Local, TimeZone, Utc};
 
+    #[cfg_attr(target_os = "macos", allow(unused_imports))]
     use super::{
         AgentSnapshot, App, BackgroundEvent, ManagerState, MemoriesFocus, TabKind, Theme,
         ToolVersions, UiStatus, build_memory_detail_lines, context_gradient_color,
@@ -5696,7 +5756,6 @@ mod tests {
         assert_eq!(service_status_detail(&app), Some("relay".to_string()));
     }
 
-    #[cfg(not(target_os = "macos"))]
     #[test]
     fn manager_footer_status_mapping_prefers_active_then_installed_then_off() {
         assert_eq!(
@@ -5721,7 +5780,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "macos"))]
     #[test]
     fn manager_footer_detail_includes_session_and_warning_counts() {
         let (tx, _rx) = mpsc::unbounded_channel();

@@ -308,6 +308,19 @@ pub fn watch_launch_agent_label(project: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
+pub fn watch_manager_launch_agent_label() -> &'static str {
+    "com.memory-layer.memory-watch-manager"
+}
+
+#[cfg(target_os = "macos")]
+pub fn managed_watch_launch_agent_label(session_id: &str) -> String {
+    format!(
+        "com.memory-layer.memory-watch.codex.{}",
+        sanitize_service_fragment(session_id)
+    )
+}
+
+#[cfg(target_os = "macos")]
 pub fn user_memory_layer_log_dir() -> Option<PathBuf> {
     Some(macos_app_support_dir()?.join("log"))
 }
@@ -325,6 +338,19 @@ pub fn backend_launch_agent_path() -> Option<PathBuf> {
 #[cfg(target_os = "macos")]
 pub fn watch_launch_agent_path(project: &str) -> Option<PathBuf> {
     Some(user_launch_agents_dir()?.join(format!("{}.plist", watch_launch_agent_label(project))))
+}
+
+#[cfg(target_os = "macos")]
+pub fn watch_manager_launch_agent_path() -> Option<PathBuf> {
+    Some(user_launch_agents_dir()?.join(format!("{}.plist", watch_manager_launch_agent_label())))
+}
+
+#[cfg(target_os = "macos")]
+pub fn managed_watch_launch_agent_path(session_id: &str) -> Option<PathBuf> {
+    Some(user_launch_agents_dir()?.join(format!(
+        "{}.plist",
+        managed_watch_launch_agent_label(session_id)
+    )))
 }
 
 #[cfg(test)]

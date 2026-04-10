@@ -3043,6 +3043,41 @@ async fn run_doctor(
             false,
         ));
 
+        #[cfg(target_os = "macos")]
+        {
+            let manager_plist_path = watch_manager_launch_agent_path()?;
+            let manager_status = launch_agent_status(watch_manager_launch_agent_label())?;
+            let manager_installed = manager_plist_path.exists();
+            report.push(doctor_check(
+                "watcher.manager_service",
+                if manager_status.running {
+                    DoctorStatus::Ok
+                } else {
+                    DoctorStatus::Warn
+                },
+                if manager_status.running {
+                    "Agent-linked watcher manager service is active."
+                } else if manager_installed || manager_status.loaded {
+                    "Agent-linked watcher manager service is installed but not active."
+                } else {
+                    "Agent-linked watcher manager service is not installed."
+                },
+                Some(format!(
+                    "installed={} loaded={} active={} plist={}",
+                    yes_no(manager_installed),
+                    yes_no(manager_status.loaded),
+                    yes_no(manager_status.running),
+                    manager_plist_path.display()
+                )),
+                if manager_status.running {
+                    None
+                } else {
+                    Some("memory watcher manager enable".to_string())
+                },
+                false,
+            ));
+        }
+
         #[cfg(not(target_os = "macos"))]
         {
             let manager_unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
@@ -3054,8 +3089,6 @@ async fn run_doctor(
                 "watcher.manager_service",
                 if manager_active {
                     DoctorStatus::Ok
-                } else if manager_installed {
-                    DoctorStatus::Warn
                 } else {
                     DoctorStatus::Warn
                 },
@@ -4311,10 +4344,8 @@ fn watch_service_status(repo_root: &Path, project: &str) -> Result<String> {
 
 #[cfg(not(target_os = "macos"))]
 const WATCH_MANAGER_UNIT_NAME: &str = "memory-watch-manager.service";
-#[cfg(not(target_os = "macos"))]
 const WATCH_MANAGER_POLL_INTERVAL_SECONDS: u64 = 2;
 
-#[cfg(not(target_os = "macos"))]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct WatcherManagerState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4325,7 +4356,6 @@ struct WatcherManagerState {
     warnings: Vec<String>,
 }
 
-#[cfg(not(target_os = "macos"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ManagedWatcherSession {
     unit_name: String,
@@ -4337,7 +4367,6 @@ struct ManagedWatcherSession {
     agent_started_at: DateTime<Utc>,
 }
 
-#[cfg(not(target_os = "macos"))]
 async fn run_watcher_manager(config: AppConfig) -> Result<()> {
     reconcile_watcher_manager(&config).await?;
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -4351,12 +4380,6 @@ async fn run_watcher_manager(config: AppConfig) -> Result<()> {
     }
 }
 
-#[cfg(target_os = "macos")]
-async fn run_watcher_manager(_config: AppConfig) -> Result<()> {
-    anyhow::bail!("watcher manager is only supported on Linux in this release")
-}
-
-#[cfg(not(target_os = "macos"))]
 async fn reconcile_watcher_manager(_config: &AppConfig) -> Result<()> {
     let mut state = load_watcher_manager_state()?;
     state.updated_at = Some(Utc::now());
@@ -4391,21 +4414,21 @@ async fn reconcile_watcher_manager(_config: &AppConfig) -> Result<()> {
             state.warnings.push(format!(
                 "Skipped agent-linked watcher for project {} because legacy watcher service {} is active.",
                 project,
-                watch_unit_name(&project)
+                legacy_watch_service_name(&project)
             ));
             continue;
         }
 
-        let unit_name = watch_agent_unit_name(&session.session_id);
+        let unit_name = managed_watch_service_name(&session.session_id);
         if should_start_agent_watcher(
             state.sessions.contains_key(&session.session_id),
-            unit_is_loaded(&unit_name),
-            unit_is_active(&unit_name),
+            managed_watch_service_loaded(&session.session_id),
+            managed_watch_service_running(&session.session_id),
         ) {
-            if unit_is_loaded(&unit_name) {
-                let _ = stop_unit_if_present(&unit_name);
+            if managed_watch_service_loaded(&session.session_id) {
+                let _ = stop_managed_watch_service(&session.session_id);
             }
-            start_agent_watcher_transient_unit(&repo_root, &project, &session, &unit_name)?;
+            start_managed_agent_watcher(&repo_root, &project, &session)?;
         }
 
         let agent_started_at = DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
@@ -4433,7 +4456,14 @@ async fn reconcile_watcher_manager(_config: &AppConfig) -> Result<()> {
         .collect::<Vec<_>>();
     for session_id in stale {
         if let Some(entry) = state.sessions.remove(&session_id) {
-            let _ = stop_unit_if_present(&entry.unit_name);
+            let _ = stop_managed_watch_service(&session_id);
+            #[cfg(target_os = "macos")]
+            if let Ok(path) = managed_watch_launch_agent_path(&session_id) {
+                if path.exists() {
+                    let _ = fs::remove_file(path);
+                }
+            }
+            let _ = entry;
         }
     }
 
@@ -4441,12 +4471,10 @@ async fn reconcile_watcher_manager(_config: &AppConfig) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
 fn is_live_codex_session(session: &AgentSession) -> bool {
     session.agent_cli == "codex" && session.status != SessionStatus::Done
 }
 
-#[cfg(not(target_os = "macos"))]
 fn resolve_codex_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
     let output = ProcessCommand::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -4463,7 +4491,6 @@ fn resolve_codex_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
     Ok(Some(PathBuf::from(repo_root)))
 }
 
-#[cfg(not(target_os = "macos"))]
 fn repo_agent_watch_enabled(repo_root: &Path) -> Result<bool> {
     let path = repo_root.join(".agents").join("memory-layer.toml");
     if !path.is_file() {
@@ -4480,7 +4507,6 @@ fn repo_agent_watch_enabled(repo_root: &Path) -> Result<bool> {
         .unwrap_or(true))
 }
 
-#[cfg(not(target_os = "macos"))]
 fn resolve_manager_project_slug(repo_root: &Path) -> String {
     read_repo_project_slug(repo_root)
         .or_else(|| {
@@ -4492,7 +4518,6 @@ fn resolve_manager_project_slug(repo_root: &Path) -> String {
         .unwrap_or_else(|| "memory".to_string())
 }
 
-#[cfg(not(target_os = "macos"))]
 fn ensure_agent_watch_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
     if !repo_root.join(".mem").is_dir() {
         initialize_repo(repo_root, project, false, false)?;
@@ -4502,7 +4527,6 @@ fn ensure_agent_watch_repo_bootstrap(repo_root: &Path, project: &str) -> Result<
     ensure_agent_watch_repo_config(repo_root)
 }
 
-#[cfg(not(target_os = "macos"))]
 fn ensure_agent_watch_repo_config(repo_root: &Path) -> Result<()> {
     let path = repo_root.join(".mem").join("config.toml");
     let content = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
@@ -4528,36 +4552,112 @@ fn ensure_agent_watch_repo_config(repo_root: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
 fn legacy_watch_service_is_active(project: &str) -> bool {
-    unit_is_active(&watch_unit_name(project))
+    #[cfg(target_os = "macos")]
+    {
+        launch_agent_status(&watch_launch_agent_label(project))
+            .map(|status| status.running)
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        unit_is_active(&watch_unit_name(project))
+    }
 }
 
-#[cfg(not(target_os = "macos"))]
-fn watch_agent_unit_name(session_id: &str) -> String {
-    format!(
-        "memory-watch-codex-{}.service",
-        platform::sanitize_service_fragment(session_id)
-    )
+fn legacy_watch_service_name(project: &str) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        watch_launch_agent_label(project)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        watch_unit_name(project)
+    }
 }
 
-#[cfg(not(target_os = "macos"))]
-fn start_agent_watcher_transient_unit(
+fn managed_watch_service_name(session_id: &str) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        managed_watch_launch_agent_label(session_id)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        format!(
+            "memory-watch-codex-{}.service",
+            platform::sanitize_service_fragment(session_id)
+        )
+    }
+}
+
+fn managed_watch_service_loaded(session_id: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        launch_agent_status(&managed_watch_launch_agent_label(session_id))
+            .map(|status| status.loaded)
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        unit_is_loaded(&managed_watch_service_name(session_id))
+    }
+}
+
+fn managed_watch_service_running(session_id: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        launch_agent_status(&managed_watch_launch_agent_label(session_id))
+            .map(|status| status.running)
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        unit_is_active(&managed_watch_service_name(session_id))
+    }
+}
+
+fn start_managed_agent_watcher(
     repo_root: &Path,
     project: &str,
     session: &AgentSession,
-    unit_name: &str,
 ) -> Result<()> {
-    let memory_binary = memory_binary_path()?;
-    let global_config = default_global_config_path();
     let started_at = DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
         .unwrap_or_else(Utc::now)
         .to_rfc3339();
+
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = managed_watch_launch_agent_path(&session.session_id)?;
+        let label = managed_watch_launch_agent_label(&session.session_id);
+        write_launch_agent(
+            &plist_path,
+            render_managed_watch_launch_agent(repo_root, project, session, &started_at)?,
+            &label,
+        )?;
+        bootstrap_launch_agent(&plist_path, &label)?;
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    let memory_binary = memory_binary_path()?;
+
+    #[cfg(not(target_os = "macos"))]
+    let global_config = default_global_config_path();
+
+    #[cfg(not(target_os = "macos"))]
+    let unit_name = managed_watch_service_name(&session.session_id);
+
+    #[cfg(not(target_os = "macos"))]
     let output = ProcessCommand::new("systemd-run")
         .args([
             "--user",
             "--unit",
-            unit_name,
+            &unit_name,
             "--property",
             &format!("WorkingDirectory={}", repo_root.display()),
             "--property",
@@ -4584,12 +4684,15 @@ fn start_agent_watcher_transient_unit(
         .arg(started_at)
         .output()
         .with_context(|| format!("run systemd-run for {}", session.session_id))?;
+    #[cfg(not(target_os = "macos"))]
     if output.status.success() {
         return Ok(());
     }
-    if unit_is_loaded(unit_name) {
+    #[cfg(not(target_os = "macos"))]
+    if unit_is_loaded(&unit_name) {
         return Ok(());
     }
+    #[cfg(not(target_os = "macos"))]
     anyhow::bail!(
         "systemd-run failed for {}: {}",
         unit_name,
@@ -4597,7 +4700,6 @@ fn start_agent_watcher_transient_unit(
     )
 }
 
-#[cfg(not(target_os = "macos"))]
 fn load_watcher_manager_state() -> Result<WatcherManagerState> {
     let path = watcher_manager_state_path()?;
     if !path.is_file() {
@@ -4607,7 +4709,6 @@ fn load_watcher_manager_state() -> Result<WatcherManagerState> {
     serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))
 }
 
-#[cfg(not(target_os = "macos"))]
 fn save_watcher_manager_state(state: &WatcherManagerState) -> Result<()> {
     let path = watcher_manager_state_path()?;
     if let Some(parent) = path.parent() {
@@ -4617,121 +4718,204 @@ fn save_watcher_manager_state(state: &WatcherManagerState) -> Result<()> {
         .with_context(|| format!("write {}", path.display()))
 }
 
-#[cfg(not(target_os = "macos"))]
+fn clear_watcher_manager_state() -> Result<()> {
+    let path = watcher_manager_state_path()?;
+    if path.exists() {
+        fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+    }
+    Ok(())
+}
+
 fn watcher_manager_state_path() -> Result<PathBuf> {
     Ok(platform::preferred_user_state_dir()
         .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
         .join("watcher-manager-state.json"))
 }
 
-#[cfg(not(target_os = "macos"))]
 fn enable_watch_manager_service(config_path: &Path) -> Result<String> {
-    let unit_dir = user_systemd_unit_dir()?;
-    let unit_path = unit_dir.join(WATCH_MANAGER_UNIT_NAME);
-    fs::create_dir_all(&unit_dir).with_context(|| format!("create {}", unit_dir.display()))?;
-    fs::write(&unit_path, render_watch_manager_unit(config_path)?)
-        .with_context(|| format!("write {}", unit_path.display()))?;
-    run_systemctl_user(["daemon-reload"])?;
-    run_systemctl_user(["enable", "--now", WATCH_MANAGER_UNIT_NAME])?;
-    Ok(format!(
-        "Installed and started user service {}.\nUnit: {}\nConfig: {}\n\nManage it with:\n- memory watcher manager status\n- memory watcher manager disable\n- systemctl --user restart {}",
-        WATCH_MANAGER_UNIT_NAME,
-        unit_path.display(),
-        config_path.display(),
-        WATCH_MANAGER_UNIT_NAME
-    ))
-}
-
-#[cfg(target_os = "macos")]
-fn enable_watch_manager_service(_config_path: &Path) -> Result<String> {
-    anyhow::bail!("watcher manager is only supported on Linux in this release")
-}
-
-#[cfg(not(target_os = "macos"))]
-fn preview_enable_watch_manager_service() -> Result<String> {
-    let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
-    Ok(format!(
-        "Dry run: would install and start user service {}.\nUnit: {}",
-        WATCH_MANAGER_UNIT_NAME,
-        unit_path.display()
-    ))
-}
-
-#[cfg(target_os = "macos")]
-fn preview_enable_watch_manager_service() -> Result<String> {
-    anyhow::bail!("watcher manager is only supported on Linux in this release")
-}
-
-#[cfg(not(target_os = "macos"))]
-fn disable_watch_manager_service() -> Result<String> {
-    let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
-    let _ = run_systemctl_user(["disable", "--now", WATCH_MANAGER_UNIT_NAME]);
-    if unit_path.exists() {
-        fs::remove_file(&unit_path).with_context(|| format!("remove {}", unit_path.display()))?;
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = watch_manager_launch_agent_path()?;
+        let label = watch_manager_launch_agent_label();
+        write_launch_agent(
+            &plist_path,
+            render_watch_manager_launch_agent(config_path)?,
+            label,
+        )?;
+        bootstrap_launch_agent(&plist_path, label)?;
+        return Ok(format!(
+            "Installed and started watcher manager LaunchAgent {}.\nPlist: {}\nConfig: {}\n\nManage it with:\n- memory watcher manager status\n- memory watcher manager disable\n- launchctl kickstart -k {}/{}",
+            label,
+            plist_path.display(),
+            config_path.display(),
+            launchctl_domain_target()?,
+            label
+        ));
     }
-    if let Ok(state) = load_watcher_manager_state() {
-        for entry in state.sessions.values() {
-            let _ = stop_unit_if_present(&entry.unit_name);
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let unit_dir = user_systemd_unit_dir()?;
+        let unit_path = unit_dir.join(WATCH_MANAGER_UNIT_NAME);
+        fs::create_dir_all(&unit_dir).with_context(|| format!("create {}", unit_dir.display()))?;
+        fs::write(&unit_path, render_watch_manager_unit(config_path)?)
+            .with_context(|| format!("write {}", unit_path.display()))?;
+        run_systemctl_user(["daemon-reload"])?;
+        run_systemctl_user(["enable", "--now", WATCH_MANAGER_UNIT_NAME])?;
+        Ok(format!(
+            "Installed and started user service {}.\nUnit: {}\nConfig: {}\n\nManage it with:\n- memory watcher manager status\n- memory watcher manager disable\n- systemctl --user restart {}",
+            WATCH_MANAGER_UNIT_NAME,
+            unit_path.display(),
+            config_path.display(),
+            WATCH_MANAGER_UNIT_NAME
+        ))
+    }
+}
+
+fn preview_enable_watch_manager_service() -> Result<String> {
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(format!(
+            "Dry run: would install and start watcher manager LaunchAgent {}.\nPlist: {}",
+            watch_manager_launch_agent_label(),
+            watch_manager_launch_agent_path()?.display(),
+        ));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
+        Ok(format!(
+            "Dry run: would install and start user service {}.\nUnit: {}",
+            WATCH_MANAGER_UNIT_NAME,
+            unit_path.display()
+        ))
+    }
+}
+
+fn disable_watch_manager_service() -> Result<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = watch_manager_launch_agent_path()?;
+        let label = watch_manager_launch_agent_label();
+        let _ = bootout_launch_agent(&plist_path, label);
+        if plist_path.exists() {
+            fs::remove_file(&plist_path)
+                .with_context(|| format!("remove {}", plist_path.display()))?;
         }
+        if let Ok(state) = load_watcher_manager_state() {
+            for session_id in state.sessions.keys() {
+                let _ = stop_managed_watch_service(session_id);
+                if let Ok(path) = managed_watch_launch_agent_path(session_id) {
+                    if path.exists() {
+                        let _ = fs::remove_file(path);
+                    }
+                }
+            }
+        }
+        clear_watcher_manager_state()?;
+        return Ok(format!(
+            "Disabled watcher manager LaunchAgent {}.\nRemoved plist: {}",
+            label,
+            plist_path.display()
+        ));
     }
-    run_systemctl_user(["daemon-reload"])?;
-    Ok(format!(
-        "Disabled user service {}.\nRemoved unit: {}",
-        WATCH_MANAGER_UNIT_NAME,
-        unit_path.display()
-    ))
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
+        let _ = run_systemctl_user(["disable", "--now", WATCH_MANAGER_UNIT_NAME]);
+        if unit_path.exists() {
+            fs::remove_file(&unit_path)
+                .with_context(|| format!("remove {}", unit_path.display()))?;
+        }
+        if let Ok(state) = load_watcher_manager_state() {
+            for entry in state.sessions.values() {
+                let _ = stop_unit_if_present(&entry.unit_name);
+            }
+        }
+        clear_watcher_manager_state()?;
+        run_systemctl_user(["daemon-reload"])?;
+        Ok(format!(
+            "Disabled user service {}.\nRemoved unit: {}",
+            WATCH_MANAGER_UNIT_NAME,
+            unit_path.display()
+        ))
+    }
 }
 
-#[cfg(target_os = "macos")]
-fn disable_watch_manager_service() -> Result<String> {
-    anyhow::bail!("watcher manager is only supported on Linux in this release")
-}
-
-#[cfg(not(target_os = "macos"))]
 fn preview_disable_watch_manager_service() -> Result<String> {
-    let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
-    Ok(format!(
-        "Dry run: would disable user service {} and remove {}",
-        WATCH_MANAGER_UNIT_NAME,
-        unit_path.display()
-    ))
+    #[cfg(target_os = "macos")]
+    {
+        return Ok(format!(
+            "Dry run: would disable watcher manager LaunchAgent {} and remove {}",
+            watch_manager_launch_agent_label(),
+            watch_manager_launch_agent_path()?.display(),
+        ));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
+        Ok(format!(
+            "Dry run: would disable user service {} and remove {}",
+            WATCH_MANAGER_UNIT_NAME,
+            unit_path.display()
+        ))
+    }
 }
 
-#[cfg(target_os = "macos")]
-fn preview_disable_watch_manager_service() -> Result<String> {
-    anyhow::bail!("watcher manager is only supported on Linux in this release")
-}
-
-#[cfg(not(target_os = "macos"))]
 fn watch_manager_service_status() -> Result<String> {
-    let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
-    let is_enabled = run_systemctl_user(["is-enabled", WATCH_MANAGER_UNIT_NAME]).is_ok();
-    let is_active = run_systemctl_user(["is-active", WATCH_MANAGER_UNIT_NAME]).is_ok();
     let state = load_watcher_manager_state().unwrap_or_default();
     let warning_lines = if state.warnings.is_empty() {
         "- warnings: none".to_string()
     } else {
         format!("- warnings: {}", state.warnings.join(" | "))
     };
-    Ok(format!(
-        "Watcher manager service:\n- unit: {}\n- installed: {}\n- enabled: {}\n- active: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n\nInspect with:\n- systemctl --user status {}\n- memory watcher manager status",
-        unit_path.display(),
-        yes_no(unit_path.exists()),
-        yes_no(is_enabled),
-        yes_no(is_active),
-        state.sessions.len(),
-        state
-            .updated_at
-            .map(|value| value.to_rfc3339())
-            .unwrap_or_else(|| "n/a".to_string()),
-        warning_lines,
-        WATCH_MANAGER_UNIT_NAME
-    ))
-}
 
-#[cfg(target_os = "macos")]
-fn watch_manager_service_status() -> Result<String> {
-    anyhow::bail!("watcher manager is only supported on Linux in this release")
+    #[cfg(target_os = "macos")]
+    {
+        let plist_path = watch_manager_launch_agent_path()?;
+        let label = watch_manager_launch_agent_label();
+        let status = launch_agent_status(label)?;
+        return Ok(format!(
+            "Watcher manager service:\n- label: {}\n- plist: {}\n- installed: {}\n- loaded: {}\n- running: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n\nInspect with:\n- launchctl print {}/{}\n- memory watcher manager status",
+            label,
+            plist_path.display(),
+            yes_no(plist_path.exists()),
+            yes_no(status.loaded),
+            yes_no(status.running),
+            state.sessions.len(),
+            state
+                .updated_at
+                .map(|value| value.to_rfc3339())
+                .unwrap_or_else(|| "n/a".to_string()),
+            warning_lines,
+            launchctl_domain_target()?,
+            label
+        ));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
+        let is_enabled = run_systemctl_user(["is-enabled", WATCH_MANAGER_UNIT_NAME]).is_ok();
+        let is_active = run_systemctl_user(["is-active", WATCH_MANAGER_UNIT_NAME]).is_ok();
+        Ok(format!(
+            "Watcher manager service:\n- unit: {}\n- installed: {}\n- enabled: {}\n- active: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n\nInspect with:\n- systemctl --user status {}\n- memory watcher manager status",
+            unit_path.display(),
+            yes_no(unit_path.exists()),
+            yes_no(is_enabled),
+            yes_no(is_active),
+            state.sessions.len(),
+            state
+                .updated_at
+                .map(|value| value.to_rfc3339())
+                .unwrap_or_else(|| "n/a".to_string()),
+            warning_lines,
+            WATCH_MANAGER_UNIT_NAME
+        ))
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -4744,6 +4928,31 @@ fn render_watch_manager_unit(config_path: &Path) -> Result<String> {
         shell_escape_path(&memory_binary),
         shell_escape_path(config_path),
     ))
+}
+
+#[cfg(target_os = "macos")]
+fn render_watch_manager_launch_agent(config_path: &Path) -> Result<String> {
+    let binary = memory_binary_path()?;
+    let working_directory =
+        macos_app_support_dir().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    let log_dir = user_memory_layer_log_dir()?;
+    let stdout_path = log_dir.join("memory-watch-manager.stdout.log");
+    let stderr_path = log_dir.join("memory-watch-manager.stderr.log");
+    let command = launch_agent_shell_command(&[
+        binary.display().to_string(),
+        "--config".to_string(),
+        config_path.display().to_string(),
+        "watcher".to_string(),
+        "manager".to_string(),
+        "run".to_string(),
+    ])?;
+    render_launch_agent_plist(
+        watch_manager_launch_agent_label(),
+        &working_directory,
+        &command,
+        &stdout_path,
+        &stderr_path,
+    )
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -4775,6 +4984,22 @@ fn unit_is_loaded(unit_name: &str) -> bool {
 
 fn should_start_agent_watcher(session_tracked: bool, unit_loaded: bool, unit_active: bool) -> bool {
     !session_tracked || !unit_loaded || !unit_active
+}
+
+fn stop_managed_watch_service(session_id: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let label = managed_watch_launch_agent_label(session_id);
+        let path = managed_watch_launch_agent_path(session_id)?;
+        let _ = bootout_launch_agent(&path, &label);
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let unit_name = managed_watch_service_name(session_id);
+        stop_unit_if_present(&unit_name)
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -4860,6 +5085,27 @@ fn backend_launch_agent_path() -> Result<PathBuf> {
 #[cfg(target_os = "macos")]
 fn watch_launch_agent_path(project: &str) -> Result<PathBuf> {
     platform::watch_launch_agent_path(project).ok_or_else(|| anyhow::anyhow!("HOME is not set"))
+}
+
+#[cfg(target_os = "macos")]
+fn watch_manager_launch_agent_label() -> &'static str {
+    platform::watch_manager_launch_agent_label()
+}
+
+#[cfg(target_os = "macos")]
+fn watch_manager_launch_agent_path() -> Result<PathBuf> {
+    platform::watch_manager_launch_agent_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))
+}
+
+#[cfg(target_os = "macos")]
+fn managed_watch_launch_agent_label(session_id: &str) -> String {
+    platform::managed_watch_launch_agent_label(session_id)
+}
+
+#[cfg(target_os = "macos")]
+fn managed_watch_launch_agent_path(session_id: &str) -> Result<PathBuf> {
+    platform::managed_watch_launch_agent_path(session_id)
+        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))
 }
 
 #[cfg(target_os = "macos")]
@@ -5011,6 +5257,50 @@ fn render_watch_launch_agent(repo_root: &Path, project: &str) -> Result<String> 
     let command = format!("export MEMORY_LAYER_WATCH_SERVICE_MANAGED=1; {command}");
     render_launch_agent_plist(
         &watch_launch_agent_label(project),
+        &working_directory,
+        &command,
+        &stdout_path,
+        &stderr_path,
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn render_managed_watch_launch_agent(
+    repo_root: &Path,
+    project: &str,
+    session: &AgentSession,
+    started_at: &str,
+) -> Result<String> {
+    let binary = memory_binary_path()?;
+    let working_directory = repo_root
+        .canonicalize()
+        .with_context(|| format!("canonicalize {}", repo_root.display()))?;
+    let log_dir = user_memory_layer_log_dir()?;
+    let sanitized = sanitize_service_fragment(&session.session_id);
+    let stdout_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stdout.log"));
+    let stderr_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stderr.log"));
+    let command = launch_agent_shell_command(&[
+        binary.display().to_string(),
+        "--config".to_string(),
+        default_global_config_path().display().to_string(),
+        "watcher".to_string(),
+        "run".to_string(),
+        "--project".to_string(),
+        project.to_string(),
+        "--repo-root".to_string(),
+        repo_root.display().to_string(),
+        "--agent-cli".to_string(),
+        session.agent_cli.to_string(),
+        "--agent-session-id".to_string(),
+        session.session_id.clone(),
+        "--agent-pid".to_string(),
+        session.pid.to_string(),
+        "--agent-started-at".to_string(),
+        started_at.to_string(),
+    ])?;
+    let command = format!("export MEMORY_LAYER_WATCH_SERVICE_MANAGED=1; {command}");
+    render_launch_agent_plist(
+        &managed_watch_launch_agent_label(&session.session_id),
         &working_directory,
         &command,
         &stdout_path,
@@ -5458,10 +5748,8 @@ fn render_init_summary(
         "Prepared"
     };
     let watcher_step = if cfg!(target_os = "macos") {
-        format!(
-            "7. Optional: enable the per-repo watcher user service:\n   memory watcher enable --project {}",
-            project
-        )
+        "7. Optional: enable the Codex-linked watcher manager:\n   memory watcher manager enable\n   Legacy per-repo watcher service: memory watcher enable --project ".to_string()
+            + project
     } else {
         "7. Optional: enable the Linux Codex-linked watcher manager:\n   memory watcher manager enable\n   Legacy per-repo watcher service: memory watcher enable --project ".to_string() + project
     };
@@ -7400,15 +7688,15 @@ impl SourceKindString for mem_api::SourceKind {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        sync::Mutex,
-        time::Duration,
-    };
+    use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
 
+    use chrono::Utc;
     use clap::{Command, CommandFactory, Parser, error::ErrorKind};
+    use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use uuid::Uuid;
+
+    #[cfg(not(target_os = "macos"))]
+    use std::path::Path;
 
     use super::{
         Cli, DEV_API_TOKEN, PlanExecutionFinishReport, RememberArgs, SERVICE_API_TOKEN_KEY,
@@ -7426,8 +7714,10 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     use super::{
-        backend_launch_agent_label, default_global_config_path, render_backend_launch_agent,
-        render_watch_launch_agent, sanitize_service_fragment, watch_launch_agent_label,
+        backend_launch_agent_label, default_global_config_path, managed_watch_launch_agent_label,
+        render_backend_launch_agent, render_managed_watch_launch_agent, render_watch_launch_agent,
+        render_watch_manager_launch_agent, sanitize_service_fragment, watch_launch_agent_label,
+        watch_manager_launch_agent_label,
     };
 
     #[cfg(not(target_os = "macos"))]
@@ -8056,8 +8346,16 @@ mod tests {
     fn launch_agent_labels_are_project_scoped() {
         assert_eq!(backend_launch_agent_label(), "com.memory-layer.mem-service");
         assert_eq!(
+            watch_manager_launch_agent_label(),
+            "com.memory-layer.memory-watch-manager"
+        );
+        assert_eq!(
             watch_launch_agent_label("customer portal"),
             "com.memory-layer.memory-watch.customer-portal"
+        );
+        assert_eq!(
+            managed_watch_launch_agent_label("session 123"),
+            "com.memory-layer.memory-watch.codex.session-123"
         );
         assert_eq!(
             sanitize_service_fragment("customer portal"),
@@ -8089,6 +8387,72 @@ mod tests {
         assert!(plist.contains("memory-watch"));
         assert!(plist.contains("--project"));
         assert!(plist.contains("homelab"));
+
+        let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn watch_manager_launch_agent_uses_manager_subcommand() {
+        let plist = render_watch_manager_launch_agent(&default_global_config_path()).unwrap();
+
+        assert!(plist.contains("<string>com.memory-layer.memory-watch-manager</string>"));
+        assert!(plist.contains("<string>/bin/zsh</string>"));
+        assert!(plist.contains("watcher"));
+        assert!(plist.contains("manager"));
+        assert!(plist.contains("run"));
+        assert!(plist.contains("memory-watch-manager.stdout.log"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn managed_watch_launch_agent_uses_agent_metadata() {
+        let repo_root = unique_temp_dir("mem-managed-watch-launch-agent");
+        fs::create_dir_all(&repo_root).unwrap();
+        let session = AgentSession {
+            agent_cli: "codex",
+            pid: 42,
+            session_id: "session-123".to_string(),
+            cwd: repo_root.display().to_string(),
+            project_name: "homelab".to_string(),
+            started_at: Utc::now().timestamp_millis() as u64,
+            status: AgentSessionStatus::Waiting,
+            model: "gpt-5.4".to_string(),
+            context_percent: 0.0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_read: 0,
+            total_cache_create: 0,
+            turn_count: 0,
+            current_tasks: Vec::new(),
+            mem_mb: 0,
+            version: "test".to_string(),
+            git_branch: "main".to_string(),
+            git_added: 0,
+            git_modified: 0,
+            token_history: Vec::new(),
+            subagents: Vec::new(),
+            mem_file_count: 0,
+            mem_line_count: 0,
+            children: Vec::new(),
+            initial_prompt: String::new(),
+            first_assistant_text: String::new(),
+        };
+        let plist = render_managed_watch_launch_agent(
+            &repo_root,
+            "homelab",
+            &session,
+            "2026-04-10T00:00:00Z",
+        )
+        .unwrap();
+
+        assert!(plist.contains("<string>com.memory-layer.memory-watch.codex.session-123</string>"));
+        assert!(plist.contains("--agent-session-id"));
+        assert!(plist.contains("session-123"));
+        assert!(plist.contains("--agent-pid"));
+        assert!(plist.contains("42"));
+        assert!(plist.contains("--repo-root"));
+        assert!(plist.contains(&repo_root.display().to_string()));
 
         let _ = fs::remove_dir_all(repo_root);
     }

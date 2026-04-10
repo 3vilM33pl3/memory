@@ -14,13 +14,18 @@ This page explains how watcher liveness and recovery show up in Memory Layer.
 
 `memory watcher` is the background process that watches a project and sends useful work context to `memory service`.
 
-On Linux, the recommended path is the Codex-linked watcher manager:
+On Linux and macOS, the recommended path is the Codex-linked watcher manager:
 
 ```bash
 memory watcher manager enable
 ```
 
-That installs a persistent `systemd --user` manager service. It detects live Codex sessions, bootstraps git repos if needed, and starts one watcher per Codex session as a transient user service.
+That installs a persistent user manager service:
+
+- on Linux it uses `systemd --user`
+- on macOS it uses a `launchd` LaunchAgent
+
+The manager detects live Codex sessions, bootstraps git repos if needed, and starts one watcher per Codex session.
 
 Legacy per-project service-managed watchers can still be installed with:
 
@@ -81,7 +86,7 @@ That makes it easier to tell the difference between:
 
 ## Common Commands
 
-Enable the Linux watcher manager:
+Enable the watcher manager:
 
 ```bash
 memory watcher manager enable
