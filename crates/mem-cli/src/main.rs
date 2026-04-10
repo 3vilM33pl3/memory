@@ -1337,7 +1337,7 @@ async fn main() -> Result<()> {
                     println!("{output}");
                 }
             }
-            if !matches!(args.command, WatcherCommand::Run(_)) {
+            if !watcher_command_requires_config_load(&args.command) {
                 return Ok(());
             }
         }
@@ -5117,6 +5117,16 @@ fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
 
+fn watcher_command_requires_config_load(command: &WatcherCommand) -> bool {
+    matches!(
+        command,
+        WatcherCommand::Run(_)
+            | WatcherCommand::Manager(WatcherManagerArgs {
+                command: WatcherManagerCommand::Run
+            })
+    )
+}
+
 const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-layer",
     "memory-query-resume",
@@ -6995,7 +7005,8 @@ mod tests {
         ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
         mask_database_url, parse_plan_checkboxes, render_agent_project_config,
         repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
-        root_gitignore_contains_mem, shared_env_lookup, write_headers,
+        root_gitignore_contains_mem, shared_env_lookup, watcher_command_requires_config_load,
+        write_headers, WatcherCommand, WatcherManagerArgs, WatcherManagerCommand,
     };
     use mem_api::AppConfig;
 
@@ -7138,6 +7149,18 @@ mod tests {
         assert!(output.contains("Natural-language question to answer from project memory"));
         assert!(output.contains("Restrict results to one or more memory types"));
         assert!(output.contains("docs/user/cli/query.md"));
+    }
+
+    #[test]
+    fn watcher_manager_run_requires_config_load() {
+        let command = WatcherCommand::Manager(WatcherManagerArgs {
+            command: WatcherManagerCommand::Run,
+        });
+        assert!(watcher_command_requires_config_load(&command));
+        let status = WatcherCommand::Manager(WatcherManagerArgs {
+            command: WatcherManagerCommand::Status,
+        });
+        assert!(!watcher_command_requires_config_load(&status));
     }
 
     #[test]
