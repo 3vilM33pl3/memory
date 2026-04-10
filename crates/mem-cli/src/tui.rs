@@ -257,6 +257,7 @@ struct ManagerFooterStatus {
     state: ManagerState,
     tracked_sessions: usize,
     warning_count: usize,
+    mode: Option<ManagerMode>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,6 +266,12 @@ enum ManagerState {
     Installed,
     Off,
     Error,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ManagerMode {
+    Service,
+    Foreground,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -4588,7 +4595,14 @@ fn manager_status_color(app: &App) -> Color {
 
 fn manager_status_detail(app: &App) -> Option<String> {
     let status = app.manager_status.as_ref()?;
-    let mut detail = format!(
+    let mut parts = Vec::new();
+    if let Some(mode) = status.mode {
+        parts.push(match mode {
+            ManagerMode::Service => "service".to_string(),
+            ManagerMode::Foreground => "manual".to_string(),
+        });
+    }
+    parts.push(format!(
         "{} session{}",
         status.tracked_sessions,
         if status.tracked_sessions == 1 {
@@ -4596,11 +4610,11 @@ fn manager_status_detail(app: &App) -> Option<String> {
         } else {
             "s"
         }
-    );
+    ));
     if status.warning_count > 0 {
-        detail.push_str(&format!(", {} warn", status.warning_count));
+        parts.push(format!("{} warn", status.warning_count));
     }
-    Some(detail)
+    Some(parts.join(", "))
 }
 
 fn watcher_bar_status_label(app: &App) -> &'static str {
@@ -4961,6 +4975,7 @@ fn load_manager_footer_status() -> ManagerFooterStatus {
     let unit_installed = manager_unit_path().is_some_and(|path| path.exists());
     let unit_enabled = systemctl_user_check("is-enabled", "memory-watch-manager.service");
     let unit_active = systemctl_user_check("is-active", "memory-watch-manager.service");
+    let foreground_active = foreground_manager_process_running();
     let state_file = load_manager_state_file();
     let tracked_sessions = state_file
         .as_ref()
@@ -4974,12 +4989,21 @@ fn load_manager_footer_status() -> ManagerFooterStatus {
         unit_installed,
         unit_enabled,
         unit_active,
+        foreground_active,
         state_file.is_some() || manager_unit_path().is_some(),
     );
+    let mode = if unit_active {
+        Some(ManagerMode::Service)
+    } else if foreground_active {
+        Some(ManagerMode::Foreground)
+    } else {
+        None
+    };
     ManagerFooterStatus {
         state,
         tracked_sessions,
         warning_count,
+        mode,
     }
 }
 
@@ -4988,9 +5012,10 @@ fn derive_manager_state(
     unit_installed: bool,
     unit_enabled: bool,
     unit_active: bool,
+    foreground_active: bool,
     can_probe: bool,
 ) -> ManagerState {
-    if unit_active {
+    if unit_active || foreground_active {
         ManagerState::Active
     } else if unit_installed || unit_enabled {
         ManagerState::Installed
@@ -4999,6 +5024,41 @@ fn derive_manager_state(
     } else {
         ManagerState::Error
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn foreground_manager_process_running() -> bool {
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return false;
+    };
+    let current_pid = std::process::id().to_string();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let pid = name.to_string_lossy();
+        if !pid.chars().all(|ch| ch.is_ascii_digit()) || pid == current_pid {
+            continue;
+        }
+        let cmdline_path = entry.path().join("cmdline");
+        let Ok(raw) = fs::read(cmdline_path) else {
+            continue;
+        };
+        if raw.is_empty() {
+            continue;
+        }
+        let parts = raw
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part).to_string())
+            .collect::<Vec<_>>();
+        if parts.len() < 4 {
+            continue;
+        }
+        let tail = &parts[parts.len().saturating_sub(3)..];
+        if tail == ["watcher", "manager", "run"] {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -5161,19 +5221,23 @@ mod tests {
     #[test]
     fn manager_footer_status_mapping_prefers_active_then_installed_then_off() {
         assert_eq!(
-            derive_manager_state(true, true, true, true),
+            derive_manager_state(true, true, true, false, true),
             ManagerState::Active
         );
         assert_eq!(
-            derive_manager_state(true, false, false, true),
+            derive_manager_state(true, false, false, false, true),
             ManagerState::Installed
         );
         assert_eq!(
-            derive_manager_state(false, false, false, true),
+            derive_manager_state(false, false, false, true, true),
+            ManagerState::Active
+        );
+        assert_eq!(
+            derive_manager_state(false, false, false, false, true),
             ManagerState::Off
         );
         assert_eq!(
-            derive_manager_state(false, false, false, false),
+            derive_manager_state(false, false, false, false, false),
             ManagerState::Error
         );
     }
@@ -5198,12 +5262,13 @@ mod tests {
             state: ManagerState::Active,
             tracked_sessions: 2,
             warning_count: 1,
+            mode: Some(super::ManagerMode::Foreground),
         });
 
         assert_eq!(manager_status_label(&app), "active");
         assert_eq!(
             manager_status_detail(&app),
-            Some("2 sessions, 1 warn".to_string())
+            Some("manual, 2 sessions, 1 warn".to_string())
         );
     }
 
