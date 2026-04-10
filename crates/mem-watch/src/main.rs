@@ -5,9 +5,9 @@ use clap::{Args, Parser, Subcommand};
 use mem_api::{AppConfig, read_repo_project_slug};
 use mem_platform as platform;
 use mem_watch::{
-    build_watcher_heartbeat_request, build_watcher_unregister_request, detect_hostname,
-    fetch_service_instance_id, flush_path, heartbeat_watcher, load_state, owner_session_is_alive,
-    run_once, to_status, unregister_watcher, WatcherAgentOwner,
+    WatcherAgentOwner, build_watcher_heartbeat_request, build_watcher_unregister_request,
+    detect_hostname, fetch_service_instance_id, flush_path, heartbeat_watcher, load_state,
+    owner_session_is_alive, run_once, to_status, unregister_watcher,
 };
 use reqwest::Client;
 use uuid::Uuid;

@@ -522,9 +522,8 @@ fn matches_owner_session(session: &AgentSession, owner: &WatcherAgentOwner) -> b
 }
 
 fn session_started_matches(session: &AgentSession, started_at: DateTime<Utc>) -> bool {
-    chrono::DateTime::<Utc>::from_timestamp_millis(session.started_at as i64).is_some_and(
-        |value| value.signed_duration_since(started_at).num_seconds().abs() <= 5,
-    )
+    chrono::DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
+        .is_some_and(|value| value.signed_duration_since(started_at).num_seconds().abs() <= 5)
 }
 
 pub fn build_capture_request(

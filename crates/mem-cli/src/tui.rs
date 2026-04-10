@@ -549,20 +549,20 @@ impl App {
                         self.agent_table_state.select(None);
                     } else {
                         if !self.agent_initial_selection_done {
-                            self.agent_selected_index = self
-                                .agent_snapshot
-                                .as_ref()
-                                .and_then(|snapshot| {
-                                    snapshot
-                                        .sessions
-                                        .iter()
-                                        .position(|session| session.project_name == self.project)
-                                })
-                                .unwrap_or(0);
+                            self.agent_selected_index =
+                                self.agent_snapshot
+                                    .as_ref()
+                                    .and_then(|snapshot| {
+                                        snapshot.sessions.iter().position(|session| {
+                                            session.project_name == self.project
+                                        })
+                                    })
+                                    .unwrap_or(0);
                             self.agent_initial_selection_done = true;
                         } else {
-                            self.agent_selected_index =
-                                self.agent_selected_index.min(session_count.saturating_sub(1));
+                            self.agent_selected_index = self
+                                .agent_selected_index
+                                .min(session_count.saturating_sub(1));
                         }
                         self.agent_table_state
                             .select(Some(self.agent_selected_index));
@@ -590,7 +590,8 @@ impl App {
         }
         let next = (self.agent_selected_index as isize + delta).clamp(0, len as isize - 1);
         self.agent_selected_index = next as usize;
-        self.agent_table_state.select(Some(self.agent_selected_index));
+        self.agent_table_state
+            .select(Some(self.agent_selected_index));
     }
 
     fn scroll_agent_detail(&mut self, delta: i16) {
@@ -2430,7 +2431,7 @@ fn draw_watchers_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         metric_line(
             "Guidance",
             Span::styled(
-                "Use `memory watcher enable --project <slug>` or `memory watcher run --project <slug>`.",
+                "Use `memory watcher manager enable` on Linux, or `memory watcher enable --project <slug>` / `memory watcher run --project <slug>` for manual mode.",
                 Style::default().fg(Theme::MUTED),
             ),
         ),
@@ -3051,7 +3052,7 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "Start a watcher with `memory watcher enable --project <slug>` or `memory watcher run --project <slug>`.",
+                "Start the Linux manager with `memory watcher manager enable`, or use `memory watcher enable --project <slug>` / `memory watcher run --project <slug>` for manual mode.",
                 Style::default().fg(Theme::MUTED),
             )),
         ];
@@ -3066,7 +3067,7 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
                 Style::default().fg(Theme::MUTED),
             )),
             Line::from(Span::styled(
-                "Start a watcher with `memory watcher enable --project <slug>` or `memory watcher run --project <slug>`.",
+                "Start the Linux manager with `memory watcher manager enable`, or use `memory watcher enable --project <slug>` / `memory watcher run --project <slug>` for manual mode.",
                 Style::default().fg(Theme::MUTED),
             )),
         ];
@@ -3437,10 +3438,16 @@ fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>>
     lines.push(Line::from(vec![section_span("Selected Session")]));
     lines.push(Line::from(vec![
         label_span("Project: "),
-        Span::styled(session.project_name.clone(), Style::default().fg(Theme::TEXT)),
+        Span::styled(
+            session.project_name.clone(),
+            Style::default().fg(Theme::TEXT),
+        ),
         Span::raw("   "),
         label_span("Agent: "),
-        Span::styled(session.agent_cli.to_string(), Style::default().fg(Theme::TEXT)),
+        Span::styled(
+            session.agent_cli.to_string(),
+            Style::default().fg(Theme::TEXT),
+        ),
     ]));
     lines.push(Line::from(vec![
         label_span("Status: "),
@@ -3497,7 +3504,10 @@ fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>>
     ]));
     lines.push(Line::from(vec![
         label_span("Task: "),
-        Span::styled(agent_task_summary(session), Style::default().fg(Theme::TEXT)),
+        Span::styled(
+            agent_task_summary(session),
+            Style::default().fg(Theme::TEXT),
+        ),
     ]));
 
     if !session.children.is_empty() {
@@ -4538,9 +4548,8 @@ fn interpolate_theme_color(start: Color, end: Color, factor: f64) -> Color {
     let factor = factor.clamp(0.0, 1.0);
     match (start, end) {
         (Color::Rgb(sr, sg, sb), Color::Rgb(er, eg, eb)) => {
-            let lerp = |s: u8, e: u8| -> u8 {
-                (s as f64 + (e as f64 - s as f64) * factor).round() as u8
-            };
+            let lerp =
+                |s: u8, e: u8| -> u8 { (s as f64 + (e as f64 - s as f64) * factor).round() as u8 };
             Color::Rgb(lerp(sr, er), lerp(sg, eg), lerp(sb, eb))
         }
         _ => end,
@@ -4608,10 +4617,7 @@ fn quota_bar_line(
         Span::styled("█".repeat(remaining_cells), remaining_style),
         Span::styled("░".repeat(used_cells), Style::default().fg(Theme::BORDER)),
         Span::raw(" "),
-        Span::styled(
-            format!("{remaining_percent:.0}% left"),
-            remaining_style,
-        ),
+        Span::styled(format!("{remaining_percent:.0}% left"), remaining_style),
     ];
     if let Some(suffix) = suffix {
         spans.push(Span::raw("   "));
@@ -4684,7 +4690,11 @@ fn format_elapsed_from_started(started_at: u64) -> String {
     } else if elapsed.num_minutes() < 60 {
         format!("{}m", elapsed.num_minutes().max(0))
     } else {
-        format!("{}h {}m", elapsed.num_hours().max(0), elapsed.num_minutes().max(0) % 60)
+        format!(
+            "{}h {}m",
+            elapsed.num_hours().max(0),
+            elapsed.num_minutes().max(0) % 60
+        )
     }
 }
 
@@ -4804,9 +4814,8 @@ mod tests {
         AgentSnapshot, App, BackgroundEvent, TabKind, Theme, ToolVersions, UiStatus,
         context_gradient_color, empty_overview, filled_bar_cells, format_context_percent,
         format_epoch_reset_time, format_timestamp, format_timestamp_full, format_timestamp_medium,
-        format_timestamp_short, format_timestamp_timeline, normalized_percent,
-        remaining_bar_cells, service_status_label, should_attempt_stream_reconnect,
-        watcher_bar_status_label,
+        format_timestamp_short, format_timestamp_timeline, normalized_percent, remaining_bar_cells,
+        service_status_label, should_attempt_stream_reconnect, watcher_bar_status_label,
     };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::WatcherPresenceSummary;
@@ -4900,7 +4909,10 @@ mod tests {
     fn epoch_reset_time_formats_in_local_timezone() {
         let epoch_seconds = 1_775_352_000_u64;
         let timestamp = Utc.timestamp_opt(epoch_seconds as i64, 0).unwrap();
-        assert_eq!(format_epoch_reset_time(epoch_seconds), format_timestamp_short(timestamp));
+        assert_eq!(
+            format_epoch_reset_time(epoch_seconds),
+            format_timestamp_short(timestamp)
+        );
     }
 
     #[test]

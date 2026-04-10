@@ -1525,6 +1525,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "mem-agenttop",
  "mem-api",
  "mem-platform",
  "reqwest",

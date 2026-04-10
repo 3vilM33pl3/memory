@@ -25,10 +25,10 @@ use reqwest::Client;
 use super::{
     ApiClient, DoctorReport, DoctorStatus, backend_service_available, default_global_config_path,
     default_local_service_overrides, default_shared_capnp_unix_socket, enable_backend_service,
-    enable_watch_service, ensure_shared_service_api_token_for_config, mask_database_url,
-    read_local_service_overrides, render_agent_project_config, render_project_metadata,
-    repair_repo_bootstrap, run_doctor, shared_env_lookup, shared_env_path_for_config,
-    write_shared_env_file,
+    enable_watch_manager_service, enable_watch_service, ensure_shared_service_api_token_for_config,
+    mask_database_url, preview_enable_watch_manager_service, read_local_service_overrides,
+    render_agent_project_config, render_project_metadata, repair_repo_bootstrap, run_doctor,
+    shared_env_lookup, shared_env_path_for_config, write_shared_env_file,
 };
 use crate::scan::{self, ScanReport};
 
@@ -396,7 +396,11 @@ impl WizardDraft {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or_else(|| ".git/, target/, .mem/".to_string()),
             enable_backend_service: ToggleChoice::No,
-            enable_watcher_service: ToggleChoice::No,
+            enable_watcher_service: if cfg!(target_os = "macos") {
+                ToggleChoice::No
+            } else {
+                ToggleChoice::Yes
+            },
             scan_choice: ScanChoice::Skip,
             run_doctor: ToggleChoice::No,
         }
@@ -1521,13 +1525,32 @@ async fn apply_draft(draft: &WizardDraft, dry_run: bool) -> Result<WizardResult>
             }
         }
         if draft.enable_watcher_service.is_yes() {
-            let service_output = if dry_run {
-                super::preview_enable_watch_service(repo_root, &draft.project)?
+            let service_output = if cfg!(target_os = "macos") || !draft.includes_global() {
+                if dry_run {
+                    super::preview_enable_watch_service(repo_root, &draft.project)?
+                } else {
+                    enable_watch_service(repo_root, &draft.project)?
+                }
+            } else if dry_run {
+                preview_enable_watch_manager_service()?
             } else {
-                enable_watch_service(repo_root, &draft.project)?
+                enable_watch_manager_service(&draft.global_config_path)?
             };
             lines.extend(split_lines(service_output));
         }
+    }
+
+    if draft.repo_root.is_none()
+        && draft.includes_global()
+        && draft.enable_watcher_service.is_yes()
+        && !cfg!(target_os = "macos")
+    {
+        let service_output = if dry_run {
+            preview_enable_watch_manager_service()?
+        } else {
+            enable_watch_manager_service(&draft.global_config_path)?
+        };
+        lines.extend(split_lines(service_output));
     }
 
     if draft.includes_global()

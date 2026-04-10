@@ -12,15 +12,23 @@ This page explains how watcher liveness and recovery show up in Memory Layer.
 
 ## What The Watcher Does
 
-`memory watcher` is the optional background process that watches a project and sends useful work context to `memory service`.
+`memory watcher` is the background process that watches a project and sends useful work context to `memory service`.
 
-Service-managed watchers can be installed with:
+On Linux, the recommended path is the Codex-linked watcher manager:
+
+```bash
+memory watcher manager enable
+```
+
+That installs a persistent `systemd --user` manager service. It detects live Codex sessions, bootstraps git repos if needed, and starts one watcher per Codex session as a transient user service.
+
+Legacy per-project service-managed watchers can still be installed with:
 
 ```bash
 memory watcher enable --project my-project
 ```
 
-Manual watchers can be run with:
+Manual foreground watchers can still be run with:
 
 ```bash
 memory watcher run --project my-project
@@ -46,6 +54,7 @@ In the TUI:
 - `Watchers` tab:
   - shows the current watcher list for the project
   - shows health state, restart attempts, last restart attempt, and last heartbeat
+  - shows the owning agent session when the watcher is manager-started
 - `Project` tab:
   - shows the compact watcher summary
 - `Activity` tab:
@@ -72,13 +81,25 @@ That makes it easier to tell the difference between:
 
 ## Common Commands
 
-Enable a service-managed watcher:
+Enable the Linux watcher manager:
+
+```bash
+memory watcher manager enable
+```
+
+Check watcher manager status:
+
+```bash
+memory watcher manager status
+```
+
+Enable a legacy service-managed watcher:
 
 ```bash
 memory watcher enable --project my-project
 ```
 
-Check watcher service status:
+Check legacy watcher service status:
 
 ```bash
 memory watcher status --project my-project

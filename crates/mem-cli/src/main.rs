@@ -20,6 +20,7 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
+use mem_agenttop::{AgentSession, AgentTop, SessionStatus};
 use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest,
     CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest, CurateResponse,
@@ -45,7 +46,7 @@ use reqwest::{
     Client,
     header::{HeaderMap, ORIGIN},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, postgres::PgPoolOptions};
 use uuid::Uuid;
@@ -135,6 +136,7 @@ See also:
 
 const WATCHER_GROUP_AFTER_HELP: &str = "\
 Examples:
+  memory watcher manager enable
   memory watcher run --project memory
   memory watcher enable --project memory
   memory watcher status --project memory
@@ -168,6 +170,7 @@ See also:
 
 const WATCHER_STATUS_AFTER_HELP: &str = "\
 Examples:
+  memory watcher manager status
   memory watcher status --project memory
 
 See also:
@@ -623,6 +626,8 @@ enum WatcherCommand {
     Disable(WatcherManageArgs),
     #[command(about = "Show watcher status for a project.", after_help = WATCHER_STATUS_AFTER_HELP)]
     Status(WatchProjectArgs),
+    #[command(about = "Run or manage the Codex-linked watcher manager.", after_help = WATCHER_STATUS_AFTER_HELP)]
+    Manager(WatcherManagerArgs),
 }
 
 #[derive(Debug, Args)]
@@ -662,6 +667,24 @@ struct WatcherRunCliArgs {
     /// Owning agent started-at timestamp for agent-linked watcher mode.
     #[arg(long)]
     agent_started_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Args)]
+struct WatcherManagerArgs {
+    #[command(subcommand)]
+    command: WatcherManagerCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum WatcherManagerCommand {
+    #[command(about = "Run the watcher manager in the foreground.")]
+    Run,
+    #[command(about = "Enable the persistent user watcher manager service.")]
+    Enable(ServiceLifecycleArgs),
+    #[command(about = "Disable the persistent user watcher manager service.")]
+    Disable(ServiceLifecycleArgs),
+    #[command(about = "Show watcher manager status.")]
+    Status,
 }
 
 #[derive(Debug, Args)]
@@ -1261,6 +1284,35 @@ async fn main() -> Result<()> {
             let repo_root = resolve_repo_root(&cwd)?;
             match &args.command {
                 WatcherCommand::Run(_) => {}
+                WatcherCommand::Manager(args) => match &args.command {
+                    WatcherManagerCommand::Run => {}
+                    WatcherManagerCommand::Enable(args) => {
+                        let output = if args.dry_run {
+                            preview_enable_watch_manager_service()?
+                        } else {
+                            enable_watch_manager_service(
+                                &cli_config
+                                    .clone()
+                                    .unwrap_or_else(default_global_config_path),
+                            )?
+                        };
+                        println!("{output}");
+                        return Ok(());
+                    }
+                    WatcherManagerCommand::Disable(args) => {
+                        let output = if args.dry_run {
+                            preview_disable_watch_manager_service()?
+                        } else {
+                            disable_watch_manager_service()?
+                        };
+                        println!("{output}");
+                        return Ok(());
+                    }
+                    WatcherManagerCommand::Status => {
+                        println!("{}", watch_manager_service_status()?);
+                        return Ok(());
+                    }
+                },
                 WatcherCommand::Enable(args) => {
                     let project = resolve_project_slug(args.project.clone(), &cwd)?;
                     let output = if args.dry_run {
@@ -2027,6 +2079,16 @@ async fn main() -> Result<()> {
                 )
                 .await?;
             }
+            WatcherCommand::Manager(args) => match args.command {
+                WatcherManagerCommand::Run => run_watcher_manager(config).await?,
+                WatcherManagerCommand::Enable(_)
+                | WatcherManagerCommand::Disable(_)
+                | WatcherManagerCommand::Status => {
+                    unreachable!(
+                        "watcher manager lifecycle commands are handled before config loading"
+                    )
+                }
+            },
             WatcherCommand::Enable(_) | WatcherCommand::Disable(_) | WatcherCommand::Status(_) => {
                 unreachable!("watcher lifecycle commands are handled before config loading")
             }
@@ -2907,6 +2969,45 @@ async fn run_doctor(
             false,
         ));
 
+        #[cfg(not(target_os = "macos"))]
+        {
+            let manager_unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
+            let manager_installed = manager_unit_path.exists();
+            let manager_enabled =
+                run_systemctl_user(["is-enabled", WATCH_MANAGER_UNIT_NAME]).is_ok();
+            let manager_active = run_systemctl_user(["is-active", WATCH_MANAGER_UNIT_NAME]).is_ok();
+            report.push(doctor_check(
+                "watcher.manager_service",
+                if manager_active {
+                    DoctorStatus::Ok
+                } else if manager_installed {
+                    DoctorStatus::Warn
+                } else {
+                    DoctorStatus::Warn
+                },
+                if manager_active {
+                    "Agent-linked watcher manager service is active."
+                } else if manager_installed {
+                    "Agent-linked watcher manager service is installed but not active."
+                } else {
+                    "Agent-linked watcher manager service is not installed."
+                },
+                Some(format!(
+                    "installed={} enabled={} active={} unit={}",
+                    yes_no(manager_installed),
+                    yes_no(manager_enabled),
+                    yes_no(manager_active),
+                    manager_unit_path.display()
+                )),
+                if manager_active {
+                    None
+                } else {
+                    Some("memory watcher manager enable".to_string())
+                },
+                false,
+            ));
+        }
+
         let client = Client::builder()
             .timeout(config.service.request_timeout)
             .build()
@@ -3000,7 +3101,11 @@ async fn run_doctor(
                                 if active_watchers.unwrap_or(0) > 0 {
                                     None
                                 } else {
-                                    Some(format!("memory watcher enable --project {}", project))
+                                    Some(if cfg!(target_os = "macos") {
+                                        format!("memory watcher enable --project {}", project)
+                                    } else {
+                                        "memory watcher manager enable".to_string()
+                                    })
                                 },
                                 false,
                             ));
@@ -4131,6 +4236,446 @@ fn watch_service_status(repo_root: &Path, project: &str) -> Result<String> {
 }
 
 #[cfg(not(target_os = "macos"))]
+const WATCH_MANAGER_UNIT_NAME: &str = "memory-watch-manager.service";
+#[cfg(not(target_os = "macos"))]
+const WATCH_MANAGER_POLL_INTERVAL_SECONDS: u64 = 2;
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct WatcherManagerState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    sessions: std::collections::BTreeMap<String, ManagedWatcherSession>,
+    #[serde(default)]
+    warnings: Vec<String>,
+}
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManagedWatcherSession {
+    unit_name: String,
+    project: String,
+    repo_root: String,
+    agent_cli: String,
+    agent_session_id: String,
+    agent_pid: u32,
+    agent_started_at: DateTime<Utc>,
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn run_watcher_manager(config: AppConfig) -> Result<()> {
+    reconcile_watcher_manager(&config).await?;
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+        WATCH_MANAGER_POLL_INTERVAL_SECONDS,
+    ));
+    loop {
+        interval.tick().await;
+        if let Err(error) = reconcile_watcher_manager(&config).await {
+            eprintln!("watcher manager reconcile failed: {error}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn run_watcher_manager(_config: AppConfig) -> Result<()> {
+    anyhow::bail!("watcher manager is only supported on Linux in this release")
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn reconcile_watcher_manager(_config: &AppConfig) -> Result<()> {
+    let mut state = load_watcher_manager_state()?;
+    state.updated_at = Some(Utc::now());
+    state.warnings.clear();
+
+    let mut top = AgentTop::new();
+    let snapshot = top.collect_snapshot();
+    let sessions = snapshot
+        .sessions
+        .into_iter()
+        .filter(is_live_codex_session)
+        .collect::<Vec<_>>();
+    let mut seen = std::collections::BTreeSet::new();
+
+    for session in sessions {
+        let Some(repo_root) = resolve_codex_repo_root(&session.cwd)? else {
+            continue;
+        };
+        if !repo_agent_watch_enabled(&repo_root)? {
+            state.warnings.push(format!(
+                "Skipped Codex session {} in {} because repo opted out of agent-linked watchers.",
+                session.session_id,
+                repo_root.display()
+            ));
+            continue;
+        }
+
+        let project = resolve_manager_project_slug(&repo_root);
+        ensure_agent_watch_repo_bootstrap(&repo_root, &project)?;
+
+        if legacy_watch_service_is_active(&project) {
+            state.warnings.push(format!(
+                "Skipped agent-linked watcher for project {} because legacy watcher service {} is active.",
+                project,
+                watch_unit_name(&project)
+            ));
+            continue;
+        }
+
+        let unit_name = watch_agent_unit_name(&session.session_id);
+        if !state.sessions.contains_key(&session.session_id) || !unit_is_active(&unit_name) {
+            start_agent_watcher_transient_unit(&repo_root, &project, &session, &unit_name)?;
+        }
+
+        let agent_started_at = DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
+            .unwrap_or_else(Utc::now);
+        state.sessions.insert(
+            session.session_id.clone(),
+            ManagedWatcherSession {
+                unit_name: unit_name.clone(),
+                project,
+                repo_root: repo_root.display().to_string(),
+                agent_cli: session.agent_cli.to_string(),
+                agent_session_id: session.session_id.clone(),
+                agent_pid: session.pid,
+                agent_started_at,
+            },
+        );
+        seen.insert(session.session_id.clone());
+    }
+
+    let stale = state
+        .sessions
+        .keys()
+        .filter(|session_id| !seen.contains(*session_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    for session_id in stale {
+        if let Some(entry) = state.sessions.remove(&session_id) {
+            let _ = stop_unit_if_present(&entry.unit_name);
+        }
+    }
+
+    save_watcher_manager_state(&state)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_live_codex_session(session: &AgentSession) -> bool {
+    session.agent_cli == "codex" && session.status != SessionStatus::Done
+}
+
+#[cfg(not(target_os = "macos"))]
+fn resolve_codex_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
+    let output = ProcessCommand::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(cwd)
+        .output()
+        .with_context(|| format!("run git rev-parse in {cwd}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let repo_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if repo_root.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(PathBuf::from(repo_root)))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn repo_agent_watch_enabled(repo_root: &Path) -> Result<bool> {
+    let path = repo_root.join(".agents").join("memory-layer.toml");
+    if !path.is_file() {
+        return Ok(true);
+    }
+    let content = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let value: toml::Value = content
+        .parse()
+        .with_context(|| format!("parse {}", path.display()))?;
+    Ok(value
+        .get("agent_watch")
+        .and_then(|section| section.get("enabled"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn resolve_manager_project_slug(repo_root: &Path) -> String {
+    read_repo_project_slug(repo_root)
+        .or_else(|| {
+            repo_root
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| "memory".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_agent_watch_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
+    if !repo_root.join(".mem").is_dir() {
+        initialize_repo(repo_root, project, false, false)?;
+    } else {
+        repair_repo_bootstrap(repo_root, project)?;
+    }
+    ensure_agent_watch_repo_config(repo_root)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_agent_watch_repo_config(repo_root: &Path) -> Result<()> {
+    let path = repo_root.join(".mem").join("config.toml");
+    let content = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let mut value: toml::Value = content
+        .parse()
+        .with_context(|| format!("parse {}", path.display()))?;
+    let root = value
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("{} does not contain a TOML table root", path.display()))?;
+    let automation = root
+        .entry("automation")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("{} [automation] is not a table", path.display()))?;
+    automation.insert("enabled".to_string(), toml::Value::Boolean(true));
+    automation.insert("mode".to_string(), toml::Value::String("auto".to_string()));
+    automation.insert(
+        "repo_root".to_string(),
+        toml::Value::String(repo_root.display().to_string()),
+    );
+    fs::write(&path, toml::to_string_pretty(&value)?)
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn legacy_watch_service_is_active(project: &str) -> bool {
+    unit_is_active(&watch_unit_name(project))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn watch_agent_unit_name(session_id: &str) -> String {
+    format!(
+        "memory-watch-codex-{}.service",
+        platform::sanitize_service_fragment(session_id)
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn start_agent_watcher_transient_unit(
+    repo_root: &Path,
+    project: &str,
+    session: &AgentSession,
+    unit_name: &str,
+) -> Result<()> {
+    let memory_binary = memory_binary_path()?;
+    let global_config = default_global_config_path();
+    let started_at = DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339();
+    let output = ProcessCommand::new("systemd-run")
+        .args([
+            "--user",
+            "--unit",
+            unit_name,
+            "--property",
+            &format!("WorkingDirectory={}", repo_root.display()),
+            "--property",
+            "Restart=no",
+            "--setenv=MEMORY_LAYER_WATCH_SERVICE_MANAGED=1",
+            "--collect",
+        ])
+        .arg(memory_binary)
+        .arg("--config")
+        .arg(global_config)
+        .arg("watcher")
+        .arg("run")
+        .arg("--project")
+        .arg(project)
+        .arg("--repo-root")
+        .arg(repo_root)
+        .arg("--agent-cli")
+        .arg(session.agent_cli)
+        .arg("--agent-session-id")
+        .arg(&session.session_id)
+        .arg("--agent-pid")
+        .arg(session.pid.to_string())
+        .arg("--agent-started-at")
+        .arg(started_at)
+        .output()
+        .with_context(|| format!("run systemd-run for {}", session.session_id))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "systemd-run failed for {}: {}",
+        unit_name,
+        String::from_utf8_lossy(&output.stderr).trim()
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn load_watcher_manager_state() -> Result<WatcherManagerState> {
+    let path = watcher_manager_state_path()?;
+    if !path.is_file() {
+        return Ok(WatcherManagerState::default());
+    }
+    let content = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn save_watcher_manager_state(state: &WatcherManagerState) -> Result<()> {
+    let path = watcher_manager_state_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    fs::write(&path, serde_json::to_vec_pretty(state)?)
+        .with_context(|| format!("write {}", path.display()))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn watcher_manager_state_path() -> Result<PathBuf> {
+    Ok(platform::preferred_user_state_dir()
+        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
+        .join("watcher-manager-state.json"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn enable_watch_manager_service(config_path: &Path) -> Result<String> {
+    let unit_dir = user_systemd_unit_dir()?;
+    let unit_path = unit_dir.join(WATCH_MANAGER_UNIT_NAME);
+    fs::create_dir_all(&unit_dir).with_context(|| format!("create {}", unit_dir.display()))?;
+    fs::write(&unit_path, render_watch_manager_unit(config_path)?)
+        .with_context(|| format!("write {}", unit_path.display()))?;
+    run_systemctl_user(["daemon-reload"])?;
+    run_systemctl_user(["enable", "--now", WATCH_MANAGER_UNIT_NAME])?;
+    Ok(format!(
+        "Installed and started user service {}.\nUnit: {}\nConfig: {}\n\nManage it with:\n- memory watcher manager status\n- memory watcher manager disable\n- systemctl --user restart {}",
+        WATCH_MANAGER_UNIT_NAME,
+        unit_path.display(),
+        config_path.display(),
+        WATCH_MANAGER_UNIT_NAME
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn enable_watch_manager_service(_config_path: &Path) -> Result<String> {
+    anyhow::bail!("watcher manager is only supported on Linux in this release")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn preview_enable_watch_manager_service() -> Result<String> {
+    let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
+    Ok(format!(
+        "Dry run: would install and start user service {}.\nUnit: {}",
+        WATCH_MANAGER_UNIT_NAME,
+        unit_path.display()
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn preview_enable_watch_manager_service() -> Result<String> {
+    anyhow::bail!("watcher manager is only supported on Linux in this release")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn disable_watch_manager_service() -> Result<String> {
+    let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
+    let _ = run_systemctl_user(["disable", "--now", WATCH_MANAGER_UNIT_NAME]);
+    if unit_path.exists() {
+        fs::remove_file(&unit_path).with_context(|| format!("remove {}", unit_path.display()))?;
+    }
+    if let Ok(state) = load_watcher_manager_state() {
+        for entry in state.sessions.values() {
+            let _ = stop_unit_if_present(&entry.unit_name);
+        }
+    }
+    run_systemctl_user(["daemon-reload"])?;
+    Ok(format!(
+        "Disabled user service {}.\nRemoved unit: {}",
+        WATCH_MANAGER_UNIT_NAME,
+        unit_path.display()
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn disable_watch_manager_service() -> Result<String> {
+    anyhow::bail!("watcher manager is only supported on Linux in this release")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn preview_disable_watch_manager_service() -> Result<String> {
+    let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
+    Ok(format!(
+        "Dry run: would disable user service {} and remove {}",
+        WATCH_MANAGER_UNIT_NAME,
+        unit_path.display()
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn preview_disable_watch_manager_service() -> Result<String> {
+    anyhow::bail!("watcher manager is only supported on Linux in this release")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn watch_manager_service_status() -> Result<String> {
+    let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
+    let is_enabled = run_systemctl_user(["is-enabled", WATCH_MANAGER_UNIT_NAME]).is_ok();
+    let is_active = run_systemctl_user(["is-active", WATCH_MANAGER_UNIT_NAME]).is_ok();
+    let state = load_watcher_manager_state().unwrap_or_default();
+    let warning_lines = if state.warnings.is_empty() {
+        "- warnings: none".to_string()
+    } else {
+        format!("- warnings: {}", state.warnings.join(" | "))
+    };
+    Ok(format!(
+        "Watcher manager service:\n- unit: {}\n- installed: {}\n- enabled: {}\n- active: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n\nInspect with:\n- systemctl --user status {}\n- memory watcher manager status",
+        unit_path.display(),
+        yes_no(unit_path.exists()),
+        yes_no(is_enabled),
+        yes_no(is_active),
+        state.sessions.len(),
+        state
+            .updated_at
+            .map(|value| value.to_rfc3339())
+            .unwrap_or_else(|| "n/a".to_string()),
+        warning_lines,
+        WATCH_MANAGER_UNIT_NAME
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn watch_manager_service_status() -> Result<String> {
+    anyhow::bail!("watcher manager is only supported on Linux in this release")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn render_watch_manager_unit(config_path: &Path) -> Result<String> {
+    let memory_binary = memory_binary_path()?;
+    let home = env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    Ok(format!(
+        "[Unit]\nDescription=Memory Layer Watcher Manager\nAfter=default.target\n\n[Service]\nType=simple\nWorkingDirectory={}\nExecStart={} --config {} watcher manager run\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
+        shell_escape_str(&home),
+        shell_escape_path(&memory_binary),
+        shell_escape_path(config_path),
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn unit_is_active(unit_name: &str) -> bool {
+    run_systemctl_user(["is-active", unit_name]).is_ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn stop_unit_if_present(unit_name: &str) -> Result<()> {
+    if unit_is_active(unit_name) {
+        run_systemctl_user(["stop", unit_name])?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
 fn render_watch_unit(repo_root: &Path, project: &str) -> Result<String> {
     let memory_binary = memory_binary_path()?;
     let env_file = user_memory_layer_env_file()?;
@@ -4791,8 +5336,16 @@ fn render_init_summary(
     } else {
         "Prepared"
     };
+    let watcher_step = if cfg!(target_os = "macos") {
+        format!(
+            "7. Optional: enable the per-repo watcher user service:\n   memory watcher enable --project {}",
+            project
+        )
+    } else {
+        "7. Optional: enable the Linux Codex-linked watcher manager:\n   memory watcher manager enable\n   Legacy per-repo watcher service: memory watcher enable --project ".to_string() + project
+    };
     format!(
-        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}\n- {}/runtime/\n- {} (bundled memory skills)\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} for repo-specific runtime overrides\n3. Use {} to customize project memory behavior\n4. Start the shared backend if it is not already running:\n   memory service run --config {}\n5. Optional: configure repo-local [service] overrides if you want a parallel dev backend for this repo\n6. Optional: run a project scan:\n   memory scan --project {}\n7. Optional: enable the per-repo watcher user service:\n   memory watcher enable --project {}\n8. Open the TUI:\n   memory tui --project {}\n9. Use the repo-local memory skill bundle from {} (umbrella skill at {}/memory-layer)",
+        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}\n- {}/runtime/\n- {} (bundled memory skills)\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} for repo-specific runtime overrides\n3. Use {} to customize project memory behavior\n4. Start the shared backend if it is not already running:\n   memory service run --config {}\n5. Optional: configure repo-local [service] overrides if you want a parallel dev backend for this repo\n6. Optional: run a project scan:\n   memory scan --project {}\n{}\n8. Open the TUI:\n   memory tui --project {}\n9. Use the repo-local memory skill bundle from {} (umbrella skill at {}/memory-layer)",
         repo_root.display(),
         config_path.display(),
         project_path.display(),
@@ -4804,7 +5357,7 @@ fn render_init_summary(
         agent_config_path.display(),
         default_global_config_path().display(),
         project,
-        project,
+        watcher_step,
         project,
         skills_root.display(),
         skills_root.display()
@@ -6425,7 +6978,12 @@ impl SourceKindString for mem_api::SourceKind {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::Mutex,
+        time::Duration,
+    };
 
     use clap::{Command, CommandFactory, Parser, error::ErrorKind};
     use uuid::Uuid;
@@ -6744,7 +7302,11 @@ mod tests {
         assert!(summary.contains(".agents/memory-layer.toml"));
         assert!(summary.contains(".agents/skills"));
         assert!(summary.contains("bundled memory skills"));
-        assert!(summary.contains("memory watcher enable --project memory"));
+        if cfg!(target_os = "macos") {
+            assert!(summary.contains("memory watcher enable --project memory"));
+        } else {
+            assert!(summary.contains("memory watcher manager enable"));
+        }
         assert!(summary.contains("memory service run"));
     }
 
@@ -6925,6 +7487,14 @@ mod tests {
         assert!(unit.contains("run --project homelab"));
 
         let _ = fs::remove_dir_all(repo_root);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn watch_manager_unit_uses_manager_subcommand() {
+        let unit = super::render_watch_manager_unit(Path::new("/tmp/memory-layer.toml")).unwrap();
+        assert!(unit.contains("watcher manager run"));
+        assert!(unit.contains("Restart=always"));
     }
 
     #[cfg(target_os = "macos")]
