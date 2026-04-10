@@ -3137,6 +3137,26 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
             format!("  watcher: {}", watcher.watcher_id),
             Style::default().fg(Theme::MUTED),
         )));
+        if watcher.agent_cli.is_some() || watcher.agent_session_id.is_some() {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  owner: {} session={} pid={}",
+                    watcher
+                        .agent_cli
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    watcher
+                        .agent_session_id
+                        .clone()
+                        .unwrap_or_else(|| "n/a".to_string()),
+                    watcher
+                        .agent_pid
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "n/a".to_string()),
+                ),
+                Style::default().fg(Theme::MUTED),
+            )));
+        }
         lines.push(Line::from(Span::styled(
             format!("  host service: {}", watcher.host_service_id),
             Style::default().fg(Theme::MUTED),
@@ -3968,12 +3988,24 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                 health,
                 managed_by_service,
                 restart_attempt_count,
+                agent_cli,
+                agent_session_id,
+                agent_pid,
                 previous_health,
                 recovered_after_restart_attempts,
                 message,
             } => {
                 lines.push(activity_kv_line("Watcher", watcher_id.clone()));
                 lines.push(activity_kv_line("Hostname", hostname.clone()));
+                if let Some(agent_cli) = agent_cli {
+                    lines.push(activity_kv_line("Agent CLI", agent_cli.clone()));
+                }
+                if let Some(agent_session_id) = agent_session_id {
+                    lines.push(activity_kv_line("Agent session", agent_session_id.clone()));
+                }
+                if let Some(agent_pid) = agent_pid {
+                    lines.push(activity_kv_line("Agent PID", agent_pid.to_string()));
+                }
                 lines.push(Line::from(vec![
                     label_span("Health: "),
                     watcher_health_span(health),

@@ -6,8 +6,8 @@ use mem_api::{AppConfig, read_repo_project_slug};
 use mem_platform as platform;
 use mem_watch::{
     build_watcher_heartbeat_request, build_watcher_unregister_request, detect_hostname,
-    fetch_service_instance_id, flush_path, heartbeat_watcher, load_state, run_once, to_status,
-    unregister_watcher,
+    fetch_service_instance_id, flush_path, heartbeat_watcher, load_state, owner_session_is_alive,
+    run_once, to_status, unregister_watcher, WatcherAgentOwner,
 };
 use reqwest::Client;
 use uuid::Uuid;
@@ -52,6 +52,14 @@ pub struct RunArgs {
     pub project: Option<String>,
     #[arg(long)]
     pub repo_root: Option<PathBuf>,
+    #[arg(long)]
+    pub agent_cli: Option<String>,
+    #[arg(long)]
+    pub agent_session_id: Option<String>,
+    #[arg(long)]
+    pub agent_pid: Option<u32>,
+    #[arg(long)]
+    pub agent_started_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Args)]
@@ -102,6 +110,12 @@ pub async fn run_loop(
     let managed_by_service = watcher_is_service_managed();
     let pid = std::process::id();
     let started_at = chrono::Utc::now();
+    let owner = WatcherAgentOwner {
+        agent_cli: args.agent_cli.clone(),
+        agent_session_id: args.agent_session_id.clone(),
+        agent_pid: args.agent_pid,
+        agent_started_at: args.agent_started_at,
+    };
 
     let heartbeat_request = build_watcher_heartbeat_request(
         &state,
@@ -111,6 +125,7 @@ pub async fn run_loop(
         managed_by_service,
         pid,
         started_at,
+        &owner,
     );
     let mut heartbeat_state = HeartbeatState::Unknown;
     let mut backend_instance = BackendInstanceState {
@@ -130,6 +145,14 @@ pub async fn run_loop(
     loop {
         tokio::select! {
             _ = poll.tick() => {
+                if !owner_session_is_alive(&owner) {
+                    let request = build_watcher_unregister_request(&project, &watcher_id);
+                    if let Err(error) = unregister_watcher(&client, &config, &request).await {
+                        eprintln!("watcher unregister failed after owner exit: {error}");
+                    }
+                    println!("watcher owner session is gone; exiting");
+                    break;
+                }
                 run_once(
                     &config,
                     &client,
@@ -151,6 +174,7 @@ pub async fn run_loop(
                     managed_by_service,
                     pid,
                     started_at,
+                    &owner,
                 );
                 heartbeat_state = log_heartbeat_transition(
                     heartbeat_state,

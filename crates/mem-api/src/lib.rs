@@ -948,6 +948,12 @@ pub enum ActivityDetails {
         managed_by_service: bool,
         restart_attempt_count: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_cli: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_session_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_pid: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         previous_health: Option<WatcherHealth>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         recovered_after_restart_attempts: Option<u32>,
@@ -1418,6 +1424,14 @@ pub struct WatcherPresence {
     pub started_at: DateTime<Utc>,
     pub last_heartbeat_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_cli: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_started_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_restart_attempt_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub restart_attempt_count: u32,
@@ -1434,6 +1448,14 @@ pub struct WatcherHeartbeatRequest {
     pub mode: AutomationMode,
     pub managed_by_service: bool,
     pub started_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_cli: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_started_at: Option<DateTime<Utc>>,
 }
 
 impl WatcherHeartbeatRequest {
@@ -1455,6 +1477,25 @@ impl WatcherHeartbeatRequest {
         }
         if self.pid == 0 {
             return Err(ValidationError::new("pid must be non-zero"));
+        }
+        if self
+            .agent_cli
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(ValidationError::new("agent_cli must be non-empty when set"));
+        }
+        if self
+            .agent_session_id
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(ValidationError::new(
+                "agent_session_id must be non-empty when set",
+            ));
+        }
+        if self.agent_pid.is_some_and(|value| value == 0) {
+            return Err(ValidationError::new("agent_pid must be non-zero when set"));
         }
         Ok(())
     }

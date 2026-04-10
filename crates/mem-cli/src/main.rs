@@ -18,7 +18,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
 use mem_api::{
     AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest,
@@ -650,6 +650,18 @@ struct WatcherRunCliArgs {
     /// Override the repository root used for watcher state and file detection.
     #[arg(long)]
     repo_root: Option<PathBuf>,
+    /// Owning agent CLI name for agent-linked watcher mode.
+    #[arg(long)]
+    agent_cli: Option<String>,
+    /// Owning agent session id for agent-linked watcher mode.
+    #[arg(long)]
+    agent_session_id: Option<String>,
+    /// Owning agent pid for agent-linked watcher mode.
+    #[arg(long)]
+    agent_pid: Option<u32>,
+    /// Owning agent started-at timestamp for agent-linked watcher mode.
+    #[arg(long)]
+    agent_started_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Args)]
@@ -2005,6 +2017,10 @@ async fn main() -> Result<()> {
                     WatcherRunArgs {
                         project: args.project,
                         repo_root: args.repo_root,
+                        agent_cli: args.agent_cli,
+                        agent_session_id: args.agent_session_id,
+                        agent_pid: args.agent_pid,
+                        agent_started_at: args.agent_started_at,
                     },
                     writer.id,
                     writer.name,

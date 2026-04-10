@@ -15,6 +15,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use mem_agenttop::{AgentSession, AgentTop, SessionStatus};
 use mem_api::{
     AppConfig, AutomationConfig, AutomationMode, AutomationStatus, CaptureTaskRequest,
     CurateRequest, CurateResponse, ProjectOverviewResponse, TestResult, WatcherHeartbeatRequest,
@@ -422,6 +423,14 @@ pub async fn unregister_watcher(
     .await
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct WatcherAgentOwner {
+    pub agent_cli: Option<String>,
+    pub agent_session_id: Option<String>,
+    pub agent_pid: Option<u32>,
+    pub agent_started_at: Option<DateTime<Utc>>,
+}
+
 pub fn build_watcher_heartbeat_request(
     state: &AutomationState,
     watcher_id: &str,
@@ -430,6 +439,7 @@ pub fn build_watcher_heartbeat_request(
     managed_by_service: bool,
     pid: u32,
     started_at: DateTime<Utc>,
+    owner: &WatcherAgentOwner,
 ) -> WatcherHeartbeatRequest {
     WatcherHeartbeatRequest {
         watcher_id: watcher_id.to_string(),
@@ -441,6 +451,10 @@ pub fn build_watcher_heartbeat_request(
         mode: state.mode.clone(),
         managed_by_service,
         started_at,
+        agent_cli: owner.agent_cli.clone(),
+        agent_session_id: owner.agent_session_id.clone(),
+        agent_pid: owner.agent_pid,
+        agent_started_at: owner.agent_started_at,
     }
 }
 
@@ -465,6 +479,52 @@ pub fn detect_hostname() -> String {
                 .filter(|value| !value.is_empty())
         })
         .unwrap_or_else(|| "unknown-host".to_string())
+}
+
+pub fn owner_session_is_alive(owner: &WatcherAgentOwner) -> bool {
+    if owner.agent_session_id.is_none() && owner.agent_pid.is_none() {
+        return true;
+    }
+
+    let mut top = AgentTop::new();
+    let snapshot = top.collect_snapshot();
+    snapshot
+        .sessions
+        .iter()
+        .any(|session| matches_owner_session(session, owner))
+}
+
+fn matches_owner_session(session: &AgentSession, owner: &WatcherAgentOwner) -> bool {
+    if !owner
+        .agent_cli
+        .as_ref()
+        .is_none_or(|value| value.eq_ignore_ascii_case(session.agent_cli))
+    {
+        return false;
+    }
+    if !owner
+        .agent_session_id
+        .as_ref()
+        .is_none_or(|value| value == &session.session_id)
+    {
+        return false;
+    }
+    if !owner.agent_pid.is_none_or(|value| value == session.pid) {
+        return false;
+    }
+    if !owner
+        .agent_started_at
+        .is_none_or(|value| session_started_matches(session, value))
+    {
+        return false;
+    }
+    session.status != SessionStatus::Done
+}
+
+fn session_started_matches(session: &AgentSession, started_at: DateTime<Utc>) -> bool {
+    chrono::DateTime::<Utc>::from_timestamp_millis(session.started_at as i64).is_some_and(
+        |value| value.signed_duration_since(started_at).num_seconds().abs() <= 5,
+    )
 }
 
 pub fn build_capture_request(

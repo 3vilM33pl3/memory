@@ -10,6 +10,7 @@ autobins = false
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
+mem-agenttop = { path = "../mem-agenttop" }
 mem-api = { path = "../mem-api" }
 mem-platform = { path = "../mem-platform" }
 reqwest.workspace = true

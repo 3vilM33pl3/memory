@@ -4216,6 +4216,10 @@ fn register_watcher_heartbeat(
             watcher.last_heartbeat_at = now;
             watcher.host_service_id = request.host_service_id.clone();
             watcher.managed_by_service = request.managed_by_service;
+            watcher.agent_cli = request.agent_cli.clone();
+            watcher.agent_session_id = request.agent_session_id.clone();
+            watcher.agent_pid = request.agent_pid;
+            watcher.agent_started_at = request.agent_started_at;
             watcher.health = WatcherHealth::Healthy;
             watcher.last_restart_attempt_at = None;
             watcher.restart_attempt_count = 0;
@@ -4233,6 +4237,9 @@ fn register_watcher_heartbeat(
                         health: WatcherHealth::Healthy,
                         managed_by_service: request.managed_by_service,
                         restart_attempt_count: 0,
+                        agent_cli: request.agent_cli.clone(),
+                        agent_session_id: request.agent_session_id.clone(),
+                        agent_pid: request.agent_pid,
                         previous_health: Some(previous_health),
                         recovered_after_restart_attempts: Some(previous_restart_attempt_count),
                         message: Some("watcher heartbeat recovered".to_string()),
@@ -4252,6 +4259,10 @@ fn register_watcher_heartbeat(
             host_service_id: request.host_service_id.clone(),
             managed_by_service: request.managed_by_service,
             health: WatcherHealth::Healthy,
+            agent_cli: request.agent_cli.clone(),
+            agent_session_id: request.agent_session_id.clone(),
+            agent_pid: request.agent_pid,
+            agent_started_at: request.agent_started_at,
             last_restart_attempt_at: None,
             restart_attempt_count: 0,
         });
@@ -4409,6 +4420,9 @@ async fn run_watcher_watchdog(state: AppState) -> Result<()> {
                                 health: WatcherHealth::Stale,
                                 managed_by_service: false,
                                 restart_attempt_count: watcher.restart_attempt_count,
+                                agent_cli: watcher.agent_cli.clone(),
+                                agent_session_id: watcher.agent_session_id.clone(),
+                                agent_pid: watcher.agent_pid,
                                 previous_health: Some(WatcherHealth::Healthy),
                                 recovered_after_restart_attempts: None,
                                 message: Some(
@@ -4437,6 +4451,9 @@ async fn run_watcher_watchdog(state: AppState) -> Result<()> {
                                 health: WatcherHealth::Failed,
                                 managed_by_service: true,
                                 restart_attempt_count: watcher.restart_attempt_count,
+                                agent_cli: watcher.agent_cli.clone(),
+                                agent_session_id: watcher.agent_session_id.clone(),
+                                agent_pid: watcher.agent_pid,
                                 previous_health: Some(WatcherHealth::Restarting),
                                 recovered_after_restart_attempts: None,
                                 message: Some("watcher exceeded restart attempt limit".to_string()),
@@ -4466,6 +4483,9 @@ async fn run_watcher_watchdog(state: AppState) -> Result<()> {
                         health: WatcherHealth::Restarting,
                         managed_by_service: true,
                         restart_attempt_count: watcher.restart_attempt_count,
+                        agent_cli: watcher.agent_cli.clone(),
+                        agent_session_id: watcher.agent_session_id.clone(),
+                        agent_pid: watcher.agent_pid,
                         previous_health: Some(WatcherHealth::Stale),
                         recovered_after_restart_attempts: None,
                         message: Some("watcher heartbeat missed; requesting restart".to_string()),
@@ -4501,6 +4521,9 @@ async fn run_watcher_watchdog(state: AppState) -> Result<()> {
                         health: WatcherHealth::Failed,
                         managed_by_service: watcher.managed_by_service,
                         restart_attempt_count: watcher.restart_attempt_count,
+                        agent_cli: watcher.agent_cli.clone(),
+                        agent_session_id: watcher.agent_session_id.clone(),
+                        agent_pid: watcher.agent_pid,
                         previous_health: Some(WatcherHealth::Restarting),
                         recovered_after_restart_attempts: None,
                         message: Some(format!("restart request failed: {error}")),
@@ -4586,6 +4609,10 @@ mod tests {
             host_service_id: "service-a".to_string(),
             managed_by_service: true,
             health: WatcherHealth::Healthy,
+            agent_cli: None,
+            agent_session_id: None,
+            agent_pid: None,
+            agent_started_at: None,
             last_restart_attempt_at: None,
             restart_attempt_count: 0,
         }
@@ -4650,6 +4677,10 @@ mod tests {
             started_at,
             host_service_id: "service-a".to_string(),
             managed_by_service: true,
+            agent_cli: None,
+            agent_session_id: None,
+            agent_pid: None,
+            agent_started_at: None,
         };
 
         let (first, first_changed, _) = register_watcher_heartbeat(&watchers, request.clone());
