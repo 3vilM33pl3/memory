@@ -11,7 +11,7 @@ Every TUI screen uses the same four-part layout:
 - the top tab bar
 - the controls row for the active tab
 - the main content area
-- the bottom status/footer area with TUI, service, and watcher state
+- the bottom status/footer area with TUI, service, watcher, and on Linux the watcher-manager state
 
 Shared navigation:
 

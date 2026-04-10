@@ -1,6 +1,8 @@
 use std::{
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
+    process::Command as ProcessCommand,
     time::{Duration, Instant},
 };
 
@@ -23,6 +25,7 @@ use mem_api::{
     ResumeResponse, StreamRequest, StreamResponse, WatcherHealth, load_repo_replacement_policy,
     read_capnp_text_frame, repo_agent_settings_path, write_capnp_text_frame,
 };
+use mem_platform::preferred_user_state_dir;
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -31,6 +34,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Tabs, Wrap},
 };
+use serde::Deserialize;
 use tokio::{
     net::{TcpStream, UnixStream},
     sync::mpsc,
@@ -68,6 +72,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
         background_tx,
     );
     start_agent_snapshot_worker(app.background_tx.clone());
+    start_manager_status_worker(app.background_tx.clone());
     terminal.draw(|frame| draw(frame, &app))?;
     app.refresh(&api, RefreshMode::Startup).await;
     let mut stream = StreamSession::connect(&api).await.ok();
@@ -159,6 +164,26 @@ fn start_agent_snapshot_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
     });
 }
 
+fn start_manager_status_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
+    #[cfg(target_os = "macos")]
+    let _ = tx;
+
+    #[cfg(not(target_os = "macos"))]
+    std::thread::spawn(move || {
+        loop {
+            if tx
+                .send(BackgroundEvent::ManagerStatusLoaded {
+                    status: Some(load_manager_footer_status()),
+                })
+                .is_err()
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    });
+}
+
 struct App {
     project: String,
     repo_root: PathBuf,
@@ -201,6 +226,10 @@ struct App {
     ui_status: UiStatus,
     status_message: String,
     health_ok: bool,
+    service_role: Option<String>,
+    service_health_state: Option<String>,
+    service_database_state: Option<String>,
+    manager_status: Option<ManagerFooterStatus>,
     relay_discovery_enabled: bool,
     filters: Filters,
     input_mode: InputMode,
@@ -211,6 +240,7 @@ struct App {
 struct ToolVersions {
     mem_cli: String,
     mem_service: String,
+    watch_manager: String,
     memory_watch: String,
 }
 
@@ -220,6 +250,29 @@ enum UiStatus {
     Busy,
     Ready,
     Error,
+}
+
+#[derive(Clone, Debug)]
+struct ManagerFooterStatus {
+    state: ManagerState,
+    tracked_sessions: usize,
+    warning_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ManagerState {
+    Active,
+    Installed,
+    Off,
+    Error,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ManagerStateFile {
+    #[serde(default)]
+    sessions: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    warnings: Vec<String>,
 }
 
 enum ActivityEntry {
@@ -250,6 +303,9 @@ enum BackgroundEvent {
     },
     AgentsLoaded {
         snapshot: Result<AgentSnapshot, String>,
+    },
+    ManagerStatusLoaded {
+        status: Option<ManagerFooterStatus>,
     },
 }
 
@@ -317,6 +373,10 @@ impl App {
             ui_status: UiStatus::Loading,
             status_message: "Loading project data...".to_string(),
             health_ok: false,
+            service_role: None,
+            service_health_state: None,
+            service_database_state: None,
+            manager_status: None,
             relay_discovery_enabled,
             filters: Filters::default(),
             input_mode: InputMode::Normal,
@@ -349,6 +409,18 @@ impl App {
                 if let Some(version) = health.get("version").and_then(|value| value.as_str()) {
                     self.versions.mem_service = version.to_string();
                 }
+                self.service_role = health
+                    .get("role")
+                    .and_then(|value| value.as_str())
+                    .map(ToOwned::to_owned);
+                self.service_health_state = health
+                    .get("status")
+                    .and_then(|value| value.as_str())
+                    .map(ToOwned::to_owned);
+                self.service_database_state = health
+                    .get("database")
+                    .and_then(|value| value.as_str())
+                    .map(ToOwned::to_owned);
             }
             Err(_) => {
                 had_error = true;
@@ -445,6 +517,9 @@ impl App {
 
     fn mark_service_unavailable(&mut self) {
         self.health_ok = false;
+        self.service_role = None;
+        self.service_health_state = None;
+        self.service_database_state = None;
         self.overview.service_status = "error".to_string();
         self.overview.database_status = "unknown".to_string();
         self.overview.watchers = None;
@@ -573,6 +648,9 @@ impl App {
                     self.agent_error = Some(error);
                 }
             },
+            BackgroundEvent::ManagerStatusLoaded { status } => {
+                self.manager_status = status;
+            }
         }
     }
 
@@ -1788,6 +1866,18 @@ fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect)
         area,
     );
 
+    #[cfg(not(target_os = "macos"))]
+    let sections = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+        ])
+        .split(area);
+
+    #[cfg(target_os = "macos")]
     let sections = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -1819,6 +1909,34 @@ fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect)
         .style(Style::default().bg(Theme::PANEL_ALT)),
         sections[1],
     );
+
+    #[cfg(not(target_os = "macos"))]
+    frame.render_widget(
+        Paragraph::new(component_status_line(
+            "Manager",
+            &app.versions.watch_manager,
+            manager_status_label(app),
+            manager_status_color(app),
+            manager_status_detail(app),
+        ))
+        .style(Style::default().bg(Theme::PANEL_ALT)),
+        sections[2],
+    );
+
+    #[cfg(not(target_os = "macos"))]
+    frame.render_widget(
+        Paragraph::new(component_status_line(
+            "Watchers",
+            &app.versions.memory_watch,
+            watcher_bar_status_label(app),
+            watcher_bar_status_color(app),
+            watcher_bar_status_detail(app),
+        ))
+        .style(Style::default().bg(Theme::PANEL_ALT)),
+        sections[3],
+    );
+
+    #[cfg(target_os = "macos")]
     frame.render_widget(
         Paragraph::new(component_status_line(
             "Watchers",
@@ -4399,10 +4517,20 @@ fn tui_status_color(app: &App) -> Color {
 fn service_status_label(app: &App) -> &'static str {
     if !app.health_ok {
         "down"
-    } else if !matches!(app.overview.database_status.as_str(), "ok" | "up") {
-        "degraded"
     } else {
-        match app.overview.service_status.as_str() {
+        let is_relay = matches!(app.service_role.as_deref(), Some("relay"));
+        let database_status = app
+            .service_database_state
+            .as_deref()
+            .unwrap_or(app.overview.database_status.as_str());
+        let service_status = app
+            .service_health_state
+            .as_deref()
+            .unwrap_or(app.overview.service_status.as_str());
+        if !is_relay && !matches!(database_status, "ok" | "up") {
+            return "degraded";
+        }
+        match service_status {
             "ok" | "up" => "up",
             "unknown" => "unknown",
             _ => "degraded",
@@ -4421,13 +4549,58 @@ fn service_status_color(app: &App) -> Color {
 
 fn service_status_detail(app: &App) -> Option<String> {
     if !app.health_ok {
-        return Some("db unknown".to_string());
+        return None;
     }
-    if !matches!(app.overview.database_status.as_str(), "ok" | "up") {
-        Some(format!("db {}", app.overview.database_status))
-    } else {
-        None
+    let mut parts = Vec::new();
+    if let Some(role) = app.service_role.as_deref() {
+        parts.push(role.to_string());
     }
+    let is_relay = matches!(app.service_role.as_deref(), Some("relay"));
+    let database_status = app
+        .service_database_state
+        .as_deref()
+        .unwrap_or(app.overview.database_status.as_str());
+    if !is_relay && !matches!(database_status, "ok" | "up") {
+        parts.push(format!("db {database_status}"));
+    }
+    (!parts.is_empty()).then_some(parts.join(", "))
+}
+
+fn manager_status_label(app: &App) -> &'static str {
+    match app.manager_status.as_ref().map(|status| status.state) {
+        Some(ManagerState::Active) => "active",
+        Some(ManagerState::Installed) => "installed",
+        Some(ManagerState::Off) => "off",
+        Some(ManagerState::Error) => "error",
+        None => "unknown",
+    }
+}
+
+fn manager_status_color(app: &App) -> Color {
+    match manager_status_label(app) {
+        "active" => Theme::SUCCESS,
+        "installed" => Theme::WARNING,
+        "off" => Theme::MUTED,
+        "error" => Theme::DANGER,
+        _ => Theme::WARNING,
+    }
+}
+
+fn manager_status_detail(app: &App) -> Option<String> {
+    let status = app.manager_status.as_ref()?;
+    let mut detail = format!(
+        "{} session{}",
+        status.tracked_sessions,
+        if status.tracked_sessions == 1 {
+            ""
+        } else {
+            "s"
+        }
+    );
+    if status.warning_count > 0 {
+        detail.push_str(&format!(", {} warn", status.warning_count));
+    }
+    Some(detail)
 }
 
 fn watcher_bar_status_label(app: &App) -> &'static str {
@@ -4783,10 +4956,90 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+fn load_manager_footer_status() -> ManagerFooterStatus {
+    let unit_installed = manager_unit_path().is_some_and(|path| path.exists());
+    let unit_enabled = systemctl_user_check("is-enabled", "memory-watch-manager.service");
+    let unit_active = systemctl_user_check("is-active", "memory-watch-manager.service");
+    let state_file = load_manager_state_file();
+    let tracked_sessions = state_file
+        .as_ref()
+        .map(|state| state.sessions.len())
+        .unwrap_or(0);
+    let warning_count = state_file
+        .as_ref()
+        .map(|state| state.warnings.len())
+        .unwrap_or(0);
+    let state = derive_manager_state(
+        unit_installed,
+        unit_enabled,
+        unit_active,
+        state_file.is_some() || manager_unit_path().is_some(),
+    );
+    ManagerFooterStatus {
+        state,
+        tracked_sessions,
+        warning_count,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn derive_manager_state(
+    unit_installed: bool,
+    unit_enabled: bool,
+    unit_active: bool,
+    can_probe: bool,
+) -> ManagerState {
+    if unit_active {
+        ManagerState::Active
+    } else if unit_installed || unit_enabled {
+        ManagerState::Installed
+    } else if can_probe {
+        ManagerState::Off
+    } else {
+        ManagerState::Error
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn manager_unit_path() -> Option<PathBuf> {
+    let config_home = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|home| PathBuf::from(home).join(".config"))
+        })?;
+    Some(
+        config_home
+            .join("systemd")
+            .join("user")
+            .join("memory-watch-manager.service"),
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn load_manager_state_file() -> Option<ManagerStateFile> {
+    let path = preferred_user_state_dir()?.join("watcher-manager-state.json");
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn systemctl_user_check(action: &str, unit: &str) -> bool {
+    ProcessCommand::new("systemctl")
+        .args(["--user", action, unit])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 fn detect_tool_versions() -> ToolVersions {
     ToolVersions {
         mem_cli: env!("CARGO_PKG_VERSION").to_string(),
         mem_service: env!("CARGO_PKG_VERSION").to_string(),
+        watch_manager: env!("CARGO_PKG_VERSION").to_string(),
         memory_watch: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
@@ -4811,11 +5064,13 @@ mod tests {
     use chrono::{Local, TimeZone, Utc};
 
     use super::{
-        AgentSnapshot, App, BackgroundEvent, TabKind, Theme, ToolVersions, UiStatus,
-        context_gradient_color, empty_overview, filled_bar_cells, format_context_percent,
-        format_epoch_reset_time, format_timestamp, format_timestamp_full, format_timestamp_medium,
-        format_timestamp_short, format_timestamp_timeline, normalized_percent, remaining_bar_cells,
-        service_status_label, should_attempt_stream_reconnect, watcher_bar_status_label,
+        AgentSnapshot, App, BackgroundEvent, ManagerState, TabKind, Theme, ToolVersions, UiStatus,
+        context_gradient_color, derive_manager_state, empty_overview, filled_bar_cells,
+        format_context_percent, format_epoch_reset_time, format_timestamp, format_timestamp_full,
+        format_timestamp_medium, format_timestamp_short, format_timestamp_timeline,
+        manager_status_detail, manager_status_label, normalized_percent, remaining_bar_cells,
+        service_status_detail, service_status_label, should_attempt_stream_reconnect,
+        watcher_bar_status_label,
     };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::WatcherPresenceSummary;
@@ -4853,6 +5108,7 @@ mod tests {
             ToolVersions {
                 mem_cli: "0.4.3".to_string(),
                 mem_service: "0.4.3".to_string(),
+                watch_manager: "0.4.3".to_string(),
                 memory_watch: "0.4.3".to_string(),
             },
             false,
@@ -4873,6 +5129,82 @@ mod tests {
 
         assert_eq!(service_status_label(&app), "down");
         assert_eq!(watcher_bar_status_label(&app), "unknown");
+    }
+
+    #[test]
+    fn footer_service_status_treats_healthy_relay_as_up() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.4.3".to_string(),
+                mem_service: "0.4.3".to_string(),
+                watch_manager: "0.4.3".to_string(),
+                memory_watch: "0.4.3".to_string(),
+            },
+            false,
+            tx,
+        );
+        app.health_ok = true;
+        app.service_role = Some("relay".to_string());
+        app.service_health_state = Some("ok".to_string());
+        app.service_database_state = Some("down".to_string());
+        app.overview.service_status = "ok".to_string();
+        app.overview.database_status = "down".to_string();
+
+        assert_eq!(service_status_label(&app), "up");
+        assert_eq!(service_status_detail(&app), Some("relay".to_string()));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn manager_footer_status_mapping_prefers_active_then_installed_then_off() {
+        assert_eq!(
+            derive_manager_state(true, true, true, true),
+            ManagerState::Active
+        );
+        assert_eq!(
+            derive_manager_state(true, false, false, true),
+            ManagerState::Installed
+        );
+        assert_eq!(
+            derive_manager_state(false, false, false, true),
+            ManagerState::Off
+        );
+        assert_eq!(
+            derive_manager_state(false, false, false, false),
+            ManagerState::Error
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn manager_footer_detail_includes_session_and_warning_counts() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.4.3".to_string(),
+                mem_service: "0.4.3".to_string(),
+                watch_manager: "0.4.3".to_string(),
+                memory_watch: "0.4.3".to_string(),
+            },
+            false,
+            tx,
+        );
+        app.manager_status = Some(super::ManagerFooterStatus {
+            state: ManagerState::Active,
+            tracked_sessions: 2,
+            warning_count: 1,
+        });
+
+        assert_eq!(manager_status_label(&app), "active");
+        assert_eq!(
+            manager_status_detail(&app),
+            Some("2 sessions, 1 warn".to_string())
+        );
     }
 
     #[test]
@@ -4962,6 +5294,7 @@ mod tests {
             ToolVersions {
                 mem_cli: "0.4.3".to_string(),
                 mem_service: "0.4.3".to_string(),
+                watch_manager: "0.4.3".to_string(),
                 memory_watch: "0.4.3".to_string(),
             },
             false,
@@ -4994,6 +5327,7 @@ mod tests {
             ToolVersions {
                 mem_cli: "0.4.3".to_string(),
                 mem_service: "0.4.3".to_string(),
+                watch_manager: "0.4.3".to_string(),
                 memory_watch: "0.4.3".to_string(),
             },
             false,
