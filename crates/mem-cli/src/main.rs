@@ -4680,7 +4680,14 @@ fn unit_is_active(unit_name: &str) -> bool {
 #[cfg(not(target_os = "macos"))]
 fn unit_is_loaded(unit_name: &str) -> bool {
     let output = ProcessCommand::new("systemctl")
-        .args(["--user", "show", unit_name, "--property", "LoadState", "--value"])
+        .args([
+            "--user",
+            "show",
+            unit_name,
+            "--property",
+            "LoadState",
+            "--value",
+        ])
         .output();
     let Ok(output) = output else {
         return false;
@@ -4692,11 +4699,7 @@ fn unit_is_loaded(unit_name: &str) -> bool {
     !load_state.is_empty() && load_state != "not-found"
 }
 
-fn should_start_agent_watcher(
-    session_tracked: bool,
-    unit_loaded: bool,
-    unit_active: bool,
-) -> bool {
+fn should_start_agent_watcher(session_tracked: bool, unit_loaded: bool, unit_active: bool) -> bool {
     !session_tracked || !unit_loaded || !unit_active
 }
 
@@ -7034,13 +7037,14 @@ mod tests {
 
     use super::{
         Cli, DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction,
+        WatcherCommand, WatcherManagerArgs, WatcherManagerCommand,
         build_plan_execution_finish_report, build_plan_execution_request, build_remember_request,
         derive_plan_thread_key, derive_plan_title, ensure_checkbox_plan,
         ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
         mask_database_url, parse_plan_checkboxes, render_agent_project_config,
         repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
         root_gitignore_contains_mem, shared_env_lookup, watcher_command_requires_config_load,
-        write_headers, WatcherCommand, WatcherManagerArgs, WatcherManagerCommand,
+        write_headers,
     };
     use mem_api::AppConfig;
 

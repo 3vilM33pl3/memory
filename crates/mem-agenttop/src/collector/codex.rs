@@ -65,7 +65,9 @@ impl CodexCollector {
             ) {
                 seen_jsonl.insert(jsonl_path.clone());
                 if let Some(new_rl) = rl {
-                    let newer = self.last_rate_limit.as_ref()
+                    let newer = self
+                        .last_rate_limit
+                        .as_ref()
                         .is_none_or(|old| new_rl.updated_at > old.updated_at);
                     if newer {
                         super::rate_limit::write_codex_cache(&new_rl);
@@ -123,12 +125,14 @@ impl CodexCollector {
                         &shared.ports,
                     ) {
                         if let Some(new_rl) = rl {
-                            let newer = self.last_rate_limit.as_ref()
+                            let newer = self
+                                .last_rate_limit
+                                .as_ref()
                                 .is_none_or(|old| new_rl.updated_at > old.updated_at);
                             if newer {
-                        super::rate_limit::write_codex_cache(&new_rl);
-                        self.last_rate_limit = Some(new_rl);
-                    }
+                                super::rate_limit::write_codex_cache(&new_rl);
+                                self.last_rate_limit = Some(new_rl);
+                            }
                         }
                         sessions.push(session);
                     }
@@ -165,12 +169,7 @@ impl CodexCollector {
         let mem_mb = proc.map(|p| p.rss_kb / 1024).unwrap_or(0);
         let display_pid = pid.unwrap_or(0);
 
-        let project_name = result
-            .cwd
-            .rsplit('/')
-            .next()
-            .unwrap_or("?")
-            .to_string();
+        let project_name = result.cwd.rsplit('/').next().unwrap_or("?").to_string();
 
         // Status detection
         // Note: Codex interactive sessions emit task_complete after every turn,
@@ -222,10 +221,7 @@ impl CodexCollector {
         // so we catch grandchild processes that listen on ports.
         let mut children = Vec::new();
         if let Some(p) = pid {
-            let mut stack: Vec<u32> = children_map
-                .get(&p)
-                .cloned()
-                .unwrap_or_default();
+            let mut stack: Vec<u32> = children_map.get(&p).cloned().unwrap_or_default();
             while let Some(cpid) = stack.pop() {
                 if let Some(cproc) = process_info.get(&cpid) {
                     let port = ports.get(&cpid).and_then(|v| v.first().copied());
@@ -246,35 +242,38 @@ impl CodexCollector {
         let (git_added, git_modified) = (0, 0);
         let rate_limit = result.rate_limit.clone();
 
-        Some((AgentSession {
-            agent_cli: "codex",
-            pid: display_pid,
-            session_id: result.session_id,
-            cwd: result.cwd,
-            project_name,
-            started_at: result.started_at,
-            status,
-            model: result.model,
-            context_percent,
-            total_input_tokens: result.total_input,
-            total_output_tokens: result.total_output,
-            total_cache_read: result.total_cache_read,
-            total_cache_create: 0, // Codex doesn't report cache write
-            turn_count: result.turn_count,
-            current_tasks,
-            mem_mb,
-            version: result.version,
-            git_branch: result.git_branch,
-            git_added,
-            git_modified,
-            token_history: result.token_history,
-            subagents: vec![],
-            mem_file_count: 0,
-            mem_line_count: 0,
-            children,
-            initial_prompt: result.initial_prompt,
-            first_assistant_text: String::new(),
-        }, rate_limit))
+        Some((
+            AgentSession {
+                agent_cli: "codex",
+                pid: display_pid,
+                session_id: result.session_id,
+                cwd: result.cwd,
+                project_name,
+                started_at: result.started_at,
+                status,
+                model: result.model,
+                context_percent,
+                total_input_tokens: result.total_input,
+                total_output_tokens: result.total_output,
+                total_cache_read: result.total_cache_read,
+                total_cache_create: 0, // Codex doesn't report cache write
+                turn_count: result.turn_count,
+                current_tasks,
+                mem_mb,
+                version: result.version,
+                git_branch: result.git_branch,
+                git_added,
+                git_modified,
+                token_history: result.token_history,
+                subagents: vec![],
+                mem_file_count: 0,
+                mem_line_count: 0,
+                children,
+                initial_prompt: result.initial_prompt,
+                first_assistant_text: String::new(),
+            },
+            rate_limit,
+        ))
     }
 
     fn load_pending_session(
@@ -288,15 +287,9 @@ impl CodexCollector {
         let proc = process_info.get(&pid)?;
         let cwd = read_proc_cwd(pid)?;
         let (started_at, start_ticks) = read_proc_started_at(pid)?;
-        let project_name = cwd
-            .rsplit('/')
-            .next()
-            .unwrap_or("?")
-            .to_string();
+        let project_name = cwd.rsplit('/').next().unwrap_or("?").to_string();
         let since_start = std::time::SystemTime::now()
-            .duration_since(
-                std::time::UNIX_EPOCH + std::time::Duration::from_millis(started_at),
-            )
+            .duration_since(std::time::UNIX_EPOCH + std::time::Duration::from_millis(started_at))
             .unwrap_or_default();
         let status = if is_exec && since_start.as_secs() > 10 {
             SessionStatus::Waiting
@@ -379,10 +372,7 @@ impl CodexCollector {
                     .split_whitespace()
                     .nth(1)
                     .is_some_and(|value| value.rsplit('/').next().unwrap_or(value) == "codex");
-            if is_codex
-                && !is_node_wrapper
-                && !cmd.contains("app-server")
-                && !cmd.contains("grep")
+            if is_codex && !is_node_wrapper && !cmd.contains("app-server") && !cmd.contains("grep")
             {
                 pids.push((*pid, is_exec));
             }
@@ -404,10 +394,7 @@ impl CodexCollector {
             args.push(pa);
         }
 
-        let output = Command::new("lsof")
-            .args(&args)
-            .output()
-            .ok();
+        let output = Command::new("lsof").args(&args).output().ok();
 
         if let Some(output) = output {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -426,7 +413,6 @@ impl CodexCollector {
         }
         map
     }
-
 }
 
 fn read_proc_cwd(pid: u32) -> Option<String> {
@@ -462,7 +448,9 @@ impl super::AgentCollector for CodexCollector {
     }
 
     fn live_rate_limit(&self) -> Option<RateLimitInfo> {
-        self.last_rate_limit.clone().or_else(super::rate_limit::read_codex_cache)
+        self.last_rate_limit
+            .clone()
+            .or_else(super::rate_limit::read_codex_cache)
     }
 }
 
@@ -596,7 +584,8 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                         if total.is_object() {
                             let inp = total["input_tokens"].as_u64().unwrap_or(0);
                             let out = total["output_tokens"].as_u64().unwrap_or(0);
-                            let cache = total["cached_input_tokens"].as_u64()
+                            let cache = total["cached_input_tokens"]
+                                .as_u64()
                                 .or_else(|| total["cache_read_input_tokens"].as_u64())
                                 .unwrap_or(0);
                             result.total_input = inp;
@@ -608,7 +597,8 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                         if last.is_object() {
                             let inp = last["input_tokens"].as_u64().unwrap_or(0);
                             let out = last["output_tokens"].as_u64().unwrap_or(0);
-                            let cache = last["cached_input_tokens"].as_u64()
+                            let cache = last["cached_input_tokens"]
+                                .as_u64()
                                 .or_else(|| last["cache_read_input_tokens"].as_u64())
                                 .unwrap_or(0);
                             result.last_context_tokens = inp + cache;
@@ -623,7 +613,8 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                         // Free plans: primary=7d(10080min), secondary=null.
                         let rl = &payload["rate_limits"];
                         if rl.is_object() {
-                            let event_secs = val["timestamp"].as_str()
+                            let event_secs = val["timestamp"]
+                                .as_str()
                                 .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
                                 .map(|dt| dt.timestamp() as u64);
                             let mut info = RateLimitInfo {
@@ -633,7 +624,9 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                             };
                             for slot in &["primary", "secondary"] {
                                 let w = &rl[slot];
-                                if !w.is_object() { continue; }
+                                if !w.is_object() {
+                                    continue;
+                                }
                                 let mins = w["window_minutes"].as_u64().unwrap_or(0);
                                 let pct = w["used_percent"].as_f64();
                                 let resets = w["resets_at"].as_u64();
@@ -735,10 +728,13 @@ mod tests {
     #[test]
     fn test_parse_codex_token_count() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"output_tokens":200,"cached_input_tokens":100},"last_token_usage":{"input_tokens":50,"output_tokens":20,"cached_input_tokens":10},"model_context_window":128000}}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"output_tokens":200,"cached_input_tokens":100},"last_token_usage":{"input_tokens":50,"output_tokens":20,"cached_input_tokens":10},"model_context_window":128000}}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
         assert_eq!(result.total_input, 500);
         assert_eq!(result.total_output, 200);
@@ -752,10 +748,13 @@ mod tests {
     #[test]
     fn test_parse_codex_rate_limits() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"output_tokens":1},"last_token_usage":{"input_tokens":1,"output_tokens":1}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":9.0,"window_minutes":300,"resets_at":1774686045},"secondary":{"used_percent":14.0,"window_minutes":10080,"resets_at":1775186466},"plan_type":"plus"}}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"output_tokens":1},"last_token_usage":{"input_tokens":1,"output_tokens":1}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":9.0,"window_minutes":300,"resets_at":1774686045},"secondary":{"used_percent":14.0,"window_minutes":10080,"resets_at":1775186466},"plan_type":"plus"}}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
         let rl = result.rate_limit.expect("rate_limit should be Some");
         assert_eq!(rl.five_hour_pct, Some(9.0));
@@ -765,11 +764,14 @@ mod tests {
     #[test]
     fn test_parse_codex_cache_read_fallback_field_name() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            // Uses cache_read_input_tokens instead of cached_input_tokens
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":30},"last_token_usage":{"input_tokens":20,"output_tokens":10,"cache_read_input_tokens":5},"model_context_window":200000}}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                // Uses cache_read_input_tokens instead of cached_input_tokens
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":30},"last_token_usage":{"input_tokens":20,"output_tokens":10,"cache_read_input_tokens":5},"model_context_window":200000}}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
         assert_eq!(result.total_cache_read, 30);
         assert_eq!(result.last_context_tokens, 25); // 20 + 5
@@ -778,11 +780,14 @@ mod tests {
     #[test]
     fn test_parse_codex_skips_malformed_lines() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            r#"NOT VALID JSON AT ALL"#,
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"agent_message"}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"NOT VALID JSON AT ALL"#,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"agent_message"}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
         // Bad line skipped, agent_message still counted
         assert_eq!(result.turn_count, 1);

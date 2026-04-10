@@ -85,7 +85,10 @@ pub struct AgentSession {
 
 impl AgentSession {
     pub fn total_tokens(&self) -> u64 {
-        self.total_input_tokens + self.total_output_tokens + self.total_cache_read + self.total_cache_create
+        self.total_input_tokens
+            + self.total_output_tokens
+            + self.total_cache_read
+            + self.total_cache_create
     }
 
     /// Tokens that represent new work (input + output), excluding cache hits.

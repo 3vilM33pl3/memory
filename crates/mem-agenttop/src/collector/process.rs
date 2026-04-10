@@ -29,13 +29,16 @@ pub fn get_process_info() -> HashMap<u32, ProcInfo> {
                 ) {
                     let cpu = parts[3].parse::<f64>().unwrap_or(0.0);
                     let command = parts[4..].join(" ");
-                    map.insert(pid, ProcInfo {
+                    map.insert(
                         pid,
-                        ppid,
-                        rss_kb: rss,
-                        cpu_pct: cpu,
-                        command,
-                    });
+                        ProcInfo {
+                            pid,
+                            ppid,
+                            rss_kb: rss,
+                            cpu_pct: cpu,
+                            command,
+                        },
+                    );
                 }
             }
         }
@@ -61,7 +64,10 @@ pub fn has_active_descendant(
     while let Some(p) = stack.pop() {
         if let Some(kids) = children_map.get(&p) {
             for &kid in kids {
-                if process_info.get(&kid).is_some_and(|p| p.cpu_pct > cpu_threshold) {
+                if process_info
+                    .get(&kid)
+                    .is_some_and(|p| p.cpu_pct > cpu_threshold)
+                {
                     return true;
                 }
                 stack.push(kid);
@@ -82,9 +88,7 @@ pub fn get_listening_ports() -> HashMap<u32, Vec<u16>> {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines().skip(1) {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            let is_tcp_listen = parts.len() >= 9
-                && parts[7] == "TCP"
-                && line.contains("(LISTEN)");
+            let is_tcp_listen = parts.len() >= 9 && parts[7] == "TCP" && line.contains("(LISTEN)");
             if is_tcp_listen {
                 if let Ok(pid) = parts[1].parse::<u32>() {
                     if let Some(addr) = parts.get(8) {

@@ -41,7 +41,12 @@ impl ClaudeCollector {
                 continue;
             }
 
-            if let Some(session) = self.load_session(&path, &shared.process_info, &shared.children_map, &shared.ports) {
+            if let Some(session) = self.load_session(
+                &path,
+                &shared.process_info,
+                &shared.children_map,
+                &shared.ports,
+            ) {
                 sessions.push(session);
             }
         }
@@ -49,7 +54,8 @@ impl ClaudeCollector {
         // Evict transcript cache for sessions that no longer exist
         let active_ids: std::collections::HashSet<&str> =
             sessions.iter().map(|s| s.session_id.as_str()).collect();
-        self.transcript_cache.retain(|sid, _| active_ids.contains(sid.as_str()));
+        self.transcript_cache
+            .retain(|sid, _| active_ids.contains(sid.as_str()));
 
         sessions.sort_by_key(|s| std::cmp::Reverse(s.started_at));
         sessions
@@ -67,9 +73,7 @@ impl ClaudeCollector {
 
         let proc_cmd = process_info.get(&sf.pid).map(|p| p.command.as_str());
         let pid_alive = proc_cmd
-            .map(|c| {
-                process::cmd_has_binary(c, "claude")
-            })
+            .map(|c| process::cmd_has_binary(c, "claude"))
             .unwrap_or(false);
 
         // Skip --print sessions (e.g. abtop's own summary generation).
@@ -79,12 +83,7 @@ impl ClaudeCollector {
             return None;
         }
 
-        let project_name = sf
-            .cwd
-            .rsplit('/')
-            .next()
-            .unwrap_or("?")
-            .to_string();
+        let project_name = sf.cwd.rsplit('/').next().unwrap_or("?").to_string();
 
         let proc = process_info.get(&sf.pid);
         let mem_mb = proc.map(|p| p.rss_kb / 1024).unwrap_or(0);
@@ -94,7 +93,8 @@ impl ClaudeCollector {
         if let Some(ref tp) = transcript_path {
             let cached = self.transcript_cache.remove(&sf.session_id);
             // Detect file replacement: if inode or mtime changed, reparse from scratch
-            let identity_changed = cached.as_ref()
+            let identity_changed = cached
+                .as_ref()
                 .map(|c| c.file_identity != file_identity(tp))
                 .unwrap_or(false);
             let from_offset = if identity_changed {
@@ -154,15 +154,27 @@ impl ClaudeCollector {
 
         let empty_result = TranscriptResult {
             model: "-".to_string(),
-            total_input: 0, total_output: 0, total_cache_read: 0, total_cache_create: 0,
-            last_context_tokens: 0, max_context_tokens: 0, turn_count: 0, current_task: String::new(),
-            version: String::new(), git_branch: String::new(),
-            last_activity: std::time::UNIX_EPOCH, new_offset: 0,
+            total_input: 0,
+            total_output: 0,
+            total_cache_read: 0,
+            total_cache_create: 0,
+            last_context_tokens: 0,
+            max_context_tokens: 0,
+            turn_count: 0,
+            current_task: String::new(),
+            version: String::new(),
+            git_branch: String::new(),
+            last_activity: std::time::UNIX_EPOCH,
+            new_offset: 0,
             file_identity: (0, 0),
-            token_history: Vec::new(), initial_prompt: String::new(),
+            token_history: Vec::new(),
+            initial_prompt: String::new(),
             first_assistant_text: String::new(),
         };
-        let cached = self.transcript_cache.get(&sf.session_id).unwrap_or(&empty_result);
+        let cached = self
+            .transcript_cache
+            .get(&sf.session_id)
+            .unwrap_or(&empty_result);
 
         let model = cached.model.clone();
         let total_input = cached.total_input;
@@ -196,9 +208,8 @@ impl ClaudeCollector {
                 let claude_cpu_active = proc.is_some_and(|p| p.cpu_pct > 1.0);
                 // 2. Any descendant using significant CPU (>5%) → likely running a tool
                 //    (higher threshold avoids false positives from idle watchers/servers)
-                let has_active_descendant = process::has_active_descendant(
-                    sf.pid, children_map, process_info, 5.0,
-                );
+                let has_active_descendant =
+                    process::has_active_descendant(sf.pid, children_map, process_info, 5.0);
                 if claude_cpu_active || has_active_descendant {
                     SessionStatus::Working
                 } else {
@@ -227,10 +238,7 @@ impl ClaudeCollector {
         let mut children = Vec::new();
         // Collect all descendants (not just direct children) so we catch
         // grandchild processes that listen on ports (e.g. Claude → shell → node).
-        let mut stack: Vec<u32> = children_map
-            .get(&sf.pid)
-            .cloned()
-            .unwrap_or_default();
+        let mut stack: Vec<u32> = children_map.get(&sf.pid).cloned().unwrap_or_default();
         while let Some(cpid) = stack.pop() {
             if let Some(cproc) = process_info.get(&cpid) {
                 let port = ports.get(&cpid).and_then(|v| v.first().copied());
@@ -324,7 +332,6 @@ impl ClaudeCollector {
         None
     }
 
-
     fn collect_subagents(subagents_dir: &Path) -> Vec<SubAgent> {
         let mut subagents = Vec::new();
 
@@ -360,7 +367,8 @@ impl ClaudeCollector {
                 Err(_) => continue,
             };
 
-            let description = meta_val.get("description")
+            let description = meta_val
+                .get("description")
                 .and_then(|v| v.as_str())
                 .unwrap_or("agent")
                 .to_string();
@@ -382,8 +390,10 @@ impl ClaudeCollector {
 
                 // Parse jsonl for token totals
                 let transcript = parse_transcript(&jsonl_path, 0);
-                tokens = transcript.total_input + transcript.total_output
-                    + transcript.total_cache_read + transcript.total_cache_create;
+                tokens = transcript.total_input
+                    + transcript.total_output
+                    + transcript.total_cache_read
+                    + transcript.total_cache_create;
             }
 
             let status = {
@@ -469,7 +479,8 @@ fn file_identity(path: &Path) -> (u64, u64) {
         .ok()
         .map(|m| {
             let ino = m.ino();
-            let mtime_ns = m.modified()
+            let mtime_ns = m
+                .modified()
                 .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_nanos() as u64)
@@ -513,7 +524,11 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
         return result;
     }
     // File shrank (truncation/rotation) — reset and reparse from start
-    let effective_offset = if file_len < from_offset { 0 } else { from_offset };
+    let effective_offset = if file_len < from_offset {
+        0
+    } else {
+        from_offset
+    };
     let from_offset = effective_offset;
 
     let mut reader = BufReader::new(file);
@@ -553,7 +568,9 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                             bytes_read += n as u64;
                         }
                         // Incomplete line with parse error — defer
-                        if !has_newline { break; }
+                        if !has_newline {
+                            break;
+                        }
                         continue;
                     }
                 };
@@ -570,10 +587,22 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                                     result.model = m.to_string();
                                 }
                                 if let Some(usage) = msg.get("usage") {
-                                    let inp = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    let out = usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    let cr = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    let cc = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let inp = usage
+                                        .get("input_tokens")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    let out = usage
+                                        .get("output_tokens")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    let cr = usage
+                                        .get("cache_read_input_tokens")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    let cc = usage
+                                        .get("cache_creation_input_tokens")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
                                     result.total_input += inp;
                                     result.total_output += out;
                                     result.total_cache_read += cr;
@@ -588,10 +617,15 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                                 }
                                 // Extract first assistant text (text blocks only) for summary fallback
                                 if result.first_assistant_text.is_empty() {
-                                    if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
-                                        let texts: Vec<&str> = content.iter()
+                                    if let Some(content) =
+                                        msg.get("content").and_then(|c| c.as_array())
+                                    {
+                                        let texts: Vec<&str> = content
+                                            .iter()
                                             .filter_map(|block| {
-                                                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                                if block.get("type").and_then(|t| t.as_str())
+                                                    == Some("text")
+                                                {
                                                     block.get("text").and_then(|t| t.as_str())
                                                 } else {
                                                     None
@@ -606,15 +640,22 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                                                 .filter(|l| !l.is_empty())
                                                 .collect::<Vec<_>>()
                                                 .join(" ");
-                                            result.first_assistant_text = truncate(&normalized, 200);
+                                            result.first_assistant_text =
+                                                truncate(&normalized, 200);
                                         }
                                     }
                                 }
                                 // Extract last tool_use from latest turn (= most recently running)
-                                if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
+                                if let Some(content) = msg.get("content").and_then(|c| c.as_array())
+                                {
                                     for item in content.iter().rev() {
-                                        if item.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                                            let tool = item.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+                                        if item.get("type").and_then(|t| t.as_str())
+                                            == Some("tool_use")
+                                        {
+                                            let tool = item
+                                                .get("name")
+                                                .and_then(|n| n.as_str())
+                                                .unwrap_or("?");
                                             let arg = extract_tool_arg(item);
                                             result.current_task = format!("{} {}", tool, arg);
                                             break;
@@ -670,7 +711,10 @@ fn extract_prompt_text(message: &Value) -> String {
             arr.iter()
                 .filter_map(|block| {
                     if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                        block.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                        block
+                            .get("text")
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.to_string())
                     } else {
                         None
                     }
@@ -693,7 +737,11 @@ fn extract_prompt_text(message: &Value) -> String {
     let mut result = cleaned;
     while let Some(start) = result.find("[Image") {
         if let Some(end) = result[start..].find(']') {
-            result = format!("{}{}", &result[..start], result[start + end + 1..].trim_start());
+            result = format!(
+                "{}{}",
+                &result[..start],
+                result[start + end + 1..].trim_start()
+            );
         } else {
             break;
         }
@@ -773,10 +821,13 @@ mod tests {
     #[test]
     fn test_parse_transcript_basic_tokens() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","version":"2.1.86","gitBranch":"main","message":{"role":"user","content":"fix the bug"}}"#,
-            r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"role":"assistant","model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":200,"cache_creation_input_tokens":30},"content":[{"type":"text","text":"I found the issue."}]}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","version":"2.1.86","gitBranch":"main","message":{"role":"user","content":"fix the bug"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"role":"assistant","model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":200,"cache_creation_input_tokens":30},"content":[{"type":"text","text":"I found the issue."}]}}"#,
+            ],
+        );
         let result = parse_transcript(file.path(), 0);
         assert_eq!(result.total_input, 100);
         assert_eq!(result.total_output, 50);
@@ -790,12 +841,15 @@ mod tests {
     #[test]
     fn test_parse_transcript_multiple_turns() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"first prompt"}}"#,
-            r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"First response."}]}}"#,
-            r#"{"type":"user","timestamp":"2026-03-28T15:01:00Z","message":{"role":"user","content":"second prompt"}}"#,
-            r#"{"type":"assistant","timestamp":"2026-03-28T15:01:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":200,"output_tokens":80,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Second response."}]}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"first prompt"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"First response."}]}}"#,
+                r#"{"type":"user","timestamp":"2026-03-28T15:01:00Z","message":{"role":"user","content":"second prompt"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-03-28T15:01:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":200,"output_tokens":80,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Second response."}]}}"#,
+            ],
+        );
         let result = parse_transcript(file.path(), 0);
         assert_eq!(result.turn_count, 2);
         assert_eq!(result.total_input, 300); // 100 + 200
@@ -806,10 +860,13 @@ mod tests {
     #[test]
     fn test_parse_transcript_tool_use_current_task() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"fix the bug"}}"#,
-            r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"src/main.rs"}}]}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"fix the bug"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"src/main.rs"}}]}}"#,
+            ],
+        );
         let result = parse_transcript(file.path(), 0);
         assert_eq!(result.current_task, "Edit src/main.rs");
     }
@@ -817,9 +874,12 @@ mod tests {
     #[test]
     fn test_parse_transcript_initial_prompt() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"refactor the auth module"}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"refactor the auth module"}}"#,
+            ],
+        );
         let result = parse_transcript(file.path(), 0);
         assert_eq!(result.initial_prompt, "refactor the auth module");
     }
@@ -827,18 +887,24 @@ mod tests {
     #[test]
     fn test_parse_transcript_incremental_offset() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"first prompt"}}"#,
-            r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"First response."}]}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"first prompt"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"First response."}]}}"#,
+            ],
+        );
         let first = parse_transcript(file.path(), 0);
         let offset = first.new_offset;
         assert!(offset > 0);
 
         // Append a third line (new assistant turn)
-        write_lines(&mut file, &[
-            r#"{"type":"assistant","timestamp":"2026-03-28T15:01:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":40,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Third."}]}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                r#"{"type":"assistant","timestamp":"2026-03-28T15:01:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":40,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Third."}]}}"#,
+            ],
+        );
         let delta = parse_transcript(file.path(), offset);
         assert_eq!(delta.turn_count, 1);
         assert_eq!(delta.total_input, 40);
@@ -857,7 +923,10 @@ mod tests {
     #[test]
     fn test_encode_cwd_path() {
         assert_eq!(encode_cwd_path("/Users/foo/bar"), "-Users-foo-bar");
-        assert_eq!(encode_cwd_path("/home/user/my_project.v2"), "-home-user-my-project-v2");
+        assert_eq!(
+            encode_cwd_path("/home/user/my_project.v2"),
+            "-home-user-my-project-v2"
+        );
     }
 
     #[test]
@@ -865,11 +934,20 @@ mod tests {
         // Base model with low token usage → 200K
         assert_eq!(context_window_for_model("claude-opus-4-6", 50_000), 200_000);
         // Explicit [1m] suffix → 1M regardless of token count
-        assert_eq!(context_window_for_model("claude-opus-4-6[1m]", 0), 1_000_000);
-        assert_eq!(context_window_for_model("claude-sonnet-4-6", 100_000), 200_000);
+        assert_eq!(
+            context_window_for_model("claude-opus-4-6[1m]", 0),
+            1_000_000
+        );
+        assert_eq!(
+            context_window_for_model("claude-sonnet-4-6", 100_000),
+            200_000
+        );
         assert_eq!(context_window_for_model("unknown-model", 0), 200_000);
         // Token usage exceeds 200K → must be 1M window
-        assert_eq!(context_window_for_model("claude-opus-4-6", 250_000), 1_000_000);
+        assert_eq!(
+            context_window_for_model("claude-opus-4-6", 250_000),
+            1_000_000
+        );
     }
 
     #[test]
@@ -880,18 +958,24 @@ mod tests {
 
     #[test]
     fn test_shorten_path() {
-        assert_eq!(shorten_path("src/collector/claude.rs"), "collector/claude.rs");
+        assert_eq!(
+            shorten_path("src/collector/claude.rs"),
+            "collector/claude.rs"
+        );
         assert_eq!(shorten_path("main.rs"), "main.rs");
     }
 
     #[test]
     fn test_parse_transcript_skips_malformed_json() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"hi"}}"#,
-            r#"THIS IS NOT VALID JSON"#,
-            r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"response"}]}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"hi"}}"#,
+                r#"THIS IS NOT VALID JSON"#,
+                r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"response"}]}}"#,
+            ],
+        );
         let result = parse_transcript(file.path(), 0);
         // Bad line should be skipped, assistant line still parsed
         assert_eq!(result.turn_count, 1);
@@ -903,10 +987,13 @@ mod tests {
     fn test_parse_transcript_file_shrunk_resets() {
         use std::io::Seek;
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"first"}}"#,
-            r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"resp"}]}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","message":{"role":"user","content":"first"}}"#,
+                r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"resp"}]}}"#,
+            ],
+        );
         let first = parse_transcript(file.path(), 0);
         let old_offset = first.new_offset;
         assert!(old_offset > 0);
@@ -914,9 +1001,12 @@ mod tests {
         // Simulate file rotation: truncate and write shorter content
         file.as_file().set_len(0).unwrap();
         file.seek(std::io::SeekFrom::Start(0)).unwrap();
-        write_lines(&mut file, &[
-            r#"{"type":"assistant","timestamp":"2026-03-28T16:00:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"new session"}]}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                r#"{"type":"assistant","timestamp":"2026-03-28T16:00:00Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"new session"}]}}"#,
+            ],
+        );
         // Pass old offset that is now beyond file length
         let result = parse_transcript(file.path(), old_offset);
         // Should reset to 0 and parse the new content
@@ -927,12 +1017,15 @@ mod tests {
     #[test]
     fn test_parse_transcript_current_task_cleared_between_turns() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            // Turn 1: has tool_use
-            r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"src/main.rs"}}]}}"#,
-            // Turn 2: text only, no tool_use
-            r#"{"type":"assistant","timestamp":"2026-03-28T15:01:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Done, all changes applied."}]}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                // Turn 1: has tool_use
+                r#"{"type":"assistant","timestamp":"2026-03-28T15:00:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"src/main.rs"}}]}}"#,
+                // Turn 2: text only, no tool_use
+                r#"{"type":"assistant","timestamp":"2026-03-28T15:01:05Z","message":{"model":"claude-sonnet-4-6","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"content":[{"type":"text","text":"Done, all changes applied."}]}}"#,
+            ],
+        );
         let result = parse_transcript(file.path(), 0);
         assert_eq!(result.turn_count, 2);
         // current_task should be empty because last turn had no tool_use
@@ -942,9 +1035,12 @@ mod tests {
     #[test]
     fn test_parse_transcript_version_and_git_branch() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","version":"2.1.90","gitBranch":"feat/payments","message":{"role":"user","content":"add stripe"}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                r#"{"type":"user","timestamp":"2026-03-28T15:00:00Z","version":"2.1.90","gitBranch":"feat/payments","message":{"role":"user","content":"add stripe"}}"#,
+            ],
+        );
         let result = parse_transcript(file.path(), 0);
         assert_eq!(result.version, "2.1.90");
         assert_eq!(result.git_branch, "feat/payments");

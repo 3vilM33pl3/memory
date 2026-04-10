@@ -38,7 +38,11 @@ impl SharedProcessData {
             Some(p) => p.clone(),
             None => process::get_listening_ports(),
         };
-        Self { process_info, children_map, ports }
+        Self {
+            process_info,
+            children_map,
+            ports,
+        }
     }
 }
 
@@ -86,7 +90,10 @@ impl MultiCollector {
 
     /// Collect rate limit info from all registered collectors.
     pub fn agent_rate_limits(&self) -> Vec<RateLimitInfo> {
-        self.collectors.iter().filter_map(|c| c.live_rate_limit()).collect()
+        self.collectors
+            .iter()
+            .filter_map(|c| c.live_rate_limit())
+            .collect()
     }
 
     pub fn collect(&mut self) -> Vec<AgentSession> {
@@ -152,11 +159,14 @@ impl MultiCollector {
                 for child in &s.children {
                     live_child_pids.insert(child.pid);
                     if let Some(port) = child.port {
-                        self.tracked_port_children.insert(child.pid, TrackedPortChild {
-                            port,
-                            command: child.command.clone(),
-                            project_name: s.project_name.clone(),
-                        });
+                        self.tracked_port_children.insert(
+                            child.pid,
+                            TrackedPortChild {
+                                port,
+                                command: child.command.clone(),
+                                project_name: s.project_name.clone(),
+                            },
+                        );
                     }
                 }
             }
@@ -171,7 +181,9 @@ impl MultiCollector {
                 continue; // still owned by a live session
             }
             // Check if process is still alive and still has the port open
-            let still_listening = shared.ports.get(pid)
+            let still_listening = shared
+                .ports
+                .get(pid)
                 .is_some_and(|ports| ports.contains(&tracked.port));
             let still_alive = shared.process_info.contains_key(pid);
             if still_alive && still_listening {
