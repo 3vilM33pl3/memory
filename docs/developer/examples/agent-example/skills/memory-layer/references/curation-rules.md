@@ -261,13 +261,15 @@ Do not merge if the result becomes ambiguous.
 Create `memory_relations` only when the relation is explicit and useful.
 
 Examples:
+- `duplicates`
 - `depends_on`
 - `supersedes`
+- `supports`
 - `related_to`
-- `caused_by`
-- `implements`
 
-Do not invent relations from weak lexical similarity.
+The live application does not currently support `caused_by` or `implements` relation types.
+
+Do not invent relations from weak lexical similarity. In the current implementation, relation refresh is deterministic and based on canonical-text overlap, shared tags, shared provenance file paths, and explicit dependency or supersession language.
 
 ---
 

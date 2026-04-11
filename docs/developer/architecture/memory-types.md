@@ -19,6 +19,7 @@ The live source of truth for the type list is [`MemoryType` in `mem-api`](../../
 - [Type-By-Type Reference](#type-by-type-reference)
 - [How Types Get Triggered](#how-types-get-triggered)
 - [How Types Link To The Database](#how-types-link-to-the-database)
+- [How Related Memories Work](#how-related-memories-work)
 - [Lifecycle And Query Behavior](#lifecycle-and-query-behavior)
 - [Practical Distinctions](#practical-distinctions)
 
@@ -399,6 +400,86 @@ So the type-to-database relationship is:
 - the application assigns `memory_type`
 - PostgreSQL stores it on `memory_entries`
 - provenance and search material for that memory are split across the related tables
+
+## How Related Memories Work
+
+The `related_memories` section on a memory detail is not authored directly when the memory is first captured.
+
+Instead, it is computed after curation and persisted explicitly in `memory_relations`.
+
+The live flow is:
+
+1. a candidate becomes a canonical `memory_entries` row
+2. curation attaches provenance and tags
+3. curation refreshes relations for that memory against other active memories in the same project
+4. the resulting relation rows are written to `memory_relations`
+5. the service reads those rows back into `related_memories` for memory detail responses
+
+So a memory "knows" its related memories because the relation rows were computed and stored beside it, not because the TUI or service infers them on the fly.
+
+### Current Relation Types
+
+The live application currently supports these relation types:
+
+- `duplicates`
+- `supersedes`
+- `depends_on`
+- `supports`
+- `related_to`
+
+These come from the `MemoryRelationType` enum in `mem-api`.
+
+### What The Relation Classifier Looks At
+
+The current deterministic classifier uses:
+
+- token overlap between normalized canonical texts
+- shared tags
+- shared provenance file paths from `memory_sources`
+- explicit language cues in canonical text such as:
+  - `replace`, `replaces`, `supersede`, `supersedes`, `deprecate`, `deprecated`
+  - `depends on`, `requires`, `relies on`
+
+It does not currently use an LLM, graph reasoning, or hand-authored relation rules at read time.
+
+### Current Heuristic Behavior
+
+At a high level, the classifier works like this:
+
+- very high text similarity becomes `duplicates`
+- supersession language plus enough overlap becomes `supersedes`
+- dependency language plus enough overlap becomes `depends_on`
+- shared files or strong shared tag overlap becomes `supports`
+- weaker but still meaningful overlap becomes `related_to`
+
+The exact numeric thresholds live in code, but the important point is that relations are heuristic and deterministic, not manually curated for each pair.
+
+### Directionality
+
+Not all relations are stored the same way:
+
+- stored both directions:
+  - `duplicates`
+  - `supports`
+  - `related_to`
+- directional:
+  - `supersedes`
+  - `depends_on`
+
+That means the current memory can point at another entry as something it supersedes or depends on, while duplicates and looser support/related links are mirrored both ways.
+
+### Current Scope
+
+Relations are currently:
+
+- project-local
+- computed only against other `active` memories
+- refreshed after:
+  - normal curation inserts
+  - approved replacement insertions
+  - bundle import refreshes
+
+They are not currently computed across projects, and they are not preserved for archived entries as part of the active relation graph refresh.
 
 ## Lifecycle And Query Behavior
 

@@ -12,6 +12,12 @@ The `Memories` tab is the main browsing view for canonical project memory.
 
 This is the best tab for reading what Memory Layer already knows about a project.
 
+## Related Memories
+
+The `Related memories` section is a navigation aid, not a hand-curated truth table.
+
+Those links are computed automatically during curation from strong text overlap, shared tags, shared provenance file paths, and explicit dependency or supersession language. They are useful for finding nearby context, but they are still heuristic.
+
 ## Key Controls
 
 - `j/k` move through the memory list

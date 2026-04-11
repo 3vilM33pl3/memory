@@ -312,11 +312,20 @@ The broad pipeline is:
    - queue an ambiguous update as a replacement proposal for review
 7. attach provenance and tags
 8. regenerate search chunks
-9. record the curation run and any replacement events
+9. refresh `memory_relations` for the new or replacement memory against other active memories in the same project
+10. record the curation run and any replacement events
 
 Canonical memories remain immutable. When curation decides that a new candidate updates an older memory, it inserts the new memory and deletes the old one rather than editing in place. Project policy for this lives in `.agents/memory-layer.toml` under `[curation].replacement_policy`.
 
 The important tradeoff here is determinism over maximum semantic richness. The current implementation favors predictable, inspectable behavior and provenance-backed memory over aggressive inference.
+
+Relation refresh currently happens in three places:
+
+- normal curation after an accepted memory is inserted
+- approved replacement resolution after the replacement memory is inserted
+- bundle import after imported memories are materialized
+
+The relation classifier is deterministic. It uses canonical-text overlap, shared tags, shared provenance file paths, and explicit supersession/dependency language to decide whether to write `duplicates`, `supersedes`, `depends_on`, `supports`, or `related_to` rows into `memory_relations`.
 
 ## Search And Query Pipeline
 
@@ -347,6 +356,8 @@ The important design point is that semantic search is additive, not a replacemen
 Embedding storage is now multi-space. A chunk can keep multiple vectors side by side for different embedding models or providers, and the active `[embeddings]` config selects which space semantic retrieval uses. Switching models does not overwrite older vectors; `reembed` only materializes the current active space, and cleanup of older spaces is explicit.
 
 Results are still project-scoped. A query is always evaluated inside one project slug unless the interface is explicitly extended otherwise.
+
+When a client requests memory detail, the service does not infer related memories on the fly. It reads the precomputed `memory_relations` rows for that memory and returns them as `related_memories`.
 
 ## TUI And Streaming Updates
 
