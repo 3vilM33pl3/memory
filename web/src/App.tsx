@@ -1,23 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  approveProposal,
   archiveProject,
   curate,
   deleteMemory,
   exportBundle,
+  getAgentSnapshot,
   getHealth,
   getMemory,
   getMemories,
   getOverview,
+  getReplacementProposals,
+  getResume,
   importBundle,
   previewExportBundle,
   previewImportBundle,
   reembed,
   reindex,
+  rejectProposal,
   runQuery,
 } from "./api";
 import type {
   ActivityDetails,
   ActivityEvent,
+  AgentSnapshotResponse,
   MemoryEntryResponse,
   MemoryStatus,
   MemoryType,
@@ -27,11 +33,14 @@ import type {
   ProjectMemoriesResponse,
   ProjectOverviewResponse,
   QueryResponse,
+  ReplacementProposalRecord,
+  ResumeResponse,
   StreamRequest,
   StreamResponse,
 } from "./types";
 
-type Tab = "memories" | "query" | "activity" | "project" | "bundles";
+const ALL_TABS = ["memories", "agents", "query", "activity", "project", "watchers", "resume", "bundles"] as const;
+type Tab = (typeof ALL_TABS)[number];
 
 type MemoryTypeFilter = "all" | MemoryType;
 type StatusFilter = "all" | MemoryStatus;
@@ -104,7 +113,17 @@ export default function App() {
   const [exportPreview, setExportPreview] = useState<ProjectMemoryBundlePreview | null>(null);
   const [importPreview, setImportPreview] = useState<ProjectMemoryImportPreview | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
+  // Agents state
+  const [agentSnapshot, setAgentSnapshot] = useState<AgentSnapshotResponse | null>(null);
+  const [selectedAgentIndex, setSelectedAgentIndex] = useState(0);
+  // Resume state
+  const [resumeData, setResumeData] = useState<ResumeResponse | null>(null);
+  const [resumeLoading, setResumeLoading] = useState(false);
+  // Proposals state
+  const [proposals, setProposals] = useState<ReplacementProposalRecord[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const queryRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     localStorage.setItem("memory-layer.project", project);
@@ -116,6 +135,7 @@ export default function App() {
     setSelectedActivityIndex(0);
   }, [project]);
 
+  // WebSocket
   useEffect(() => {
     const socket = new WebSocket(websocketUrl());
     wsRef.current = socket;
@@ -158,6 +178,7 @@ export default function App() {
     };
   }, [project, selectedMemoryId]);
 
+  // Memory detail subscription
   useEffect(() => {
     if (!selectedMemoryId) {
       setSelectedMemory(null);
@@ -170,6 +191,7 @@ export default function App() {
     sendStream({ type: "subscribe_memory", memory_id: selectedMemoryId });
   }, [selectedMemoryId]);
 
+  // Query result detail
   useEffect(() => {
     const result = queryResponse?.results[selectedQueryIndex];
     if (!result) {
@@ -181,25 +203,39 @@ export default function App() {
       .catch((error: Error) => setStatusMessage(error.message));
   }, [queryResponse, selectedQueryIndex]);
 
+  // Agent polling (every 2s when on agents tab)
+  useEffect(() => {
+    if (tab !== "agents") return;
+    let active = true;
+    const poll = () => {
+      void getAgentSnapshot()
+        .then((snap) => { if (active) setAgentSnapshot(snap); })
+        .catch(() => {});
+    };
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => { active = false; clearInterval(id); };
+  }, [tab]);
+
+  // Load proposals when project tab is active
+  useEffect(() => {
+    if (tab !== "project") return;
+    void getReplacementProposals(project)
+      .then((r) => setProposals(r.proposals))
+      .catch(() => {});
+  }, [tab, project]);
+
   const filteredMemories = useMemo(() => {
     return memories.items.filter((item) => {
       if (textFilter) {
         const haystack = `${item.summary} ${item.preview}`.toLowerCase();
-        if (!haystack.includes(textFilter.toLowerCase())) {
-          return false;
-        }
+        if (!haystack.includes(textFilter.toLowerCase())) return false;
       }
       if (tagFilter) {
-        if (!item.tags.some((tag) => tag.toLowerCase().includes(tagFilter.toLowerCase()))) {
-          return false;
-        }
+        if (!item.tags.some((t) => t.toLowerCase().includes(tagFilter.toLowerCase()))) return false;
       }
-      if (statusFilter !== "all" && item.status !== statusFilter) {
-        return false;
-      }
-      if (typeFilter !== "all" && item.memory_type !== typeFilter) {
-        return false;
-      }
+      if (statusFilter !== "all" && item.status !== statusFilter) return false;
+      if (typeFilter !== "all" && item.memory_type !== typeFilter) return false;
       return true;
     });
   }, [memories.items, statusFilter, tagFilter, textFilter, typeFilter]);
@@ -214,7 +250,42 @@ export default function App() {
     }
   }, [filteredMemories, selectedMemoryId]);
 
-  async function refreshProject(nextProject: string) {
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement;
+      const inInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
+
+      if (inInput) return;
+
+      const tabIndex = parseInt(e.key, 10) - 1;
+      if (tabIndex >= 0 && tabIndex < ALL_TABS.length) {
+        e.preventDefault();
+        setTab(ALL_TABS[tabIndex]);
+        return;
+      }
+
+      if (e.key === "/" && tab === "memories") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (e.key === "?" && tab === "query") {
+        e.preventDefault();
+        queryRef.current?.focus();
+        return;
+      }
+      if (e.key === "r") {
+        e.preventDefault();
+        void refreshProject(project);
+        return;
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [tab, project]);
+
+  const refreshProject = useCallback(async (nextProject: string) => {
     try {
       const [healthPayload, overviewPayload, memoriesPayload] = await Promise.all([
         getHealth(),
@@ -229,7 +300,7 @@ export default function App() {
     } catch (error) {
       setStatusMessage((error as Error).message);
     }
-  }
+  }, []);
 
   async function handleQuerySubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -350,17 +421,50 @@ export default function App() {
     }
   }
 
+  async function handleLoadResume() {
+    setResumeLoading(true);
+    try {
+      const data = await getResume(project);
+      setResumeData(data);
+      setStatusMessage("Resume briefing loaded.");
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    } finally {
+      setResumeLoading(false);
+    }
+  }
+
+  async function handleApproveProposal(proposalId: string) {
+    try {
+      const res = await approveProposal(project, proposalId);
+      setStatusMessage(`Approved: ${res.candidate_summary} replaced ${res.target_summary}`);
+      setProposals((prev) => prev.filter((p) => p.id !== proposalId));
+      await refreshProject(project);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    }
+  }
+
+  async function handleRejectProposal(proposalId: string) {
+    try {
+      const res = await rejectProposal(project, proposalId);
+      setStatusMessage(`Rejected proposal for ${res.target_summary}`);
+      setProposals((prev) => prev.filter((p) => p.id !== proposalId));
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    }
+  }
+
   function applyProjectInput() {
     const next = projectInput.trim();
-    if (!next) {
-      return;
-    }
+    if (!next) return;
     setProject(next);
   }
 
   const activeActivity = activities[selectedActivityIndex] ?? null;
   const activeQueryResult = queryResponse?.results[selectedQueryIndex] ?? null;
   const serviceVersion = typeof health?.version === "string" ? health.version : "unknown";
+  const selectedAgent = agentSnapshot?.sessions[selectedAgentIndex] ?? null;
 
   return (
     <div className="app-shell">
@@ -411,23 +515,25 @@ export default function App() {
       </section>
 
       <nav className="tabs">
-        {(["memories", "query", "activity", "project", "bundles"] as Tab[]).map((name) => (
+        {ALL_TABS.map((name, i) => (
           <button
             key={name}
             className={tab === name ? "tab-active" : ""}
             onClick={() => setTab(name)}
             type="button"
+            title={`${i + 1}`}
           >
             {name}
           </button>
         ))}
       </nav>
 
+      {/* ── Memories ── */}
       {tab === "memories" ? (
         <section className="panel-grid">
           <div className="panel">
             <div className="panel-toolbar filters-grid">
-              <input placeholder="Search summary or preview" value={textFilter} onChange={(e) => setTextFilter(e.target.value)} />
+              <input ref={searchRef} placeholder="Search summary or preview (/)" value={textFilter} onChange={(e) => setTextFilter(e.target.value)} />
               <input placeholder="Filter tag" value={tagFilter} onChange={(e) => setTagFilter(e.target.value)} />
               <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}>
                 <option value="all">All statuses</option>
@@ -475,9 +581,7 @@ export default function App() {
                     <h2>{selectedMemory.summary}</h2>
                     <p>{selectedMemory.memory_type} · {selectedMemory.status} · confidence {selectedMemory.confidence.toFixed(2)}</p>
                   </div>
-                  <button className="danger" onClick={() => void handleDelete(selectedMemory.id)} type="button">
-                    Delete
-                  </button>
+                  <button className="danger" onClick={() => void handleDelete(selectedMemory.id)} type="button">Delete</button>
                 </div>
                 <section className="detail-section">
                   <h3>Canonical text</h3>
@@ -485,7 +589,7 @@ export default function App() {
                 </section>
                 <section className="detail-section">
                   <h3>Tags</h3>
-                  <div className="tag-wrap">{selectedMemory.tags.map((tag) => <span key={tag} className="tag">{tag}</span>)}</div>
+                  <div className="tag-wrap">{selectedMemory.tags.map((t) => <span key={t} className="tag">{t}</span>)}</div>
                 </section>
                 <section className="detail-section">
                   <h3>Sources</h3>
@@ -518,13 +622,104 @@ export default function App() {
         </section>
       ) : null}
 
+      {/* ── Agents ── */}
+      {tab === "agents" ? (
+        <section className="panel-grid">
+          <div className="panel">
+            <div className="list-view">
+              {agentSnapshot?.sessions.length ? (
+                agentSnapshot.sessions.map((session, index) => (
+                  <button
+                    key={session.session_id}
+                    type="button"
+                    className={`list-item ${selectedAgentIndex === index ? "selected" : ""}`}
+                    onClick={() => setSelectedAgentIndex(index)}
+                  >
+                    <div>
+                      <strong>{session.project_name}</strong>
+                      <p>{session.current_tasks.join(", ") || "idle"}</p>
+                    </div>
+                    <div className="meta-stack">
+                      <span className="badge">{session.agent_cli}</span>
+                      <span className={`status-pill status-${session.status}`}>{session.status}</span>
+                      <span>{session.model}</span>
+                      <span>{formatElapsed(session.started_at)}</span>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <p className="muted">No agent sessions detected.</p>
+              )}
+            </div>
+          </div>
+          <div className="panel detail-scroll">
+            {selectedAgent ? (
+              <>
+                <h2>{selectedAgent.project_name}</h2>
+                <p className={`status-pill status-${selectedAgent.status}`}>{selectedAgent.status}</p>
+                <Metric label="Agent" value={`${selectedAgent.agent_cli} ${selectedAgent.version}`} />
+                <Metric label="Session" value={selectedAgent.session_id} />
+                <Metric label="PID" value={String(selectedAgent.pid)} />
+                <Metric label="Model" value={selectedAgent.model} />
+                <Metric label="Context" value={`${selectedAgent.context_percent.toFixed(1)}%`} />
+                <Metric label="Turns" value={String(selectedAgent.turn_count)} />
+                <Metric label="Tokens" value={`${formatTokens(selectedAgent.total_input_tokens)} in / ${formatTokens(selectedAgent.total_output_tokens)} out`} />
+                <Metric label="Cache" value={`${formatTokens(selectedAgent.total_cache_read)} read / ${formatTokens(selectedAgent.total_cache_create)} create`} />
+                <Metric label="Memory" value={`${selectedAgent.mem_mb} MB`} />
+                <Metric label="Working directory" value={selectedAgent.cwd} />
+                <Metric label="Git" value={`${selectedAgent.git_branch || "n/a"} (+${selectedAgent.git_added} ~${selectedAgent.git_modified})`} />
+                <Metric label="Prompt" value={selectedAgent.initial_prompt || "n/a"} />
+                <Metric label="Current tasks" value={selectedAgent.current_tasks.join(", ") || "none"} />
+                {selectedAgent.subagents.length > 0 && (
+                  <section className="detail-section">
+                    <h3>Subagents</h3>
+                    {selectedAgent.subagents.map((sa) => (
+                      <div key={sa.name} className="metric-row">
+                        <span>{sa.name} ({sa.status})</span>
+                        <strong>{formatTokens(sa.tokens)} tokens</strong>
+                      </div>
+                    ))}
+                  </section>
+                )}
+                {selectedAgent.children.length > 0 && (
+                  <section className="detail-section">
+                    <h3>Child processes</h3>
+                    {selectedAgent.children.map((ch) => (
+                      <div key={ch.pid} className="metric-row">
+                        <span>PID {ch.pid}: {ch.command}</span>
+                        <strong>{ch.port ? `port ${ch.port}` : `${ch.mem_kb} KB`}</strong>
+                      </div>
+                    ))}
+                  </section>
+                )}
+                {(agentSnapshot?.orphan_ports.length ?? 0) > 0 && (
+                  <section className="detail-section">
+                    <h3>Orphan ports</h3>
+                    {agentSnapshot!.orphan_ports.map((op) => (
+                      <div key={`${op.pid}-${op.port}`} className="metric-row">
+                        <span>:{op.port} (PID {op.pid}) {op.command}</span>
+                        <strong>{op.project_name}</strong>
+                      </div>
+                    ))}
+                  </section>
+                )}
+              </>
+            ) : (
+              <p className="muted">Select an agent session to inspect its details.</p>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {/* ── Query ── */}
       {tab === "query" ? (
         <section className="panel-stack">
           <form className="panel" onSubmit={handleQuerySubmit}>
             <div className="panel-toolbar">
               <input
+                ref={queryRef}
                 className="query-input"
-                placeholder="Ask what the project knows..."
+                placeholder="Ask what the project knows... (?)"
                 value={queryText}
                 onChange={(event) => setQueryText(event.target.value)}
               />
@@ -575,13 +770,9 @@ export default function App() {
                   <div className="detail-header">
                     <div>
                       <h2>{activeQueryResult.summary}</h2>
-                      <p>
-                        {activeQueryResult.memory_type} · {activeQueryResult.match_kind} · score {activeQueryResult.score.toFixed(2)}
-                      </p>
+                      <p>{activeQueryResult.memory_type} · {activeQueryResult.match_kind} · score {activeQueryResult.score.toFixed(2)}</p>
                     </div>
-                    <button className="danger" onClick={() => void handleDelete(activeQueryResult.memory_id)} type="button">
-                      Delete
-                    </button>
+                    <button className="danger" onClick={() => void handleDelete(activeQueryResult.memory_id)} type="button">Delete</button>
                   </div>
                   <section className="detail-section">
                     <h3>Snippet</h3>
@@ -617,6 +808,7 @@ export default function App() {
         </section>
       ) : null}
 
+      {/* ── Activity ── */}
       {tab === "activity" ? (
         <section className="panel-grid">
           <div className="panel">
@@ -652,6 +844,7 @@ export default function App() {
         </section>
       ) : null}
 
+      {/* ── Project ── */}
       {tab === "project" ? (
         <section className="panel-stack">
           <div className="panel actions-row">
@@ -684,24 +877,13 @@ export default function App() {
                     : "not configured"
                 }
               />
+              <Metric label="Watchers" value={`${overview.watchers?.active_count ?? 0} active`} />
             </div>
             <div className="panel">
-              <h2>Watchers</h2>
-              {overview.watchers?.watchers.length ? (
-                overview.watchers.watchers.map((watcher) => (
-                  <div key={watcher.watcher_id} className="watcher-card">
-                    <strong>{watcher.hostname}</strong>
-                    <p>{watcher.repo_root}</p>
-                    <div className="stats-row">
-                      <span>pid {watcher.pid}</span>
-                      <span>{watcher.mode}</span>
-                      <span>{formatDateTime(watcher.last_heartbeat_at)}</span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <p className="muted">No watcher presence reported.</p>
-              )}
+              <h2>Memory types</h2>
+              <KeyValueList items={overview.memory_type_breakdown.map((item) => [item.memory_type, String(item.count)])} empty="No memory type data." />
+              <h2 style={{ marginTop: "1rem" }}>Source kinds</h2>
+              <KeyValueList items={overview.source_kind_breakdown.map((item) => [item.source_kind, String(item.count)])} empty="No source kind data." />
             </div>
             <div className="panel">
               <h2>Top tags</h2>
@@ -712,9 +894,186 @@ export default function App() {
               <KeyValueList items={overview.top_files.map((item) => [item.name, String(item.count)])} empty="No file provenance yet." />
             </div>
           </section>
+          {proposals.length > 0 && (
+            <div className="panel">
+              <h2>Replacement proposals ({proposals.length})</h2>
+              {proposals.map((proposal) => (
+                <div key={proposal.id} className="proposal-card">
+                  <p><strong>Target:</strong> {proposal.target_summary}</p>
+                  <p><strong>Candidate:</strong> {proposal.candidate_summary}</p>
+                  <p className="muted">
+                    {proposal.candidate_memory_type} · score {proposal.score} · {proposal.policy}
+                    {proposal.reasons.length > 0 && ` · ${proposal.reasons.join(", ")}`}
+                  </p>
+                  <div className="proposal-actions">
+                    <button className="approve-btn" onClick={() => void handleApproveProposal(proposal.id)} type="button">Approve</button>
+                    <button className="reject-btn" onClick={() => void handleRejectProposal(proposal.id)} type="button">Reject</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       ) : null}
 
+      {/* ── Watchers ── */}
+      {tab === "watchers" ? (
+        <section className="panel-stack">
+          <div className="panel">
+            <h2>Watcher presence</h2>
+            {overview.watchers ? (
+              <>
+                <Metric label="Active watchers" value={String(overview.watchers.active_count)} />
+                <Metric label="Stale after" value={`${overview.watchers.stale_after_seconds}s`} />
+                <Metric label="Last heartbeat" value={formatDateTime(overview.watchers.last_heartbeat_at)} />
+              </>
+            ) : (
+              <p className="muted">No watcher presence data.</p>
+            )}
+          </div>
+          <div className="panel">
+            <h2>Watchers</h2>
+            {overview.watchers?.watchers.length ? (
+              overview.watchers.watchers.map((watcher) => (
+                <div key={watcher.watcher_id} className="watcher-card">
+                  <strong>{watcher.hostname}</strong>
+                  <p>{watcher.repo_root}</p>
+                  <div className="stats-row">
+                    <span>pid {watcher.pid}</span>
+                    <span>{watcher.mode}</span>
+                    <span>{formatDateTime(watcher.last_heartbeat_at)}</span>
+                    <span className="muted">{watcher.watcher_id}</span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="muted">
+                No watcher presence reported. Start one with{" "}
+                <code>memory watcher run --project {project}</code> or enable the watcher manager with{" "}
+                <code>memory watcher manager enable</code>.
+              </p>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {/* ── Resume ── */}
+      {tab === "resume" ? (
+        <section className="panel-stack">
+          <div className="panel actions-row">
+            <button onClick={() => void handleLoadResume()} type="button" disabled={resumeLoading}>
+              {resumeLoading ? "Generating..." : "Load resume"}
+            </button>
+          </div>
+          <div className="panel detail-scroll">
+            {resumeLoading ? (
+              <p className="loading-indicator">Generating project briefing...</p>
+            ) : resumeData ? (
+              <>
+                <h2>Resume for {resumeData.project}</h2>
+                <p className="muted">Generated {formatDateTime(resumeData.generated_at)}</p>
+
+                {resumeData.checkpoint && (
+                  <div className="resume-section">
+                    <h3>Checkpoint</h3>
+                    <p>{resumeData.checkpoint.note ?? "Checkpoint saved"}</p>
+                    <p className="muted">
+                      {formatDateTime(resumeData.checkpoint.marked_at)}
+                      {resumeData.checkpoint.git_branch ? ` · ${resumeData.checkpoint.git_branch}` : ""}
+                      {resumeData.checkpoint.git_head ? ` · ${resumeData.checkpoint.git_head.slice(0, 8)}` : ""}
+                    </p>
+                  </div>
+                )}
+
+                {resumeData.current_thread && (
+                  <div className="resume-section">
+                    <h3>Current work</h3>
+                    <p>{resumeData.current_thread}</p>
+                  </div>
+                )}
+
+                {resumeData.primary_next_step && (
+                  <div className="resume-section">
+                    <h3>Next step</h3>
+                    <div className="action-card">
+                      <strong>{resumeData.primary_next_step.title}</strong>
+                      <p>{resumeData.primary_next_step.rationale}</p>
+                      {resumeData.primary_next_step.command_hint && <code>{resumeData.primary_next_step.command_hint}</code>}
+                    </div>
+                  </div>
+                )}
+
+                {resumeData.secondary_next_steps.length > 0 && (
+                  <div className="resume-section">
+                    <h3>Other actions</h3>
+                    {resumeData.secondary_next_steps.map((action) => (
+                      <div key={action.title} className="action-card">
+                        <strong>{action.title}</strong>
+                        <p>{action.rationale}</p>
+                        {action.command_hint && <code>{action.command_hint}</code>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {resumeData.change_summary.length > 0 && (
+                  <div className="resume-section">
+                    <h3>What changed</h3>
+                    <ul>{resumeData.change_summary.map((item) => <li key={item}>{item}</li>)}</ul>
+                  </div>
+                )}
+
+                {resumeData.attention_items.length > 0 && (
+                  <div className="resume-section">
+                    <h3>Needs attention</h3>
+                    <ul>{resumeData.attention_items.map((item) => <li key={item}>{item}</li>)}</ul>
+                  </div>
+                )}
+
+                {resumeData.durable_context.length > 0 && (
+                  <div className="resume-section">
+                    <h3>Keep in mind</h3>
+                    {resumeData.durable_context.map((mem) => (
+                      <div key={mem.id} className="metric-row">
+                        <span className="badge">{mem.memory_type}</span>
+                        <span>{mem.summary}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {resumeData.timeline.length > 0 && (
+                  <div className="resume-section">
+                    <h3>Timeline</h3>
+                    {resumeData.timeline.map((event, i) => (
+                      <div key={`${event.recorded_at}-${i}`} className="metric-row">
+                        <span className="muted">{formatDateTime(event.recorded_at)}</span>
+                        <span>{event.summary}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {resumeData.warnings.length > 0 && (
+                  <div className="resume-section">
+                    <h3>Warnings</h3>
+                    <ul className="warning-list">{resumeData.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
+                  </div>
+                )}
+
+                <div className="resume-section">
+                  <h3>Briefing</h3>
+                  <pre>{resumeData.briefing}</pre>
+                </div>
+              </>
+            ) : (
+              <p className="muted">Click "Load resume" to generate a project briefing with next steps and context.</p>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {/* ── Bundles ── */}
       {tab === "bundles" ? (
         <section className="panel-grid">
           <div className="panel detail-scroll">
@@ -734,13 +1093,11 @@ export default function App() {
                 <p className="muted">{exportPreview.memory_count} memories · {exportPreview.relation_count} relations · {exportPreview.warning_count} warnings</p>
                 <pre className="code-block">{exportPreview.summary_markdown}</pre>
                 {exportPreview.warnings.length ? (
-                  <ul className="warning-list">
-                    {exportPreview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
-                  </ul>
+                  <ul className="warning-list">{exportPreview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
                 ) : null}
               </>
             ) : (
-              <p className="muted">Export a versioned, shareable bundle of the current project’s curated memories.</p>
+              <p className="muted">Export a versioned, shareable bundle of the current project's curated memories.</p>
             )}
           </div>
           <div className="panel detail-scroll">
@@ -755,9 +1112,7 @@ export default function App() {
                 <p className="muted">{importPreview.memory_count} memories · {importPreview.new_count} new · {importPreview.unchanged_count} unchanged · {importPreview.replacing_count} replacing</p>
                 <pre className="code-block">{importPreview.summary_markdown}</pre>
                 {importPreview.warnings.length ? (
-                  <ul className="warning-list">
-                    {importPreview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
-                  </ul>
+                  <ul className="warning-list">{importPreview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
                 ) : null}
               </>
             ) : (
@@ -772,9 +1127,7 @@ export default function App() {
   );
 
   function sendStream(request: StreamRequest, socket = wsRef.current) {
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      return;
-    }
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify(request));
   }
 }
@@ -789,9 +1142,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 function KeyValueList({ items, empty }: { items: [string, string][]; empty: string }) {
-  if (!items.length) {
-    return <p className="muted">{empty}</p>;
-  }
+  if (!items.length) return <p className="muted">{empty}</p>;
   return (
     <div className="kv-list">
       {items.map(([key, value]) => (
@@ -805,10 +1156,7 @@ function KeyValueList({ items, empty }: { items: [string, string][]; empty: stri
 }
 
 function ActivityDetail({ details }: { details: ActivityDetails | null }) {
-  if (!details) {
-    return <p className="muted">No structured details recorded.</p>;
-  }
-
+  if (!details) return <p className="muted">No structured details recorded.</p>;
   return (
     <div className="detail-section">
       <h3>Details</h3>
@@ -818,14 +1166,25 @@ function ActivityDetail({ details }: { details: ActivityDetails | null }) {
 }
 
 function formatDateTime(value: string | null | undefined): string {
-  if (!value) {
-    return "n/a";
-  }
+  if (!value) return "n/a";
   return new Date(value).toLocaleString();
 }
 
 function formatNumber(value: number | null | undefined): string {
   return typeof value === "number" ? value.toFixed(2) : "0.00";
+}
+
+function formatTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(value);
+}
+
+function formatElapsed(startedAtMs: number): string {
+  const secs = Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m`;
+  return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
 }
 
 function websocketUrl(): string {

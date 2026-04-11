@@ -1498,6 +1498,7 @@ dependencies = [
  "chrono",
  "config",
  "futures-util",
+ "mem-agenttop",
  "mem-api",
  "mem-curate",
  "mem-platform",

@@ -416,6 +416,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/watchers/unregister", post(watcher_unregister))
         .route("/v1/watchers/restart-local", post(watcher_restart_local))
         .route("/v1/archive", post(archive))
+        .route("/v1/agents", get(agents_snapshot))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
@@ -1768,6 +1769,98 @@ async fn config_path_fingerprint(path: Option<&FsPath>) -> Result<ConfigFingerpr
 
 async fn healthz(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
     Ok(Json(health_payload(&state).await.map_err(ApiError::io)?))
+}
+
+async fn agents_snapshot() -> Result<Json<serde_json::Value>, ApiError> {
+    let snapshot = tokio::task::spawn_blocking(|| {
+        let mut top = mem_agenttop::AgentTop::new();
+        top.collect_snapshot()
+    })
+    .await
+    .map_err(|e| ApiError::io(anyhow::anyhow!("agent snapshot task failed: {e}")))?;
+
+    let sessions: Vec<serde_json::Value> = snapshot
+        .sessions
+        .iter()
+        .map(|s| {
+            let status = match s.status {
+                mem_agenttop::SessionStatus::Working => "working",
+                mem_agenttop::SessionStatus::Waiting => "waiting",
+                mem_agenttop::SessionStatus::Done => "done",
+            };
+            let children: Vec<serde_json::Value> = s
+                .children
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "pid": c.pid,
+                        "command": c.command,
+                        "mem_kb": c.mem_kb,
+                        "port": c.port,
+                    })
+                })
+                .collect();
+            let subagents: Vec<serde_json::Value> = s
+                .subagents
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "name": a.name,
+                        "status": a.status,
+                        "tokens": a.tokens,
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "agent_cli": s.agent_cli,
+                "pid": s.pid,
+                "session_id": s.session_id,
+                "cwd": s.cwd,
+                "project_name": s.project_name,
+                "started_at": s.started_at,
+                "status": status,
+                "model": s.model,
+                "context_percent": s.context_percent,
+                "total_input_tokens": s.total_input_tokens,
+                "total_output_tokens": s.total_output_tokens,
+                "total_cache_read": s.total_cache_read,
+                "total_cache_create": s.total_cache_create,
+                "turn_count": s.turn_count,
+                "current_tasks": s.current_tasks,
+                "mem_mb": s.mem_mb,
+                "version": s.version,
+                "git_branch": s.git_branch,
+                "git_added": s.git_added,
+                "git_modified": s.git_modified,
+                "token_history": s.token_history,
+                "subagents": subagents,
+                "mem_file_count": s.mem_file_count,
+                "mem_line_count": s.mem_line_count,
+                "children": children,
+                "initial_prompt": s.initial_prompt,
+                "first_assistant_text": s.first_assistant_text,
+            })
+        })
+        .collect();
+
+    let orphan_ports: Vec<serde_json::Value> = snapshot
+        .orphan_ports
+        .iter()
+        .map(|o| {
+            serde_json::json!({
+                "port": o.port,
+                "pid": o.pid,
+                "command": o.command,
+                "project_name": o.project_name,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "collected_at": snapshot.collected_at.to_rfc3339(),
+        "sessions": sessions,
+        "orphan_ports": orphan_ports,
+    })))
 }
 
 async fn admin_shutdown(

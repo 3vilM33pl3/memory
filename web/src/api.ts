@@ -1,4 +1,5 @@
 import type {
+  AgentSnapshotResponse,
   ArchiveResponse,
   CurateResponse,
   DeleteMemoryResponse,
@@ -13,6 +14,9 @@ import type {
   QueryResponse,
   ReembedResponse,
   ReindexResponse,
+  ReplacementProposalListResponse,
+  ReplacementProposalResolutionResponse,
+  ResumeResponse,
 } from "./types";
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -149,5 +153,51 @@ export async function importBundle(
       headers: { "content-type": "application/octet-stream" },
       body: file,
     }),
+  );
+}
+
+export async function getAgentSnapshot(): Promise<AgentSnapshotResponse> {
+  return parseJson(await fetch("/v1/agents"));
+}
+
+export async function getResume(project: string): Promise<ResumeResponse> {
+  return parseJson(
+    await fetch(`/v1/projects/${encodeURIComponent(project)}/resume`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project, include_llm_summary: true, limit: 20 }),
+    }),
+  );
+}
+
+export async function getReplacementProposals(
+  project: string,
+): Promise<ReplacementProposalListResponse> {
+  return parseJson(
+    await fetch(`/v1/projects/${encodeURIComponent(project)}/replacement-proposals`),
+  );
+}
+
+export async function approveProposal(
+  project: string,
+  proposalId: string,
+): Promise<ReplacementProposalResolutionResponse> {
+  return parseJson(
+    await fetch(
+      `/v1/projects/${encodeURIComponent(project)}/replacement-proposals/${encodeURIComponent(proposalId)}/approve`,
+      { method: "POST" },
+    ),
+  );
+}
+
+export async function rejectProposal(
+  project: string,
+  proposalId: string,
+): Promise<ReplacementProposalResolutionResponse> {
+  return parseJson(
+    await fetch(
+      `/v1/projects/${encodeURIComponent(project)}/replacement-proposals/${encodeURIComponent(proposalId)}/reject`,
+      { method: "POST" },
+    ),
   );
 }

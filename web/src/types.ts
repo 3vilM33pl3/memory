@@ -349,6 +349,134 @@ export interface ProjectMemoryImportResponse {
   relation_count: number;
 }
 
+// --- Agent snapshot types ---
+
+export interface ChildProcessResponse {
+  pid: number;
+  command: string;
+  mem_kb: number;
+  port: number | null;
+}
+
+export interface SubAgentResponse {
+  name: string;
+  status: string;
+  tokens: number;
+}
+
+export interface AgentSessionResponse {
+  agent_cli: string;
+  pid: number;
+  session_id: string;
+  cwd: string;
+  project_name: string;
+  started_at: number;
+  status: "working" | "waiting" | "done";
+  model: string;
+  context_percent: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read: number;
+  total_cache_create: number;
+  turn_count: number;
+  current_tasks: string[];
+  mem_mb: number;
+  version: string;
+  git_branch: string;
+  git_added: number;
+  git_modified: number;
+  token_history: number[];
+  subagents: SubAgentResponse[];
+  mem_file_count: number;
+  mem_line_count: number;
+  children: ChildProcessResponse[];
+  initial_prompt: string;
+  first_assistant_text: string;
+}
+
+export interface OrphanPortResponse {
+  port: number;
+  pid: number;
+  command: string;
+  project_name: string;
+}
+
+export interface AgentSnapshotResponse {
+  collected_at: string;
+  sessions: AgentSessionResponse[];
+  orphan_ports: OrphanPortResponse[];
+}
+
+// --- Resume types ---
+
+export interface ResumeCheckpoint {
+  project: string;
+  repo_root: string;
+  marked_at: string;
+  note: string | null;
+  git_branch: string | null;
+  git_head: string | null;
+}
+
+export interface ResumeAction {
+  title: string;
+  rationale: string;
+  command_hint: string | null;
+}
+
+export interface ResumeResponse {
+  project: string;
+  generated_at: string;
+  checkpoint: ResumeCheckpoint | null;
+  briefing: string;
+  current_thread: string | null;
+  change_summary: string[];
+  attention_items: string[];
+  primary_next_step: ResumeAction | null;
+  secondary_next_steps: ResumeAction[];
+  context_items: ProjectMemoryListItem[];
+  timeline: ActivityEvent[];
+  changed_memories: ProjectMemoryListItem[];
+  durable_context: ProjectMemoryListItem[];
+  warnings: string[];
+  actions: ResumeAction[];
+  overview: ProjectOverviewResponse;
+}
+
+// --- Replacement proposal types ---
+
+export interface ReplacementProposalRecord {
+  id: string;
+  project: string;
+  target_memory_id: string;
+  target_summary: string;
+  candidate_summary: string;
+  candidate_canonical_text: string;
+  candidate_memory_type: MemoryType;
+  score: number;
+  policy: string;
+  reasons: string[];
+  created_at: string;
+}
+
+export interface ReplacementProposalListResponse {
+  project: string;
+  proposals: ReplacementProposalRecord[];
+}
+
+export interface ReplacementProposalResolutionResponse {
+  project: string;
+  proposal_id: string;
+  status: string;
+  policy: string;
+  target_memory_id: string;
+  target_summary: string;
+  candidate_summary: string;
+  new_memory_id: string | null;
+}
+
+// --- Stream types ---
+
 export type StreamRequest =
   | { type: "health" }
   | { type: "project_overview"; project: string }
