@@ -7688,15 +7688,17 @@ impl SourceKindString for mem_api::SourceKind {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, sync::Mutex, time::Duration};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::Mutex,
+        time::Duration,
+    };
 
     use chrono::Utc;
     use clap::{Command, CommandFactory, Parser, error::ErrorKind};
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use uuid::Uuid;
-
-    #[cfg(not(target_os = "macos"))]
-    use std::path::Path;
 
     use super::{
         Cli, DEV_API_TOKEN, PlanExecutionFinishReport, RememberArgs, SERVICE_API_TOKEN_KEY,
@@ -7706,9 +7708,9 @@ mod tests {
         derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
         ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
         mask_database_url, parse_plan_checkboxes, render_agent_project_config,
-        repair_repo_bootstrap, resolve_project_slug, resolve_repo_root,
-        resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
-        watcher_command_requires_config_load, write_headers,
+        repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
+        root_gitignore_contains_mem, shared_env_lookup, watcher_command_requires_config_load,
+        write_headers,
     };
     use mem_api::AppConfig;
 
@@ -7989,8 +7991,7 @@ mod tests {
         );
 
         assert!(
-            !request
-                .structured_candidates[0]
+            !request.structured_candidates[0]
                 .sources
                 .iter()
                 .any(|source| source.source_kind == mem_api::SourceKind::File)
