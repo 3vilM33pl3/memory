@@ -51,3 +51,4 @@ Use `--implementation-summary` and repeatable `--implementation-note` flags when
 - [Resume Briefings](resume.md)
 - [Project Tab](../tui/project.md)
 - [Resume Tab](../tui/resume.md)
+- [Memory Types Reference](../../developer/architecture/memory-types.md)

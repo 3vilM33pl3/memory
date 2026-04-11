@@ -26,3 +26,4 @@ memory query --project memory --question "What are the watcher health states?" -
 - [Resume Briefings](resume.md)
 - [Remember Command](remember.md)
 - [TUI Query Tab](../tui/query.md)
+- [Memory Types Reference](../../developer/architecture/memory-types.md)

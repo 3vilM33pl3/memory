@@ -117,3 +117,4 @@ Do not use `remember` for:
 
 For project-wide repository extraction, use [Scan Command](scan.md).
 For agent-driven task capture, use the repo-local skill workflow described in the developer docs.
+For the full developer explanation of each curated memory category, use [Memory Types Reference](../../developer/architecture/memory-types.md).

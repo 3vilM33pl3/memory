@@ -1,6 +1,6 @@
 # Memory Layer Architecture
 
-This page is a short architecture overview for developers. For the detailed runtime model, use [How Memory Layer Works](how-it-works.md).
+This page is a short architecture overview for developers. For the detailed runtime model, use [How Memory Layer Works](how-it-works.md). For the curated memory categories themselves, use [Memory Types Reference](memory-types.md).
 
 ## Table of Contents
 

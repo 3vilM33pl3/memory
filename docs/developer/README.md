@@ -11,6 +11,7 @@ This section is for developers working on Memory Layer itself: architecture, int
 ## Architecture
 
 - [Architecture Overview](architecture/overview.md)
+- [Memory Types Reference](architecture/memory-types.md)
 - [How Memory Layer Works](architecture/how-it-works.md)
 - [Hidden Memory Daemon](architecture/hidden-memory-daemon.md)
 
