@@ -70,9 +70,9 @@ The supported helper commands are:
 - `start-plan-execution`
   - save the checkpoint and store the full approved execution plan as `plan` memory before implementation starts
 - `finish-plan-execution`
-  - verify that every checkbox item in the active approved plan is complete before the agent can claim the task is finished
+  - verify that every checkbox item in the active approved plan is complete before the agent can claim the task is finished, and record the verified implemented outcome as `implementation` memory
 - `remember-task`
-  - capture completed work and curate it immediately into durable memory
+  - capture completed work and curate it immediately into durable memory, with `implementation` as the normal completed-work outcome type
 - `capture-task`
 - `curate-memory`
 

@@ -9,6 +9,7 @@ Use it when you want a direct answer from durable project memory instead of brow
 ```bash
 memory query --project memory --question "How does resume work?"
 memory query --project memory --question "What changed recently?" --type plan
+memory query --project memory --question "What was actually implemented for the watcher manager?" --type implementation
 memory query --project memory --question "What are the watcher health states?" --tag watcher
 ```
 

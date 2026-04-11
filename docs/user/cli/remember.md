@@ -16,6 +16,7 @@ Use `remember` when you want to store a durable project fact or task outcome dir
 
 Use `remember` for:
 
+- implemented outcomes that should be easy to find later
 - architecture decisions
 - conventions and workflow rules
 - durable debugging lessons
@@ -100,6 +101,10 @@ That means the result still follows the normal Memory Layer data model:
 
 - raw capture as evidence
 - curated memory as the searchable durable result
+
+For normal completed work, `remember` now records an explicit `implementation` memory by default so the shipped outcome is visible in the memory list and query results.
+
+If your notes also contain debugging lessons, decisions, or conventions, curation can still keep those as separate secondary memories when they are justified.
 
 ## When Not To Use It
 
