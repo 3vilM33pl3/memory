@@ -1630,6 +1630,7 @@ async fn main() -> Result<()> {
                         &thread_key,
                         &plan_markdown,
                         source_path.as_deref(),
+                        &repo_root,
                         repo_git_head(&repo_root).as_deref(),
                     );
                     request.dry_run = args.dry_run;
@@ -1750,6 +1751,7 @@ async fn main() -> Result<()> {
                                 &selection.thread_key,
                                 &plan_markdown,
                                 source_path.as_deref(),
+                                &repo_root,
                                 repo_git_head(&repo_root).as_deref(),
                             );
                             request.dry_run = false;
@@ -6857,6 +6859,7 @@ fn build_plan_execution_request(
     thread_key: &str,
     plan_markdown: &str,
     source_path: Option<&Path>,
+    repo_root: &Path,
     git_head: Option<&str>,
 ) -> CaptureTaskRequest {
     let normalized_plan = normalize_plan_markdown_for_hash(plan_markdown);
@@ -6873,17 +6876,19 @@ fn build_plan_execution_request(
         },
     ];
     if let Some(source_path) = source_path {
-        sources.insert(
-            0,
-            mem_api::CaptureCandidateSourceInput {
-                file_path: Some(source_path.display().to_string()),
-                source_kind: mem_api::SourceKind::File,
-                excerpt: Some(format!(
-                    "Approved plan source file: {}",
-                    source_path.display()
-                )),
-            },
-        );
+        if let Some(source_path) = durable_plan_source_path(source_path, repo_root) {
+            sources.insert(
+                0,
+                mem_api::CaptureCandidateSourceInput {
+                    file_path: Some(source_path.display().to_string()),
+                    source_kind: mem_api::SourceKind::File,
+                    excerpt: Some(format!(
+                        "Approved plan source file: {}",
+                        source_path.display()
+                    )),
+                },
+            );
+        }
     }
 
     CaptureTaskRequest {
@@ -6919,6 +6924,14 @@ fn build_plan_execution_request(
         )),
         dry_run: false,
     }
+}
+
+fn durable_plan_source_path(source_path: &Path, repo_root: &Path) -> Option<PathBuf> {
+    let resolved_source = fs::canonicalize(source_path).ok()?;
+    let resolved_repo_root = fs::canonicalize(repo_root).ok()?;
+    resolved_source
+        .starts_with(&resolved_repo_root)
+        .then_some(resolved_source)
 }
 
 fn implementation_sources(
@@ -7402,10 +7415,11 @@ mod tests {
         ServiceApiTokenAction, WatcherCommand, WatcherManagerArgs, WatcherManagerCommand,
         build_finish_execution_implementation_request, build_plan_execution_finish_report,
         build_plan_execution_request, build_remember_request, derive_plan_thread_key,
-        derive_plan_title, ensure_checkbox_plan, ensure_shared_service_api_token, initialize_repo,
-        is_placeholder_database_url, mask_database_url, parse_plan_checkboxes,
-        render_agent_project_config, repair_repo_bootstrap, resolve_project_slug,
-        resolve_repo_root, resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
+        derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
+        ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
+        mask_database_url, parse_plan_checkboxes, render_agent_project_config,
+        repair_repo_bootstrap, resolve_project_slug, resolve_repo_root,
+        resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
         watcher_command_requires_config_load, write_headers,
     };
     use mem_api::AppConfig;
@@ -7621,6 +7635,7 @@ mod tests {
             "resume-redesign",
             "# Resume Redesign\n\n- step",
             None,
+            Path::new("/tmp/memory"),
             Some("abc123"),
         );
 
@@ -7634,6 +7649,65 @@ mod tests {
                 .tags
                 .contains(&"plan-thread:resume-redesign".to_string())
         );
+    }
+
+    #[test]
+    fn durable_plan_source_path_keeps_repo_files_and_drops_outside_paths() {
+        let repo_root = unique_temp_dir("mem-plan-source-repo");
+        let plans_dir = repo_root.join("plans");
+        fs::create_dir_all(&plans_dir).unwrap();
+        let repo_plan = plans_dir.join("approved-plan.md");
+        fs::write(&repo_plan, "# Plan\n\n- [ ] step").unwrap();
+
+        let outside_root = unique_temp_dir("mem-plan-source-outside");
+        fs::create_dir_all(&outside_root).unwrap();
+        let outside_plan = outside_root.join("approved-plan.md");
+        fs::write(&outside_plan, "# Plan\n\n- [ ] step").unwrap();
+
+        assert_eq!(
+            durable_plan_source_path(&repo_plan, &repo_root),
+            Some(fs::canonicalize(&repo_plan).unwrap())
+        );
+        assert_eq!(durable_plan_source_path(&outside_plan, &repo_root), None);
+
+        let _ = fs::remove_dir_all(repo_root);
+        let _ = fs::remove_dir_all(outside_root);
+    }
+
+    #[test]
+    fn plan_execution_request_omits_outside_repo_plan_file_source() {
+        let repo_root = unique_temp_dir("mem-plan-request-repo");
+        fs::create_dir_all(&repo_root).unwrap();
+        let outside_root = unique_temp_dir("mem-plan-request-outside");
+        fs::create_dir_all(&outside_root).unwrap();
+        let outside_plan = outside_root.join("approved-plan.md");
+        fs::write(&outside_plan, "# Plan\n\n- [ ] step").unwrap();
+        let writer = super::WriterIdentity {
+            id: "writer".to_string(),
+            name: Some("Writer".to_string()),
+        };
+
+        let request = build_plan_execution_request(
+            "memory",
+            &writer,
+            "Resume Redesign",
+            "resume-redesign",
+            "# Resume Redesign\n\n- [ ] step",
+            Some(outside_plan.as_path()),
+            &repo_root,
+            Some("abc123"),
+        );
+
+        assert!(
+            !request
+                .structured_candidates[0]
+                .sources
+                .iter()
+                .any(|source| source.source_kind == mem_api::SourceKind::File)
+        );
+
+        let _ = fs::remove_dir_all(repo_root);
+        let _ = fs::remove_dir_all(outside_root);
     }
 
     #[test]
