@@ -476,6 +476,7 @@ pub fn parse_memory_type(value: &str) -> MemoryType {
         "environment" => MemoryType::Environment,
         "domain_fact" => MemoryType::DomainFact,
         "plan" => MemoryType::Plan,
+        "implementation" => MemoryType::Implementation,
         _ => MemoryType::Convention,
     }
 }

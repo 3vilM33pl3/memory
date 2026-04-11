@@ -1647,6 +1647,7 @@ enum TypeFilter {
     Environment,
     DomainFact,
     Plan,
+    Implementation,
 }
 
 impl TypeFilter {
@@ -1660,7 +1661,8 @@ impl TypeFilter {
             Self::Debugging => Self::Environment,
             Self::Environment => Self::DomainFact,
             Self::DomainFact => Self::Plan,
-            Self::Plan => Self::All,
+            Self::Plan => Self::Implementation,
+            Self::Implementation => Self::All,
         }
     }
 
@@ -1676,6 +1678,7 @@ impl TypeFilter {
                 | (Self::Environment, MemoryType::Environment)
                 | (Self::DomainFact, MemoryType::DomainFact)
                 | (Self::Plan, MemoryType::Plan)
+                | (Self::Implementation, MemoryType::Implementation)
         )
     }
 
@@ -1690,6 +1693,7 @@ impl TypeFilter {
             Self::Environment => "environment",
             Self::DomainFact => "domain_fact",
             Self::Plan => "plan",
+            Self::Implementation => "implementation",
         }
     }
 }
@@ -4671,6 +4675,7 @@ fn memory_type_span_from_label(label: &str) -> Span<'static> {
         "environment" => Color::Rgb(190, 170, 255),
         "domain_fact" => Color::Rgb(130, 225, 220),
         "plan" => Color::Rgb(255, 120, 200),
+        "implementation" => Color::Rgb(120, 230, 140),
         "all" => Theme::TEXT,
         _ => Theme::TEXT,
     };

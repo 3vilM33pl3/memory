@@ -26,6 +26,7 @@ pub enum MemoryType {
     Environment,
     DomainFact,
     Plan,
+    Implementation,
 }
 
 impl fmt::Display for MemoryType {
@@ -39,6 +40,7 @@ impl fmt::Display for MemoryType {
             Self::Environment => "environment",
             Self::DomainFact => "domain_fact",
             Self::Plan => "plan",
+            Self::Implementation => "implementation",
         };
         f.write_str(value)
     }

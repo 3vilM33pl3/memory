@@ -62,10 +62,8 @@ pub fn extract_candidates(request: &CaptureTaskRequest) -> Vec<CandidateAssertio
     let tags = infer_tags(request);
 
     if !request.structured_candidates.is_empty() {
-        return request
-            .structured_candidates
-            .iter()
-            .map(|candidate| CandidateAssertion {
+        items.extend(request.structured_candidates.iter().map(|candidate| {
+            CandidateAssertion {
                 canonical_text: normalize_candidate_canonical_text(
                     &candidate.memory_type,
                     &candidate.canonical_text,
@@ -84,8 +82,8 @@ pub fn extract_candidates(request: &CaptureTaskRequest) -> Vec<CandidateAssertio
                         excerpt: source.excerpt.clone(),
                     })
                     .collect(),
-            })
-            .collect();
+            }
+        }));
     }
 
     for note in &request.notes {
@@ -135,8 +133,19 @@ fn classify_type(request: &CaptureTaskRequest, text: &str) -> MemoryType {
         || haystack.contains("config")
     {
         MemoryType::Environment
-    } else {
+    } else if haystack.contains("convention")
+        || haystack.contains("workflow")
+        || haystack.contains("rule")
+        || haystack.contains("policy")
+    {
         MemoryType::Convention
+    } else if haystack.contains("domain")
+        || haystack.contains("protocol")
+        || haystack.contains("business")
+    {
+        MemoryType::DomainFact
+    } else {
+        MemoryType::Implementation
     }
 }
 
@@ -236,7 +245,7 @@ fn build_sources(
 
 fn normalize_candidate_canonical_text(memory_type: &MemoryType, input: &str) -> String {
     match memory_type {
-        MemoryType::Plan => normalize_markdown_block(input),
+        MemoryType::Plan | MemoryType::Implementation => normalize_markdown_block(input),
         _ => normalize_sentence(input),
     }
 }
@@ -343,5 +352,39 @@ mod tests {
             "# Plan\n\n- Step one\n- Step two"
         );
         assert_eq!(candidates[0].memory_type, MemoryType::Plan);
+    }
+
+    #[test]
+    fn structured_candidates_can_coexist_with_inferred_debugging_notes() {
+        let mut request = sample_request();
+        request.task_title = "Finish implementation".to_string();
+        request.agent_summary = "Implemented the manager status footer".to_string();
+        request.notes = vec!["Fixed stale manager footer status bug".to_string()];
+        request.structured_candidates = vec![mem_api::CaptureCandidateInput {
+            canonical_text: "Implemented the manager status footer.".to_string(),
+            summary: "Implemented manager footer".to_string(),
+            memory_type: MemoryType::Implementation,
+            confidence: 0.9,
+            importance: 3,
+            tags: vec!["implementation".to_string()],
+            sources: Vec::new(),
+        }];
+
+        let candidates = extract_candidates(&request);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].memory_type, MemoryType::Implementation);
+        assert_eq!(candidates[1].memory_type, MemoryType::Debugging);
+    }
+
+    #[test]
+    fn generic_completed_work_defaults_to_implementation() {
+        let mut request = sample_request();
+        request.task_title = "Ship watcher manager status".to_string();
+        request.user_prompt = "Implement the new manager status footer".to_string();
+        request.agent_summary = "Added manager session counts to the footer".to_string();
+        request.notes = vec!["Added manager session counts to the footer".to_string()];
+
+        let candidates = extract_candidates(&request);
+        assert_eq!(candidates[0].memory_type, MemoryType::Implementation);
     }
 }

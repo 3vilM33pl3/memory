@@ -986,6 +986,12 @@ struct CheckpointFinishExecutionArgs {
     /// Optional updated plan markdown from stdin to sync before verification.
     #[arg(long)]
     plan_stdin: bool,
+    /// Optional explicit summary for the implementation memory recorded after verification.
+    #[arg(long)]
+    implementation_summary: Option<String>,
+    /// Durable implementation detail to include in the recorded implementation memory.
+    #[arg(long = "implementation-note")]
+    implementation_notes: Vec<String>,
     /// Preview whether verification would pass or fail without writing.
     #[arg(long)]
     dry_run: bool,
@@ -1790,6 +1796,58 @@ async fn main() -> Result<()> {
                             );
                         }
                     }
+                    let implementation = if report.verified_complete {
+                        let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
+                        let summary = derive_finish_execution_implementation_summary(
+                            args.implementation_summary.as_deref(),
+                            &report,
+                        );
+                        let mut request = build_finish_execution_implementation_request(
+                            &project,
+                            &writer,
+                            &report,
+                            &summary,
+                            &args.implementation_notes,
+                            repo_git_head(&repo_root).as_deref(),
+                        );
+                        request.dry_run = args.dry_run;
+                        let preview = request.structured_candidates.first().map(|candidate| {
+                            ImplementationMemoryPreview {
+                                summary: candidate.summary.clone(),
+                                memory_type: candidate.memory_type.clone(),
+                                tags: candidate.tags.clone(),
+                                canonical_text: candidate.canonical_text.clone(),
+                            }
+                        });
+                        if args.dry_run {
+                            Some(ImplementationMemoryResult {
+                                recorded: false,
+                                summary,
+                                preview,
+                                capture: None,
+                                curate: None,
+                            })
+                        } else {
+                            let capture = api.capture_task(&request).await.with_context(
+                                || "plan verification succeeded, but implementation capture failed",
+                            )?;
+                            let curate = api
+                                .curate(&project, repo_replacement_policy(&repo_root), false)
+                                .await
+                                .with_context(|| {
+                                    "plan verification succeeded and implementation was captured, but curation failed"
+                                })?;
+                            Some(ImplementationMemoryResult {
+                                recorded: true,
+                                summary,
+                                preview,
+                                capture: Some(capture),
+                                curate: Some(curate),
+                            })
+                        }
+                    } else {
+                        None
+                    };
                     if !args.dry_run {
                         let finish_request = build_plan_activity_request(
                             &project,
@@ -1816,11 +1874,25 @@ async fn main() -> Result<()> {
                             "{}",
                             serde_json::to_string_pretty(&serde_json::json!({
                                 "report": report,
+                                "implementation": implementation,
                                 "dry_run": args.dry_run,
                             }))?
                         );
                     } else {
                         print_plan_execution_finish_report(&report);
+                        if let Some(implementation) = &implementation {
+                            if args.dry_run {
+                                println!(
+                                    "\nWould record implementation memory: {}",
+                                    implementation.summary
+                                );
+                            } else if implementation.recorded {
+                                println!(
+                                    "\nRecorded implementation memory: {}",
+                                    implementation.summary
+                                );
+                            }
+                        }
                         if args.dry_run {
                             println!(
                                 "\nDry run only: no plan state was synced, logged, or persisted."
@@ -6341,6 +6413,7 @@ fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
         "environment" => Ok(mem_api::MemoryType::Environment),
         "domain_fact" => Ok(mem_api::MemoryType::DomainFact),
         "plan" => Ok(mem_api::MemoryType::Plan),
+        "implementation" => Ok(mem_api::MemoryType::Implementation),
         _ => anyhow::bail!("unknown memory type: {input}"),
     }
 }
@@ -6417,7 +6490,7 @@ fn build_remember_request(
             status: "failed".to_string(),
             output: None,
         }))
-        .collect();
+        .collect::<Vec<_>>();
 
     let title = args
         .title
@@ -6428,6 +6501,14 @@ fn build_remember_request(
     let summary = args
         .summary
         .unwrap_or_else(|| derive_summary(project, &files_changed));
+    let implementation_candidate = build_remember_implementation_candidate(
+        &summary,
+        &prompt,
+        &args.notes,
+        &files_changed,
+        &tests,
+        command_output.as_deref(),
+    );
 
     Ok(CaptureTaskRequest {
         project: project.to_string(),
@@ -6440,7 +6521,7 @@ fn build_remember_request(
         git_diff_summary: None,
         tests,
         notes: args.notes,
-        structured_candidates: Vec::new(),
+        structured_candidates: vec![implementation_candidate],
         command_output,
         idempotency_key: None,
         dry_run: false,
@@ -6556,8 +6637,29 @@ struct PlanExecutionFinishReport {
     plan_title: String,
     total_items: usize,
     completed_items: usize,
+    completed_item_texts: Vec<String>,
     remaining_items: Vec<String>,
     verified_complete: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ImplementationMemoryPreview {
+    summary: String,
+    memory_type: mem_api::MemoryType,
+    tags: Vec<String>,
+    canonical_text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ImplementationMemoryResult {
+    recorded: bool,
+    summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<ImplementationMemoryPreview>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capture: Option<mem_api::CaptureTaskResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    curate: Option<CurateResponse>,
 }
 
 async fn resolve_active_plan_selection(
@@ -6819,6 +6921,260 @@ fn build_plan_execution_request(
     }
 }
 
+fn implementation_sources(
+    prompt: &str,
+    notes: &[String],
+    files_changed: &[String],
+    tests: &[TestResult],
+    command_output: Option<&str>,
+) -> Vec<mem_api::CaptureCandidateSourceInput> {
+    let mut sources = Vec::new();
+    if !prompt.trim().is_empty() {
+        sources.push(mem_api::CaptureCandidateSourceInput {
+            file_path: None,
+            source_kind: mem_api::SourceKind::TaskPrompt,
+            excerpt: Some(prompt.trim().to_string()),
+        });
+    }
+    for note in notes {
+        let trimmed = note.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        sources.push(mem_api::CaptureCandidateSourceInput {
+            file_path: None,
+            source_kind: mem_api::SourceKind::Note,
+            excerpt: Some(trimmed.to_string()),
+        });
+    }
+    for file in files_changed {
+        sources.push(mem_api::CaptureCandidateSourceInput {
+            file_path: Some(file.clone()),
+            source_kind: mem_api::SourceKind::File,
+            excerpt: Some(format!("Changed file during task: {file}")),
+        });
+    }
+    for test in tests {
+        sources.push(mem_api::CaptureCandidateSourceInput {
+            file_path: None,
+            source_kind: mem_api::SourceKind::Test,
+            excerpt: Some(format!("{}: {}", test.command, test.status)),
+        });
+    }
+    if let Some(output) = command_output
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        sources.push(mem_api::CaptureCandidateSourceInput {
+            file_path: None,
+            source_kind: mem_api::SourceKind::CommandOutput,
+            excerpt: Some(output.to_string()),
+        });
+    }
+    sources
+}
+
+fn normalize_sentence_fragment(input: &str) -> String {
+    let mut value = input.trim().replace('\n', " ");
+    while value.contains("  ") {
+        value = value.replace("  ", " ");
+    }
+    if value.is_empty() {
+        return value;
+    }
+    if !value.ends_with('.') {
+        value.push('.');
+    }
+    value
+}
+
+fn build_implementation_canonical_text(
+    title: &str,
+    summary: &str,
+    implemented_items: &[String],
+    notes: &[String],
+) -> String {
+    let mut sections = vec![normalize_sentence_fragment(summary)];
+    if !title.trim().is_empty() {
+        sections.push(format!("Plan: {}.", title.trim()));
+    }
+    if !implemented_items.is_empty() {
+        sections.push(format!(
+            "Implemented items:\n{}",
+            implemented_items
+                .iter()
+                .map(|item| format!("- {}", item.trim()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    let cleaned_notes = notes
+        .iter()
+        .map(|note| note.trim())
+        .filter(|note| !note.is_empty())
+        .collect::<Vec<_>>();
+    if !cleaned_notes.is_empty() {
+        sections.push(format!(
+            "Implementation notes:\n{}",
+            cleaned_notes
+                .iter()
+                .map(|note| format!("- {note}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    sections.join("\n\n")
+}
+
+fn build_remember_implementation_candidate(
+    summary: &str,
+    prompt: &str,
+    notes: &[String],
+    files_changed: &[String],
+    tests: &[TestResult],
+    command_output: Option<&str>,
+) -> mem_api::CaptureCandidateInput {
+    let canonical_text = build_implementation_canonical_text("", summary, &[], notes);
+    let mut tags = vec!["implementation".to_string(), "implemented".to_string()];
+    for file in files_changed {
+        if let Some(prefix) = file.split('/').next().filter(|prefix| !prefix.is_empty()) {
+            tags.push(prefix.to_string());
+        }
+    }
+    tags.sort();
+    tags.dedup();
+
+    mem_api::CaptureCandidateInput {
+        canonical_text,
+        summary: summary.trim().to_string(),
+        memory_type: mem_api::MemoryType::Implementation,
+        confidence: if tests.iter().any(|test| test.status == "passed") {
+            0.9
+        } else {
+            0.8
+        },
+        importance: if !tests.is_empty() || !files_changed.is_empty() {
+            3
+        } else {
+            2
+        },
+        tags,
+        sources: implementation_sources(prompt, notes, files_changed, tests, command_output),
+    }
+}
+
+fn derive_finish_execution_implementation_summary(
+    explicit_summary: Option<&str>,
+    report: &PlanExecutionFinishReport,
+) -> String {
+    if let Some(summary) = explicit_summary
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return summary.to_string();
+    }
+    match report.completed_items {
+        0 => format!("Completed {}", report.plan_title),
+        1 => report
+            .completed_item_texts
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("Completed {}", report.plan_title)),
+        _ => format!(
+            "Implemented {} items for {}",
+            report.completed_items, report.plan_title
+        ),
+    }
+}
+
+fn build_finish_execution_implementation_idempotency_key(
+    project: &str,
+    report: &PlanExecutionFinishReport,
+    summary: &str,
+    notes: &[String],
+    git_head: Option<&str>,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"implementation-finish");
+    hasher.update(project.as_bytes());
+    hasher.update(report.thread_key.as_bytes());
+    hasher.update(report.plan_title.as_bytes());
+    hasher.update(summary.as_bytes());
+    for item in &report.completed_item_texts {
+        hasher.update(item.as_bytes());
+    }
+    for note in notes {
+        hasher.update(note.trim().as_bytes());
+    }
+    if let Some(git_head) = git_head.map(str::trim).filter(|value| !value.is_empty()) {
+        hasher.update(git_head.as_bytes());
+    }
+    format!("implementation-finish:{:x}", hasher.finalize())
+}
+
+fn build_finish_execution_implementation_request(
+    project: &str,
+    writer: &WriterIdentity,
+    report: &PlanExecutionFinishReport,
+    summary: &str,
+    notes: &[String],
+    git_head: Option<&str>,
+) -> CaptureTaskRequest {
+    let canonical_text = build_implementation_canonical_text(
+        &report.plan_title,
+        summary,
+        &report.completed_item_texts,
+        notes,
+    );
+    let mut tags = vec![
+        "implementation".to_string(),
+        "implemented".to_string(),
+        format!("plan-thread:{}", report.thread_key),
+    ];
+    tags.sort();
+    tags.dedup();
+
+    CaptureTaskRequest {
+        project: project.to_string(),
+        task_title: format!("Implemented: {}", report.plan_title),
+        user_prompt: format!(
+            "Verified completed implementation for plan {} in project {}.",
+            report.plan_title, project
+        ),
+        writer_id: writer.id.clone(),
+        writer_name: writer.name.clone(),
+        agent_summary: summary.to_string(),
+        files_changed: Vec::new(),
+        git_diff_summary: git_head
+            .map(|head| format!("Implementation verified from git HEAD {head}")),
+        tests: Vec::new(),
+        notes: Vec::new(),
+        structured_candidates: vec![mem_api::CaptureCandidateInput {
+            canonical_text: canonical_text.clone(),
+            summary: summary.to_string(),
+            memory_type: mem_api::MemoryType::Implementation,
+            confidence: 0.95,
+            importance: 4,
+            tags,
+            sources: implementation_sources(
+                &format!(
+                    "Verified completed implementation for plan {} in project {}.",
+                    report.plan_title, project
+                ),
+                notes,
+                &[],
+                &[],
+                None,
+            ),
+        }],
+        command_output: None,
+        idempotency_key: Some(build_finish_execution_implementation_idempotency_key(
+            project, report, summary, notes, git_head,
+        )),
+        dry_run: false,
+    }
+}
+
 fn build_plan_execution_finish_report(
     project: &str,
     detail: &mem_api::MemoryEntryResponse,
@@ -6826,6 +7182,11 @@ fn build_plan_execution_finish_report(
     let items = parse_plan_checkboxes(&detail.canonical_text);
     ensure_checkbox_plan(&items)?;
     let completed_items = items.iter().filter(|item| item.checked).count();
+    let completed_item_texts = items
+        .iter()
+        .filter(|item| item.checked)
+        .map(|item| item.text.clone())
+        .collect::<Vec<_>>();
     let remaining_items = items
         .iter()
         .filter(|item| !item.checked)
@@ -6841,6 +7202,7 @@ fn build_plan_execution_finish_report(
         plan_title: detail.summary.clone(),
         total_items: items.len(),
         completed_items,
+        completed_item_texts,
         verified_complete: remaining_items.is_empty(),
         remaining_items,
     })
@@ -7036,15 +7398,15 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        Cli, DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction,
-        WatcherCommand, WatcherManagerArgs, WatcherManagerCommand,
-        build_plan_execution_finish_report, build_plan_execution_request, build_remember_request,
-        derive_plan_thread_key, derive_plan_title, ensure_checkbox_plan,
-        ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
-        mask_database_url, parse_plan_checkboxes, render_agent_project_config,
-        repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
-        root_gitignore_contains_mem, shared_env_lookup, watcher_command_requires_config_load,
-        write_headers,
+        Cli, DEV_API_TOKEN, PlanExecutionFinishReport, RememberArgs, SERVICE_API_TOKEN_KEY,
+        ServiceApiTokenAction, WatcherCommand, WatcherManagerArgs, WatcherManagerCommand,
+        build_finish_execution_implementation_request, build_plan_execution_finish_report,
+        build_plan_execution_request, build_remember_request, derive_plan_thread_key,
+        derive_plan_title, ensure_checkbox_plan, ensure_shared_service_api_token, initialize_repo,
+        is_placeholder_database_url, mask_database_url, parse_plan_checkboxes,
+        render_agent_project_config, repair_repo_bootstrap, resolve_project_slug,
+        resolve_repo_root, resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
+        watcher_command_requires_config_load, write_headers,
     };
     use mem_api::AppConfig;
 
@@ -7227,6 +7589,11 @@ mod tests {
         assert_eq!(request.writer_id, "codex-writer");
         assert!(request.user_prompt.contains("Auto-captured"));
         assert!(request.agent_summary.contains("src/main.rs"));
+        assert_eq!(request.structured_candidates.len(), 1);
+        assert_eq!(
+            request.structured_candidates[0].memory_type,
+            mem_api::MemoryType::Implementation
+        );
     }
 
     #[test]
@@ -7321,8 +7688,51 @@ mod tests {
 
         assert_eq!(report.total_items, 2);
         assert_eq!(report.completed_items, 1);
+        assert_eq!(report.completed_item_texts, vec!["done".to_string()]);
         assert!(!report.verified_complete);
         assert_eq!(report.remaining_items, vec!["remaining".to_string()]);
+    }
+
+    #[test]
+    fn finish_execution_implementation_request_uses_completed_items() {
+        let writer = super::WriterIdentity {
+            id: "writer".to_string(),
+            name: Some("Writer".to_string()),
+        };
+        let report = PlanExecutionFinishReport {
+            project: "memory".to_string(),
+            thread_key: "footer-fix".to_string(),
+            plan_title: "Footer Fix".to_string(),
+            total_items: 2,
+            completed_items: 2,
+            completed_item_texts: vec![
+                "Add implementation memory type".to_string(),
+                "Record finish-execution implementation outcomes".to_string(),
+            ],
+            remaining_items: Vec::new(),
+            verified_complete: true,
+        };
+
+        let request = build_finish_execution_implementation_request(
+            "memory",
+            &writer,
+            &report,
+            "Implemented 2 items for Footer Fix",
+            &["The memories view now shows implemented outcomes.".to_string()],
+            Some("abc123"),
+        );
+
+        assert_eq!(request.structured_candidates.len(), 1);
+        let candidate = &request.structured_candidates[0];
+        assert_eq!(candidate.memory_type, mem_api::MemoryType::Implementation);
+        assert!(candidate.tags.contains(&"implemented".to_string()));
+        assert!(candidate.canonical_text.contains("Implemented items:"));
+        assert!(
+            candidate
+                .canonical_text
+                .contains("Add implementation memory type")
+        );
+        assert!(request.idempotency_key.is_some());
     }
 
     #[test]
