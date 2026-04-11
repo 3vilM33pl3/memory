@@ -216,6 +216,7 @@ struct App {
     activity_events: Vec<ActivityEntry>,
     activity_selected_index: usize,
     activity_table_state: TableState,
+    memories_focus: MemoriesFocus,
     memory_detail_scroll: u16,
     project_scroll: u16,
     watcher_scroll: u16,
@@ -322,6 +323,12 @@ enum RefreshMode {
     Full,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MemoriesFocus {
+    List,
+    Detail,
+}
+
 impl App {
     fn new(
         project: String,
@@ -370,6 +377,7 @@ impl App {
             activity_events: Vec::new(),
             activity_selected_index: 0,
             activity_table_state,
+            memories_focus: MemoriesFocus::List,
             memory_detail_scroll: 0,
             project_scroll: 0,
             watcher_scroll: 0,
@@ -750,10 +758,18 @@ impl App {
                 }
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Memories => {
-                self.move_selection(1, api, stream).await;
+                if self.memories_focus == MemoriesFocus::Detail {
+                    self.scroll_memory_detail(1);
+                } else {
+                    self.move_selection(1, api, stream).await;
+                }
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Memories => {
-                self.move_selection(-1, api, stream).await;
+                if self.memories_focus == MemoriesFocus::Detail {
+                    self.scroll_memory_detail(-1);
+                } else {
+                    self.move_selection(-1, api, stream).await;
+                }
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Agents => {
                 self.move_agent_selection(1);
@@ -792,7 +808,16 @@ impl App {
                 self.scroll_memory_detail(-8);
             }
             KeyCode::Home if self.active_tab == TabKind::Memories => {
-                self.memory_detail_scroll = 0;
+                self.scroll_memory_detail_home();
+            }
+            KeyCode::End if self.active_tab == TabKind::Memories => {
+                self.scroll_memory_detail_end();
+            }
+            KeyCode::Enter if self.active_tab == TabKind::Memories => {
+                self.toggle_memories_focus();
+            }
+            KeyCode::Esc if self.active_tab == TabKind::Memories => {
+                self.focus_memories_list();
             }
             KeyCode::PageDown if self.active_tab == TabKind::Agents => {
                 self.scroll_agent_detail(8);
@@ -1018,6 +1043,7 @@ impl App {
     ) {
         self.selected_detail = None;
         self.memory_detail_scroll = 0;
+        self.memories_focus = MemoriesFocus::List;
         if let Some(item) = self.filtered_memories.get(self.selected_index) {
             if let Some(stream) = stream.as_mut() {
                 if let Err(error) = stream
@@ -1047,6 +1073,7 @@ impl App {
             self.selected_index = 0;
             self.table_state.select(None);
             self.selected_detail = None;
+            self.memories_focus = MemoriesFocus::List;
         } else {
             self.selected_index = self.selected_index.min(self.filtered_memories.len() - 1);
             self.table_state.select(Some(self.selected_index));
@@ -1073,6 +1100,7 @@ impl App {
             | StreamResponse::MemoryChanged { detail } => {
                 self.selected_detail = detail;
                 self.memory_detail_scroll = 0;
+                self.memories_focus = MemoriesFocus::List;
             }
             StreamResponse::Activity { event } => {
                 self.record_backend_activity(event);
@@ -1361,13 +1389,41 @@ impl App {
     }
 
     fn scroll_memory_detail(&mut self, delta: i16) {
+        let area = current_frame_area().unwrap_or_else(default_frame_area);
+        self.scroll_memory_detail_in_area(delta, area);
+    }
+
+    fn scroll_memory_detail_in_area(&mut self, delta: i16, frame_area: Rect) {
+        let max_scroll = memory_detail_max_scroll(self, frame_area);
         self.memory_detail_scroll = if delta.is_negative() {
             self.memory_detail_scroll
                 .saturating_sub(delta.unsigned_abs())
         } else {
             self.memory_detail_scroll
                 .saturating_add(u16::try_from(delta).unwrap_or(0))
+        }
+        .min(max_scroll);
+    }
+
+    fn scroll_memory_detail_home(&mut self) {
+        self.memory_detail_scroll = 0;
+    }
+
+    fn scroll_memory_detail_end(&mut self) {
+        let area = current_frame_area().unwrap_or_else(default_frame_area);
+        self.memory_detail_scroll = memory_detail_max_scroll(self, area);
+    }
+
+    fn toggle_memories_focus(&mut self) {
+        self.memories_focus = match self.memories_focus {
+            MemoriesFocus::List if self.selected_detail.is_some() => MemoriesFocus::Detail,
+            MemoriesFocus::Detail => MemoriesFocus::List,
+            MemoriesFocus::List => MemoriesFocus::List,
         };
+    }
+
+    fn focus_memories_list(&mut self) {
+        self.memories_focus = MemoriesFocus::List;
     }
 }
 
@@ -1761,8 +1817,29 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             accent_span("type=t "),
             memory_type_span_from_label(app.filters.memory_type.label()),
             Span::raw("  "),
+            accent_span("focus "),
             Span::styled(
-                "detail=PgUp/PgDn Home  clear=x curate=c reindex=i reembed=e archive=a delete=D",
+                match app.memories_focus {
+                    MemoriesFocus::List => "list",
+                    MemoriesFocus::Detail => "detail",
+                },
+                Style::default()
+                    .fg(match app.memories_focus {
+                        MemoriesFocus::List => Theme::ACCENT,
+                        MemoriesFocus::Detail => Theme::ACCENT_STRONG,
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                match app.memories_focus {
+                    MemoriesFocus::List => {
+                        "Enter=detail  j/k=select  PgUp/PgDn/Home/End=scroll  clear=x curate=c reindex=i reembed=e archive=a delete=D"
+                    }
+                    MemoriesFocus::Detail => {
+                        "Enter/Esc=list  j/k=scroll  PgUp/PgDn/Home/End=scroll  clear=x curate=c reindex=i reembed=e archive=a delete=D"
+                    }
+                },
                 Style::default().fg(Theme::MUTED),
             ),
         ],
@@ -2029,10 +2106,7 @@ fn draw_backend_recovery(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) 
 }
 
 fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-        .split(area);
+    let chunks = split_memories_area(area);
 
     let header = Row::new(["Summary", "Type", "Status", "Conf", "Updated"]).style(
         Style::default()
@@ -2059,15 +2133,42 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             .bg(Theme::SELECTION_BG)
             .add_modifier(Modifier::BOLD),
     )
-    .block(themed_block(format!(
-        "Memories (showing {} / {})",
-        app.filtered_memories.len(),
-        app.total_memories
-    )));
+    .block(themed_focus_block(
+        format!(
+            "Memories (showing {} / {})",
+            app.filtered_memories.len(),
+            app.total_memories
+        ),
+        app.memories_focus == MemoriesFocus::List,
+    ));
     let mut state = app.table_state.clone();
     frame.render_stateful_widget(table, chunks[0], &mut state);
 
-    let detail_text = if let Some(detail) = &app.selected_detail {
+    let detail_text = build_memory_detail_lines(app);
+    let detail_block = themed_focus_block(
+        match app.memories_focus {
+            MemoriesFocus::List => "Detail".to_string(),
+            MemoriesFocus::Detail => "Detail Reader".to_string(),
+        },
+        app.memories_focus == MemoriesFocus::Detail,
+    );
+    let detail_inner = detail_block.inner(chunks[1]);
+    let max_scroll = if detail_inner.width == 0 || detail_inner.height == 0 {
+        0
+    } else {
+        wrapped_line_count(&detail_text, detail_inner.width)
+            .saturating_sub(detail_inner.height as usize) as u16
+    };
+    let detail = Paragraph::new(detail_text)
+        .style(Style::default().bg(Theme::PANEL))
+        .scroll((app.memory_detail_scroll.min(max_scroll), 0))
+        .wrap(Wrap { trim: false })
+        .block(detail_block);
+    frame.render_widget(detail, chunks[1]);
+}
+
+fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
+    if let Some(detail) = &app.selected_detail {
         let mut lines = vec![
             Line::from(vec![
                 label_span("Summary: "),
@@ -2105,11 +2206,10 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             ]),
             Line::from(""),
             Line::from(vec![section_span("Canonical Text")]),
-            Line::from(Span::styled(
-                detail.canonical_text.clone(),
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(""),
+        ];
+        lines.extend(render_markdown_lines(&detail.canonical_text));
+        lines.push(Line::from(""));
+        lines.extend([
             Line::from(vec![
                 label_span("Tags: "),
                 Span::styled(
@@ -2123,7 +2223,7 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             ]),
             Line::from(""),
             Line::from(vec![section_span("Sources")]),
-        ];
+        ]);
 
         if detail.sources.is_empty() {
             lines.push(Line::from(Span::styled(
@@ -2170,28 +2270,21 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 ]));
             }
         }
-        lines
+        return lines;
     } else if app.filtered_memories.is_empty() {
-        vec![Line::from(Span::styled(
+        return vec![Line::from(Span::styled(
             format!(
                 "No memories match the current filters for project {}.",
                 app.project
             ),
             Style::default().fg(Theme::MUTED),
-        ))]
+        ))];
     } else {
-        vec![Line::from(Span::styled(
+        return vec![Line::from(Span::styled(
             "Select a memory to load its details.",
             Style::default().fg(Theme::MUTED),
-        ))]
-    };
-
-    let detail = Paragraph::new(detail_text)
-        .style(Style::default().bg(Theme::PANEL))
-        .scroll((app.memory_detail_scroll, 0))
-        .wrap(Wrap { trim: false })
-        .block(themed_block("Detail"));
-    frame.render_widget(detail, chunks[1]);
+        ))];
+    }
 }
 
 fn draw_agents_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
@@ -4322,6 +4415,66 @@ fn format_automation_status(status: &mem_api::AutomationStatus) -> String {
     )
 }
 
+fn split_root_area(area: Rect) -> [Rect; 4] {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(4),
+        ])
+        .split(area);
+    [chunks[0], chunks[1], chunks[2], chunks[3]]
+}
+
+fn split_memories_area(area: Rect) -> [Rect; 2] {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(area);
+    [chunks[0], chunks[1]]
+}
+
+fn current_frame_area() -> Option<Rect> {
+    let (width, height) = crossterm::terminal::size().ok()?;
+    Some(Rect::new(0, 0, width, height))
+}
+
+fn default_frame_area() -> Rect {
+    Rect::new(0, 0, 160, 48)
+}
+
+fn memory_detail_max_scroll(app: &App, frame_area: Rect) -> u16 {
+    let root = split_root_area(frame_area);
+    let detail_area = split_memories_area(root[2])[1];
+    let block = themed_focus_block("Detail", app.memories_focus == MemoriesFocus::Detail);
+    let inner = block.inner(detail_area);
+    if inner.width == 0 || inner.height == 0 {
+        return 0;
+    }
+    wrapped_line_count(&build_memory_detail_lines(app), inner.width)
+        .saturating_sub(inner.height as usize) as u16
+}
+
+fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
+    if width == 0 {
+        return 0;
+    }
+    let width = width as usize;
+    lines
+        .iter()
+        .map(|line| {
+            let line_width = line.width();
+            if line_width == 0 {
+                1
+            } else {
+                line_width.div_ceil(width)
+            }
+        })
+        .sum()
+}
+
 fn themed_block<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
     Block::default()
         .borders(Borders::ALL)
@@ -4333,6 +4486,325 @@ fn themed_block<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
                 .add_modifier(Modifier::BOLD),
         )
         .style(Style::default().bg(Theme::PANEL))
+}
+
+fn themed_focus_block<'a>(title: impl Into<Line<'a>>, focused: bool) -> Block<'a> {
+    let border = if focused {
+        Theme::ACCENT
+    } else {
+        Theme::BORDER
+    };
+    let title_color = if focused {
+        Theme::ACCENT_STRONG
+    } else {
+        Theme::TITLE
+    };
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border).add_modifier(if focused {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        }))
+        .title(title)
+        .title_style(
+            Style::default()
+                .fg(title_color)
+                .add_modifier(Modifier::BOLD),
+        )
+        .style(Style::default().bg(Theme::PANEL))
+}
+
+fn render_markdown_lines(input: &str) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut in_code_block = false;
+
+    for raw_line in input.lines() {
+        let line = raw_line.trim_end_matches('\r');
+
+        if let Some(fence) = line.trim_start().strip_prefix("```") {
+            in_code_block = !in_code_block;
+            if !fence.trim().is_empty() && in_code_block {
+                lines.push(Line::from(vec![
+                    Span::styled("code ", Style::default().fg(Theme::ACCENT_STRONG)),
+                    Span::styled(
+                        fence.trim().to_string(),
+                        Style::default()
+                            .fg(Theme::ACCENT_STRONG)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            } else {
+                lines.push(Line::from(""));
+            }
+            continue;
+        }
+
+        if in_code_block {
+            lines.push(Line::from(vec![Span::styled(
+                format!("  {line}"),
+                Style::default()
+                    .fg(Theme::TEXT)
+                    .bg(Theme::PANEL_ALT)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+            continue;
+        }
+
+        if line.trim().is_empty() {
+            lines.push(Line::from(""));
+            continue;
+        }
+
+        if is_thematic_break(line) {
+            lines.push(Line::from(Span::styled(
+                "─".repeat(32),
+                Style::default().fg(Theme::BORDER),
+            )));
+            continue;
+        }
+
+        if let Some((level, content)) = parse_heading(line) {
+            lines.push(Line::from(render_inline_markdown(
+                content,
+                heading_style(level),
+            )));
+            continue;
+        }
+
+        if let Some((depth, content)) = parse_blockquote(line) {
+            let mut spans = vec![Span::styled(
+                format!("{} ", "│ ".repeat(depth.max(1))),
+                Style::default().fg(Theme::ACCENT),
+            )];
+            spans.extend(render_inline_markdown(
+                content,
+                Style::default()
+                    .fg(Theme::TEXT)
+                    .add_modifier(Modifier::ITALIC),
+            ));
+            lines.push(Line::from(spans));
+            continue;
+        }
+
+        if let Some((indent, marker, content, checked)) = parse_list_item(line) {
+            let mut spans = vec![Span::styled(
+                " ".repeat(indent),
+                Style::default().fg(Theme::TEXT),
+            )];
+            let marker_span = match checked {
+                Some(true) => Span::styled(
+                    "[x] ".to_string(),
+                    Style::default()
+                        .fg(Theme::SUCCESS)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Some(false) => Span::styled(
+                    "[ ] ".to_string(),
+                    Style::default()
+                        .fg(Theme::WARNING)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                None => Span::styled(
+                    marker,
+                    Style::default()
+                        .fg(Theme::ACCENT_STRONG)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            };
+            spans.push(marker_span);
+            spans.extend(render_inline_markdown(
+                content,
+                Style::default().fg(Theme::TEXT),
+            ));
+            lines.push(Line::from(spans));
+            continue;
+        }
+
+        lines.push(Line::from(render_inline_markdown(
+            line,
+            Style::default().fg(Theme::TEXT),
+        )));
+    }
+
+    if lines.is_empty() {
+        vec![Line::from("")]
+    } else {
+        lines
+    }
+}
+
+fn heading_style(level: usize) -> Style {
+    let color = match level {
+        1 => Theme::ACCENT_STRONG,
+        2 => Theme::ACCENT,
+        _ => Theme::TITLE,
+    };
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
+}
+
+fn is_thematic_break(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.len() >= 3
+        && (trimmed.chars().all(|ch| ch == '-')
+            || trimmed.chars().all(|ch| ch == '*')
+            || trimmed.chars().all(|ch| ch == '_'))
+}
+
+fn parse_heading(line: &str) -> Option<(usize, &str)> {
+    let trimmed = line.trim_start();
+    let hashes = trimmed.chars().take_while(|&ch| ch == '#').count();
+    if hashes == 0 || hashes > 6 {
+        return None;
+    }
+    let content = trimmed[hashes..].trim_start();
+    (!content.is_empty()).then_some((hashes, content))
+}
+
+fn parse_blockquote(line: &str) -> Option<(usize, &str)> {
+    let trimmed = line.trim_start();
+    let mut depth = 0usize;
+    let mut rest = trimmed;
+    while let Some(remainder) = rest.strip_prefix('>') {
+        depth += 1;
+        rest = remainder.trim_start();
+    }
+    (depth > 0).then_some((depth, rest))
+}
+
+fn parse_list_item(line: &str) -> Option<(usize, String, &str, Option<bool>)> {
+    let indent = line.chars().take_while(|ch| ch.is_whitespace()).count();
+    let trimmed = &line[indent..];
+    for bullet in ["- ", "* ", "+ "] {
+        if let Some(rest) = trimmed.strip_prefix(bullet) {
+            if let Some(content) = rest.strip_prefix("[ ] ") {
+                return Some((indent, String::new(), content, Some(false)));
+            }
+            if let Some(content) = rest.strip_prefix("[x] ") {
+                return Some((indent, String::new(), content, Some(true)));
+            }
+            if let Some(content) = rest.strip_prefix("[X] ") {
+                return Some((indent, String::new(), content, Some(true)));
+            }
+            return Some((indent, "• ".to_string(), rest, None));
+        }
+    }
+    let digits = trimmed.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digits > 0 && trimmed[digits..].starts_with(". ") {
+        let number = &trimmed[..digits];
+        let content = &trimmed[(digits + 2)..];
+        return Some((indent, format!("{number}. "), content, None));
+    }
+    None
+}
+
+fn render_inline_markdown(input: &str, base_style: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut buffer = String::new();
+    let mut chars = input.chars().peekable();
+    let mut emphasis = false;
+    let mut strong = false;
+    let mut code = false;
+
+    let flush = |spans: &mut Vec<Span<'static>>,
+                 buffer: &mut String,
+                 emphasis: bool,
+                 strong: bool,
+                 code: bool,
+                 base_style: Style| {
+        if buffer.is_empty() {
+            return;
+        }
+        spans.push(Span::styled(
+            std::mem::take(buffer),
+            inline_markdown_style(base_style, emphasis, strong, code),
+        ));
+    };
+
+    while let Some(ch) = chars.next() {
+        if ch == '[' {
+            let mut label = String::new();
+            let mut temp = chars.clone();
+            let mut found_close = false;
+            while let Some(next) = temp.next() {
+                if next == ']' {
+                    found_close = true;
+                    break;
+                }
+                label.push(next);
+            }
+            if found_close {
+                let mut temp_after = temp.clone();
+                if temp_after.next() == Some('(') {
+                    let mut url = String::new();
+                    let mut found_url_close = false;
+                    while let Some(next) = temp_after.next() {
+                        if next == ')' {
+                            found_url_close = true;
+                            break;
+                        }
+                        url.push(next);
+                    }
+                    if found_url_close {
+                        flush(&mut spans, &mut buffer, emphasis, strong, code, base_style);
+                        for _ in 0..(label.chars().count() + url.chars().count() + 3) {
+                            let _ = chars.next();
+                        }
+                        spans.push(Span::styled(
+                            format!("{label} ({url})"),
+                            inline_markdown_style(base_style, emphasis, strong, code)
+                                .fg(Theme::ACCENT),
+                        ));
+                        continue;
+                    }
+                }
+            }
+            buffer.push(ch);
+            continue;
+        }
+
+        if ch == '`' {
+            flush(&mut spans, &mut buffer, emphasis, strong, code, base_style);
+            code = !code;
+            continue;
+        }
+
+        if (ch == '*' || ch == '_') && chars.peek() == Some(&ch) {
+            let _ = chars.next();
+            flush(&mut spans, &mut buffer, emphasis, strong, code, base_style);
+            strong = !strong;
+            continue;
+        }
+
+        if ch == '*' || ch == '_' {
+            flush(&mut spans, &mut buffer, emphasis, strong, code, base_style);
+            emphasis = !emphasis;
+            continue;
+        }
+
+        buffer.push(ch);
+    }
+
+    flush(&mut spans, &mut buffer, emphasis, strong, code, base_style);
+    if spans.is_empty() {
+        vec![Span::styled(String::new(), base_style)]
+    } else {
+        spans
+    }
+}
+
+fn inline_markdown_style(base_style: Style, emphasis: bool, strong: bool, code: bool) -> Style {
+    let mut style = base_style;
+    if emphasis {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    if strong {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if code {
+        style = style.bg(Theme::PANEL_ALT).fg(Theme::ACCENT_STRONG);
+    }
+    style
 }
 
 fn accent_span(value: impl Into<String>) -> Span<'static> {
@@ -5129,19 +5601,21 @@ mod tests {
     use chrono::{Local, TimeZone, Utc};
 
     use super::{
-        AgentSnapshot, App, BackgroundEvent, ManagerState, TabKind, Theme, ToolVersions, UiStatus,
-        context_gradient_color, derive_manager_state, empty_overview, filled_bar_cells,
-        format_context_percent, format_epoch_reset_time, format_timestamp, format_timestamp_full,
-        format_timestamp_medium, format_timestamp_short, format_timestamp_timeline,
-        manager_status_detail, manager_status_label, normalized_percent, remaining_bar_cells,
-        service_status_detail, service_status_label, should_attempt_stream_reconnect,
-        watcher_bar_status_label,
+        AgentSnapshot, App, BackgroundEvent, ManagerState, MemoriesFocus, TabKind, Theme,
+        ToolVersions, UiStatus, build_memory_detail_lines, context_gradient_color,
+        derive_manager_state, empty_overview, filled_bar_cells, format_context_percent,
+        format_epoch_reset_time, format_timestamp, format_timestamp_full, format_timestamp_medium,
+        format_timestamp_short, format_timestamp_timeline, manager_status_detail,
+        manager_status_label, memory_detail_max_scroll, normalized_percent, remaining_bar_cells,
+        render_markdown_lines, service_status_detail, service_status_label,
+        should_attempt_stream_reconnect, watcher_bar_status_label,
     };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
-    use mem_api::WatcherPresenceSummary;
+    use mem_api::{MemoryEntryResponse, MemoryStatus, MemoryType, WatcherPresenceSummary};
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
+    use uuid::Uuid;
 
     #[test]
     fn format_timestamp_returns_na_for_missing_value() {
@@ -5355,6 +5829,25 @@ mod tests {
         }
     }
 
+    fn test_memory_detail(canonical_text: &str) -> MemoryEntryResponse {
+        let timestamp = Utc.with_ymd_and_hms(2026, 4, 11, 8, 0, 0).unwrap();
+        MemoryEntryResponse {
+            id: Uuid::nil(),
+            project: "memory".to_string(),
+            canonical_text: canonical_text.to_string(),
+            summary: "Improved TUI detail rendering".to_string(),
+            memory_type: MemoryType::Implementation,
+            importance: 8,
+            confidence: 0.92,
+            status: MemoryStatus::Active,
+            tags: vec!["implementation".to_string(), "tui".to_string()],
+            sources: Vec::new(),
+            related_memories: Vec::new(),
+            created_at: timestamp,
+            updated_at: timestamp,
+        }
+    }
+
     #[test]
     fn agents_tab_initial_selection_prefers_current_project() {
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -5435,5 +5928,112 @@ mod tests {
         assert_eq!(TabKind::Memories.next(), TabKind::Agents);
         assert_eq!(TabKind::Watchers.next(), TabKind::Resume);
         assert_eq!(TabKind::Resume.next(), TabKind::Memories);
+    }
+
+    #[test]
+    fn markdown_renderer_formats_rich_memory_text_readably() {
+        let lines = render_markdown_lines(
+            "# Heading\n\n- [x] shipped\n1. numbered\n> quoted\n\nVisit [docs](https://example.com) and use `cargo test`.\n\n```rust\nfn main() {}\n```",
+        );
+        let rendered = lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Heading"));
+        assert!(rendered.contains("[x] shipped"));
+        assert!(rendered.contains("1. numbered"));
+        assert!(rendered.contains("quoted"));
+        assert!(rendered.contains("docs (https://example.com)"));
+        assert!(rendered.contains("cargo test"));
+        assert!(rendered.contains("fn main() {}"));
+    }
+
+    #[test]
+    fn build_memory_detail_lines_includes_rendered_canonical_text() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.4.5".to_string(),
+                mem_service: "0.4.5".to_string(),
+                watch_manager: "0.4.5".to_string(),
+                memory_watch: "0.4.5".to_string(),
+            },
+            false,
+            tx,
+        );
+        app.selected_detail = Some(test_memory_detail(
+            "# Canonical\n\n- [ ] readable\n\n```text\nblock\n```",
+        ));
+
+        let rendered = build_memory_detail_lines(&app)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Canonical Text"));
+        assert!(rendered.contains("Canonical"));
+        assert!(rendered.contains("[ ] readable"));
+        assert!(rendered.contains("block"));
+    }
+
+    #[test]
+    fn memories_focus_toggle_and_escape_return_to_list() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.4.5".to_string(),
+                mem_service: "0.4.5".to_string(),
+                watch_manager: "0.4.5".to_string(),
+                memory_watch: "0.4.5".to_string(),
+            },
+            false,
+            tx,
+        );
+        app.selected_detail = Some(test_memory_detail("detail"));
+
+        assert_eq!(app.memories_focus, MemoriesFocus::List);
+        app.toggle_memories_focus();
+        assert_eq!(app.memories_focus, MemoriesFocus::Detail);
+        app.focus_memories_list();
+        assert_eq!(app.memories_focus, MemoriesFocus::List);
+    }
+
+    #[test]
+    fn memory_detail_scroll_is_clamped_to_rendered_content() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.4.5".to_string(),
+                mem_service: "0.4.5".to_string(),
+                watch_manager: "0.4.5".to_string(),
+                memory_watch: "0.4.5".to_string(),
+            },
+            false,
+            tx,
+        );
+        let canonical = (0..40)
+            .map(|idx| format!("- [x] item {idx} with enough text to wrap in the detail pane"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.selected_detail = Some(test_memory_detail(&canonical));
+        let frame = ratatui::layout::Rect::new(0, 0, 100, 24);
+
+        let max_scroll = memory_detail_max_scroll(&app, frame);
+        assert!(max_scroll > 0);
+
+        app.scroll_memory_detail_in_area(500, frame);
+        assert_eq!(app.memory_detail_scroll, max_scroll);
+
+        app.scroll_memory_detail_in_area(-500, frame);
+        assert_eq!(app.memory_detail_scroll, 0);
     }
 }
