@@ -3577,6 +3577,7 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
         sync_memory_skill_bundle(&skill_template_dir, &skill_root, false)?;
     }
     ensure_root_gitignore_entry(&repo_root.join(".gitignore"), "/.mem\n")?;
+    ensure_claude_md_memory_section(repo_root, project)?;
     Ok(())
 }
 
@@ -3836,6 +3837,7 @@ fn initialize_repo(
         }
         sync_memory_skill_bundle(&skill_template_dir, &skill_root, force)?;
         ensure_root_gitignore_entry(&root_gitignore_path, root_gitignore_line)?;
+        ensure_claude_md_memory_section(repo_root, project)?;
     }
 
     Ok(render_init_summary(
@@ -4390,17 +4392,18 @@ async fn reconcile_watcher_manager(_config: &AppConfig) -> Result<()> {
     let sessions = snapshot
         .sessions
         .into_iter()
-        .filter(is_live_codex_session)
+        .filter(is_live_agent_session)
         .collect::<Vec<_>>();
     let mut seen = std::collections::BTreeSet::new();
 
     for session in sessions {
-        let Some(repo_root) = resolve_codex_repo_root(&session.cwd)? else {
+        let Some(repo_root) = resolve_agent_repo_root(&session.cwd)? else {
             continue;
         };
         if !repo_agent_watch_enabled(&repo_root)? {
             state.warnings.push(format!(
-                "Skipped Codex session {} in {} because repo opted out of agent-linked watchers.",
+                "Skipped {} session {} in {} because repo opted out of agent-linked watchers.",
+                session.agent_cli,
                 session.session_id,
                 repo_root.display()
             ));
@@ -4419,7 +4422,7 @@ async fn reconcile_watcher_manager(_config: &AppConfig) -> Result<()> {
             continue;
         }
 
-        let unit_name = managed_watch_service_name(&session.session_id);
+        let unit_name = watch_agent_unit_name(session.agent_cli, &session.session_id);
         if should_start_agent_watcher(
             state.sessions.contains_key(&session.session_id),
             managed_watch_service_loaded(&session.session_id),
@@ -4471,11 +4474,13 @@ async fn reconcile_watcher_manager(_config: &AppConfig) -> Result<()> {
     Ok(())
 }
 
-fn is_live_codex_session(session: &AgentSession) -> bool {
-    session.agent_cli == "codex" && session.status != SessionStatus::Done
+#[cfg(not(target_os = "macos"))]
+fn is_live_agent_session(session: &AgentSession) -> bool {
+    matches!(session.agent_cli, "codex" | "claude") && session.status != SessionStatus::Done
 }
 
-fn resolve_codex_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
+#[cfg(not(target_os = "macos"))]
+fn resolve_agent_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
     let output = ProcessCommand::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(cwd)
@@ -4487,6 +4492,25 @@ fn resolve_codex_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
     let repo_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if repo_root.is_empty() {
         return Ok(None);
+    }
+    // When the agent runs inside a git worktree (e.g. Claude Code -w), --show-toplevel
+    // returns the worktree path, which lacks .mem/project.toml. Resolve through to
+    // the main repo root via --git-common-dir so both agents share the same project slug.
+    let common_dir_output = ProcessCommand::new("git")
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .current_dir(cwd)
+        .output();
+    if let Ok(common_output) = common_dir_output {
+        if common_output.status.success() {
+            let common_dir = String::from_utf8_lossy(&common_output.stdout)
+                .trim()
+                .to_string();
+            if let Some(main_root) = PathBuf::from(&common_dir).parent() {
+                if main_root.join(".mem").join("project.toml").exists() {
+                    return Ok(Some(main_root.to_path_buf()));
+                }
+            }
+        }
     }
     Ok(Some(PathBuf::from(repo_root)))
 }
@@ -4576,6 +4600,15 @@ fn legacy_watch_service_name(project: &str) -> String {
     {
         watch_unit_name(project)
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn watch_agent_unit_name(agent_cli: &str, session_id: &str) -> String {
+    format!(
+        "memory-watch-{}-{}.service",
+        agent_cli,
+        platform::sanitize_service_fragment(session_id)
+    )
 }
 
 fn managed_watch_service_name(session_id: &str) -> String {
@@ -5710,6 +5743,86 @@ replacement_policy = "balanced"
 "#,
         repo_root.display()
     )
+}
+
+const CLAUDE_MD_MEMORY_MARKER: &str = "## Memory Layer workflows";
+
+fn render_claude_md_memory_section(project: &str) -> String {
+    format!(
+        r#"## Memory Layer workflows
+
+This project uses Memory Layer to persist durable project knowledge. The `memory` CLI
+must be on PATH (or use `cargo run --bin memory --` from the repo root).
+
+### Shared invariants
+1. Query memory before answering project-specific questions.
+2. Use `resume` instead of a generic query for interruption-recovery prompts.
+3. Save the approved plan before implementation begins when a planning phase turns into execution.
+4. Verify plan-backed work is complete before claiming the task is finished.
+5. Remember meaningful work after it is actually done.
+6. Prefer insufficient evidence over unsupported conclusions.
+7. Never invent provenance.
+
+### Query and resume
+Use when: the user asks a project-specific question or returns after an interruption.
+
+```bash
+memory query --project {project} --question "<question>"
+memory resume --project {project}
+```
+
+### Plan execution
+Use when: a planning session ends and the user approves execution.
+
+Save checkpoint and plan at execution start:
+```bash
+memory checkpoint start-execution --project {project} --plan-file /tmp/approved-plan.md
+```
+
+Verify all plan items are complete before claiming finished:
+```bash
+memory checkpoint finish-execution --project {project}
+```
+
+### Remember completed work (mandatory post-task rule)
+**After any meaningful repository work, run the remember workflow before sending the
+final response** unless one of these is true:
+- no durable knowledge was produced
+- the work was purely trivial
+- the user explicitly asked not to store memory
+
+```bash
+memory remember --project {project} \
+  --title "<task title>" \
+  --summary "<what changed>" \
+  --note "<durable fact 1>" \
+  --note "<durable fact 2>" \
+  --file-changed "<path>"
+```
+
+This should default to storing durable project knowledge, not waiting for the user to ask.
+"#
+    )
+}
+
+fn ensure_claude_md_memory_section(repo_root: &Path, project: &str) -> Result<()> {
+    let path = repo_root.join("CLAUDE.md");
+    let content = if path.exists() {
+        fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?
+    } else {
+        String::new()
+    };
+    if content.contains(CLAUDE_MD_MEMORY_MARKER) {
+        return Ok(());
+    }
+    let section = render_claude_md_memory_section(project);
+    let updated = if content.is_empty() {
+        format!("# Project Instructions\n\n{section}")
+    } else {
+        format!("{}\n\n{}", content.trim_end(), section)
+    };
+    fs::write(&path, updated).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
 }
 
 fn ensure_root_gitignore_entry(path: &Path, line: &str) -> Result<()> {

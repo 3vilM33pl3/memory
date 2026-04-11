@@ -73,7 +73,7 @@ impl ClaudeCollector {
 
         let proc_cmd = process_info.get(&sf.pid).map(|p| p.command.as_str());
         let pid_alive = proc_cmd
-            .map(|c| process::cmd_has_binary(c, "claude"))
+            .map(|c| process::cmd_has_binary(c, "claude") || is_claude_versioned_binary(c))
             .unwrap_or(false);
 
         // Skip --print sessions (e.g. abtop's own summary generation).
@@ -796,6 +796,12 @@ fn truncate(s: &str, max: usize) -> String {
         let truncated: String = s.chars().take(max - 1).collect();
         format!("{}…", truncated)
     }
+}
+
+/// Match Claude CLI's versioned binary path: `.../claude/versions/X.Y.Z`
+fn is_claude_versioned_binary(cmd: &str) -> bool {
+    let first_token = cmd.split_whitespace().next().unwrap_or("");
+    first_token.contains("/claude/versions/")
 }
 
 fn context_window_for_model(model: &str, last_context_tokens: u64) -> u64 {
