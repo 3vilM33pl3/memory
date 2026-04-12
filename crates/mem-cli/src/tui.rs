@@ -3602,10 +3602,20 @@ fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>>
         ]),
     ];
 
-    if !snapshot.rate_limits.is_empty() {
+    let selected_agent_cli = app
+        .agent_table_state
+        .selected()
+        .and_then(|i| snapshot.sessions.get(i))
+        .map(|s| s.agent_cli);
+    let matching_limits: Vec<_> = snapshot
+        .rate_limits
+        .iter()
+        .filter(|rl| selected_agent_cli.is_none_or(|cli| cli == rl.source))
+        .collect();
+    if !matching_limits.is_empty() {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![section_span("Rate Limits")]));
-        for rate_limit in &snapshot.rate_limits {
+        for rate_limit in &matching_limits {
             lines.push(Line::from(vec![
                 label_span("Source: "),
                 Span::styled(rate_limit.source.clone(), Style::default().fg(Theme::TEXT)),
