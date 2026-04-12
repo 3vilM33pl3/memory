@@ -4423,7 +4423,7 @@ async fn reconcile_watcher_manager(_config: &AppConfig, config_path: Option<&Pat
             continue;
         }
 
-        let unit_name = watch_agent_unit_name(session.agent_cli, &session.session_id);
+        let unit_name = managed_watch_service_name(&session.session_id);
         if should_start_agent_watcher(
             state.sessions.contains_key(&session.session_id),
             managed_watch_service_loaded(&session.session_id),
@@ -4475,12 +4475,10 @@ async fn reconcile_watcher_manager(_config: &AppConfig, config_path: Option<&Pat
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
 fn is_live_agent_session(session: &AgentSession) -> bool {
     matches!(session.agent_cli, "codex" | "claude") && session.status != SessionStatus::Done
 }
 
-#[cfg(not(target_os = "macos"))]
 fn resolve_agent_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
     let output = ProcessCommand::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -4601,15 +4599,6 @@ fn legacy_watch_service_name(project: &str) -> String {
     {
         watch_unit_name(project)
     }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn watch_agent_unit_name(agent_cli: &str, session_id: &str) -> String {
-    format!(
-        "memory-watch-{}-{}.service",
-        agent_cli,
-        platform::sanitize_service_fragment(session_id)
-    )
 }
 
 fn managed_watch_service_name(session_id: &str) -> String {

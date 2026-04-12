@@ -415,12 +415,31 @@ impl CodexCollector {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn read_proc_cwd(pid: u32) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/cwd"))
         .ok()
         .map(|path| path.display().to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn read_proc_cwd(pid: u32) -> Option<String> {
+    let output = Command::new("lsof")
+        .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-F", "n"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // lsof -F n outputs lines like "p1234" (pid) and "n/path/to/cwd"
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix('n'))
+        .map(|s| s.to_string())
+}
+
+#[cfg(target_os = "linux")]
 fn read_proc_started_at(pid: u32) -> Option<(u64, u64)> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let parts = stat.split_whitespace().collect::<Vec<_>>();
@@ -440,6 +459,29 @@ fn read_proc_started_at(pid: u32) -> Option<(u64, u64)> {
         .saturating_mul(1000)
         .saturating_add(start_ticks.saturating_mul(1000) / ticks_per_second as u64);
     Some((started_at, start_ticks))
+}
+
+#[cfg(target_os = "macos")]
+fn read_proc_started_at(pid: u32) -> Option<(u64, u64)> {
+    // `ps -o lstart= -p <pid>` outputs e.g. "Thu Apr 10 14:30:00 2026"
+    let output = Command::new("ps")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let text = stdout.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let dt = chrono::NaiveDateTime::parse_from_str(text, "%a %b %e %H:%M:%S %Y").ok()?;
+    let started_at = dt
+        .and_local_timezone(chrono::Local)
+        .single()?
+        .timestamp_millis() as u64;
+    Some((started_at, 0))
 }
 
 impl super::AgentCollector for CodexCollector {

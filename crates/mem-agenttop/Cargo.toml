@@ -8,9 +8,11 @@ authors.workspace = true
 [dependencies]
 chrono.workspace = true
 dirs = "6.0.0"
-libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.23.0"
