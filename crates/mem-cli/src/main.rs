@@ -1368,6 +1368,7 @@ async fn main() -> Result<()> {
         _ => {}
     }
 
+    let cli_config_path = cli_config.clone();
     let config = AppConfig::load_from_path(cli_config).context("load config")?;
     let client = Client::builder()
         .timeout(config.service.request_timeout)
@@ -2154,7 +2155,7 @@ async fn main() -> Result<()> {
                 .await?;
             }
             WatcherCommand::Manager(args) => match args.command {
-                WatcherManagerCommand::Run => run_watcher_manager(config).await?,
+                WatcherManagerCommand::Run => run_watcher_manager(config, cli_config_path).await?,
                 WatcherManagerCommand::Enable(_)
                 | WatcherManagerCommand::Disable(_)
                 | WatcherManagerCommand::Status => {
@@ -4369,20 +4370,20 @@ struct ManagedWatcherSession {
     agent_started_at: DateTime<Utc>,
 }
 
-async fn run_watcher_manager(config: AppConfig) -> Result<()> {
-    reconcile_watcher_manager(&config).await?;
+async fn run_watcher_manager(config: AppConfig, config_path: Option<PathBuf>) -> Result<()> {
+    reconcile_watcher_manager(&config, config_path.as_deref()).await?;
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
         WATCH_MANAGER_POLL_INTERVAL_SECONDS,
     ));
     loop {
         interval.tick().await;
-        if let Err(error) = reconcile_watcher_manager(&config).await {
+        if let Err(error) = reconcile_watcher_manager(&config, config_path.as_deref()).await {
             eprintln!("watcher manager reconcile failed: {error}");
         }
     }
 }
 
-async fn reconcile_watcher_manager(_config: &AppConfig) -> Result<()> {
+async fn reconcile_watcher_manager(_config: &AppConfig, config_path: Option<&Path>) -> Result<()> {
     let mut state = load_watcher_manager_state()?;
     state.updated_at = Some(Utc::now());
     state.warnings.clear();
@@ -4431,7 +4432,7 @@ async fn reconcile_watcher_manager(_config: &AppConfig) -> Result<()> {
             if managed_watch_service_loaded(&session.session_id) {
                 let _ = stop_managed_watch_service(&session.session_id);
             }
-            start_managed_agent_watcher(&repo_root, &project, &session)?;
+            start_managed_agent_watcher(&repo_root, &project, &session, config_path)?;
         }
 
         let agent_started_at = DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
@@ -4658,6 +4659,7 @@ fn start_managed_agent_watcher(
     repo_root: &Path,
     project: &str,
     session: &AgentSession,
+    config_path: Option<&Path>,
 ) -> Result<()> {
     let started_at = DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
         .unwrap_or_else(Utc::now)
@@ -4669,7 +4671,7 @@ fn start_managed_agent_watcher(
         let label = managed_watch_launch_agent_label(&session.session_id);
         write_launch_agent(
             &plist_path,
-            render_managed_watch_launch_agent(repo_root, project, session, &started_at)?,
+            render_managed_watch_launch_agent(repo_root, project, session, &started_at, config_path)?,
             &label,
         )?;
         bootstrap_launch_agent(&plist_path, &label)?;
@@ -4680,7 +4682,9 @@ fn start_managed_agent_watcher(
     let memory_binary = memory_binary_path()?;
 
     #[cfg(not(target_os = "macos"))]
-    let global_config = default_global_config_path();
+    let resolved_config = config_path
+        .map(PathBuf::from)
+        .unwrap_or_else(default_global_config_path);
 
     #[cfg(not(target_os = "macos"))]
     let unit_name = managed_watch_service_name(&session.session_id);
@@ -4700,7 +4704,7 @@ fn start_managed_agent_watcher(
         ])
         .arg(memory_binary)
         .arg("--config")
-        .arg(global_config)
+        .arg(&resolved_config)
         .arg("watcher")
         .arg("run")
         .arg("--project")
@@ -5303,6 +5307,7 @@ fn render_managed_watch_launch_agent(
     project: &str,
     session: &AgentSession,
     started_at: &str,
+    config_path: Option<&Path>,
 ) -> Result<String> {
     let binary = memory_binary_path()?;
     let working_directory = repo_root
@@ -5312,10 +5317,13 @@ fn render_managed_watch_launch_agent(
     let sanitized = sanitize_service_fragment(&session.session_id);
     let stdout_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stdout.log"));
     let stderr_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stderr.log"));
+    let resolved_config = config_path
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| default_global_config_path().display().to_string());
     let command = launch_agent_shell_command(&[
         binary.display().to_string(),
         "--config".to_string(),
-        default_global_config_path().display().to_string(),
+        resolved_config,
         "watcher".to_string(),
         "run".to_string(),
         "--project".to_string(),
@@ -8557,6 +8565,7 @@ mod tests {
             "homelab",
             &session,
             "2026-04-10T00:00:00Z",
+            None,
         )
         .unwrap();
 
