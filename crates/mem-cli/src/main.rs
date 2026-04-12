@@ -4682,29 +4682,30 @@ fn start_managed_agent_watcher(
     let memory_binary = memory_binary_path()?;
 
     #[cfg(not(target_os = "macos"))]
-    let resolved_config = config_path
-        .map(PathBuf::from)
-        .unwrap_or_else(default_global_config_path);
-
-    #[cfg(not(target_os = "macos"))]
     let unit_name = managed_watch_service_name(&session.session_id);
 
     #[cfg(not(target_os = "macos"))]
-    let output = ProcessCommand::new("systemd-run")
-        .args([
-            "--user",
-            "--unit",
-            &unit_name,
-            "--property",
-            &format!("WorkingDirectory={}", repo_root.display()),
-            "--property",
-            "Restart=no",
-            "--setenv=MEMORY_LAYER_WATCH_SERVICE_MANAGED=1",
-            "--collect",
-        ])
-        .arg(memory_binary)
-        .arg("--config")
-        .arg(&resolved_config)
+    let mut cmd = ProcessCommand::new("systemd-run");
+    #[cfg(not(target_os = "macos"))]
+    cmd.args([
+        "--user",
+        "--unit",
+        &unit_name,
+        "--property",
+        &format!("WorkingDirectory={}", repo_root.display()),
+        "--property",
+        "Restart=no",
+        "--setenv=MEMORY_LAYER_WATCH_SERVICE_MANAGED=1",
+        "--collect",
+    ]);
+    #[cfg(not(target_os = "macos"))]
+    cmd.arg(memory_binary);
+    #[cfg(not(target_os = "macos"))]
+    if let Some(path) = config_path {
+        cmd.arg("--config").arg(path);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let output = cmd
         .arg("watcher")
         .arg("run")
         .arg("--project")
@@ -5317,13 +5318,12 @@ fn render_managed_watch_launch_agent(
     let sanitized = sanitize_service_fragment(&session.session_id);
     let stdout_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stdout.log"));
     let stderr_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stderr.log"));
-    let resolved_config = config_path
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| default_global_config_path().display().to_string());
-    let command = launch_agent_shell_command(&[
-        binary.display().to_string(),
-        "--config".to_string(),
-        resolved_config,
+    let mut args = vec![binary.display().to_string()];
+    if let Some(path) = config_path {
+        args.push("--config".to_string());
+        args.push(path.display().to_string());
+    }
+    args.extend([
         "watcher".to_string(),
         "run".to_string(),
         "--project".to_string(),
@@ -5338,7 +5338,8 @@ fn render_managed_watch_launch_agent(
         session.pid.to_string(),
         "--agent-started-at".to_string(),
         started_at.to_string(),
-    ])?;
+    ]);
+    let command = launch_agent_shell_command(&args)?;
     let command = format!("export MEMORY_LAYER_WATCH_SERVICE_MANAGED=1; {command}");
     render_launch_agent_plist(
         &managed_watch_launch_agent_label(&session.session_id),
