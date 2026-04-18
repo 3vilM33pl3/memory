@@ -140,19 +140,12 @@ pub async fn run_loop(
     );
 
     let mut poll = tokio::time::interval(config.automation.poll_interval);
+    let mut liveness = tokio::time::interval(std::time::Duration::from_secs(30));
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
 
     loop {
         tokio::select! {
             _ = poll.tick() => {
-                if !owner_session_is_alive(&owner) {
-                    let request = build_watcher_unregister_request(&project, &watcher_id);
-                    if let Err(error) = unregister_watcher(&client, &config, &request).await {
-                        eprintln!("watcher unregister failed after owner exit: {error}");
-                    }
-                    println!("watcher owner session is gone; exiting");
-                    break;
-                }
                 run_once(
                     &config,
                     &client,
@@ -163,6 +156,16 @@ pub async fn run_loop(
                     &writer_id,
                     writer_name.as_deref(),
                 ).await?;
+            }
+            _ = liveness.tick() => {
+                if !owner_session_is_alive(&owner) {
+                    let request = build_watcher_unregister_request(&project, &watcher_id);
+                    if let Err(error) = unregister_watcher(&client, &config, &request).await {
+                        eprintln!("watcher unregister failed after owner exit: {error}");
+                    }
+                    println!("watcher owner session is gone; exiting");
+                    break;
+                }
             }
             _ = heartbeat.tick() => {
                 let state = load_state(&project, &repo_root, &config.automation).await?;

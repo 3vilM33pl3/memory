@@ -15,7 +15,6 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use mem_agenttop::{AgentSession, AgentTop, SessionStatus};
 use mem_api::{
     AppConfig, AutomationConfig, AutomationMode, AutomationStatus, CaptureTaskRequest,
     CurateRequest, CurateResponse, ProjectOverviewResponse, TestResult, WatcherHeartbeatRequest,
@@ -482,48 +481,27 @@ pub fn detect_hostname() -> String {
 }
 
 pub fn owner_session_is_alive(owner: &WatcherAgentOwner) -> bool {
-    if owner.agent_session_id.is_none() && owner.agent_pid.is_none() {
+    match owner.agent_pid {
+        Some(pid) => is_pid_alive(pid),
+        None => true, // no PID to check; keep running
+    }
+}
+
+#[cfg(unix)]
+fn is_pid_alive(pid: u32) -> bool {
+    // signal 0 checks process existence without sending a signal
+    let ret = unsafe { libc::kill(pid as i32, 0) };
+    if ret == 0 {
         return true;
     }
-
-    let mut top = AgentTop::new();
-    let snapshot = top.collect_snapshot();
-    snapshot
-        .sessions
-        .iter()
-        .any(|session| matches_owner_session(session, owner))
+    let err = std::io::Error::last_os_error();
+    // EPERM means the process exists but we lack permission
+    err.raw_os_error() == Some(libc::EPERM)
 }
 
-fn matches_owner_session(session: &AgentSession, owner: &WatcherAgentOwner) -> bool {
-    if !owner
-        .agent_cli
-        .as_ref()
-        .is_none_or(|value| value.eq_ignore_ascii_case(session.agent_cli))
-    {
-        return false;
-    }
-    if !owner
-        .agent_session_id
-        .as_ref()
-        .is_none_or(|value| value == &session.session_id)
-    {
-        return false;
-    }
-    if !owner.agent_pid.is_none_or(|value| value == session.pid) {
-        return false;
-    }
-    if !owner
-        .agent_started_at
-        .is_none_or(|value| session_started_matches(session, value))
-    {
-        return false;
-    }
-    session.status != SessionStatus::Done
-}
-
-fn session_started_matches(session: &AgentSession, started_at: DateTime<Utc>) -> bool {
-    chrono::DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
-        .is_some_and(|value| value.signed_duration_since(started_at).num_seconds().abs() <= 5)
+#[cfg(not(unix))]
+fn is_pid_alive(_pid: u32) -> bool {
+    true // no cheap check available; keep running
 }
 
 pub fn build_capture_request(

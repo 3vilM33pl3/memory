@@ -10,7 +10,6 @@ autobins = false
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
-mem-agenttop = { path = "../mem-agenttop" }
 mem-api = { path = "../mem-api" }
 mem-platform = { path = "../mem-platform" }
 reqwest.workspace = true
@@ -20,6 +19,9 @@ sha2.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 toml.workspace = true
