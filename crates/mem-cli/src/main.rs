@@ -3899,7 +3899,12 @@ fn initialize_repo(
 }
 
 fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String> {
-    let mem_dir = repo_root.join(".mem");
+    // Prefer the .mem/ that the config loader would find (ancestor walk from
+    // cwd), so running `memory dev init` inside a git worktree lands the
+    // overlay next to the existing base config in the main repo.
+    let mem_dir = mem_api::discover_repo_config_path()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| repo_root.join(".mem"));
     if !mem_dir.is_dir() {
         anyhow::bail!(
             "no .mem/ directory found at {}. Run `memory init` first to bootstrap the \
