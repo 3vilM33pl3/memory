@@ -4697,9 +4697,16 @@ fn start_managed_agent_watcher(
     ]);
     #[cfg(not(target_os = "macos"))]
     cmd.arg(memory_binary);
+    // Prefer the repo-local config so the watcher talks to the same service
+    // instance the TUI and CLI use for this project.
     #[cfg(not(target_os = "macos"))]
-    if let Some(path) = config_path {
-        cmd.arg("--config").arg(path);
+    {
+        let repo_config = repo_root.join(".mem").join("config.toml");
+        if repo_config.is_file() {
+            cmd.arg("--config").arg(&repo_config);
+        } else if let Some(path) = config_path {
+            cmd.arg("--config").arg(path);
+        }
     }
     #[cfg(not(target_os = "macos"))]
     let output = cmd
@@ -5316,7 +5323,13 @@ fn render_managed_watch_launch_agent(
     let stdout_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stdout.log"));
     let stderr_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stderr.log"));
     let mut args = vec![binary.display().to_string()];
-    if let Some(path) = config_path {
+    // Prefer the repo-local config so the watcher talks to the same service
+    // instance the TUI and CLI use for this project.
+    let repo_config = repo_root.join(".mem").join("config.toml");
+    if repo_config.is_file() {
+        args.push("--config".to_string());
+        args.push(repo_config.display().to_string());
+    } else if let Some(path) = config_path {
         args.push("--config".to_string());
         args.push(path.display().to_string());
     }
