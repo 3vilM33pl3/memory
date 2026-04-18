@@ -722,7 +722,13 @@ impl App {
                     self.request_resume_refresh(api, false);
                 }
             }
-            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') if key.modifiers.is_empty() => {
+            KeyCode::BackTab if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() => {
+                self.active_tab = self.active_tab.prev();
+                if self.active_tab == TabKind::Resume && !self.resume_loaded {
+                    self.request_resume_refresh(api, false);
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') if key.modifiers.is_empty() => {
                 self.active_tab = self.active_tab.prev();
                 if self.active_tab == TabKind::Resume && !self.resume_loaded {
                     self.request_resume_refresh(api, false);
