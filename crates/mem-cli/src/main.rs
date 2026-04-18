@@ -506,6 +506,36 @@ enum Command {
     Automation(AutomationArgs),
     #[command(about = "Open the terminal UI.", after_help = TUI_AFTER_HELP)]
     Tui(TuiArgs),
+    #[command(about = "Scaffold and inspect the dev-profile overlay.")]
+    Dev(DevArgs),
+}
+
+#[derive(Debug, Args)]
+struct DevArgs {
+    #[command(subcommand)]
+    command: DevCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum DevCommand {
+    /// Create `.mem/config.dev.toml` and the dev runtime directory.
+    Init(DevInitArgs),
+}
+
+#[derive(Debug, Args)]
+struct DevInitArgs {
+    /// Overwrite an existing `.mem/config.dev.toml` instead of preserving it.
+    #[arg(long)]
+    force: bool,
+    /// Print what would be written without touching the filesystem.
+    #[arg(long)]
+    dry_run: bool,
+    /// Address the dev service should bind. Defaults to `127.0.0.1:4250`.
+    #[arg(long, default_value = "127.0.0.1:4250")]
+    bind_addr: String,
+    /// Cap'n Proto TCP address for the dev service. Defaults to `127.0.0.1:4251`.
+    #[arg(long, default_value = "127.0.0.1:4251")]
+    capnp_tcp_addr: String,
 }
 
 #[derive(Debug, Args)]
@@ -1237,6 +1267,17 @@ async fn main() -> Result<()> {
             println!("{output}");
             return Ok(());
         }
+        Command::Dev(args) => {
+            match &args.command {
+                DevCommand::Init(init_args) => {
+                    let cwd = env::current_dir().context("read current directory")?;
+                    let repo_root = resolve_repo_root(&cwd)?;
+                    let output = initialize_dev_overlay(&repo_root, init_args)?;
+                    println!("{output}");
+                }
+            }
+            return Ok(());
+        }
         Command::Service(args) => {
             let config_path = cli_config
                 .clone()
@@ -1382,6 +1423,7 @@ async fn main() -> Result<()> {
     match command {
         Command::Wizard(_) => unreachable!("wizard is handled before config loading"),
         Command::Init(_) => unreachable!("init is handled before config loading"),
+        Command::Dev(_) => unreachable!("dev subcommands are handled before config loading"),
         Command::Service(ServiceArgs {
             command: ServiceCommand::Run,
         }) => unreachable!("service run is handled before config loading"),
@@ -3853,6 +3895,75 @@ fn initialize_repo(
         &agent_config_path,
         &skill_root,
         print_only,
+    ))
+}
+
+fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String> {
+    let mem_dir = repo_root.join(".mem");
+    if !mem_dir.is_dir() {
+        anyhow::bail!(
+            "no .mem/ directory found at {}. Run `memory init` first to bootstrap the \
+             base config before layering the dev overlay on top.",
+            mem_dir.display()
+        );
+    }
+    let overlay_path = mem_dir.join("config.dev.toml");
+    let runtime_dev_dir = mem_dir.join("runtime").join("dev");
+    let capnp_unix_socket = runtime_dev_dir.join("memory-layer.capnp.sock");
+    let state_file_path = runtime_dev_dir.join("automation-state.json");
+    let audit_log_path = runtime_dev_dir.join("automation.log");
+
+    let contents = format!(
+        "# Overlay on top of .mem/config.toml for the dev profile.\n\
+         # Active when MEMORY_LAYER_PROFILE=dev or the binary runs from a cargo target/ directory.\n\
+         # Only include keys that differ from the base config.\n\
+         \n\
+         [service]\n\
+         bind_addr = \"{bind_addr}\"\n\
+         capnp_tcp_addr = \"{capnp_tcp_addr}\"\n\
+         capnp_unix_socket = \"{capnp_unix_socket}\"\n\
+         \n\
+         [automation]\n\
+         state_file_path = \"{state_file_path}\"\n\
+         audit_log_path = \"{audit_log_path}\"\n\
+         \n\
+         [cluster]\n\
+         service_id = \"memory-layer-dev\"\n\
+         \n\
+         # The database connection is intentionally inherited from config.toml so the\n\
+         # dev stack can eat its own dogfood against real project memory.\n",
+        bind_addr = args.bind_addr,
+        capnp_tcp_addr = args.capnp_tcp_addr,
+        capnp_unix_socket = capnp_unix_socket.display(),
+        state_file_path = state_file_path.display(),
+        audit_log_path = audit_log_path.display(),
+    );
+
+    if args.dry_run {
+        return Ok(format!(
+            "[dry run] would write {} ({} bytes) and create {}\n\n{}",
+            overlay_path.display(),
+            contents.len(),
+            runtime_dev_dir.display(),
+            contents
+        ));
+    }
+
+    fs::create_dir_all(&runtime_dev_dir)
+        .with_context(|| format!("create {}", runtime_dev_dir.display()))?;
+    if overlay_path.exists() && !args.force {
+        return Ok(format!(
+            "dev overlay already present at {} (use --force to overwrite)",
+            overlay_path.display()
+        ));
+    }
+    fs::write(&overlay_path, &contents)
+        .with_context(|| format!("write {}", overlay_path.display()))?;
+    Ok(format!(
+        "wrote {} and ensured {}\nnext: run `cargo run --bin mem-service` in another shell, \
+         then `cargo run --bin memory -- tui`.",
+        overlay_path.display(),
+        runtime_dev_dir.display()
     ))
 }
 
@@ -8809,6 +8920,9 @@ mod tests {
             cluster: mem_api::ClusterConfig::default(),
             writer: mem_api::WriterConfig::default(),
             automation: mem_api::AutomationConfig::default(),
+            profile: mem_api::Profile::Prod,
+            resolved_config_path: None,
+            resolved_dev_overlay_path: None,
         }
     }
 

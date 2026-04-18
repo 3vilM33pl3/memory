@@ -19,7 +19,7 @@ use mem_agenttop::{
 };
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
-    NamedCount, PlanActivityAction, ProjectMemoriesResponse, ProjectMemoryListItem,
+    NamedCount, PlanActivityAction, Profile, ProjectMemoriesResponse, ProjectMemoryListItem,
     ProjectOverviewResponse, QueryFilters, QueryMatchKind, QueryRequest, QueryResponse,
     QueryResult, ReplacementPolicy, ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest,
     ResumeResponse, StreamRequest, StreamResponse, WatcherHealth, load_repo_replacement_policy,
@@ -64,11 +64,13 @@ impl Theme {
 pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> Result<()> {
     let (background_tx, mut background_rx) = mpsc::unbounded_channel();
     let mut terminal = setup_terminal()?;
+    let profile = api.config.profile;
     let mut app = App::new(
         project,
         repo_root,
         detect_tool_versions(),
         api.config.cluster.enabled,
+        profile,
         background_tx,
     );
     start_agent_snapshot_worker(app.background_tx.clone());
@@ -228,6 +230,7 @@ struct App {
     service_database_state: Option<String>,
     manager_status: Option<ManagerFooterStatus>,
     relay_discovery_enabled: bool,
+    profile: Profile,
     filters: Filters,
     input_mode: InputMode,
     startup_resume_autoselect_pending: bool,
@@ -331,6 +334,7 @@ impl App {
         repo_root: PathBuf,
         versions: ToolVersions,
         relay_discovery_enabled: bool,
+        profile: Profile,
         background_tx: mpsc::UnboundedSender<BackgroundEvent>,
     ) -> Self {
         let mut table_state = TableState::default();
@@ -389,6 +393,7 @@ impl App {
             service_database_state: None,
             manager_status: None,
             relay_discovery_enabled,
+            profile,
             filters: Filters::default(),
             input_mode: InputMode::Normal,
             startup_resume_autoselect_pending: true,
@@ -1778,12 +1783,13 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     .into_iter()
     .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
     .collect::<Vec<_>>();
+    let title = match app.profile {
+        Profile::Dev => format!("Memory Layer TUI [dev] - project {}", app.project),
+        Profile::Prod => format!("Memory Layer TUI - project {}", app.project),
+    };
     let tabs = Tabs::new(titles)
         .select(app.active_tab.index())
-        .block(
-            themed_block(format!("Memory Layer TUI - project {}", app.project))
-                .borders(Borders::ALL),
-        )
+        .block(themed_block(title).borders(Borders::ALL))
         .style(Style::default().fg(Theme::MUTED).bg(Theme::PANEL))
         .highlight_style(
             Style::default()
@@ -5687,7 +5693,9 @@ mod tests {
         should_attempt_stream_reconnect, watcher_bar_status_label,
     };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
-    use mem_api::{MemoryEntryResponse, MemoryStatus, MemoryType, WatcherPresenceSummary};
+    use mem_api::{
+        MemoryEntryResponse, MemoryStatus, MemoryType, Profile, WatcherPresenceSummary,
+    };
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
@@ -5727,6 +5735,7 @@ mod tests {
                 memory_watch: "0.4.3".to_string(),
             },
             false,
+            Profile::Prod,
             tx,
         );
         app.ui_status = UiStatus::Error;
@@ -5759,6 +5768,7 @@ mod tests {
                 memory_watch: "0.4.3".to_string(),
             },
             false,
+            Profile::Prod,
             tx,
         );
         app.health_ok = true;
@@ -5809,6 +5819,7 @@ mod tests {
                 memory_watch: "0.4.3".to_string(),
             },
             false,
+            Profile::Prod,
             tx,
         );
         app.manager_status = Some(super::ManagerFooterStatus {
@@ -5935,6 +5946,7 @@ mod tests {
                 memory_watch: "0.4.3".to_string(),
             },
             false,
+            Profile::Prod,
             tx,
         );
         let snapshot = AgentSnapshot {
@@ -5968,6 +5980,7 @@ mod tests {
                 memory_watch: "0.4.3".to_string(),
             },
             false,
+            Profile::Prod,
             tx,
         );
         let snapshot = AgentSnapshot {
@@ -6037,6 +6050,7 @@ mod tests {
                 memory_watch: "0.4.5".to_string(),
             },
             false,
+            Profile::Prod,
             tx,
         );
         app.selected_detail = Some(test_memory_detail(
@@ -6068,6 +6082,7 @@ mod tests {
                 memory_watch: "0.4.5".to_string(),
             },
             false,
+            Profile::Prod,
             tx,
         );
         app.selected_detail = Some(test_memory_detail("detail"));
@@ -6092,6 +6107,7 @@ mod tests {
                 memory_watch: "0.4.5".to_string(),
             },
             false,
+            Profile::Prod,
             tx,
         );
         let canonical = (0..40)

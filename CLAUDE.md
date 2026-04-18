@@ -13,6 +13,32 @@
   - `Chore:` for maintenance work that does not fit the categories above
 - Prefer the most specific prefix instead of defaulting to `Chore:`.
 
+## Dev stack (cargo-run) vs installed stack
+
+Binaries detect their profile at startup:
+
+- Any binary whose path sits under a `target/{debug,release}/` directory
+  alongside a `Cargo.toml` runs as **dev**.
+- Installed binaries (systemd units, `~/.cargo/bin/`, packaged installs)
+  run as **prod**.
+- Override with `MEMORY_LAYER_PROFILE=dev|prod` when needed.
+
+The dev profile skips the global config entirely and overlays
+`.mem/config.dev.toml` on top of the repo's `.mem/config.toml`. This
+keeps the dev service, watcher, and TUI on their own port, socket, and
+runtime directory while still sharing the project database, so the dev
+stack can run in parallel with a normally installed stack on the same
+host. The TUI header shows `[dev]` when it is on the dev profile.
+
+Bootstrap the overlay once, then run each piece via the single `memory`
+binary in a separate shell:
+
+```bash
+cargo run --bin memory -- dev init
+cargo run --bin memory -- service run   # dev service
+cargo run --bin memory -- tui           # dev TUI (spawns its watcher)
+```
+
 ## Memory Layer workflows
 
 This project uses Memory Layer to persist durable project knowledge. The `memory` CLI
