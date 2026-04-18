@@ -4484,6 +4484,10 @@ fn is_live_agent_session(session: &AgentSession) -> bool {
 }
 
 fn resolve_agent_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
+    // The session cwd may no longer exist (deleted repo, unmounted volume, etc.).
+    if !Path::new(cwd).is_dir() {
+        return Ok(None);
+    }
     let output = ProcessCommand::new("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(cwd)
