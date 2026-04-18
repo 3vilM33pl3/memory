@@ -144,6 +144,27 @@ fn classify_type(request: &CaptureTaskRequest, text: &str) -> MemoryType {
         || haystack.contains("business")
     {
         MemoryType::DomainFact
+    } else if haystack.contains("feedback")
+        || haystack.contains("correction")
+        || haystack.contains("stop doing")
+        || haystack.contains("keep doing")
+    {
+        MemoryType::Feedback
+    } else if haystack.contains("preference")
+        || haystack.contains("user role")
+        || haystack.contains("user wants")
+    {
+        MemoryType::User
+    } else if haystack.contains("deadline")
+        || haystack.contains("milestone")
+        || haystack.contains("initiative")
+    {
+        MemoryType::Project
+    } else if haystack.contains("dashboard")
+        || haystack.contains("tracked in")
+        || haystack.contains("external link")
+    {
+        MemoryType::Reference
     } else {
         MemoryType::Implementation
     }
