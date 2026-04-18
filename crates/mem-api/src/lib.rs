@@ -1557,6 +1557,65 @@ impl WatcherUnregisterRequest {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Profile {
+    Prod,
+    Dev,
+}
+
+impl Profile {
+    /// Resolve the active profile from (1) `MEMORY_LAYER_PROFILE` env var,
+    /// otherwise (2) the location of the running binary — a path under a
+    /// `target/{debug,release}/` directory counts as dev.
+    pub fn detect() -> Self {
+        if let Ok(value) = env::var("MEMORY_LAYER_PROFILE") {
+            match value.trim().to_ascii_lowercase().as_str() {
+                "dev" | "development" => return Profile::Dev,
+                "prod" | "production" | "" => return Profile::Prod,
+                _ => {}
+            }
+        }
+        if current_exe_is_in_cargo_target() {
+            return Profile::Dev;
+        }
+        Profile::Prod
+    }
+}
+
+impl fmt::Display for Profile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Profile::Prod => "prod",
+            Profile::Dev => "dev",
+        })
+    }
+}
+
+fn current_exe_is_in_cargo_target() -> bool {
+    let Ok(exe) = env::current_exe() else {
+        return false;
+    };
+    let mut saw_profile_dir = false;
+    for ancestor in exe.ancestors() {
+        let Some(name) = ancestor.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !saw_profile_dir {
+            if matches!(name, "debug" | "release") {
+                saw_profile_dir = true;
+            }
+            continue;
+        }
+        if name == "target" {
+            if let Some(parent) = ancestor.parent() {
+                return parent.join("Cargo.toml").is_file();
+            }
+            return false;
+        }
+    }
+    false
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub service: ServiceConfig,
@@ -1573,21 +1632,50 @@ pub struct AppConfig {
     pub writer: WriterConfig,
     #[serde(default)]
     pub automation: AutomationConfig,
+    #[serde(skip, default = "default_profile")]
+    pub profile: Profile,
+    /// Path of the resolved config file (base file in dev mode). Useful when
+    /// spawning subprocesses that must reuse the same config.
+    #[serde(skip)]
+    pub resolved_config_path: Option<PathBuf>,
+    /// Path of the dev overlay if one was applied.
+    #[serde(skip)]
+    pub resolved_dev_overlay_path: Option<PathBuf>,
+}
+
+fn default_profile() -> Profile {
+    Profile::Prod
 }
 
 impl AppConfig {
     pub fn load_from_path(path: Option<PathBuf>) -> Result<Self, ConfigError> {
+        Self::load_with_profile(path, Profile::detect())
+    }
+
+    pub fn load_with_profile(
+        path: Option<PathBuf>,
+        profile: Profile,
+    ) -> Result<Self, ConfigError> {
         let mut builder = Config::builder();
         let mut env_files = Vec::new();
+        let mut resolved_config_path: Option<PathBuf> = None;
+        let mut resolved_dev_overlay_path: Option<PathBuf> = None;
+
         if let Some(path) = path {
             env_files.push(env_path_for_config(&path));
+            resolved_config_path = Some(path.clone());
             builder = builder.add_source(File::from(path).required(false));
         } else {
-            if let Some(path) = discover_global_config_path() {
-                env_files.push(env_path_for_config(&path));
-                builder = builder.add_source(File::from(path).required(false));
-            } else {
-                builder = builder.add_source(File::with_name("memory-layer").required(false));
+            // Global config is part of the installed/prod stack; the dev
+            // stack ignores it so a cargo-run service cannot silently pick
+            // up the packaged machine-wide settings.
+            if profile == Profile::Prod {
+                if let Some(path) = discover_global_config_path() {
+                    env_files.push(env_path_for_config(&path));
+                    builder = builder.add_source(File::from(path).required(false));
+                } else {
+                    builder = builder.add_source(File::with_name("memory-layer").required(false));
+                }
             }
             if let Some(path) = discover_repo_config_path() {
                 env_files.push(
@@ -1595,7 +1683,26 @@ impl AppConfig {
                         .unwrap_or_else(|| Path::new("."))
                         .join("memory-layer.env"),
                 );
+                resolved_config_path = Some(path.clone());
                 builder = builder.add_source(File::from(path).required(false));
+            }
+        }
+
+        if profile == Profile::Dev {
+            let overlay_path = resolved_config_path
+                .as_deref()
+                .and_then(dev_overlay_path_for_base)
+                .or_else(discover_repo_dev_config_path);
+            match overlay_path {
+                Some(path) if path.is_file() => {
+                    resolved_dev_overlay_path = Some(path.clone());
+                    builder = builder.add_source(File::from(path).required(false));
+                }
+                _ => {
+                    return Err(ConfigError::Message(dev_overlay_missing_message(
+                        resolved_config_path.as_deref(),
+                    )));
+                }
             }
         }
 
@@ -1612,6 +1719,9 @@ impl AppConfig {
         normalize_legacy_config_keys(&mut value);
         let mut config: AppConfig =
             serde_json::from_value(value).map_err(|error| ConfigError::Foreign(Box::new(error)))?;
+        config.profile = profile;
+        config.resolved_config_path = resolved_config_path;
+        config.resolved_dev_overlay_path = resolved_dev_overlay_path;
         config.apply_runtime_defaults();
         Ok(config)
     }
@@ -1703,6 +1813,32 @@ fn env_path_for_config(path: &Path) -> PathBuf {
 pub fn discover_repo_config_path() -> Option<PathBuf> {
     let cwd = env::current_dir().ok()?;
     find_repo_config_path(&cwd)
+}
+
+pub fn dev_overlay_path_for_base(base: &Path) -> Option<PathBuf> {
+    base.parent().map(|parent| parent.join("config.dev.toml"))
+}
+
+pub fn discover_repo_dev_config_path() -> Option<PathBuf> {
+    let cwd = env::current_dir().ok()?;
+    for directory in cwd.ancestors() {
+        let candidate = directory.join(".mem").join("config.dev.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn dev_overlay_missing_message(base: Option<&Path>) -> String {
+    let hint = match base.and_then(Path::parent) {
+        Some(dir) => format!("{}/config.dev.toml", dir.display()),
+        None => "<repo>/.mem/config.dev.toml".to_string(),
+    };
+    format!(
+        "dev profile active but {hint} is missing. Run `memory dev init` to \
+         scaffold it, or set MEMORY_LAYER_PROFILE=prod to opt out."
+    )
 }
 
 pub fn discover_repo_env_path() -> Option<PathBuf> {
@@ -2404,7 +2540,7 @@ mod tests {
             env::remove_var("MEMORY_LAYER__DATABASE__URL");
             env::remove_var("MEMORY_LAYER__SERVICE__API_TOKEN");
         }
-        let config = AppConfig::load_from_path(Some(config_path)).unwrap();
+        let config = AppConfig::load_with_profile(Some(config_path), Profile::Prod).unwrap();
         unsafe {
             env::remove_var("MEMORY_LAYER__DATABASE__URL");
             env::remove_var("MEMORY_LAYER__SERVICE__API_TOKEN");
@@ -2440,7 +2576,7 @@ mod tests {
                 "postgresql://from-process-env",
             );
         }
-        let config = AppConfig::load_from_path(Some(config_path)).unwrap();
+        let config = AppConfig::load_with_profile(Some(config_path), Profile::Prod).unwrap();
         unsafe {
             env::remove_var("MEMORY_LAYER__DATABASE__URL");
         }
@@ -2491,7 +2627,7 @@ mod tests {
             env::set_var("XDG_CONFIG_HOME", &config_home);
         }
         env::set_current_dir(&repo_dir).unwrap();
-        let config = AppConfig::load_from_path(None).unwrap();
+        let config = AppConfig::load_with_profile(None, Profile::Prod).unwrap();
         env::set_current_dir(original_dir).unwrap();
         unsafe {
             env::remove_var("XDG_CONFIG_HOME");
@@ -2501,6 +2637,59 @@ mod tests {
             config.automation.capture_idle_threshold,
             Duration::from_secs(600)
         );
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn dev_profile_overlays_config_dev_toml_on_top_of_base() {
+        let temp_dir = unique_temp_dir("mem-api-dev-overlay");
+        let mem_dir = temp_dir.join(".mem");
+        fs::create_dir_all(&mem_dir).unwrap();
+        fs::write(
+            mem_dir.join("config.toml"),
+            "[service]\nbind_addr = \"10.0.0.1:4150\"\ncapnp_unix_socket = \"/tmp/prod.sock\"\ncapnp_tcp_addr = \"10.0.0.1:4151\"\napi_token = \"t\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://shared\"\n",
+        )
+        .unwrap();
+        fs::write(
+            mem_dir.join("config.dev.toml"),
+            "[service]\nbind_addr = \"127.0.0.1:4250\"\n",
+        )
+        .unwrap();
+
+        let config = AppConfig::load_with_profile(
+            Some(mem_dir.join("config.toml")),
+            Profile::Dev,
+        )
+        .unwrap();
+
+        assert_eq!(config.profile, Profile::Dev);
+        assert_eq!(config.service.bind_addr, "127.0.0.1:4250");
+        assert_eq!(config.database.url, "postgresql://shared");
+        assert_eq!(
+            config.resolved_dev_overlay_path.as_deref(),
+            Some(mem_dir.join("config.dev.toml").as_path())
+        );
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn dev_profile_errors_when_overlay_is_missing() {
+        let temp_dir = unique_temp_dir("mem-api-dev-overlay-missing");
+        let mem_dir = temp_dir.join(".mem");
+        fs::create_dir_all(&mem_dir).unwrap();
+        fs::write(
+            mem_dir.join("config.toml"),
+            "[service]\nbind_addr = \"10.0.0.1:4150\"\ncapnp_unix_socket = \"/tmp/p.sock\"\ncapnp_tcp_addr = \"10.0.0.1:4151\"\napi_token = \"t\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://shared\"\n",
+        )
+        .unwrap();
+
+        let err = AppConfig::load_with_profile(
+            Some(mem_dir.join("config.toml")),
+            Profile::Dev,
+        )
+        .unwrap_err();
+        let message = format!("{err}");
+        assert!(message.contains("config.dev.toml"), "message: {message}");
         let _ = fs::remove_dir_all(temp_dir);
     }
 
