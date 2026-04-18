@@ -22,7 +22,7 @@ use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
 use mem_agenttop::{AgentSession, AgentTop, SessionStatus};
 use mem_api::{
-    AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest,
+    AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest, MemoryType,
     CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest, CurateResponse,
     DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, PlanActivityAction,
     PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse,
@@ -1061,6 +1061,10 @@ struct RememberArgs {
     /// Explicit task title for the remember capture.
     #[arg(long)]
     title: Option<String>,
+    /// Memory type to assign (e.g., user, feedback, project, reference, implementation).
+    /// When set, overrides the automatic type classification.
+    #[arg(long = "type")]
+    memory_type: Option<String>,
     /// Original user prompt or task framing to attach to the capture.
     #[arg(long)]
     prompt: Option<String>,
@@ -5799,6 +5803,39 @@ memory remember --project {project} \
 ```
 
 This should default to storing durable project knowledge, not waiting for the user to ask.
+
+### Store user context
+Use when: you learn about the user's role, preferences, or expertise.
+
+```bash
+memory remember --project {project} --type user --note "<what you learned>"
+```
+
+### Store feedback
+Use when: the user corrects your approach or confirms a non-obvious choice.
+
+```bash
+memory remember --project {project} --type feedback \
+  --note "<rule or validated approach>" \
+  --note "<why: reason or context>"
+```
+
+### Store project context
+Use when: you learn about goals, deadlines, or ongoing initiatives.
+
+```bash
+memory remember --project {project} --type project \
+  --note "<fact or decision>" \
+  --note "<why: motivation or constraint>"
+```
+
+### Store external reference
+Use when: you learn about resources tracked in external systems.
+
+```bash
+memory remember --project {project} --type reference \
+  --note "<what the resource is and where to find it>"
+```
 "#
     )
 }
@@ -6902,7 +6939,7 @@ fn build_remember_request(
     let summary = args
         .summary
         .unwrap_or_else(|| derive_summary(project, &files_changed));
-    let implementation_candidate = build_remember_implementation_candidate(
+    let mut candidate = build_remember_implementation_candidate(
         &summary,
         &prompt,
         &args.notes,
@@ -6910,6 +6947,9 @@ fn build_remember_request(
         &tests,
         command_output.as_deref(),
     );
+    if let Some(type_str) = &args.memory_type {
+        candidate.memory_type = parse_memory_type_arg(type_str)?;
+    }
 
     Ok(CaptureTaskRequest {
         project: project.to_string(),
@@ -6922,11 +6962,34 @@ fn build_remember_request(
         git_diff_summary: None,
         tests,
         notes: args.notes,
-        structured_candidates: vec![implementation_candidate],
+        structured_candidates: vec![candidate],
         command_output,
         idempotency_key: None,
         dry_run: false,
     })
+}
+
+fn parse_memory_type_arg(value: &str) -> Result<MemoryType> {
+    match value {
+        "architecture" => Ok(MemoryType::Architecture),
+        "convention" => Ok(MemoryType::Convention),
+        "decision" => Ok(MemoryType::Decision),
+        "incident" => Ok(MemoryType::Incident),
+        "debugging" => Ok(MemoryType::Debugging),
+        "environment" => Ok(MemoryType::Environment),
+        "domain_fact" => Ok(MemoryType::DomainFact),
+        "plan" => Ok(MemoryType::Plan),
+        "implementation" => Ok(MemoryType::Implementation),
+        "user" => Ok(MemoryType::User),
+        "feedback" => Ok(MemoryType::Feedback),
+        "project" => Ok(MemoryType::Project),
+        "reference" => Ok(MemoryType::Reference),
+        _ => anyhow::bail!(
+            "unknown memory type '{value}'; expected one of: architecture, convention, \
+             decision, incident, debugging, environment, domain_fact, plan, implementation, \
+             user, feedback, project, reference"
+        ),
+    }
 }
 
 async fn save_checkpoint_with_activity(
@@ -7986,6 +8049,7 @@ mod tests {
             RememberArgs {
                 project: None,
                 title: None,
+                memory_type: None,
                 prompt: None,
                 summary: None,
                 notes: vec!["durable fact".to_string()],
