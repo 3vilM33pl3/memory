@@ -85,6 +85,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
             "Streaming updates enabled. Press r to force resync, q to exit.".to_string();
     }
 
+    let mut last_draw = Instant::now();
     loop {
         let mut stream_failed = false;
         if let Some(current_stream) = stream.as_mut() {
@@ -101,6 +102,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
                         format!("Streaming disconnected: {error}. Falling back to manual refresh.");
                     app.mark_service_unavailable();
                     app.ui_status = UiStatus::Error;
+                    app.needs_redraw = true;
                     stream_failed = true;
                 }
             }
@@ -120,25 +122,35 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
                         stream = Some(stream_session);
                         app.status_message =
                             "Backend reconnected. Refreshing project data...".to_string();
+                        app.needs_redraw = true;
                         app.refresh(&api, RefreshMode::Full).await;
                     }
                     Err(error) => {
                         app.status_message =
                             format!("Backend reachable, but stream subscription failed: {error}");
                         app.ui_status = UiStatus::Error;
+                        app.needs_redraw = true;
                     }
                 },
                 Err(_) => {}
             }
         }
-        terminal.draw(|frame| draw(frame, &app))?;
-        if event::poll(Duration::from_millis(200))? {
+        if app.needs_redraw || last_draw.elapsed() >= Duration::from_secs(1) {
+            terminal.draw(|frame| draw(frame, &app))?;
+            app.needs_redraw = false;
+            last_draw = Instant::now();
+        }
+        if event::poll(Duration::from_millis(500))? {
             match event::read()? {
                 Event::Key(key) if should_quit(key, &app) => break,
                 Event::Key(key) => {
                     if app.handle_key(key, &api, stream.as_mut()).await? {
                         break;
                     }
+                    app.needs_redraw = true;
+                }
+                Event::Resize(_, _) => {
+                    app.needs_redraw = true;
                 }
                 _ => {}
             }
@@ -161,7 +173,7 @@ fn start_agent_snapshot_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
             {
                 break;
             }
-            std::thread::sleep(Duration::from_secs(2));
+            std::thread::sleep(Duration::from_secs(5));
         }
     });
 }
@@ -177,7 +189,7 @@ fn start_manager_status_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
             {
                 break;
             }
-            std::thread::sleep(Duration::from_secs(2));
+            std::thread::sleep(Duration::from_secs(10));
         }
     });
 }
@@ -235,6 +247,7 @@ struct App {
     input_mode: InputMode,
     startup_resume_autoselect_pending: bool,
     background_tx: mpsc::UnboundedSender<BackgroundEvent>,
+    needs_redraw: bool,
 }
 
 struct ToolVersions {
@@ -398,10 +411,12 @@ impl App {
             input_mode: InputMode::Normal,
             startup_resume_autoselect_pending: true,
             background_tx,
+            needs_redraw: true,
         }
     }
 
     async fn refresh(&mut self, api: &ApiClient, mode: RefreshMode) {
+        self.needs_redraw = true;
         self.status_message = "Refreshing...".to_string();
         self.ui_status = if mode == RefreshMode::Startup {
             UiStatus::Loading
@@ -532,6 +547,7 @@ impl App {
     }
 
     fn mark_service_unavailable(&mut self) {
+        self.needs_redraw = true;
         self.health_ok = false;
         self.service_role = None;
         self.service_health_state = None;
@@ -588,6 +604,7 @@ impl App {
     }
 
     fn apply_background_event(&mut self, event: BackgroundEvent) {
+        self.needs_redraw = true;
         match event {
             BackgroundEvent::ResumeLoaded {
                 response,
@@ -1088,6 +1105,7 @@ impl App {
     }
 
     fn apply_stream_response(&mut self, response: StreamResponse) {
+        self.needs_redraw = true;
         match response {
             StreamResponse::ProjectSnapshot { overview, memories }
             | StreamResponse::ProjectChanged { overview, memories } => {
