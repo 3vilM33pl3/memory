@@ -1668,7 +1668,9 @@ impl AppConfig {
         } else {
             // Global config is part of the installed/prod stack; the dev
             // stack ignores it so a cargo-run service cannot silently pick
-            // up the packaged machine-wide settings.
+            // up the packaged machine-wide settings. Bootstrap shared
+            // values (database URL, LLM endpoints) into .mem/config.dev.toml
+            // via `memory dev init --copy-from-global`.
             if profile == Profile::Prod {
                 if let Some(path) = discover_global_config_path() {
                     env_files.push(env_path_for_config(&path));

@@ -536,6 +536,14 @@ struct DevInitArgs {
     /// Cap'n Proto TCP address for the dev service. Defaults to `127.0.0.1:4251`.
     #[arg(long, default_value = "127.0.0.1:4251")]
     capnp_tcp_addr: String,
+    /// Copy database URL and LLM/embedding endpoints from the global config
+    /// into the dev overlay. Without this flag and without a TTY, nothing is
+    /// copied. With a TTY, the command asks interactively.
+    #[arg(long)]
+    copy_from_global: bool,
+    /// Skip the interactive prompt and leave shared settings out of the overlay.
+    #[arg(long, conflicts_with = "copy_from_global")]
+    no_copy_from_global: bool,
 }
 
 #[derive(Debug, Args)]
@@ -3918,10 +3926,13 @@ fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String
     let state_file_path = runtime_dev_dir.join("automation-state.json");
     let audit_log_path = runtime_dev_dir.join("automation.log");
 
-    let contents = format!(
+    let shared_snippet = resolve_shared_global_snippet(args)?;
+
+    let mut contents = format!(
         "# Overlay on top of .mem/config.toml for the dev profile.\n\
          # Active when MEMORY_LAYER_PROFILE=dev or the binary runs from a cargo target/ directory.\n\
-         # Only include keys that differ from the base config.\n\
+         # The dev profile does NOT read the global config — anything shared (database URL,\n\
+         # LLM endpoints) lives here. Re-run `memory dev init --copy-from-global` to refresh.\n\
          \n\
          [service]\n\
          bind_addr = \"{bind_addr}\"\n\
@@ -3933,16 +3944,17 @@ fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String
          audit_log_path = \"{audit_log_path}\"\n\
          \n\
          [cluster]\n\
-         service_id = \"memory-layer-dev\"\n\
-         \n\
-         # The database connection is intentionally inherited from config.toml so the\n\
-         # dev stack can eat its own dogfood against real project memory.\n",
+         service_id = \"memory-layer-dev\"\n",
         bind_addr = args.bind_addr,
         capnp_tcp_addr = args.capnp_tcp_addr,
         capnp_unix_socket = capnp_unix_socket.display(),
         state_file_path = state_file_path.display(),
         audit_log_path = audit_log_path.display(),
     );
+    if !shared_snippet.is_empty() {
+        contents.push('\n');
+        contents.push_str(&shared_snippet);
+    }
 
     if args.dry_run {
         return Ok(format!(
@@ -3965,10 +3977,66 @@ fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String
     fs::write(&overlay_path, &contents)
         .with_context(|| format!("write {}", overlay_path.display()))?;
     Ok(format!(
-        "wrote {} and ensured {}\nnext: run `cargo run --bin mem-service` in another shell, \
-         then `cargo run --bin memory -- tui`.",
+        "wrote {} and ensured {}\nnext: run `cargo run --bin memory -- service run` in another \
+         shell, then `cargo run --bin memory -- tui`.",
         overlay_path.display(),
         runtime_dev_dir.display()
+    ))
+}
+
+/// Tables we willingly copy from the global config into the dev overlay. The
+/// service endpoint + automation paths + cluster id are intentionally
+/// excluded so the dev stack always diverges where it matters.
+const SHARED_GLOBAL_SECTIONS: &[&str] =
+    &["database", "llm", "embeddings", "features", "writer"];
+
+fn resolve_shared_global_snippet(args: &DevInitArgs) -> Result<String> {
+    let Some(global_path) = mem_api::discover_global_config_path() else {
+        if args.copy_from_global {
+            anyhow::bail!(
+                "--copy-from-global was set but no global config was found \
+                 (expected one of the paths reported by `memory doctor`)"
+            );
+        }
+        return Ok(String::new());
+    };
+    let should_copy = if args.copy_from_global {
+        true
+    } else if args.no_copy_from_global {
+        false
+    } else if io::stdin().is_terminal() && io::stdout().is_terminal() {
+        prompt_yes_no(&format!(
+            "Copy shared settings (database URL, LLM/embedding endpoints) from {} into the dev overlay?",
+            global_path.display()
+        ))?
+    } else {
+        false
+    };
+    if !should_copy {
+        return Ok(String::new());
+    }
+    let raw = fs::read_to_string(&global_path)
+        .with_context(|| format!("read {}", global_path.display()))?;
+    let value: toml::Value = toml::from_str(&raw)
+        .with_context(|| format!("parse {}", global_path.display()))?;
+    let Some(table) = value.as_table() else {
+        return Ok(String::new());
+    };
+    let mut copied = toml::value::Table::new();
+    for section in SHARED_GLOBAL_SECTIONS {
+        if let Some(value) = table.get(*section) {
+            copied.insert((*section).to_string(), value.clone());
+        }
+    }
+    if copied.is_empty() {
+        return Ok(String::new());
+    }
+    let rendered = toml::to_string(&toml::Value::Table(copied))
+        .context("serialize shared sections")?;
+    Ok(format!(
+        "# Copied from {} — re-run `memory dev init --copy-from-global --force` to refresh.\n{}",
+        global_path.display(),
+        rendered
     ))
 }
 
