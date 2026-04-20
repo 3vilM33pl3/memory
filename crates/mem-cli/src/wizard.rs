@@ -1149,7 +1149,11 @@ fn draw_context(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
         lines.extend(result.lines.iter().map(|line| Line::from(line.as_str())));
         lines
     } else {
-        review_lines(&app.draft, app.step, &app.status)
+        let selected_field = app
+            .current_items()
+            .get(app.selected)
+            .map(|item| item.key);
+        review_lines(&app.draft, app.step, &app.status, selected_field)
     };
 
     let widget = Paragraph::new(lines)
@@ -1180,13 +1184,33 @@ fn footer_lines(app: &WizardApp) -> Vec<Line<'static>> {
     lines
 }
 
-fn review_lines(draft: &WizardDraft, step: Step, status: &str) -> Vec<Line<'static>> {
-    let mut lines = vec![Line::from(Span::styled(
+fn review_lines(
+    draft: &WizardDraft,
+    step: Step,
+    status: &str,
+    selected_field: Option<FieldKey>,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    if let Some(field) = selected_field {
+        lines.push(Line::from(Span::styled(
+            format!("About: {}", field_label(field)),
+            Style::default()
+                .fg(Color::LightYellow)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for line in field_description(field).lines() {
+            lines.push(Line::from(line.trim().to_string()));
+        }
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(Span::styled(
         "Planned changes",
         Style::default()
             .fg(Color::LightCyan)
             .add_modifier(Modifier::BOLD),
-    ))];
+    )));
     lines.push(Line::from(""));
 
     match step {
@@ -1826,6 +1850,106 @@ fn action_item(key: FieldKey, label: &str) -> StepItem {
     }
 }
 
+/// One-paragraph explanation of every field, rendered above the Context pane so
+/// the user never has to guess what a prompt is asking for. Keep lines under
+/// ~100 chars each and explain both what the value means and what each choice
+/// actually does, including any non-obvious side effects.
+fn field_description(field: FieldKey) -> &'static str {
+    match field {
+        FieldKey::IncludeGlobal => "Whether this run also edits machine-wide settings at \
+            ~/.config/memory-layer/memory-layer.toml (the shared DB URL, LLM endpoints, \
+            backend service). Pick No to only touch the current repo's .mem/ files.",
+        FieldKey::DatabaseUrl => "Postgres URL the service will connect to. Format: \
+            postgresql://user:password@host:port/dbname. Must be reachable from every host \
+            that runs the service; used by both the installed and dev stacks unless overridden.",
+        FieldKey::ApiToken => "Overrides MEMORY_LAYER__SERVICE__API_TOKEN for HTTP clients. \
+            Leave empty to keep the generated or existing token. Stored in the shared env \
+            file, not the TOML config, so it doesn't land in version control.",
+        FieldKey::LlmModelChoice => "Cycles through known OpenAI-compatible models for \
+            curation/summary calls. Pick Custom to type any other model name in the next \
+            field. Model names you pick here land in [llm].model in the global config.",
+        FieldKey::LlmCustomModel => "Free-form model identifier used when LLM model is set \
+            to Custom (e.g. a self-hosted deployment name). Ignored when a preset is chosen.",
+        FieldKey::LlmApiKeyEnv => "Name of the environment variable the service reads for \
+            the LLM API key (e.g. OPENAI_API_KEY). The wizard stores the variable *name* \
+            in config and the *value* in a neighbouring env file.",
+        FieldKey::LlmApiKeyValue => "Secret value written to the shared memory-layer.env. \
+            Leave empty to keep whatever's already on disk. Never committed; env files live \
+            outside version control.",
+        FieldKey::Project => "Short slug identifying the project in the memory DB. \
+            Defaults to the repo directory name; change only if you want this repo to share \
+            memory with a differently-named project.",
+        FieldKey::LocalDatabaseUrl => "Per-repo override for the Postgres URL. Empty means \
+            inherit the shared value. Set this if the dev stack needs its own database or a \
+            different credential than the installed stack.",
+        FieldKey::LocalLlmApiKeyValue => "Per-repo LLM API key. Written to .mem/memory-layer.env. \
+            Empty means inherit the shared key. Useful when a repo should use a different \
+            model provider or account than the machine default.",
+        FieldKey::LocalServiceMode => "Choose how the repo talks to the backend. \
+            'inherit shared' reuses the installed service bindings. 'parallel dev' runs a \
+            second service on repo-local ports so `cargo run` and the installed service can \
+            coexist; if you pick it, fill in the three address fields below.",
+        FieldKey::LocalBindAddr => "HTTP bind address for the repo-local (parallel-dev) \
+            service. Typically 127.0.0.1:<port>. Must not collide with the shared service.",
+        FieldKey::LocalCapnpTcpAddr => "Cap'n Proto TCP address for the repo-local service. \
+            Pair it with a port one above the HTTP port by convention.",
+        FieldKey::LocalCapnpUnixSocket => "Filesystem path for the repo-local Cap'n Proto \
+            Unix socket. Keep it inside the repo (e.g. .mem/runtime/memory-layer.capnp.sock) \
+            so it doesn't clash with other stacks on the host.",
+        FieldKey::RelayDiscoveryEnabled => "When Yes, the service advertises itself to \
+            cluster peers and can fall back to a peer's database if its own Postgres is \
+            unreachable. Pick No for a single-host install.",
+        FieldKey::ApplyRepoSetup => "When Yes, the wizard writes .mem/config.toml and \
+            .mem/project.toml for this repo. Pick No if you only want to configure the shared \
+            settings and leave the repo untouched.",
+        FieldKey::AutomationEnabled => "Master switch for the watcher's auto-capture loop. \
+            When Yes, file changes in this repo feed raw captures into the memory pipeline. \
+            When No, the watcher never captures on its own.",
+        FieldKey::AutomationMode => "'suggest' asks before capturing (review-gate). 'auto' \
+            captures immediately without a prompt. Only matters if Automation enabled is Yes.",
+        FieldKey::AutomationPollInterval => "How often the watcher checks for changes. \
+            Duration string (e.g. 10s, 1m). Shorter = lower capture latency + more CPU.",
+        FieldKey::AutomationCaptureIdleThreshold => "How long the repo must stay idle before \
+            a capture is emitted. Duration string (e.g. 5m). Protects against capturing \
+            half-written work in progress.",
+        FieldKey::AutomationMinChangedFiles => "Minimum number of changed files required \
+            before a capture fires. Integer. Keeps tiny, uninteresting edits out of memory.",
+        FieldKey::AutomationRequirePassingTest => "When Yes, the watcher skips captures \
+            whose accompanying `memory remember --tests` invocation reports a failing test. \
+            Useful to keep broken snapshots out of durable memory.",
+        FieldKey::AutomationCurateAfterCaptures => "After this many raw captures accumulate, \
+            the watcher runs curation to promote or replace durable memories. Integer.",
+        FieldKey::AutomationCurateOnExplicitFlush => "When Yes, running `memory flush` also \
+            triggers an immediate curation pass. When No, flush only closes out pending raw \
+            captures without curating.",
+        FieldKey::AutomationIgnoredPaths => "Comma-separated list of path prefixes the \
+            watcher skips (e.g. .git/, target/, .mem/). Runtime-only metadata directories \
+            belong here; source trees do not.",
+        FieldKey::EnableBackendService => "When Yes, the apply step installs and enables \
+            the systemd (or launchd on macOS) unit for the backend service so it starts on \
+            boot. Pick No to manage the service manually.",
+        FieldKey::EnableWatcher => "When Yes, the apply step installs a per-user watcher \
+            service for this repo so automation keeps running after you log out. Pick No to \
+            only run the watcher manually.",
+        FieldKey::ScanChoice => "Initial indexing pass after setup. 'Skip' does nothing. \
+            'Dry-run' walks the repo and prints what would be captured. 'Write' actually \
+            writes captures to the memory DB.",
+        FieldKey::RunDoctor => "When Yes, the apply step runs `memory doctor` at the end so \
+            you see health of the install (service reachable, DB up, paths resolved) before \
+            the wizard exits.",
+        FieldKey::Next => "Advance to the next step. Disabled on the Review step — use \
+            Apply there instead.",
+        FieldKey::Back => "Return to the previous step without losing entered values.",
+        FieldKey::Apply => "Execute every change listed in Planned changes. Respects the \
+            wizard's dry-run flag: in dry-run mode, Apply prints what it would do without \
+            writing anything.",
+        FieldKey::Finish => "Close the wizard after the Apply step finishes. Leaves you \
+            back at the shell.",
+        FieldKey::Cancel => "Exit the wizard without applying any changes. Already-edited \
+            values are discarded.",
+    }
+}
+
 fn field_label(field: FieldKey) -> &'static str {
     match field {
         FieldKey::IncludeGlobal => "Include shared/global setup",
@@ -1981,10 +2105,64 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        Step, WizardDraft, default_include_global, next_step, read_project_slug,
-        render_global_config,
+        FieldKey, Step, WizardDraft, default_include_global, field_description, field_label,
+        next_step, read_project_slug, render_global_config,
     };
     use mem_api::AutomationMode;
+
+    #[test]
+    fn every_field_key_has_a_non_trivial_description() {
+        // Exhaustive match in field_description guarantees coverage at compile
+        // time; this test additionally enforces that no description is a
+        // stub (empty or trivially short) so nobody accidentally ships a
+        // placeholder.
+        let keys = [
+            FieldKey::IncludeGlobal,
+            FieldKey::DatabaseUrl,
+            FieldKey::ApiToken,
+            FieldKey::LlmModelChoice,
+            FieldKey::LlmCustomModel,
+            FieldKey::LlmApiKeyEnv,
+            FieldKey::LlmApiKeyValue,
+            FieldKey::Project,
+            FieldKey::LocalDatabaseUrl,
+            FieldKey::LocalLlmApiKeyValue,
+            FieldKey::LocalServiceMode,
+            FieldKey::LocalBindAddr,
+            FieldKey::LocalCapnpTcpAddr,
+            FieldKey::LocalCapnpUnixSocket,
+            FieldKey::RelayDiscoveryEnabled,
+            FieldKey::ApplyRepoSetup,
+            FieldKey::AutomationEnabled,
+            FieldKey::AutomationMode,
+            FieldKey::AutomationPollInterval,
+            FieldKey::AutomationCaptureIdleThreshold,
+            FieldKey::AutomationMinChangedFiles,
+            FieldKey::AutomationRequirePassingTest,
+            FieldKey::AutomationCurateAfterCaptures,
+            FieldKey::AutomationCurateOnExplicitFlush,
+            FieldKey::AutomationIgnoredPaths,
+            FieldKey::EnableBackendService,
+            FieldKey::EnableWatcher,
+            FieldKey::ScanChoice,
+            FieldKey::RunDoctor,
+            FieldKey::Next,
+            FieldKey::Back,
+            FieldKey::Apply,
+            FieldKey::Finish,
+            FieldKey::Cancel,
+        ];
+        for key in keys {
+            let description = field_description(key);
+            assert!(
+                description.len() > 40,
+                "{:?} ({}) has a too-short description: {:?}",
+                key,
+                field_label(key),
+                description
+            );
+        }
+    }
 
     #[test]
     fn wizard_defaults_to_local_scope_inside_repo() {
