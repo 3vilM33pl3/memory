@@ -117,7 +117,7 @@ impl AgentSession {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SessionFile {
     pub pid: u32,
     #[serde(rename = "sessionId")]

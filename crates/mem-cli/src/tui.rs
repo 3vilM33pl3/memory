@@ -3,6 +3,11 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self as std_mpsc, RecvTimeoutError},
+    },
     time::{Duration, Instant},
 };
 
@@ -73,7 +78,13 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
         profile,
         background_tx,
     );
-    start_agent_snapshot_worker(app.background_tx.clone());
+    start_agent_snapshot_worker(
+        app.background_tx.clone(),
+        app.agents_tab_visible.clone(),
+        app.agent_wake_rx
+            .take()
+            .expect("agent_wake_rx present on fresh App"),
+    );
     start_manager_status_worker(app.background_tx.clone());
     terminal.draw(|frame| draw(frame, &app))?;
     app.refresh(&api, RefreshMode::Startup).await;
@@ -160,7 +171,17 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
     restore_terminal(terminal)
 }
 
-fn start_agent_snapshot_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
+/// Fast cadence used while the Agents tab is visible.
+const AGENT_POLL_ACTIVE: Duration = Duration::from_secs(5);
+/// Slow cadence used when no tab displays agent_snapshot. Switching to the
+/// Agents tab sends a wake signal so the user doesn't wait this long.
+const AGENT_POLL_IDLE: Duration = Duration::from_secs(30);
+
+fn start_agent_snapshot_worker(
+    tx: mpsc::UnboundedSender<BackgroundEvent>,
+    agents_tab_visible: Arc<AtomicBool>,
+    wake_rx: std_mpsc::Receiver<()>,
+) {
     std::thread::spawn(move || {
         let mut collector = mem_agenttop::AgentTop::new();
         loop {
@@ -173,7 +194,15 @@ fn start_agent_snapshot_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
             {
                 break;
             }
-            std::thread::sleep(Duration::from_secs(5));
+            let interval = if agents_tab_visible.load(Ordering::Relaxed) {
+                AGENT_POLL_ACTIVE
+            } else {
+                AGENT_POLL_IDLE
+            };
+            match wake_rx.recv_timeout(interval) {
+                Ok(()) | Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
         }
     });
 }
@@ -247,6 +276,17 @@ struct App {
     input_mode: InputMode,
     startup_resume_autoselect_pending: bool,
     background_tx: mpsc::UnboundedSender<BackgroundEvent>,
+    /// Signals the agent-snapshot worker whether the Agents tab is visible;
+    /// the worker switches between a fast and slow polling cadence based on
+    /// this flag.
+    agents_tab_visible: Arc<AtomicBool>,
+    /// Wakes the agent-snapshot worker immediately when the user switches
+    /// into the Agents tab, so they don't have to wait out the idle
+    /// cadence.
+    agent_wake_tx: std_mpsc::Sender<()>,
+    /// Receiver handed to the worker on startup. `Option` so `run()` can
+    /// take it via `.take()` once without requiring the field to be `Clone`.
+    agent_wake_rx: Option<std_mpsc::Receiver<()>>,
     needs_redraw: bool,
 }
 
@@ -358,6 +398,7 @@ impl App {
         agent_table_state.select(Some(0));
         let mut activity_table_state = TableState::default();
         activity_table_state.select(Some(0));
+        let (agent_wake_tx, agent_wake_rx) = std_mpsc::channel();
         Self {
             project: project.clone(),
             repo_root: repo_root.clone(),
@@ -411,7 +452,22 @@ impl App {
             input_mode: InputMode::Normal,
             startup_resume_autoselect_pending: true,
             background_tx,
+            agents_tab_visible: Arc::new(AtomicBool::new(false)),
+            agent_wake_tx,
+            agent_wake_rx: Some(agent_wake_rx),
             needs_redraw: true,
+        }
+    }
+
+    fn set_active_tab(&mut self, tab: TabKind) {
+        let became_agents = tab == TabKind::Agents && self.active_tab != TabKind::Agents;
+        self.active_tab = tab;
+        self.agents_tab_visible
+            .store(tab == TabKind::Agents, Ordering::Relaxed);
+        if became_agents {
+            // Wake the worker so the newly-opened tab shows fresh data
+            // rather than whatever the idle cadence last produced.
+            let _ = self.agent_wake_tx.send(());
         }
     }
 
@@ -623,7 +679,7 @@ impl App {
                             && checkpoint_present
                             && has_changes
                         {
-                            self.active_tab = TabKind::Resume;
+                            self.set_active_tab(TabKind::Resume);
                         }
                         self.status_message = if self.active_tab == TabKind::Resume {
                             "Resume loaded.".to_string()
@@ -739,19 +795,19 @@ impl App {
 
         match key.code {
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') if key.modifiers.is_empty() => {
-                self.active_tab = self.active_tab.next();
+                self.set_active_tab(self.active_tab.next());
                 if self.active_tab == TabKind::Resume && !self.resume_loaded {
                     self.request_resume_refresh(api, false);
                 }
             }
             KeyCode::BackTab if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() => {
-                self.active_tab = self.active_tab.prev();
+                self.set_active_tab(self.active_tab.prev());
                 if self.active_tab == TabKind::Resume && !self.resume_loaded {
                     self.request_resume_refresh(api, false);
                 }
             }
             KeyCode::Left | KeyCode::Char('h') if key.modifiers.is_empty() => {
-                self.active_tab = self.active_tab.prev();
+                self.set_active_tab(self.active_tab.prev());
                 if self.active_tab == TabKind::Resume && !self.resume_loaded {
                     self.request_resume_refresh(api, false);
                 }
@@ -910,7 +966,7 @@ impl App {
                     "Type search text, Enter to apply, Esc to cancel.".to_string();
             }
             KeyCode::Char('?') if key.modifiers.is_empty() => {
-                self.active_tab = TabKind::Query;
+                self.set_active_tab(TabKind::Query);
                 self.input_mode = InputMode::Query(self.query_text.clone());
                 self.status_message = "Type a question, Enter to run, Esc to cancel.".to_string();
             }
