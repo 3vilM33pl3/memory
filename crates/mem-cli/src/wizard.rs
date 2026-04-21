@@ -10,7 +10,9 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use mem_api::{AppConfig, AutomationMode, discover_global_config_path, read_repo_project_slug};
+use mem_api::{
+    AppConfig, AutomationMode, Profile, discover_global_config_path, read_repo_project_slug,
+};
 use mem_platform as platform;
 use ratatui::{
     Terminal,
@@ -39,6 +41,7 @@ pub(crate) async fn run(
     prefer_global: bool,
     dry_run: bool,
 ) -> Result<()> {
+    ensure_runnable_profile(Profile::detect())?;
     let mut terminal = setup_terminal()?;
     let mut app = WizardApp::new(cwd, repo_root, project, prefer_global, dry_run);
 
@@ -1850,6 +1853,24 @@ fn action_item(key: FieldKey, label: &str) -> StepItem {
     }
 }
 
+/// Refuse to run the wizard when the binary is in the dev profile. The
+/// wizard loads the current config (base + dev overlay when dev is active)
+/// and writes back to the base file on Apply, which silently undoes the
+/// overlay for the next cargo-run session. Rather than paper over that with
+/// provenance tags, we hard-stop dev-built binaries and tell the user how
+/// to bypass if they really mean it.
+fn ensure_runnable_profile(profile: Profile) -> Result<()> {
+    match profile {
+        Profile::Prod => Ok(()),
+        Profile::Dev => anyhow::bail!(
+            "memory wizard edits the installed config, but this binary is running in the \
+             dev profile (current_exe is inside a cargo target/ directory). Rerun with the \
+             installed binary, or set MEMORY_LAYER_PROFILE=prod to bypass if you know what \
+             you're doing."
+        ),
+    }
+}
+
 /// One-paragraph explanation of every field, rendered above the Context pane so
 /// the user never has to guess what a prompt is asking for. Keep lines under
 /// ~100 chars each and explain both what the value means and what each choice
@@ -2105,10 +2126,29 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        FieldKey, Step, WizardDraft, default_include_global, field_description, field_label,
-        next_step, read_project_slug, render_global_config,
+        FieldKey, Step, WizardDraft, default_include_global, ensure_runnable_profile,
+        field_description, field_label, next_step, read_project_slug, render_global_config,
     };
-    use mem_api::AutomationMode;
+    use mem_api::{AutomationMode, Profile};
+
+    #[test]
+    fn ensure_runnable_profile_allows_prod() {
+        assert!(ensure_runnable_profile(Profile::Prod).is_ok());
+    }
+
+    #[test]
+    fn ensure_runnable_profile_blocks_dev_with_actionable_message() {
+        let err = ensure_runnable_profile(Profile::Dev).expect_err("dev must be refused");
+        let message = format!("{err}");
+        assert!(
+            message.contains("dev profile"),
+            "expected refusal to name the profile, got: {message}"
+        );
+        assert!(
+            message.contains("MEMORY_LAYER_PROFILE=prod"),
+            "expected refusal to point at the env-var bypass, got: {message}"
+        );
+    }
 
     #[test]
     fn every_field_key_has_a_non_trivial_description() {
