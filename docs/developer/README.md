@@ -13,6 +13,7 @@ This section is for developers working on Memory Layer itself: architecture, int
 - [Architecture Overview](architecture/overview.md)
 - [Memory Types Reference](architecture/memory-types.md)
 - [How Memory Layer Works](architecture/how-it-works.md)
+- [Embeddings and Search](architecture/embeddings-and-search.md)
 - [Hidden Memory Daemon](architecture/hidden-memory-daemon.md)
 
 ## Implementation Material

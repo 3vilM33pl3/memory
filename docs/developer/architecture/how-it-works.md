@@ -342,6 +342,8 @@ The current implementation is PostgreSQL-first. It uses:
 
 Because chunk embeddings are stored in PostgreSQL with `pgvector`, current deployments need the `vector` extension installed even if semantic recall is not yet enabled in config.
 
+See [Embeddings and Search](embeddings-and-search.md) for the full pipeline — chunking, vector production, storage schema, the hybrid merge/re-rank weights, and the re-embed / prune maintenance surfaces.
+
 The query flow is:
 
 1. normalize and interpret the query

@@ -26,3 +26,4 @@ Memory Layer is a local-first project memory system for coding agents and develo
 - [Architecture Overview](developer/architecture/overview.md)
 - [Memory Types Reference](developer/architecture/memory-types.md)
 - [How Memory Layer Works](developer/architecture/how-it-works.md)
+- [Embeddings and Search](developer/architecture/embeddings-and-search.md)
