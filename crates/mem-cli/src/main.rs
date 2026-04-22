@@ -486,6 +486,8 @@ enum Command {
     Resume(ResumeArgs),
     #[command(about = "Ask a project-specific question against curated memory.", after_help = QUERY_AFTER_HELP)]
     Query(QueryArgs),
+    #[command(about = "Show the full version history for a memory, including tombstones.")]
+    History(HistoryArgs),
     #[command(about = "Scan a repository for candidate durable memories.", after_help = SCAN_AFTER_HELP)]
     Scan(ScanArgs),
     #[command(about = "Capture structured task context from a file.", after_help = CAPTURE_GROUP_AFTER_HELP)]
@@ -755,6 +757,17 @@ struct QueryArgs {
     #[arg(long)]
     history: bool,
     /// Emit the query result as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Show the full version history for a memory, including tombstones.")]
+struct HistoryArgs {
+    /// Any version's id (including a tombstone). The chain resolves via
+    /// canonical_id so passing any version id returns the same history.
+    memory_id: Uuid,
+    /// Emit the result as JSON.
     #[arg(long)]
     json: bool,
 }
@@ -1523,6 +1536,24 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string(&payload)?);
             } else {
                 print_query_response(payload);
+            }
+        }
+        Command::History(args) => {
+            let payload: mem_api::MemoryHistoryResponse = get_json(
+                client
+                    .get(service_url(
+                        &config,
+                        &format!("/v1/memory/{}/history", args.memory_id),
+                    ))
+                    .send()
+                    .await
+                    .context("history request failed")?,
+            )
+            .await?;
+            if args.json {
+                println!("{}", serde_json::to_string(&payload)?);
+            } else {
+                print_memory_history(&payload);
             }
         }
         Command::Repo(args) => {
@@ -6606,6 +6637,47 @@ async fn print_json_response(response: reqwest::Response) -> Result<()> {
     }
     println!("{body}");
     Ok(())
+}
+
+fn print_memory_history(payload: &mem_api::MemoryHistoryResponse) {
+    println!(
+        "Canonical {} in project {} — {} version(s)",
+        payload.canonical_id,
+        payload.project,
+        payload.versions.len()
+    );
+    for version in &payload.versions {
+        let marker = if version.is_tombstone {
+            " [tombstone]"
+        } else {
+            ""
+        };
+        let status_label = match version.status {
+            mem_api::MemoryStatus::Active => "active",
+            mem_api::MemoryStatus::Archived => "archived",
+        };
+        println!(
+            "\nv{} — {} ({}){}\n  id: {}\n  updated: {}",
+            version.version_no,
+            version.memory_type,
+            status_label,
+            marker,
+            version.id,
+            version.updated_at.to_rfc3339(),
+        );
+        if version.is_tombstone {
+            println!("  (empty — memory was deleted at this point)");
+        } else {
+            println!("  summary: {}", version.summary);
+            let preview: String = version.canonical_text.chars().take(240).collect();
+            let ellipsis = if version.canonical_text.chars().count() > 240 {
+                "..."
+            } else {
+                ""
+            };
+            println!("  text: {preview}{ellipsis}");
+        }
+    }
 }
 
 fn print_query_response(payload: QueryResponse) {

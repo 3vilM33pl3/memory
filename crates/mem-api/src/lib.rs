@@ -1323,6 +1323,16 @@ pub struct ProjectMemoriesResponse {
     pub items: Vec<ProjectMemoryListItem>,
 }
 
+/// Full version chain for a single canonical memory. Resolved from any
+/// version's `id`; the response walks back to the canonical_id and returns
+/// every row (including tombstones) ordered oldest → newest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryHistoryResponse {
+    pub canonical_id: Uuid,
+    pub project: String,
+    pub versions: Vec<MemoryEntryResponse>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryTypeCount {
     pub memory_type: MemoryType,

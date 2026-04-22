@@ -25,7 +25,8 @@ use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse,
     CaptureTaskRequest, CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest,
     CommitSyncResponse, CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse,
-    MemoryEntryResponse, MemorySourceRecord, PlanActivityAction, PlanActivityRequest,
+    MemoryEntryResponse, MemoryHistoryResponse, MemorySourceRecord, PlanActivityAction,
+    PlanActivityRequest,
     ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
     ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
     ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
@@ -374,6 +375,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/reembed", post(reembed))
         .route("/v1/prune-embeddings", post(prune_embeddings))
         .route("/v1/memory/{id}", get(get_memory))
+        .route("/v1/memory/{id}/history", get(get_memory_history))
         .route("/v1/memory", delete(delete_memory))
         .route("/v1/stats", get(stats))
         .route("/v1/projects/{slug}/commits", get(project_commits))
@@ -2413,6 +2415,70 @@ async fn get_memory(
         .map_err(ApiError::sql)?
         .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
     Ok(Json(detail))
+}
+
+async fn get_memory_history(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<MemoryHistoryResponse>, ApiError> {
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_get_json(&state, &format!("/v1/memory/{id}/history")).await?,
+        ));
+    }
+    let pool = state.pool()?;
+    // Walk back to the canonical_id of the provided version, then pull every
+    // sibling version in chronological order. The caller can pass any
+    // version's id (including a tombstone) and get the same chain.
+    let anchor = sqlx::query(
+        r#"
+        SELECT m.canonical_id, p.slug
+        FROM memory_entries m
+        JOIN projects p ON p.id = m.project_id
+        WHERE m.id = $1
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::sql)?
+    .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
+
+    let canonical_id: Uuid = anchor.try_get("canonical_id").map_err(ApiError::sql)?;
+    let project: String = anchor.try_get("slug").map_err(ApiError::sql)?;
+
+    let version_ids: Vec<Uuid> = sqlx::query(
+        r#"
+        SELECT id
+        FROM memory_entries
+        WHERE canonical_id = $1
+        ORDER BY version_no ASC
+        "#,
+    )
+    .bind(canonical_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::sql)?
+    .into_iter()
+    .map(|row| row.try_get::<Uuid, _>("id"))
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(ApiError::sql)?;
+
+    let mut versions = Vec::with_capacity(version_ids.len());
+    for version_id in version_ids {
+        if let Some(entry) = fetch_memory_entry(pool, version_id)
+            .await
+            .map_err(ApiError::sql)?
+        {
+            versions.push(entry);
+        }
+    }
+
+    Ok(Json(MemoryHistoryResponse {
+        canonical_id,
+        project,
+        versions,
+    }))
 }
 
 async fn stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, ApiError> {
