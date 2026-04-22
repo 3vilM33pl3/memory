@@ -1674,6 +1674,8 @@ pub struct AppConfig {
     pub writer: WriterConfig,
     #[serde(default)]
     pub automation: AutomationConfig,
+    #[serde(default)]
+    pub retention: RetentionConfig,
     #[serde(skip, default = "default_profile")]
     pub profile: Profile,
     /// Path of the resolved config file (base file in dev mode). Useful when
@@ -2195,6 +2197,64 @@ pub struct AutomationConfig {
     pub state_file_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RetentionConfig {
+    /// Delete a canonical memory entirely (all its versions) when its
+    /// latest version is a tombstone older than this duration. Default
+    /// None means "never prune tombstones".
+    #[serde(default, with = "humantime_serde::option")]
+    pub tombstone_after: Option<Duration>,
+    /// Delete superseded (non-latest, non-tombstone) versions whose
+    /// `updated_at` is older than this duration. The latest version of
+    /// each canonical memory is always kept. Default None means "never
+    /// prune superseded versions".
+    #[serde(default, with = "humantime_serde::option")]
+    pub superseded_after: Option<Duration>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PruneHistoryRequest {
+    /// Limit the prune to a single project. None means every project in
+    /// the database.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// Overrides `RetentionConfig::tombstone_after` for this call.
+    #[serde(default, with = "humantime_serde::option")]
+    pub tombstone_after: Option<Duration>,
+    /// Overrides `RetentionConfig::superseded_after` for this call.
+    #[serde(default, with = "humantime_serde::option")]
+    pub superseded_after: Option<Duration>,
+    /// When true, count what would be deleted without actually deleting.
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+impl PruneHistoryRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.tombstone_after.is_none() && self.superseded_after.is_none() {
+            return Err(ValidationError::new(
+                "no retention threshold configured; pass --tombstone-after or --superseded-after, \
+                 or set retention.tombstone_after / retention.superseded_after in config",
+            ));
+        }
+        if let Some(project) = &self.project {
+            if project.trim().is_empty() {
+                return Err(ValidationError::new("project must be non-empty when provided"));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PruneHistoryResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub canonicals_tombstoned_deleted: u64,
+    pub superseded_versions_pruned: u64,
+    pub dry_run: bool,
+}
+
 impl Default for AutomationConfig {
     fn default() -> Self {
         Self {
@@ -2378,6 +2438,42 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn prune_history_rejects_missing_thresholds() {
+        let request = PruneHistoryRequest::default();
+        let err = request.validate().expect_err("missing thresholds must fail");
+        let message = format!("{err}");
+        assert!(
+            message.contains("no retention threshold configured"),
+            "unexpected message: {message}"
+        );
+    }
+
+    #[test]
+    fn prune_history_accepts_either_threshold_alone() {
+        let req = PruneHistoryRequest {
+            tombstone_after: Some(Duration::from_secs(86_400)),
+            ..PruneHistoryRequest::default()
+        };
+        assert!(req.validate().is_ok());
+
+        let req = PruneHistoryRequest {
+            superseded_after: Some(Duration::from_secs(3_600)),
+            ..PruneHistoryRequest::default()
+        };
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn prune_history_rejects_empty_project_override() {
+        let req = PruneHistoryRequest {
+            project: Some(String::new()),
+            tombstone_after: Some(Duration::from_secs(10)),
+            ..PruneHistoryRequest::default()
+        };
+        assert!(req.validate().is_err());
+    }
 
     #[test]
     fn query_request_rejects_empty_query() {

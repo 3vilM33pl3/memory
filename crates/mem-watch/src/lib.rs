@@ -919,6 +919,7 @@ mod tests {
             cluster: mem_api::ClusterConfig::default(),
             writer: mem_api::WriterConfig::default(),
             automation: mem_api::AutomationConfig::default(),
+            retention: mem_api::RetentionConfig::default(),
             profile: mem_api::Profile::Prod,
             resolved_config_path: None,
             resolved_dev_overlay_path: None,

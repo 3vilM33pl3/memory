@@ -31,7 +31,8 @@ use mem_api::{
     ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
     ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
     ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
-    PruneEmbeddingsResponse, QueryRequest, ReembedRequest, ReembedResponse, ReindexRequest,
+    PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryRequest,
+    ReembedRequest, ReembedResponse, ReindexRequest,
     ReindexResponse, RelatedMemorySummary, ReplacementProposalListResponse,
     ReplacementProposalResolutionResponse, ResumeAction, ResumeRequest, ResumeResponse,
     ScanActivityRequest, SourceKind, StatsResponse, StreamRequest, StreamResponse, ValidationError,
@@ -377,6 +378,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/memory/{id}", get(get_memory))
         .route("/v1/memory/{id}/history", get(get_memory_history))
         .route("/v1/memory", delete(delete_memory))
+        .route("/v1/prune-history", post(prune_history))
         .route("/v1/stats", get(stats))
         .route("/v1/projects/{slug}/commits", get(project_commits))
         .route(
@@ -4261,6 +4263,153 @@ async fn delete_memory(
         project,
         summary,
         deleted: true,
+    }))
+}
+
+async fn prune_history(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<PruneHistoryRequest>,
+) -> Result<Json<PruneHistoryResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    // Fill missing thresholds from server config so the caller can rely on
+    // either source without duplicating the logic in every client.
+    let tombstone_after = request
+        .tombstone_after
+        .or(state.config.retention.tombstone_after);
+    let superseded_after = request
+        .superseded_after
+        .or(state.config.retention.superseded_after);
+    let effective = PruneHistoryRequest {
+        project: request.project.clone(),
+        tombstone_after,
+        superseded_after,
+        dry_run: request.dry_run,
+    };
+    effective.validate().map_err(ApiError::validation)?;
+
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/prune-history", &effective, true).await?,
+        ));
+    }
+
+    let pool = state.pool()?;
+    let mut tx = pool.begin().await.map_err(ApiError::sql)?;
+
+    let project_filter: Option<String> = effective.project.clone();
+    let dry_run = effective.dry_run;
+
+    let mut canonicals_tombstoned_deleted: u64 = 0;
+    if let Some(threshold) = effective.tombstone_after {
+        let seconds = threshold.as_secs_f64();
+        let count_sql = r#"
+            WITH latest AS (
+                SELECT DISTINCT ON (m.canonical_id)
+                       m.canonical_id, m.updated_at, m.is_tombstone
+                FROM memory_entries m
+                JOIN projects p ON p.id = m.project_id
+                WHERE ($1::text IS NULL OR p.slug = $1)
+                ORDER BY m.canonical_id, m.version_no DESC
+            )
+            SELECT COUNT(*) AS count
+            FROM latest
+            WHERE is_tombstone = TRUE
+              AND updated_at < now() - make_interval(secs => $2)
+        "#;
+        let count: i64 = sqlx::query(count_sql)
+            .bind(project_filter.as_deref())
+            .bind(seconds)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(ApiError::sql)?
+            .try_get("count")
+            .map_err(ApiError::sql)?;
+        canonicals_tombstoned_deleted = count.max(0) as u64;
+
+        if !dry_run && canonicals_tombstoned_deleted > 0 {
+            let delete_sql = r#"
+                WITH latest AS (
+                    SELECT DISTINCT ON (m.canonical_id)
+                           m.canonical_id, m.updated_at, m.is_tombstone
+                    FROM memory_entries m
+                    JOIN projects p ON p.id = m.project_id
+                    WHERE ($1::text IS NULL OR p.slug = $1)
+                    ORDER BY m.canonical_id, m.version_no DESC
+                ),
+                dead AS (
+                    SELECT canonical_id FROM latest
+                    WHERE is_tombstone = TRUE
+                      AND updated_at < now() - make_interval(secs => $2)
+                )
+                DELETE FROM memory_entries
+                WHERE canonical_id IN (SELECT canonical_id FROM dead)
+            "#;
+            sqlx::query(delete_sql)
+                .bind(project_filter.as_deref())
+                .bind(seconds)
+                .execute(&mut *tx)
+                .await
+                .map_err(ApiError::sql)?;
+        }
+    }
+
+    let mut superseded_versions_pruned: u64 = 0;
+    if let Some(threshold) = effective.superseded_after {
+        let seconds = threshold.as_secs_f64();
+        let count_sql = r#"
+            SELECT COUNT(*) AS count
+            FROM memory_entries m
+            JOIN projects p ON p.id = m.project_id
+            WHERE ($1::text IS NULL OR p.slug = $1)
+              AND m.is_tombstone = FALSE
+              AND m.updated_at < now() - make_interval(secs => $2)
+              AND m.version_no < (
+                  SELECT MAX(m2.version_no)
+                  FROM memory_entries m2
+                  WHERE m2.canonical_id = m.canonical_id
+              )
+        "#;
+        let count: i64 = sqlx::query(count_sql)
+            .bind(project_filter.as_deref())
+            .bind(seconds)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(ApiError::sql)?
+            .try_get("count")
+            .map_err(ApiError::sql)?;
+        superseded_versions_pruned = count.max(0) as u64;
+
+        if !dry_run && superseded_versions_pruned > 0 {
+            let delete_sql = r#"
+                DELETE FROM memory_entries m
+                USING projects p
+                WHERE m.project_id = p.id
+                  AND ($1::text IS NULL OR p.slug = $1)
+                  AND m.is_tombstone = FALSE
+                  AND m.updated_at < now() - make_interval(secs => $2)
+                  AND m.version_no < (
+                      SELECT MAX(m2.version_no)
+                      FROM memory_entries m2
+                      WHERE m2.canonical_id = m.canonical_id
+                  )
+            "#;
+            sqlx::query(delete_sql)
+                .bind(project_filter.as_deref())
+                .bind(seconds)
+                .execute(&mut *tx)
+                .await
+                .map_err(ApiError::sql)?;
+        }
+    }
+
+    tx.commit().await.map_err(ApiError::sql)?;
+
+    Ok(Json(PruneHistoryResponse {
+        project: project_filter,
+        canonicals_tombstoned_deleted,
+        superseded_versions_pruned,
+        dry_run,
     }))
 }
 

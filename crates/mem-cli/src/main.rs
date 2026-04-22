@@ -488,6 +488,8 @@ enum Command {
     Query(QueryArgs),
     #[command(about = "Show the full version history for a memory, including tombstones.")]
     History(HistoryArgs),
+    #[command(about = "Prune old memory versions and tombstoned canonicals.")]
+    PruneHistory(PruneHistoryArgs),
     #[command(about = "Scan a repository for candidate durable memories.", after_help = SCAN_AFTER_HELP)]
     Scan(ScanArgs),
     #[command(about = "Capture structured task context from a file.", after_help = CAPTURE_GROUP_AFTER_HELP)]
@@ -767,6 +769,30 @@ struct HistoryArgs {
     /// Any version's id (including a tombstone). The chain resolves via
     /// canonical_id so passing any version id returns the same history.
     memory_id: Uuid,
+    /// Emit the result as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Prune tombstoned canonical memories and superseded versions older than the configured thresholds."
+)]
+struct PruneHistoryArgs {
+    /// Limit the sweep to one project. Defaults to every project in the DB.
+    #[arg(long)]
+    project: Option<String>,
+    /// Duration (e.g. 30d, 12h) after which a tombstoned canonical's rows
+    /// are deleted entirely. Overrides config.retention.tombstone_after.
+    #[arg(long, value_parser = humantime::parse_duration)]
+    tombstone_after: Option<std::time::Duration>,
+    /// Duration after which non-latest, non-tombstone versions are
+    /// deleted. Overrides config.retention.superseded_after.
+    #[arg(long, value_parser = humantime::parse_duration)]
+    superseded_after: Option<std::time::Duration>,
+    /// Preview counts without touching the database.
+    #[arg(long)]
+    dry_run: bool,
     /// Emit the result as JSON.
     #[arg(long)]
     json: bool,
@@ -1554,6 +1580,39 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string(&payload)?);
             } else {
                 print_memory_history(&payload);
+            }
+        }
+        Command::PruneHistory(args) => {
+            let request = mem_api::PruneHistoryRequest {
+                project: args.project,
+                tombstone_after: args.tombstone_after,
+                superseded_after: args.superseded_after,
+                dry_run: args.dry_run,
+            };
+            let payload: mem_api::PruneHistoryResponse = get_json(
+                client
+                    .post(service_url(&config, "/v1/prune-history"))
+                    .headers(write_headers(&config)?)
+                    .json(&request)
+                    .send()
+                    .await
+                    .context("prune-history request failed")?,
+            )
+            .await?;
+            if args.json {
+                println!("{}", serde_json::to_string(&payload)?);
+            } else {
+                let verb = if payload.dry_run { "Would prune" } else { "Pruned" };
+                let scope = payload
+                    .project
+                    .as_deref()
+                    .map(|p| format!(" for project \"{p}\""))
+                    .unwrap_or_default();
+                println!(
+                    "{verb} {} canonical tombstone(s) and {} superseded version(s){scope}.",
+                    payload.canonicals_tombstoned_deleted,
+                    payload.superseded_versions_pruned
+                );
             }
         }
         Command::Repo(args) => {
@@ -9093,6 +9152,7 @@ mod tests {
             cluster: mem_api::ClusterConfig::default(),
             writer: mem_api::WriterConfig::default(),
             automation: mem_api::AutomationConfig::default(),
+            retention: mem_api::RetentionConfig::default(),
             profile: mem_api::Profile::Prod,
             resolved_config_path: None,
             resolved_dev_overlay_path: None,

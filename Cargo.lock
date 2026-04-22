@@ -1426,6 +1426,7 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
+ "humantime",
  "mem-agenttop",
  "mem-analyze",
  "mem-api",
