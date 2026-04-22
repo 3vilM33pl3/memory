@@ -6485,6 +6485,22 @@ impl ApiClient {
         .await
     }
 
+    pub(crate) async fn memory_history(
+        &self,
+        memory_id: &str,
+    ) -> Result<mem_api::MemoryHistoryResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/memory/{memory_id}/history"),
+                ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
     pub(crate) async fn sync_commits(
         &self,
         request: &CommitSyncRequest,

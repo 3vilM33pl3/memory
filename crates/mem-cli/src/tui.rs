@@ -232,6 +232,10 @@ struct App {
     total_memories: i64,
     overview: ProjectOverviewResponse,
     selected_detail: Option<MemoryEntryResponse>,
+    /// History of the selected memory, loaded on demand via the `H`
+    /// keystroke. When Some, the detail pane renders the version chain
+    /// instead of the usual single-version detail.
+    selected_history: Option<mem_api::MemoryHistoryResponse>,
     selected_index: usize,
     table_state: TableState,
     query_text: String,
@@ -408,6 +412,7 @@ impl App {
             total_memories: 0,
             overview: empty_overview(project),
             selected_detail: None,
+            selected_history: None,
             selected_index: 0,
             table_state,
             query_text: String::new(),
@@ -1043,10 +1048,47 @@ impl App {
                     self.delete_selected_query_memory(api).await?;
                 }
             }
+            KeyCode::Char('H') if key.modifiers == KeyModifiers::SHIFT => {
+                if self.active_tab == TabKind::Memories {
+                    self.toggle_selected_history(api).await;
+                }
+            }
             KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => return Ok(true),
             _ => {}
         }
         Ok(false)
+    }
+
+    async fn toggle_selected_history(&mut self, api: &ApiClient) {
+        // Second press hides the chain and returns to the single-version
+        // detail view — cheap UX for users who don't want a dedicated
+        // close key.
+        if self.selected_history.is_some() {
+            self.selected_history = None;
+            self.memory_detail_scroll = 0;
+            self.status_message = "Hid version history.".to_string();
+            return;
+        }
+        let Some(item) = self.filtered_memories.get(self.selected_index) else {
+            self.status_message = "No memory selected.".to_string();
+            return;
+        };
+        self.status_message = "Loading version history...".to_string();
+        match api.memory_history(&item.id.to_string()).await {
+            Ok(history) => {
+                self.status_message = format!(
+                    "Loaded {} version(s) for canonical {}.",
+                    history.versions.len(),
+                    history.canonical_id
+                );
+                self.selected_history = Some(history);
+                self.memory_detail_scroll = 0;
+                self.memories_focus = MemoriesFocus::Detail;
+            }
+            Err(error) => {
+                self.status_message = format!("History unavailable: {error}");
+            }
+        }
     }
 
     async fn handle_text_input(
@@ -1122,6 +1164,7 @@ impl App {
         mut stream: Option<&mut StreamSession>,
     ) {
         self.selected_detail = None;
+        self.selected_history = None;
         self.memory_detail_scroll = 0;
         self.memories_focus = MemoriesFocus::List;
         if let Some(item) = self.filtered_memories.get(self.selected_index) {
@@ -1153,6 +1196,7 @@ impl App {
             self.selected_index = 0;
             self.table_state.select(None);
             self.selected_detail = None;
+            self.selected_history = None;
             self.memories_focus = MemoriesFocus::List;
         } else {
             self.selected_index = self.selected_index.min(self.filtered_memories.len() - 1);
@@ -1917,10 +1961,10 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             Span::styled(
                 match app.memories_focus {
                     MemoriesFocus::List => {
-                        "Enter=detail  j/k=select  PgUp/PgDn/Home/End=scroll  clear=x curate=c reindex=i reembed=e archive=a delete=D"
+                        "Enter=detail  j/k=select  PgUp/PgDn/Home/End=scroll  clear=x curate=c reindex=i reembed=e archive=a delete=D history=H"
                     }
                     MemoriesFocus::Detail => {
-                        "Enter/Esc=list  j/k=scroll  PgUp/PgDn/Home/End=scroll  clear=x curate=c reindex=i reembed=e archive=a delete=D"
+                        "Enter/Esc=list  j/k=scroll  PgUp/PgDn/Home/End=scroll  clear=x curate=c reindex=i reembed=e archive=a delete=D history=H"
                     }
                 },
                 Style::default().fg(Theme::MUTED),
@@ -2250,7 +2294,99 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(detail, chunks[1]);
 }
 
+fn build_history_lines(history: &mem_api::MemoryHistoryResponse) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    lines.push(Line::from(vec![
+        label_span("Canonical: "),
+        Span::styled(
+            history.canonical_id.to_string(),
+            Style::default().fg(Theme::TEXT),
+        ),
+        Span::raw("   "),
+        label_span("Versions: "),
+        Span::styled(
+            history.versions.len().to_string(),
+            Style::default().fg(Theme::ACCENT_STRONG),
+        ),
+    ]));
+    lines.push(Line::from(Span::styled(
+        "Press Shift+H again to return to the single-version detail.",
+        Style::default().fg(Theme::MUTED),
+    )));
+    lines.push(Line::from(""));
+    for version in &history.versions {
+        let header_style = if version.is_tombstone {
+            Style::default().fg(Theme::DANGER).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(Theme::ACCENT_STRONG)
+                .add_modifier(Modifier::BOLD)
+        };
+        let tombstone_suffix = if version.is_tombstone {
+            "  [tombstone]"
+        } else {
+            ""
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("v{}", version.version_no), header_style),
+            Span::raw("  "),
+            memory_type_span(&version.memory_type),
+            Span::raw("  "),
+            status_span(match version.status {
+                MemoryStatus::Active => "active",
+                MemoryStatus::Archived => "archived",
+            }),
+            Span::styled(
+                tombstone_suffix.to_string(),
+                Style::default().fg(Theme::DANGER),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            label_span("id: "),
+            Span::styled(
+                version.id.to_string(),
+                Style::default().fg(Theme::MUTED),
+            ),
+            Span::raw("   "),
+            label_span("updated: "),
+            Span::styled(
+                format_timestamp_medium(version.updated_at),
+                Style::default().fg(Theme::MUTED),
+            ),
+        ]));
+        if version.is_tombstone {
+            lines.push(Line::from(Span::styled(
+                "  (empty — memory was deleted at this point)",
+                Style::default().fg(Theme::MUTED),
+            )));
+        } else {
+            lines.push(Line::from(vec![
+                label_span("summary: "),
+                Span::styled(
+                    version.summary.clone(),
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]));
+            let preview: String = version.canonical_text.chars().take(320).collect();
+            let ellipsis = if version.canonical_text.chars().count() > 320 {
+                "..."
+            } else {
+                ""
+            };
+            lines.push(Line::from(Span::styled(
+                format!("{preview}{ellipsis}"),
+                Style::default().fg(Theme::TEXT),
+            )));
+        }
+        lines.push(Line::from(""));
+    }
+    lines
+}
+
 fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
+    if let Some(history) = &app.selected_history {
+        return build_history_lines(history);
+    }
     if let Some(detail) = &app.selected_detail {
         let mut lines = vec![
             Line::from(vec![
@@ -3588,11 +3724,25 @@ fn memory_row(item: &ProjectMemoryListItem) -> Row<'static> {
         MemoryStatus::Active => Style::default().fg(Theme::TEXT).bg(Theme::PANEL),
         MemoryStatus::Archived => Style::default().fg(Theme::MUTED).bg(Theme::PANEL),
     };
+    // Build the summary cell with an optional "v2"/"v3"/... badge so the
+    // user can tell at a glance that the row is a replacement rather than
+    // an original capture. v1 never shows a badge to keep the list clean.
+    let mut summary_spans = Vec::with_capacity(2);
+    summary_spans.push(Span::styled(
+        item.summary.clone(),
+        Style::default().fg(Theme::TEXT),
+    ));
+    if item.version_no > 1 {
+        summary_spans.push(Span::raw("  "));
+        summary_spans.push(Span::styled(
+            format!("v{}", item.version_no),
+            Style::default()
+                .fg(Theme::ACCENT_STRONG)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     Row::new(vec![
-        Cell::from(Span::styled(
-            item.summary.clone(),
-            Style::default().fg(Theme::TEXT),
-        )),
+        Cell::from(Line::from(summary_spans)),
         Cell::from(memory_type_span(&item.memory_type)),
         Cell::from(status_span(match item.status {
             MemoryStatus::Active => "active",
