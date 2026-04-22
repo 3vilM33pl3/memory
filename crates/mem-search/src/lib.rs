@@ -1,38 +1,36 @@
 use std::{
     collections::{HashMap, HashSet},
+    sync::Arc,
     time::Instant,
 };
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
-    AppConfig, EmbeddingConfig, MemoryRelationType, MemoryType, QueryDiagnostics, QueryMatchKind,
-    QueryRequest, QueryResponse, QueryResult, QueryResultDebug, QuerySource, SourceKind,
-    resolve_secret_value,
+    AppConfig, MemoryRelationType, MemoryType, QueryDiagnostics, QueryMatchKind, QueryRequest,
+    QueryResponse, QueryResult, QueryResultDebug, QuerySource, SourceKind,
 };
 use pgvector::Vector;
-use reqwest::header;
-use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
+
+mod embedding_backend;
+
+pub use embedding_backend::EmbeddingPurpose;
+use embedding_backend::{EmbeddingBackend, EmbeddingSpace};
 
 const MAX_CANDIDATES: i64 = 64;
 const CHUNK_TARGET_SIZE: usize = 320;
 const CHUNK_OVERLAP: usize = 80;
 
+/// Wrapper around a single embedding backend. The trait lives in
+/// `embedding_backend`; this struct exists so the rest of the crate keeps a
+/// stable `EmbeddingService` type without depending on the trait object
+/// directly.
 #[derive(Clone)]
 pub struct EmbeddingService {
-    client: reqwest::Client,
-    config: EmbeddingConfig,
-    api_key: String,
-}
-
-#[derive(Debug, Clone)]
-struct EmbeddingSpace {
-    provider: String,
-    base_url: String,
-    model: String,
-    space_key: String,
+    backend: Arc<dyn EmbeddingBackend>,
+    batch_size: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -44,85 +42,48 @@ struct EmbeddingBatch {
 
 impl EmbeddingService {
     pub fn from_config(config: &AppConfig) -> Option<Self> {
-        if config.embeddings.provider.trim() != "openai_compatible"
-            || config.embeddings.model.trim().is_empty()
-        {
-            return None;
-        }
-        let api_key = resolve_secret_value(&config.embeddings.api_key_env)?;
-        if api_key.trim().is_empty() {
-            return None;
-        }
+        let backend = embedding_backend::build_backend(&config.embeddings)?;
         Some(Self {
-            client: reqwest::Client::new(),
-            config: config.embeddings.clone(),
-            api_key,
+            backend,
+            batch_size: config.embeddings.batch_size.max(1),
         })
     }
 
-    async fn embed_texts(&self, input: &[String]) -> Result<EmbeddingBatch> {
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
+    }
+
+    async fn embed_texts(
+        &self,
+        input: &[String],
+        purpose: EmbeddingPurpose,
+    ) -> Result<EmbeddingBatch> {
         if input.is_empty() {
             return Ok(EmbeddingBatch {
-                space: self.embedding_space(),
+                space: self.backend.space().clone(),
                 dimension: 0,
                 vectors: Vec::new(),
             });
         }
-
-        let request = EmbeddingRequest {
-            model: self.config.model.clone(),
-            input: input.to_vec(),
-        };
-        let response = self
-            .client
-            .post(format!(
-                "{}/embeddings",
-                self.config.base_url.trim_end_matches('/')
-            ))
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
-            .header(header::CONTENT_TYPE, "application/json")
-            .json(&request)
-            .send()
+        let vectors = self
+            .backend
+            .embed(input, purpose)
             .await
-            .context("send embedding request")?;
-
-        let status = response.status();
-        let body = response.text().await.context("read embedding response")?;
-        if !status.is_success() {
-            anyhow::bail!("embedding request failed: {status} {body}");
-        }
-
-        let parsed: EmbeddingResponse =
-            serde_json::from_str(&body).context("parse embedding response")?;
-        let mut data = parsed.data;
-        data.sort_by_key(|item| item.index);
-        let vectors = data
-            .into_iter()
-            .map(|item| Vector::from(item.embedding))
-            .collect::<Vec<_>>();
+            .context("embedding backend request")?;
         let dimension = vectors.first().map(vector_dimension).unwrap_or(0);
         Ok(EmbeddingBatch {
-            space: self.embedding_space(),
+            space: self.backend.space().clone(),
             dimension,
             vectors,
         })
     }
 
     fn embedding_space(&self) -> EmbeddingSpace {
-        let base_url = self.config.base_url.trim_end_matches('/').to_string();
-        let provider = self.config.provider.trim().to_string();
-        let model = self.config.model.trim().to_string();
-        let space_key = format!("{provider}|{base_url}|{model}");
-        EmbeddingSpace {
-            provider,
-            base_url,
-            model,
-            space_key,
-        }
+        self.backend.space().clone()
     }
 
     pub fn embedding_space_key(&self) -> String {
-        self.embedding_space().space_key
+        self.backend.space().space_key.clone()
     }
 }
 
@@ -137,23 +98,6 @@ fn empty_embedding_batch() -> EmbeddingBatch {
         dimension: 0,
         vectors: Vec::new(),
     }
-}
-
-#[derive(Debug, Serialize)]
-struct EmbeddingRequest {
-    model: String,
-    input: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EmbeddingResponse {
-    data: Vec<EmbeddingItem>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EmbeddingItem {
-    index: usize,
-    embedding: Vec<f32>,
 }
 
 pub async fn query_memory(
@@ -174,7 +118,7 @@ pub async fn query_memory(
     let semantic_started = Instant::now();
     let (semantic_candidates, semantic_status) = if let Some(embedder) = embedder {
         match embedder
-            .embed_texts(std::slice::from_ref(&request.query))
+            .embed_texts(std::slice::from_ref(&request.query), EmbeddingPurpose::Query)
             .await
         {
             Ok(embedding_batch) => {
@@ -319,7 +263,7 @@ pub async fn rebuild_chunks(
         let chunks = split_search_chunks(&summary, &canonical_text);
         let embedding_batch = if let Some(embedder) = embedder {
             embedder
-                .embed_texts(&chunks)
+                .embed_texts(&chunks, EmbeddingPurpose::Document)
                 .await
                 .context("embed rebuilt chunks")?
         } else {
@@ -403,7 +347,7 @@ pub async fn reembed_project_chunks(
     }
 
     let mut reembedded_chunks = 0u64;
-    for batch in rows.chunks(embedder.config.batch_size.max(1)) {
+    for batch in rows.chunks(embedder.batch_size()) {
         let chunk_ids = batch
             .iter()
             .map(|row| row.try_get::<Uuid, _>("id"))
@@ -415,7 +359,7 @@ pub async fn reembed_project_chunks(
             .collect::<Result<Vec<_>, _>>()
             .context("decode stale chunk texts")?;
         let embeddings = embedder
-            .embed_texts(&texts)
+            .embed_texts(&texts, EmbeddingPurpose::Document)
             .await
             .context("embed stale chunks")?;
 

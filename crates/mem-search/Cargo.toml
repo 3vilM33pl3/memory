@@ -15,3 +15,8 @@ serde_json.workspace = true
 sqlx.workspace = true
 pgvector.workspace = true
 uuid.workspace = true
+async-trait = "0.1"
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

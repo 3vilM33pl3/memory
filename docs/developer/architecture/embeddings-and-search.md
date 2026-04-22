@@ -33,17 +33,32 @@ line 1344; called from `rebuild_memory_chunks` at line 290.
 
 ## How vectors are produced
 
-The `EmbeddingService` struct in `crates/mem-search/src/lib.rs:24`
-holds a `reqwest::Client` plus an `EmbeddingConfig { provider,
-base_url, model, api_key_env, batch_size }`. Its only remote call is
-`embed_texts(&[String])`, which POSTs `{base_url}/embeddings` with a
-JSON body of `{model, input: [...]}` and a Bearer token resolved
-from `api_key_env`.
+`EmbeddingService` (`crates/mem-search/src/lib.rs`) is a thin wrapper
+around a trait object: `Arc<dyn EmbeddingBackend>`. Each backend
+lives in `crates/mem-search/src/embedding_backend.rs` and speaks its
+provider's native REST dialect. The service chooses a backend from
+`config.embeddings.provider`:
 
-The only currently implemented provider is `openai_compatible`, so
-anything speaking the OpenAI embeddings API plugs in: OpenAI itself,
-`ollama`, `llama-server`, a hosted proxy, etc. Default base URL is
-`https://api.openai.com/v1`.
+| Provider string | Backend | Default `base_url` | Auth | Notes |
+|---|---|---|---|---|
+| `openai_compatible` *(or `openai`)* | `OpenAiBackend` | `https://api.openai.com/v1` | `Authorization: Bearer` | Works for OpenAI, Ollama, llama-server, local proxies. Ignores document/query distinction. |
+| `voyage` | `VoyageBackend` | `https://api.voyageai.com` | `Authorization: Bearer` | Anthropic's recommended partner. Uses `input_type: document` at index time, `query` at query time. |
+| `cohere` | `CohereBackend` | `https://api.cohere.com` | `Authorization: Bearer` | Posts to `/v2/embed`. Uses `input_type: search_document` / `search_query`. Response carries vectors under `embeddings.float`. |
+| `gemini` | `GeminiBackend` | `https://generativelanguage.googleapis.com/v1beta` | `x-goog-api-key` | Model goes in the URL path (`/models/{model}:batchEmbedContents`) and is `"models/{model}"`-qualified in the body. Uses `taskType: RETRIEVAL_DOCUMENT` / `RETRIEVAL_QUERY`. |
+
+All backends take their API key from the env var named in
+`embeddings.api_key_env` (`OPENAI_API_KEY`, `VOYAGE_API_KEY`,
+`COHERE_API_KEY`, `GEMINI_API_KEY` are common choices).
+
+Every `embed_texts` call also carries an `EmbeddingPurpose`:
+
+- `Document` — for chunks we're storing.
+- `Query` — for the single embedding produced when a user asks a
+  question.
+
+OpenAI ignores the purpose; Voyage, Cohere, and Gemini each map it
+onto their native "are you indexing or searching?" hint, which
+measurably improves retrieval quality on those providers.
 
 The identity of a vector space is derived from the config:
 
@@ -239,7 +254,8 @@ fully populated and queries against it return reasonable results.
 
 | What | Where |
 |---|---|
-| `EmbeddingService`, `EmbeddingConfig`, `embed_texts` | `crates/mem-search/src/lib.rs:24, 63` |
+| `EmbeddingService`, `embed_texts`, `EmbeddingPurpose` | `crates/mem-search/src/lib.rs` + `embedding_backend.rs` |
+| `EmbeddingBackend` trait + OpenAI/Voyage/Cohere/Gemini impls | `crates/mem-search/src/embedding_backend.rs` |
 | `split_search_chunks` (chunker) | `crates/mem-search/src/lib.rs:1344` |
 | `rebuild_memory_chunks` | `crates/mem-search/src/lib.rs:290` |
 | `upsert_chunk_embedding` | `crates/mem-search/src/lib.rs:901` |
