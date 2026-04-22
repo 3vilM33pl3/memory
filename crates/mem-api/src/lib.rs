@@ -239,6 +239,12 @@ pub struct QueryRequest {
     pub top_k: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_confidence: Option<f32>,
+    /// When true, search across every version of every canonical memory
+    /// (including tombstones). Default is false, which restricts the search
+    /// to the latest non-tombstone version per canonical_id. Use for
+    /// deep-history or audit-style queries.
+    #[serde(default)]
+    pub history: bool,
 }
 
 impl QueryRequest {
@@ -500,6 +506,23 @@ pub struct MemoryEntryResponse {
     pub related_memories: Vec<RelatedMemorySummary>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Stable identifier shared by every version of this logical memory.
+    /// Equal to `id` for never-edited memories.
+    #[serde(default)]
+    pub canonical_id: Uuid,
+    /// 1-indexed version counter within `canonical_id`. New edits or
+    /// replacements bump this by one; tombstone deletes also bump it.
+    #[serde(default = "default_version_no")]
+    pub version_no: i32,
+    /// True when this row is the "deleted" sentinel. Content fields are
+    /// empty on tombstones; clients should treat the canonical memory
+    /// as gone unless they explicitly asked for history.
+    #[serde(default)]
+    pub is_tombstone: bool,
+}
+
+fn default_version_no() -> i32 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1282,6 +1305,15 @@ pub struct ProjectMemoryListItem {
     pub tags: Vec<String>,
     pub tag_count: i64,
     pub source_count: i64,
+    /// Stable identifier shared by every version of this memory.
+    #[serde(default)]
+    pub canonical_id: Uuid,
+    /// 1-indexed version number.
+    #[serde(default = "default_version_no")]
+    pub version_no: i32,
+    /// True when this is the deleted sentinel for a canonical memory.
+    #[serde(default)]
+    pub is_tombstone: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2345,6 +2377,7 @@ mod tests {
             filters: QueryFilters::default(),
             top_k: 8,
             min_confidence: None,
+            history: false,
         };
 
         assert!(request.validate().is_err());

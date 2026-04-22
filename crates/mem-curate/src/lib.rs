@@ -198,12 +198,17 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
                         score: _score,
                         reasons: _reasons,
                     } => {
-                        let memory_id =
-                            insert_candidate_memory(&mut tx, project_id, &candidate).await?;
-                        sqlx::query("DELETE FROM memory_entries WHERE id = $1")
-                            .bind(target.id)
-                            .execute(&mut *tx)
-                            .await?;
+                        // Write a new version of the same canonical memory
+                        // instead of deleting the old row. Old version stays
+                        // visible to history-aware queries; default search
+                        // sees only the new version.
+                        let memory_id = insert_memory_version(
+                            &mut tx,
+                            project_id,
+                            &candidate,
+                            Some(target.id),
+                        )
+                        .await?;
                         output_count += 1;
                         replaced_count += 1;
                         replacements.push(AppliedMemoryReplacement {
@@ -564,17 +569,52 @@ async fn insert_candidate_memory(
     project_id: Uuid,
     candidate: &CandidateAssertion,
 ) -> Result<Uuid, sqlx::Error> {
+    insert_memory_version(tx, project_id, candidate, None).await
+}
+
+/// Insert a new row in memory_entries. When `supersedes` is `None` this
+/// becomes version 1 of a brand new canonical memory. When it's `Some(id)`,
+/// we look up that row's canonical_id and version_no and append the new
+/// memory as the next version of that canonical memory. The old row is
+/// preserved — callers that want only the latest must filter by version.
+async fn insert_memory_version(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    project_id: Uuid,
+    candidate: &CandidateAssertion,
+    supersedes: Option<Uuid>,
+) -> Result<Uuid, sqlx::Error> {
     let memory_id = Uuid::new_v4();
+    let (canonical_id, version_no) = match supersedes {
+        Some(old_id) => {
+            let row = sqlx::query(
+                r#"
+                SELECT canonical_id, MAX(m.version_no) OVER (PARTITION BY canonical_id) AS latest
+                FROM memory_entries m
+                WHERE m.id = $1
+                "#,
+            )
+            .bind(old_id)
+            .fetch_one(&mut **tx)
+            .await?;
+            let canonical_id: Uuid = row.try_get("canonical_id")?;
+            let latest: i32 = row.try_get("latest")?;
+            (canonical_id, latest + 1)
+        }
+        None => (memory_id, 1),
+    };
+
     sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
         VALUES
-            ($1, $2, $3, $4, $5, 'project', $6, $7, 'active', now(), now(), NULL, to_tsvector('english', $3 || ' ' || $4))
+            ($1, $2, $3, $4, FALSE, $5, $6, $7, 'project', $8, $9, 'active', now(), now(), NULL, to_tsvector('english', $5 || ' ' || $6))
         "#,
     )
     .bind(memory_id)
     .bind(project_id)
+    .bind(canonical_id)
+    .bind(version_no)
     .bind(&candidate.canonical_text)
     .bind(&candidate.summary)
     .bind(candidate.memory_type.to_string())
@@ -1185,7 +1225,15 @@ pub async fn approve_replacement_proposal(
         .await?;
     let project_id: Uuid = project_row.try_get("id")?;
 
-    let new_memory_id = insert_candidate_memory(&mut tx, project_id, &candidate.0).await?;
+    // Record the approval as a new version of the target canonical memory;
+    // the old version stays on disk and is visible to history-aware queries.
+    let new_memory_id = insert_memory_version(
+        &mut tx,
+        project_id,
+        &candidate.0,
+        Some(target_memory_id),
+    )
+    .await?;
     attach_candidate_metadata(&mut tx, new_memory_id, task_id, &candidate.0).await?;
     rebuild_memory_chunks(&mut tx, new_memory_id).await?;
     sqlx::query(
@@ -1194,10 +1242,6 @@ pub async fn approve_replacement_proposal(
     .bind(proposal_id)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("DELETE FROM memory_entries WHERE id = $1")
-        .bind(target_memory_id)
-        .execute(&mut *tx)
-        .await?;
     refresh_relations(&mut tx, project_id, new_memory_id).await?;
     tx.commit().await?;
 

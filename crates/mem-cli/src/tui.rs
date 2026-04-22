@@ -1214,6 +1214,7 @@ impl App {
             filters: QueryFilters::default(),
             top_k: 8,
             min_confidence: None,
+            history: false,
         };
         let started = Instant::now();
         match api.query(&request).await {
@@ -6004,6 +6005,9 @@ mod tests {
             related_memories: Vec::new(),
             created_at: timestamp,
             updated_at: timestamp,
+            canonical_id: Uuid::nil(),
+            version_no: 1,
+            is_tombstone: false,
         }
     }
 

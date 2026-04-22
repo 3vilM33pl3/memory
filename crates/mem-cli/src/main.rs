@@ -749,6 +749,11 @@ struct QueryArgs {
     /// Ignore memories below this confidence threshold.
     #[arg(long)]
     min_confidence: Option<f32>,
+    /// Include every historical version of each memory (including
+    /// tombstones from deleted memories) in the search space. Default is
+    /// latest-version-only.
+    #[arg(long)]
+    history: bool,
     /// Emit the query result as JSON.
     #[arg(long)]
     json: bool,
@@ -1503,6 +1508,7 @@ async fn main() -> Result<()> {
                 },
                 top_k: args.limit,
                 min_confidence: args.min_confidence,
+                history: args.history,
             };
             let payload: QueryResponse = get_json(
                 client
@@ -7908,6 +7914,9 @@ fn plan_detail_from_markdown(
         project: String::new(),
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        canonical_id: memory_id,
+        version_no: 1,
+        is_tombstone: false,
     })
 }
 
@@ -8423,6 +8432,9 @@ mod tests {
                 related_memories: Vec::new(),
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
+                canonical_id: Uuid::nil(),
+                version_no: 1,
+                is_tombstone: false,
             },
         )
         .expect("build finish report");

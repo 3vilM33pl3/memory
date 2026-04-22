@@ -32,13 +32,21 @@ pub async fn fetch_project_memories(
     limit: i64,
     offset: i64,
 ) -> Result<ProjectMemoriesResponse, sqlx::Error> {
+    // Both the count and the list restrict themselves to the latest
+    // non-tombstone version per canonical_id so a canonical memory appears
+    // once even after updates. Older versions live on in the table and are
+    // reachable via history-aware queries.
     let total_row = sqlx::query(
         r#"
-        SELECT COUNT(*) AS count
-        FROM memory_entries m
-        JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
-          AND ($2::text IS NULL OR m.status = $2)
+        WITH latest AS (
+            SELECT DISTINCT ON (m.canonical_id) m.id, m.status
+            FROM memory_entries m
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1 AND m.is_tombstone = FALSE
+            ORDER BY m.canonical_id, m.version_no DESC
+        )
+        SELECT COUNT(*) AS count FROM latest
+        WHERE ($2::text IS NULL OR latest.status = $2)
         "#,
     )
     .bind(slug)
@@ -49,6 +57,13 @@ pub async fn fetch_project_memories(
 
     let rows = sqlx::query(
         r#"
+        WITH latest AS (
+            SELECT DISTINCT ON (m.canonical_id) m.*
+            FROM memory_entries m
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1 AND m.is_tombstone = FALSE
+            ORDER BY m.canonical_id, m.version_no DESC
+        )
         SELECT
             m.id,
             m.summary,
@@ -58,16 +73,19 @@ pub async fn fetch_project_memories(
             m.confidence,
             m.importance,
             m.updated_at,
+            m.canonical_id,
+            m.version_no,
+            m.is_tombstone,
             ARRAY_REMOVE(ARRAY_AGG(DISTINCT mt.tag), NULL) AS tags,
             COUNT(DISTINCT mt.tag) AS tag_count,
             COUNT(DISTINCT ms.id) AS source_count
-        FROM memory_entries m
-        JOIN projects p ON p.id = m.project_id
+        FROM latest m
         LEFT JOIN memory_tags mt ON mt.memory_entry_id = m.id
         LEFT JOIN memory_sources ms ON ms.memory_entry_id = m.id
-        WHERE p.slug = $1
-          AND ($2::text IS NULL OR m.status = $2)
-        GROUP BY m.id
+        WHERE ($2::text IS NULL OR m.status = $2)
+        GROUP BY m.id, m.summary, m.canonical_text, m.memory_type, m.status,
+                 m.confidence, m.importance, m.updated_at, m.canonical_id,
+                 m.version_no, m.is_tombstone
         ORDER BY m.updated_at DESC, m.id DESC
         LIMIT $3 OFFSET $4
         "#,
@@ -96,6 +114,9 @@ pub async fn fetch_project_memories(
             tags: row.try_get("tags")?,
             tag_count: row.try_get("tag_count")?,
             source_count: row.try_get("source_count")?,
+            canonical_id: row.try_get("canonical_id")?,
+            version_no: row.try_get("version_no")?,
+            is_tombstone: row.try_get("is_tombstone")?,
         });
     }
 

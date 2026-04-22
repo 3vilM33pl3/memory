@@ -1214,7 +1214,8 @@ async fn fetch_memory_entry(
     let row = sqlx::query(
         r#"
         SELECT p.slug, m.id, m.canonical_text, m.summary, m.memory_type, m.importance, m.confidence,
-               m.status, m.created_at, m.updated_at
+               m.status, m.created_at, m.updated_at,
+               m.canonical_id, m.version_no, m.is_tombstone
         FROM memory_entries m
         JOIN projects p ON p.id = m.project_id
         WHERE m.id = $1
@@ -1302,6 +1303,9 @@ async fn fetch_memory_entry(
         related_memories,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
+        canonical_id: row.try_get("canonical_id")?,
+        version_no: row.try_get("version_no")?,
+        is_tombstone: row.try_get("is_tombstone")?,
     }))
 }
 
@@ -3217,6 +3221,9 @@ async fn fetch_latest_active_plan_memory(
             m.confidence,
             m.importance,
             m.updated_at,
+            m.canonical_id,
+            m.version_no,
+            m.is_tombstone,
             COALESCE((
                 SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
                 FROM memory_tags mt
@@ -3237,6 +3244,12 @@ async fn fetch_latest_active_plan_memory(
         WHERE p.slug = $1
           AND m.status = 'active'
           AND m.memory_type = 'plan'
+          AND m.is_tombstone = FALSE
+          AND m.version_no = (
+              SELECT MAX(m2.version_no)
+              FROM memory_entries m2
+              WHERE m2.canonical_id = m.canonical_id
+          )
         ORDER BY m.updated_at DESC, m.id DESC
         LIMIT 1
         "#,
@@ -3261,6 +3274,9 @@ async fn fetch_latest_active_plan_memory(
             tags: row.try_get("tags")?,
             tag_count: row.try_get("tag_count")?,
             source_count: row.try_get("source_count")?,
+            canonical_id: row.try_get("canonical_id")?,
+            version_no: row.try_get("version_no")?,
+            is_tombstone: row.try_get("is_tombstone")?,
         })
     })
     .transpose()
@@ -4108,24 +4124,60 @@ async fn delete_memory(
         ));
     }
 
-    let record = sqlx::query(
+    // Memories are immutable. Delete writes a tombstone version — a row with
+    // the same canonical_id but empty content and is_tombstone=TRUE. Default
+    // searches skip it; history-aware queries can still surface the prior
+    // versions so nothing is truly lost.
+    let pool = state.pool()?;
+    let mut tx = pool.begin().await.map_err(ApiError::sql)?;
+    let target = sqlx::query(
         r#"
-        DELETE FROM memory_entries m
-        USING projects p
-        WHERE m.project_id = p.id
-          AND m.id = $1
-        RETURNING m.id, p.slug, m.summary
+        SELECT m.id, m.project_id, p.slug, m.canonical_id, m.summary,
+               (
+                   SELECT MAX(m2.version_no)
+                   FROM memory_entries m2
+                   WHERE m2.canonical_id = m.canonical_id
+               ) AS latest_version
+        FROM memory_entries m
+        JOIN projects p ON p.id = m.project_id
+        WHERE m.id = $1
         "#,
     )
     .bind(request.memory_id)
-    .fetch_optional(state.pool()?)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(ApiError::sql)?
     .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
 
-    let memory_id = record.try_get("id").map_err(ApiError::sql)?;
-    let project: String = record.try_get("slug").map_err(ApiError::sql)?;
-    let summary: String = record.try_get("summary").map_err(ApiError::sql)?;
+    let project_id: Uuid = target.try_get("project_id").map_err(ApiError::sql)?;
+    let project: String = target.try_get("slug").map_err(ApiError::sql)?;
+    let canonical_id: Uuid = target.try_get("canonical_id").map_err(ApiError::sql)?;
+    let latest_version: i32 = target.try_get("latest_version").map_err(ApiError::sql)?;
+    let summary: String = target.try_get("summary").map_err(ApiError::sql)?;
+
+    let tombstone_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO memory_entries
+            (id, project_id, canonical_id, version_no, is_tombstone,
+             canonical_text, summary, memory_type, scope, importance,
+             confidence, status, created_at, updated_at, archived_at,
+             search_document)
+        VALUES
+            ($1, $2, $3, $4, TRUE, '', '', 'implementation', 'project', 0, 0.0,
+             'active', now(), now(), NULL, to_tsvector('english', ''))
+        "#,
+    )
+    .bind(tombstone_id)
+    .bind(project_id)
+    .bind(canonical_id)
+    .bind(latest_version + 1)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::sql)?;
+    tx.commit().await.map_err(ApiError::sql)?;
+
+    let memory_id = tombstone_id;
     notify_project_changed(
         &state,
         project.clone(),

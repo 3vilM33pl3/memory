@@ -384,6 +384,7 @@ pub async fn reembed_project_chunks(
          AND mce.embedding_space = $2
         WHERE p.slug = $1
           AND m.status = 'active'
+          AND m.is_tombstone = FALSE
           AND (
                 mce.chunk_id IS NULL
                 OR mce.embedding_dimension IS NULL
@@ -455,6 +456,7 @@ pub async fn prune_project_embeddings(
           AND m.project_id = p.id
           AND p.slug = $1
           AND m.status = 'active'
+          AND m.is_tombstone = FALSE
           AND mce.embedding_space <> $2
         "#,
     )
@@ -663,6 +665,17 @@ async fn fetch_lexical_candidates(
         ) best_chunk ON true
         WHERE p.slug = $1
           AND m.status = 'active'
+          AND (
+                $9::boolean
+                OR (
+                    m.is_tombstone = FALSE
+                    AND m.version_no = (
+                        SELECT MAX(m2.version_no)
+                        FROM memory_entries m2
+                        WHERE m2.canonical_id = m.canonical_id
+                    )
+                )
+          )
           AND ($3::text[] IS NULL OR m.memory_type = ANY($3))
           AND (
                 cardinality($4::text[]) = 0
@@ -723,6 +736,7 @@ async fn fetch_lexical_candidates(
     .bind(&path_like_terms)
     .bind(&tag_like_terms)
     .bind(candidate_limit)
+    .bind(request.history)
     .fetch_all(pool)
     .await?;
 
@@ -791,6 +805,17 @@ async fn fetch_semantic_candidates(
         JOIN projects p ON p.id = m.project_id
         WHERE p.slug = $1
           AND m.status = 'active'
+          AND (
+                $8::boolean
+                OR (
+                    m.is_tombstone = FALSE
+                    AND m.version_no = (
+                        SELECT MAX(m2.version_no)
+                        FROM memory_entries m2
+                        WHERE m2.canonical_id = m.canonical_id
+                    )
+                )
+          )
           AND mce.embedding_space = $4
           AND mce.embedding_dimension = $5
           AND ($2::text[] IS NULL OR m.memory_type = ANY($2))
@@ -818,6 +843,7 @@ async fn fetch_semantic_candidates(
     .bind(embedding_dimension)
     .bind(query_embedding)
     .bind(candidate_limit)
+    .bind(request.history)
     .fetch_all(pool)
     .await?;
 
@@ -931,6 +957,7 @@ async fn project_has_active_embedding_space(
             JOIN projects p ON p.id = m.project_id
             WHERE p.slug = $1
               AND m.status = 'active'
+              AND m.is_tombstone = FALSE
               AND mce.embedding_space = $2
               AND mce.embedding_dimension = $3
         ) AS present
