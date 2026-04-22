@@ -14,6 +14,7 @@ It supports multiple developers, multiple projects, and multiple coding agents a
 - [What It Does](#what-it-does)
 - [Documentation](#documentation)
 - [Development](#development)
+- [License](#license)
 
 ## Quick Start
 
@@ -116,6 +117,23 @@ Project-local customization now has two layers:
 - [Architecture Overview](docs/developer/architecture/overview.md)
 - [How Memory Layer Works](docs/developer/architecture/how-it-works.md)
 - [Hidden Memory Daemon](docs/developer/architecture/hidden-memory-daemon.md)
+
+## License
+
+Memory Layer is dual-licensed:
+
+- **Open source:** GNU Affero General Public License v3.0 or later, see [LICENSE](LICENSE)
+- **Commercial:** available under a separate commercial license from the copyright holder, see [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md)
+
+### What this means
+
+If you use, modify, or host Memory Layer under the open source license, you must comply with the AGPL, including providing source code for modified networked versions.
+
+If you want to use Memory Layer in a proprietary or closed-source commercial setting, contact the copyright holder for a commercial license.
+
+### Contributions
+
+Unless explicitly agreed otherwise in writing, contributions are accepted under the repository's open source license, while the maintainer retains the right to offer the project under separate commercial terms. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Development
 
