@@ -2489,6 +2489,47 @@ fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
                 ]));
             }
         }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("Embeddings")]));
+        if detail.embedding_spaces.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No embeddings computed yet.",
+                Style::default().fg(Theme::MUTED),
+            )));
+        } else {
+            for space in &detail.embedding_spaces {
+                let chunks_label = if space.chunk_count == 1 {
+                    "1 chunk".to_string()
+                } else {
+                    format!("{} chunks", space.chunk_count)
+                };
+                let mut spans = vec![
+                    Span::styled(
+                        space.provider.clone(),
+                        Style::default().fg(Theme::ACCENT),
+                    ),
+                    Span::raw(" · "),
+                    Span::styled(space.model.clone(), Style::default().fg(Theme::TEXT)),
+                    Span::raw(" · "),
+                    Span::styled(chunks_label, Style::default().fg(Theme::TEXT)),
+                ];
+                if let Some(updated) = space.last_updated {
+                    spans.push(Span::raw(" · "));
+                    spans.push(Span::styled(
+                        format!("updated {}", format_timestamp_medium(updated)),
+                        Style::default().fg(Theme::MUTED),
+                    ));
+                }
+                lines.push(Line::from(spans));
+                if !embedding_base_url_is_default(&space.provider, &space.base_url) {
+                    lines.push(Line::from(Span::styled(
+                        format!("    {}", space.base_url),
+                        Style::default().fg(Theme::MUTED),
+                    )));
+                }
+            }
+        }
         return lines;
     } else if app.filtered_memories.is_empty() {
         return vec![Line::from(Span::styled(
@@ -4600,6 +4641,18 @@ fn watcher_transition_status_message(
     }
 }
 
+fn embedding_base_url_is_default(provider: &str, base_url: &str) -> bool {
+    // Keep in sync with mem_search::embedding_backend::default_base_url.
+    let expected = match provider {
+        "openai_compatible" | "openai" => "https://api.openai.com/v1",
+        "voyage" => "https://api.voyageai.com",
+        "cohere" => "https://api.cohere.com",
+        "gemini" => "https://generativelanguage.googleapis.com/v1beta",
+        _ => return false,
+    };
+    base_url.trim_end_matches('/') == expected
+}
+
 fn format_timestamp(value: Option<DateTime<Utc>>) -> String {
     value
         .map(format_timestamp_full)
@@ -5920,7 +5973,8 @@ mod tests {
     };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
-        MemoryEntryResponse, MemoryStatus, MemoryType, Profile, WatcherPresenceSummary,
+        MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType, Profile,
+        WatcherPresenceSummary,
     };
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
@@ -6154,6 +6208,7 @@ mod tests {
             tags: vec!["implementation".to_string(), "tui".to_string()],
             sources: Vec::new(),
             related_memories: Vec::new(),
+            embedding_spaces: Vec::new(),
             created_at: timestamp,
             updated_at: timestamp,
             canonical_id: Uuid::nil(),
@@ -6296,6 +6351,89 @@ mod tests {
         assert!(rendered.contains("Canonical"));
         assert!(rendered.contains("[ ] readable"));
         assert!(rendered.contains("block"));
+    }
+
+    #[test]
+    fn build_memory_detail_lines_lists_each_embedding_space() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.6.0".to_string(),
+                mem_service: "0.6.0".to_string(),
+                watch_manager: "0.6.0".to_string(),
+                memory_watch: "0.6.0".to_string(),
+            },
+            false,
+            Profile::Prod,
+            tx,
+        );
+        let mut detail = test_memory_detail("body");
+        let updated = Utc.with_ymd_and_hms(2026, 4, 22, 23, 37, 0).unwrap();
+        detail.embedding_spaces = vec![
+            MemoryEmbeddingSpace {
+                provider: "openai".to_string(),
+                model: "text-embedding-3-small".to_string(),
+                base_url: "https://api.openai.com/v1".to_string(),
+                chunk_count: 12,
+                last_updated: Some(updated),
+            },
+            MemoryEmbeddingSpace {
+                provider: "voyage".to_string(),
+                model: "voyage-3".to_string(),
+                base_url: "https://proxy.internal/voyage".to_string(),
+                chunk_count: 1,
+                last_updated: None,
+            },
+        ];
+        app.selected_detail = Some(detail);
+
+        let rendered = build_memory_detail_lines(&app)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Embeddings"));
+        assert!(rendered.contains("openai"));
+        assert!(rendered.contains("text-embedding-3-small"));
+        assert!(rendered.contains("12 chunks"));
+        assert!(rendered.contains("voyage"));
+        assert!(rendered.contains("voyage-3"));
+        assert!(rendered.contains("1 chunk"));
+        // OpenAI uses the default base URL, so it should not appear in the rendered output.
+        assert!(!rendered.contains("https://api.openai.com/v1"));
+        // Voyage is on a non-default base URL, so the URL appears on its own line.
+        assert!(rendered.contains("https://proxy.internal/voyage"));
+    }
+
+    #[test]
+    fn build_memory_detail_lines_shows_empty_state_when_no_embeddings() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.6.0".to_string(),
+                mem_service: "0.6.0".to_string(),
+                watch_manager: "0.6.0".to_string(),
+                memory_watch: "0.6.0".to_string(),
+            },
+            false,
+            Profile::Prod,
+            tx,
+        );
+        app.selected_detail = Some(test_memory_detail("body"));
+
+        let rendered = build_memory_detail_lines(&app)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Embeddings"));
+        assert!(rendered.contains("No embeddings computed yet."));
     }
 
     #[test]

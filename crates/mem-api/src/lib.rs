@@ -491,6 +491,16 @@ pub struct MemorySourceRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryEmbeddingSpace {
+    pub provider: String,
+    pub model: String,
+    pub base_url: String,
+    pub chunk_count: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_updated: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryEntryResponse {
     pub id: Uuid,
     pub project: String,
@@ -504,6 +514,11 @@ pub struct MemoryEntryResponse {
     pub sources: Vec<MemorySourceRecord>,
     #[serde(default)]
     pub related_memories: Vec<RelatedMemorySummary>,
+    /// Embedding spaces that cover this memory's chunks. Distinct
+    /// (provider, model, base_url) tuples with per-space chunk counts
+    /// and the most recent embedding update timestamp.
+    #[serde(default)]
+    pub embedding_spaces: Vec<MemoryEmbeddingSpace>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     /// Stable identifier shared by every version of this logical memory.

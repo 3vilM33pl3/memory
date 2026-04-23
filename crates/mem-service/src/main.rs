@@ -1296,6 +1296,8 @@ async fn fetch_memory_entry(
     })
     .collect::<Result<Vec<_>, sqlx::Error>>()?;
 
+    let embedding_spaces = fetch_memory_embedding_spaces(pool, id).await?;
+
     Ok(Some(MemoryEntryResponse {
         id,
         project: row.try_get("slug")?,
@@ -1311,12 +1313,50 @@ async fn fetch_memory_entry(
         tags,
         sources,
         related_memories,
+        embedding_spaces,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
         canonical_id: row.try_get("canonical_id")?,
         version_no: row.try_get("version_no")?,
         is_tombstone: row.try_get("is_tombstone")?,
     }))
+}
+
+async fn fetch_memory_embedding_spaces(
+    pool: &PgPool,
+    memory_id: Uuid,
+) -> Result<Vec<mem_api::MemoryEmbeddingSpace>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT mce.embedding_provider,
+               mce.embedding_model,
+               mce.embedding_base_url,
+               COUNT(*)::bigint         AS chunk_count,
+               MAX(mce.embedding_updated_at) AS last_updated
+        FROM memory_chunk_embeddings mce
+        JOIN memory_chunks mc ON mc.id = mce.chunk_id
+        WHERE mc.memory_entry_id = $1
+        GROUP BY mce.embedding_provider, mce.embedding_model, mce.embedding_base_url
+        ORDER BY last_updated DESC NULLS LAST,
+                 mce.embedding_provider,
+                 mce.embedding_model
+        "#,
+    )
+    .bind(memory_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(mem_api::MemoryEmbeddingSpace {
+                provider: row.try_get("embedding_provider")?,
+                model: row.try_get("embedding_model")?,
+                base_url: row.try_get("embedding_base_url")?,
+                chunk_count: row.try_get("chunk_count")?,
+                last_updated: row.try_get("last_updated")?,
+            })
+        })
+        .collect()
 }
 
 const MEMORY_BUNDLE_SCHEMA_VERSION: u32 = 1;
