@@ -1293,6 +1293,14 @@ struct AutomationFlushArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if env::args().nth(1).is_some_and(|arg| arg == "--version" || arg == "-V") {
+        println!(
+            "memory {}",
+            mem_api::Profile::detect().display_version(env!("CARGO_PKG_VERSION"))
+        );
+        return Ok(());
+    }
+
     let Cli {
         config: cli_config,
         writer_id: cli_writer_id,

@@ -82,6 +82,17 @@ struct FlushArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args()
+        .nth(1)
+        .is_some_and(|arg| arg == "--version" || arg == "-V")
+    {
+        println!(
+            "memory-watch {}",
+            mem_api::Profile::detect().display_version(env!("CARGO_PKG_VERSION"))
+        );
+        return Ok(());
+    }
+
     let cli = Cli::parse();
     let config = AppConfig::load_from_path(cli.config).context("load config")?;
     let writer_id = resolve_writer_id(&config, cli.writer_id)?;

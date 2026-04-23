@@ -73,6 +73,8 @@ The dev profile reads `.mem/config.toml` and then layers `.mem/config.dev.toml` 
 
 Importantly, **the dev profile ignores the global config entirely**. That is what keeps a cargo-run service from silently picking up packaged machine-wide settings. Anything the dev stack needs that's normally global (database URL, LLM/embedding endpoints) must live in the dev overlay, which is why `memory dev init --copy-from-global` exists.
 
+Dev binaries also **advertise themselves with a `-dev` version suffix**. `memory --version`, `mem-service --version`, `memory-watch --version`, the `/healthz` JSON `version` field, the cluster discovery packet, and the TUI version panel all report `0.6.0-dev` rather than `0.6.0` when the profile is dev. That way logs, peer lists, and health checks cannot silently conflate a dev service with an installed one.
+
 ## What Is Shared
 
 By default, only the **PostgreSQL database** is shared between dev and installed stacks — and only because `memory dev init --copy-from-global` copies the URL into the overlay. If you want the dev stack on a separate database, edit `.mem/config.dev.toml` to point `[database].url` somewhere else.
@@ -106,17 +108,21 @@ cargo run --bin memory -- dev init \
 
 ## Verifying Isolation
 
-Three quick checks:
+Four quick checks:
 
 ```bash
 # 1. The TUI header.
-cargo run --bin memory -- tui      # should show [dev]
+cargo run --bin memory -- tui                 # header reads [dev]
 
-# 2. Health endpoint of each stack.
-curl -s http://127.0.0.1:4040/v1/health   # installed
-curl -s http://127.0.0.1:4250/v1/health   # dev
+# 2. Version string of each binary.
+cargo run --bin memory -- --version           # memory 0.6.0-dev
+/usr/bin/memory --version                     # memory 0.6.0
 
-# 3. Doctor reports the active profile and resolved overlay path.
+# 3. Health endpoint of each stack (reports "version" with or without -dev).
+curl -s http://127.0.0.1:4040/healthz         # installed
+curl -s http://127.0.0.1:4250/healthz         # dev
+
+# 4. Doctor reports the active profile and resolved overlay path.
 cargo run --bin memory -- doctor
 ```
 

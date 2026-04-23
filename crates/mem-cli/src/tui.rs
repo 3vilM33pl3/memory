@@ -73,7 +73,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
     let mut app = App::new(
         project,
         repo_root,
-        detect_tool_versions(),
+        detect_tool_versions(profile),
         api.config.cluster.enabled,
         profile,
         background_tx,
@@ -5878,12 +5878,13 @@ fn launchctl_print_succeeds(label: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn detect_tool_versions() -> ToolVersions {
+fn detect_tool_versions(profile: Profile) -> ToolVersions {
+    let version = profile.display_version(env!("CARGO_PKG_VERSION"));
     ToolVersions {
-        mem_cli: env!("CARGO_PKG_VERSION").to_string(),
-        mem_service: env!("CARGO_PKG_VERSION").to_string(),
-        watch_manager: env!("CARGO_PKG_VERSION").to_string(),
-        memory_watch: env!("CARGO_PKG_VERSION").to_string(),
+        mem_cli: version.clone(),
+        mem_service: version.clone(),
+        watch_manager: version.clone(),
+        memory_watch: version,
     }
 }
 

@@ -244,7 +244,10 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     if std::env::args().any(|arg| arg == "--version" || arg == "-V") {
-        println!("memory service {}", env!("CARGO_PKG_VERSION"));
+        println!(
+            "memory service {}",
+            mem_api::Profile::detect().display_version(env!("CARGO_PKG_VERSION"))
+        );
         return Ok(());
     }
 
@@ -618,7 +621,10 @@ fn build_discovery_packet(state: &AppState, kind: DiscoveryKind) -> DiscoveryPac
         kind,
         service_id: state.config.cluster.service_id.clone(),
         advertise_addr: advertised_http_addr(&state.config),
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: state
+            .config
+            .profile
+            .display_version(env!("CARGO_PKG_VERSION")),
         priority: state.config.cluster.priority,
         sent_at: chrono::Utc::now(),
     }
@@ -1081,7 +1087,7 @@ async fn health_payload(state: &AppState) -> Result<serde_json::Value> {
             "database": "up",
             "instance_id": state.instance_id,
             "service_id": state.config.cluster.service_id,
-            "version": env!("CARGO_PKG_VERSION")
+            "version": state.config.profile.display_version(env!("CARGO_PKG_VERSION"))
         }))
     } else {
         let upstream = relay_upstream_health(state).await?;
@@ -1091,7 +1097,7 @@ async fn health_payload(state: &AppState) -> Result<serde_json::Value> {
             "database": "down",
             "instance_id": state.instance_id,
             "service_id": state.config.cluster.service_id,
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": state.config.profile.display_version(env!("CARGO_PKG_VERSION")),
             "upstream": upstream
         }))
     }

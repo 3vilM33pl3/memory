@@ -1622,6 +1622,21 @@ impl Profile {
         }
         Profile::Prod
     }
+
+    /// Version-string suffix for this profile. Dev builds get `-dev` so
+    /// `memory --version`, the health endpoint, and cluster discovery all
+    /// make it obvious which stack produced a given response.
+    pub fn version_suffix(self) -> &'static str {
+        match self {
+            Profile::Prod => "",
+            Profile::Dev => "-dev",
+        }
+    }
+
+    /// Apply [`Profile::version_suffix`] to a crate's `CARGO_PKG_VERSION`.
+    pub fn display_version(self, pkg_version: &str) -> String {
+        format!("{pkg_version}{}", self.version_suffix())
+    }
 }
 
 impl fmt::Display for Profile {
@@ -2438,6 +2453,14 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn profile_display_version_adds_dev_suffix_only_in_dev() {
+        assert_eq!(Profile::Prod.version_suffix(), "");
+        assert_eq!(Profile::Dev.version_suffix(), "-dev");
+        assert_eq!(Profile::Prod.display_version("0.6.0"), "0.6.0");
+        assert_eq!(Profile::Dev.display_version("0.6.0"), "0.6.0-dev");
+    }
 
     #[test]
     fn prune_history_rejects_missing_thresholds() {
