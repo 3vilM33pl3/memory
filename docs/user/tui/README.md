@@ -34,6 +34,8 @@ Shared navigation:
   - Inspect project-level health, counts, embedding state, automation status, and replacement proposals.
 - [Watchers Tab](watchers.md)
   - See active watchers, heartbeat state, restart attempts, and watcher recovery details.
+- [Embeddings Tab](embeddings.md)
+  - List configured embedding backends, see their per-project coverage, and activate a different backend without leaving the TUI.
 - [Resume Tab](resume.md)
   - Use this after an interruption to get the current work thread, suggested next step, and recent timeline.
 
@@ -45,4 +47,5 @@ Shared navigation:
 - If you want to understand what changed recently, open [Activity Tab](activity.md).
 - If you want high-level health and pending review work, open [Project Tab](project.md).
 - If you want watcher liveness and watchdog status, open [Watchers Tab](watchers.md).
+- If you want to see which embedding backends are configured and switch which one search uses, open [Embeddings Tab](embeddings.md).
 - If you are returning after time away, open [Resume Tab](resume.md) for the re-entry briefing.

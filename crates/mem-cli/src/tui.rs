@@ -86,6 +86,15 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
             .expect("agent_wake_rx present on fresh App"),
     );
     start_manager_status_worker(app.background_tx.clone());
+    start_embedding_backends_worker(
+        api.clone(),
+        app.project.clone(),
+        app.background_tx.clone(),
+        app.embeddings_tab_visible.clone(),
+        app.embeddings_wake_rx
+            .take()
+            .expect("embeddings_wake_rx present on fresh App"),
+    );
     terminal.draw(|frame| draw(frame, &app))?;
     app.refresh(&api, RefreshMode::Startup).await;
     let mut stream = StreamSession::connect(&api).await.ok();
@@ -207,6 +216,47 @@ fn start_agent_snapshot_worker(
     });
 }
 
+const EMBEDDINGS_POLL_ACTIVE: Duration = Duration::from_secs(5);
+const EMBEDDINGS_POLL_IDLE: Duration = Duration::from_secs(60);
+
+fn start_embedding_backends_worker(
+    api: ApiClient,
+    project: String,
+    tx: mpsc::UnboundedSender<BackgroundEvent>,
+    embeddings_tab_visible: Arc<AtomicBool>,
+    wake_rx: std_mpsc::Receiver<()>,
+) {
+    std::thread::spawn(move || {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(_) => return,
+        };
+        loop {
+            let snapshot = runtime
+                .block_on(api.list_embedding_backends(Some(&project)))
+                .map_err(|err| err.to_string());
+            if tx
+                .send(BackgroundEvent::EmbeddingBackendsLoaded { snapshot })
+                .is_err()
+            {
+                break;
+            }
+            let interval = if embeddings_tab_visible.load(Ordering::Relaxed) {
+                EMBEDDINGS_POLL_ACTIVE
+            } else {
+                EMBEDDINGS_POLL_IDLE
+            };
+            match wake_rx.recv_timeout(interval) {
+                Ok(()) | Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    });
+}
+
 fn start_manager_status_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
     std::thread::spawn(move || {
         loop {
@@ -291,6 +341,16 @@ struct App {
     /// Receiver handed to the worker on startup. `Option` so `run()` can
     /// take it via `.take()` once without requiring the field to be `Clone`.
     agent_wake_rx: Option<std_mpsc::Receiver<()>>,
+    // --- Embeddings tab state ---
+    embedding_backends_snapshot: Option<mem_api::EmbeddingBackendsResponse>,
+    embedding_backends_error: Option<String>,
+    embeddings_selected_index: usize,
+    embeddings_table_state: TableState,
+    embeddings_tab_visible: Arc<AtomicBool>,
+    embeddings_wake_tx: std_mpsc::Sender<()>,
+    embeddings_wake_rx: Option<std_mpsc::Receiver<()>>,
+    embeddings_activation_message: Option<String>,
+    embeddings_activating: Option<String>,
     needs_redraw: bool,
 }
 
@@ -371,6 +431,13 @@ enum BackgroundEvent {
     ManagerStatusLoaded {
         status: Option<ManagerFooterStatus>,
     },
+    EmbeddingBackendsLoaded {
+        snapshot: Result<mem_api::EmbeddingBackendsResponse, String>,
+    },
+    EmbeddingBackendActivated {
+        name: String,
+        result: Result<mem_api::EmbeddingBackendsResponse, String>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -403,6 +470,9 @@ impl App {
         let mut activity_table_state = TableState::default();
         activity_table_state.select(Some(0));
         let (agent_wake_tx, agent_wake_rx) = std_mpsc::channel();
+        let (embeddings_wake_tx, embeddings_wake_rx) = std_mpsc::channel();
+        let mut embeddings_table_state = TableState::default();
+        embeddings_table_state.select(Some(0));
         Self {
             project: project.clone(),
             repo_root: repo_root.clone(),
@@ -460,19 +530,35 @@ impl App {
             agents_tab_visible: Arc::new(AtomicBool::new(false)),
             agent_wake_tx,
             agent_wake_rx: Some(agent_wake_rx),
+            embedding_backends_snapshot: None,
+            embedding_backends_error: None,
+            embeddings_selected_index: 0,
+            embeddings_table_state,
+            embeddings_tab_visible: Arc::new(AtomicBool::new(false)),
+            embeddings_wake_tx,
+            embeddings_wake_rx: Some(embeddings_wake_rx),
+            embeddings_activation_message: None,
+            embeddings_activating: None,
             needs_redraw: true,
         }
     }
 
     fn set_active_tab(&mut self, tab: TabKind) {
         let became_agents = tab == TabKind::Agents && self.active_tab != TabKind::Agents;
+        let became_embeddings =
+            tab == TabKind::Embeddings && self.active_tab != TabKind::Embeddings;
         self.active_tab = tab;
         self.agents_tab_visible
             .store(tab == TabKind::Agents, Ordering::Relaxed);
+        self.embeddings_tab_visible
+            .store(tab == TabKind::Embeddings, Ordering::Relaxed);
         if became_agents {
             // Wake the worker so the newly-opened tab shows fresh data
             // rather than whatever the idle cadence last produced.
             let _ = self.agent_wake_tx.send(());
+        }
+        if became_embeddings {
+            let _ = self.embeddings_wake_tx.send(());
         }
     }
 
@@ -745,6 +831,46 @@ impl App {
             BackgroundEvent::ManagerStatusLoaded { status } => {
                 self.manager_status = status;
             }
+            BackgroundEvent::EmbeddingBackendsLoaded { snapshot } => match snapshot {
+                Ok(snapshot) => {
+                    self.embedding_backends_error = None;
+                    let len = snapshot.backends.len();
+                    self.embedding_backends_snapshot = Some(snapshot);
+                    if len == 0 {
+                        self.embeddings_selected_index = 0;
+                        self.embeddings_table_state.select(None);
+                    } else {
+                        self.embeddings_selected_index =
+                            self.embeddings_selected_index.min(len.saturating_sub(1));
+                        self.embeddings_table_state
+                            .select(Some(self.embeddings_selected_index));
+                    }
+                }
+                Err(error) => {
+                    self.embedding_backends_error = Some(error);
+                }
+            },
+            BackgroundEvent::EmbeddingBackendActivated { name, result } => {
+                self.embeddings_activating = None;
+                match result {
+                    Ok(snapshot) => {
+                        self.embedding_backends_error = None;
+                        self.embeddings_activation_message = Some(format!("Activated {name}"));
+                        let len = snapshot.backends.len();
+                        self.embedding_backends_snapshot = Some(snapshot);
+                        if len > 0 {
+                            self.embeddings_selected_index =
+                                self.embeddings_selected_index.min(len.saturating_sub(1));
+                            self.embeddings_table_state
+                                .select(Some(self.embeddings_selected_index));
+                        }
+                    }
+                    Err(error) => {
+                        self.embeddings_activation_message =
+                            Some(format!("Activation failed: {error}"));
+                    }
+                }
+            }
         }
     }
 
@@ -764,6 +890,36 @@ impl App {
         self.agent_selected_index = next as usize;
         self.agent_table_state
             .select(Some(self.agent_selected_index));
+    }
+
+    fn move_embeddings_selection(&mut self, delta: isize) {
+        let len = self
+            .embedding_backends_snapshot
+            .as_ref()
+            .map(|s| s.backends.len())
+            .unwrap_or(0);
+        if len == 0 {
+            self.embeddings_selected_index = 0;
+            self.embeddings_table_state.select(None);
+            return;
+        }
+        // Cyclic wrap so j/k loops within the list.
+        let cur = self.embeddings_selected_index as isize;
+        let next = ((cur + delta) % len as isize + len as isize) % len as isize;
+        self.embeddings_selected_index = next as usize;
+        self.embeddings_table_state
+            .select(Some(self.embeddings_selected_index));
+    }
+
+    fn selected_embedding_backend_name(&self) -> Option<String> {
+        self.embedding_backends_snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .backends
+                    .get(self.embeddings_selected_index)
+                    .map(|b| b.name.clone())
+            })
     }
 
     fn scroll_agent_detail(&mut self, delta: i16) {
@@ -885,6 +1041,33 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Watchers => {
                 self.scroll_watchers(-1);
+            }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Embeddings => {
+                self.move_embeddings_selection(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Embeddings => {
+                self.move_embeddings_selection(-1);
+            }
+            KeyCode::Enter if self.active_tab == TabKind::Embeddings => {
+                if let Some(name) = self.selected_embedding_backend_name() {
+                    self.embeddings_activating = Some(name.clone());
+                    self.embeddings_activation_message = None;
+                    let tx = self.background_tx.clone();
+                    let api = api.clone();
+                    tokio::spawn(async move {
+                        let result = api
+                            .activate_embedding_backend(&name)
+                            .await
+                            .map_err(|err| err.to_string());
+                        let _ = tx.send(BackgroundEvent::EmbeddingBackendActivated {
+                            name,
+                            result,
+                        });
+                    });
+                }
+            }
+            KeyCode::Char('r') if self.active_tab == TabKind::Embeddings => {
+                let _ = self.embeddings_wake_tx.send(());
             }
             KeyCode::PageDown if self.active_tab == TabKind::Memories => {
                 self.scroll_memory_detail(8);
@@ -1678,6 +1861,7 @@ enum TabKind {
     Activity,
     Project,
     Watchers,
+    Embeddings,
     Resume,
 }
 
@@ -1689,7 +1873,8 @@ impl TabKind {
             Self::Query => Self::Activity,
             Self::Activity => Self::Project,
             Self::Project => Self::Watchers,
-            Self::Watchers => Self::Resume,
+            Self::Watchers => Self::Embeddings,
+            Self::Embeddings => Self::Resume,
             Self::Resume => Self::Memories,
         }
     }
@@ -1702,7 +1887,8 @@ impl TabKind {
             Self::Activity => Self::Query,
             Self::Project => Self::Activity,
             Self::Watchers => Self::Project,
-            Self::Resume => Self::Watchers,
+            Self::Embeddings => Self::Watchers,
+            Self::Resume => Self::Embeddings,
         }
     }
 
@@ -1714,7 +1900,8 @@ impl TabKind {
             Self::Activity => 3,
             Self::Project => 4,
             Self::Watchers => 5,
-            Self::Resume => 6,
+            Self::Embeddings => 6,
+            Self::Resume => 7,
         }
     }
 }
@@ -1897,7 +2084,14 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         .split(frame.area());
 
     let titles = [
-        "Memories", "Agents", "Query", "Activity", "Project", "Watchers", "Resume",
+        "Memories",
+        "Agents",
+        "Query",
+        "Activity",
+        "Project",
+        "Watchers",
+        "Embeddings",
+        "Resume",
     ]
     .into_iter()
     .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
@@ -2020,6 +2214,14 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             accent_span("jump "),
             Span::styled("Home", Style::default().fg(Theme::TEXT)),
         ],
+        TabKind::Embeddings => vec![
+            accent_span("move "),
+            Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+            accent_span("activate "),
+            Span::styled("Enter  ", Style::default().fg(Theme::TEXT)),
+            accent_span("refresh "),
+            Span::styled("r", Style::default().fg(Theme::TEXT)),
+        ],
     })])
     .style(Style::default().bg(Theme::PANEL_ALT))
     .block(themed_block(match &app.input_mode {
@@ -2057,6 +2259,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             TabKind::Activity => draw_activity_tab(frame, app, chunks[2]),
             TabKind::Project => draw_project_tab(frame, app, chunks[2]),
             TabKind::Watchers => draw_watchers_tab(frame, app, chunks[2]),
+            TabKind::Embeddings => draw_embeddings_tab(frame, app, chunks[2]),
         }
     } else {
         draw_backend_recovery(frame, app, chunks[2]);
@@ -2930,6 +3133,178 @@ fn draw_watchers_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             app.watcher_scroll
         )));
     frame.render_widget(detail, chunks[1]);
+}
+
+fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(5), Constraint::Min(8)])
+        .split(area);
+
+    let snapshot = app.embedding_backends_snapshot.as_ref();
+    let backends = snapshot.map(|s| s.backends.as_slice()).unwrap_or(&[]);
+    let configured = backends.len();
+    let ready = backends.iter().filter(|b| b.ready).count();
+    let not_ready = configured.saturating_sub(ready);
+    let active_display = snapshot
+        .and_then(|s| s.active.clone())
+        .unwrap_or_else(|| "(none)".to_string());
+
+    let message_line = if let Some(activating) = &app.embeddings_activating {
+        Line::from(vec![
+            label_span("Status: "),
+            Span::styled(
+                format!("activating {activating}..."),
+                Style::default().fg(Theme::ACCENT),
+            ),
+        ])
+    } else if let Some(msg) = &app.embeddings_activation_message {
+        let color = if msg.starts_with("Activation failed") {
+            Theme::DANGER
+        } else {
+            Theme::SUCCESS
+        };
+        Line::from(vec![
+            label_span("Status: "),
+            Span::styled(msg.clone(), Style::default().fg(color)),
+        ])
+    } else if let Some(err) = &app.embedding_backends_error {
+        Line::from(vec![
+            label_span("Status: "),
+            Span::styled(
+                format!("refresh failed: {err}"),
+                Style::default().fg(Theme::WARNING),
+            ),
+        ])
+    } else {
+        Line::from(vec![
+            label_span("Status: "),
+            Span::styled("idle", Style::default().fg(Theme::MUTED)),
+        ])
+    };
+
+    let summary = Paragraph::new(vec![
+        Line::from(vec![
+            label_span("Active: "),
+            Span::styled(active_display, Style::default().fg(Theme::ACCENT_STRONG)),
+        ]),
+        Line::from(vec![
+            label_span("Backends: "),
+            Span::styled(
+                format!("{configured} configured · {ready} ready · {not_ready} not ready"),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        message_line,
+    ])
+    .style(Style::default().bg(Theme::PANEL))
+    .block(themed_block("Embedding Backends"));
+    frame.render_widget(summary, chunks[0]);
+
+    if backends.is_empty() {
+        let body = if app.embedding_backends_snapshot.is_some() {
+            "No embedding backends configured. Declare them under [[embeddings.backends]] in your memory-layer.toml."
+        } else {
+            "Loading embedding backends..."
+        };
+        frame.render_widget(
+            Paragraph::new(body)
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(Theme::MUTED).bg(Theme::PANEL_ALT))
+                .block(themed_block("Backends")),
+            chunks[1],
+        );
+        return;
+    }
+
+    let header = Row::new([" ", "NAME", "PROVIDER", "MODEL", "BASE URL", "CHUNKS", "MEMORIES"])
+        .style(
+            Style::default()
+                .fg(Theme::ACCENT_STRONG)
+                .bg(Theme::PANEL_ALT)
+                .add_modifier(Modifier::BOLD),
+        );
+    let rows = backends.iter().map(|backend| {
+        let marker = if backend.active {
+            Span::styled("*", Style::default().fg(Theme::ACCENT_STRONG).add_modifier(Modifier::BOLD))
+        } else if !backend.ready {
+            Span::styled("!", Style::default().fg(Theme::DANGER))
+        } else {
+            Span::raw(" ")
+        };
+        let base_url = if backend.base_url.trim().is_empty()
+            || embedding_base_url_is_default(&backend.provider, &backend.base_url)
+        {
+            String::new()
+        } else {
+            backend.base_url.clone()
+        };
+        let chunks_cell = backend
+            .project_chunk_count
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let memories_cell = backend
+            .project_memory_count
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let name_style = if backend.active {
+            Style::default()
+                .fg(Theme::ACCENT_STRONG)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Theme::TEXT)
+        };
+        Row::new(vec![
+            Line::from(marker),
+            Line::from(Span::styled(backend.name.clone(), name_style)),
+            Line::from(Span::styled(
+                backend.provider.clone(),
+                Style::default().fg(Theme::ACCENT),
+            )),
+            Line::from(Span::styled(
+                backend.model.clone(),
+                Style::default().fg(Theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                base_url,
+                Style::default().fg(Theme::MUTED),
+            )),
+            Line::from(Span::styled(
+                chunks_cell,
+                Style::default().fg(Theme::TEXT),
+            )),
+            Line::from(Span::styled(
+                memories_cell,
+                Style::default().fg(Theme::TEXT),
+            )),
+        ])
+    });
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(1),
+            Constraint::Length(24),
+            Constraint::Length(20),
+            Constraint::Length(28),
+            Constraint::Min(18),
+            Constraint::Length(8),
+            Constraint::Length(10),
+        ],
+    )
+    .header(header)
+    .row_highlight_style(
+        Style::default()
+            .bg(Theme::SELECTION_BG)
+            .fg(Theme::SELECTION_FG),
+    )
+    .style(Style::default().bg(Theme::PANEL_ALT))
+    .block(themed_block(format!(
+        "Backends ({} for project {})",
+        backends.len(),
+        app.project
+    )));
+    let mut state = app.embeddings_table_state.clone();
+    frame.render_stateful_widget(table, chunks[1], &mut state);
 }
 
 fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
@@ -6285,18 +6660,22 @@ mod tests {
     }
 
     #[test]
-    fn tab_order_starts_with_memories_and_ends_with_resume() {
+    fn tab_order_includes_embeddings_between_watchers_and_resume() {
         assert_eq!(TabKind::Memories.index(), 0);
         assert_eq!(TabKind::Agents.index(), 1);
         assert_eq!(TabKind::Query.index(), 2);
         assert_eq!(TabKind::Activity.index(), 3);
         assert_eq!(TabKind::Project.index(), 4);
         assert_eq!(TabKind::Watchers.index(), 5);
-        assert_eq!(TabKind::Resume.index(), 6);
+        assert_eq!(TabKind::Embeddings.index(), 6);
+        assert_eq!(TabKind::Resume.index(), 7);
 
         assert_eq!(TabKind::Memories.prev(), TabKind::Resume);
         assert_eq!(TabKind::Memories.next(), TabKind::Agents);
-        assert_eq!(TabKind::Watchers.next(), TabKind::Resume);
+        assert_eq!(TabKind::Watchers.next(), TabKind::Embeddings);
+        assert_eq!(TabKind::Embeddings.prev(), TabKind::Watchers);
+        assert_eq!(TabKind::Embeddings.next(), TabKind::Resume);
+        assert_eq!(TabKind::Resume.prev(), TabKind::Embeddings);
         assert_eq!(TabKind::Resume.next(), TabKind::Memories);
     }
 
@@ -6470,6 +6849,127 @@ mod tests {
 
         assert!(rendered.contains("Embeddings"));
         assert!(rendered.contains("No embeddings computed yet."));
+    }
+
+    fn embeddings_test_response() -> mem_api::EmbeddingBackendsResponse {
+        mem_api::EmbeddingBackendsResponse {
+            backends: vec![
+                mem_api::EmbeddingBackendInfo {
+                    name: "openai-3-small".to_string(),
+                    provider: "openai_compatible".to_string(),
+                    base_url: "https://api.openai.com/v1".to_string(),
+                    model: "text-embedding-3-small".to_string(),
+                    active: false,
+                    ready: true,
+                    project_chunk_count: Some(12),
+                    project_memory_count: Some(4),
+                },
+                mem_api::EmbeddingBackendInfo {
+                    name: "voyage-code".to_string(),
+                    provider: "voyage".to_string(),
+                    base_url: "https://api.voyageai.com".to_string(),
+                    model: "voyage-code-3".to_string(),
+                    active: true,
+                    ready: true,
+                    project_chunk_count: Some(12),
+                    project_memory_count: Some(4),
+                },
+            ],
+            active: Some("voyage-code".to_string()),
+        }
+    }
+
+    fn new_test_app() -> App {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.6.2".to_string(),
+                mem_service: "0.6.2".to_string(),
+                watch_manager: "0.6.2".to_string(),
+                memory_watch: "0.6.2".to_string(),
+            },
+            false,
+            Profile::Prod,
+            tx,
+        )
+    }
+
+    #[test]
+    fn embeddings_loaded_event_populates_snapshot_and_clamps_selection() {
+        let mut app = new_test_app();
+        app.embeddings_selected_index = 5; // out of range
+        app.apply_background_event(BackgroundEvent::EmbeddingBackendsLoaded {
+            snapshot: Ok(embeddings_test_response()),
+        });
+        let snapshot = app.embedding_backends_snapshot.as_ref().expect("loaded");
+        assert_eq!(snapshot.backends.len(), 2);
+        assert_eq!(app.embeddings_selected_index, 1);
+        assert_eq!(app.embeddings_table_state.selected(), Some(1));
+        assert!(app.embedding_backends_error.is_none());
+    }
+
+    #[test]
+    fn embeddings_selection_wraps_cyclically() {
+        let mut app = new_test_app();
+        app.apply_background_event(BackgroundEvent::EmbeddingBackendsLoaded {
+            snapshot: Ok(embeddings_test_response()),
+        });
+        app.embeddings_selected_index = 0;
+        app.move_embeddings_selection(1);
+        assert_eq!(app.embeddings_selected_index, 1);
+        assert_eq!(app.selected_embedding_backend_name().as_deref(), Some("voyage-code"));
+        app.move_embeddings_selection(1);
+        assert_eq!(app.embeddings_selected_index, 0);
+        app.move_embeddings_selection(-1);
+        assert_eq!(app.embeddings_selected_index, 1);
+    }
+
+    #[test]
+    fn embedding_backend_activated_sets_success_message_and_updates_snapshot() {
+        let mut app = new_test_app();
+        // First load the initial list so selection is primed.
+        app.apply_background_event(BackgroundEvent::EmbeddingBackendsLoaded {
+            snapshot: Ok(embeddings_test_response()),
+        });
+        app.embeddings_activating = Some("openai-3-small".to_string());
+
+        // Simulate the activate POST returning a response where openai is now active.
+        let mut response = embeddings_test_response();
+        response.active = Some("openai-3-small".to_string());
+        response.backends[0].active = true;
+        response.backends[1].active = false;
+        app.apply_background_event(BackgroundEvent::EmbeddingBackendActivated {
+            name: "openai-3-small".to_string(),
+            result: Ok(response),
+        });
+
+        assert_eq!(app.embeddings_activating, None);
+        assert_eq!(
+            app.embeddings_activation_message.as_deref(),
+            Some("Activated openai-3-small")
+        );
+        assert_eq!(
+            app.embedding_backends_snapshot
+                .as_ref()
+                .and_then(|s| s.active.as_deref()),
+            Some("openai-3-small")
+        );
+    }
+
+    #[test]
+    fn embedding_backend_activation_failure_shows_error_message() {
+        let mut app = new_test_app();
+        app.embeddings_activating = Some("broken".to_string());
+        app.apply_background_event(BackgroundEvent::EmbeddingBackendActivated {
+            name: "broken".to_string(),
+            result: Err("400 unknown backend".to_string()),
+        });
+        assert_eq!(app.embeddings_activating, None);
+        let msg = app.embeddings_activation_message.as_deref().unwrap_or("");
+        assert!(msg.starts_with("Activation failed:"));
+        assert!(msg.contains("400 unknown backend"));
     }
 
     #[test]

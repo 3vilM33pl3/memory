@@ -83,6 +83,8 @@ memory embeddings list
 
 Output marks the active backend with `*` and any backend that didn't resolve at startup (missing API key, empty model) with `!`.
 
+The same information, plus per-project chunk and memory counts, is available interactively in the [Embeddings Tab](../tui/embeddings.md) of the TUI.
+
 Switch which backend search uses:
 
 ```bash

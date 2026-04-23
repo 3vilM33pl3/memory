@@ -2489,13 +2489,37 @@ async fn prune_embeddings(
     }))
 }
 
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+struct EmbeddingBackendsQuery {
+    project: Option<String>,
+}
+
 async fn list_embedding_backends(
     State(state): State<AppState>,
+    Query(params): Query<EmbeddingBackendsQuery>,
+) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
+    build_embedding_backends_response(&state, params.project.as_deref()).await
+}
+
+async fn build_embedding_backends_response(
+    state: &AppState,
+    project: Option<&str>,
 ) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
     let embedders = state.embedders.read().await;
     let active_name = embedders.active_name().map(|s| s.to_string());
-    let ready: std::collections::HashSet<String> =
-        embedders.iter().map(|(name, _)| name.to_string()).collect();
+    // Map name -> space_key for ready backends so we can merge coverage
+    // counts (which are grouped by embedding_space) back by name.
+    let space_by_name: std::collections::HashMap<String, String> = embedders
+        .iter()
+        .map(|(name, service)| (name.to_string(), service.embedding_space_key()))
+        .collect();
+    let ready: std::collections::HashSet<String> = space_by_name.keys().cloned().collect();
+
+    let coverage_by_space: std::collections::HashMap<String, (i64, i64)> = match project {
+        Some(slug) => fetch_project_embedding_coverage(state, slug).await?,
+        None => std::collections::HashMap::new(),
+    };
+
     let backends = state
         .config
         .embeddings
@@ -2507,6 +2531,17 @@ async fn list_embedding_backends(
             } else {
                 backend.base_url.trim_end_matches('/').to_string()
             };
+            let (project_chunk_count, project_memory_count) = if project.is_some() {
+                match space_by_name
+                    .get(&backend.name)
+                    .and_then(|key| coverage_by_space.get(key))
+                {
+                    Some((chunks, memories)) => (Some(*chunks), Some(*memories)),
+                    None => (Some(0), Some(0)),
+                }
+            } else {
+                (None, None)
+            };
             EmbeddingBackendInfo {
                 name: backend.name.clone(),
                 provider: backend.provider.clone(),
@@ -2514,6 +2549,8 @@ async fn list_embedding_backends(
                 model: backend.model.clone(),
                 active: active_name.as_deref() == Some(backend.name.as_str()),
                 ready: ready.contains(&backend.name),
+                project_chunk_count,
+                project_memory_count,
             }
         })
         .collect();
@@ -2521,6 +2558,43 @@ async fn list_embedding_backends(
         backends,
         active: active_name,
     }))
+}
+
+async fn fetch_project_embedding_coverage(
+    state: &AppState,
+    slug: &str,
+) -> Result<std::collections::HashMap<String, (i64, i64)>, ApiError> {
+    let Some(pool) = state.pool.as_ref() else {
+        return Ok(std::collections::HashMap::new());
+    };
+    let rows = sqlx::query(
+        r#"
+        SELECT mce.embedding_space,
+               COUNT(*)::bigint                       AS chunk_count,
+               COUNT(DISTINCT mc.memory_entry_id)::bigint AS memory_count
+        FROM memory_chunk_embeddings mce
+        JOIN memory_chunks mc ON mc.id = mce.chunk_id
+        JOIN memory_entries m ON m.id = mc.memory_entry_id
+        JOIN projects p ON p.id = m.project_id
+        WHERE p.slug = $1
+          AND m.status = 'active'
+          AND m.is_tombstone = FALSE
+        GROUP BY mce.embedding_space
+        "#,
+    )
+    .bind(slug)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::sql)?;
+
+    let mut map = std::collections::HashMap::with_capacity(rows.len());
+    for row in rows {
+        let space: String = row.try_get("embedding_space").map_err(ApiError::sql)?;
+        let chunk_count: i64 = row.try_get("chunk_count").map_err(ApiError::sql)?;
+        let memory_count: i64 = row.try_get("memory_count").map_err(ApiError::sql)?;
+        map.insert(space, (chunk_count, memory_count));
+    }
+    Ok(map)
 }
 
 async fn activate_embedding_backend(
@@ -2554,7 +2628,7 @@ async fn activate_embedding_backend(
         return Err(err);
     }
 
-    list_embedding_backends(State(state)).await
+    build_embedding_backends_response(&state, None).await
 }
 
 async fn persist_active_embedding_backend(state: &AppState, name: &str) -> Result<(), ApiError> {

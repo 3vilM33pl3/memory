@@ -1309,6 +1309,15 @@ pub struct EmbeddingBackendInfo {
     /// the backend is declared in config but the API key or model is
     /// missing, so it won't embed until fixed.
     pub ready: bool,
+    /// Chunks in the requested project that currently have an
+    /// embedding in this backend's space. Present only when the
+    /// request scoped the listing to a project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_chunk_count: Option<i64>,
+    /// Distinct memories in the requested project with at least one
+    /// chunk covered by this backend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_memory_count: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

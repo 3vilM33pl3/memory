@@ -2187,22 +2187,13 @@ async fn main() -> Result<()> {
         }
         Command::Embeddings(args) => match args.command {
             EmbeddingsCommand::List => {
-                let response = client
-                    .get(service_url(&config, "/v1/embeddings/backends"))
-                    .headers(write_headers(&config)?)
-                    .send()
-                    .await?;
-                let payload: mem_api::EmbeddingBackendsResponse = get_json(response).await?;
+                let api = ApiClient::new(client.clone(), config.clone());
+                let payload = api.list_embedding_backends(None).await?;
                 print_embedding_backends(&payload);
             }
             EmbeddingsCommand::Activate(args) => {
-                let response = client
-                    .post(service_url(&config, "/v1/embeddings/activate"))
-                    .headers(write_headers(&config)?)
-                    .json(&mem_api::ActivateEmbeddingBackendRequest { name: args.name })
-                    .send()
-                    .await?;
-                let payload: mem_api::EmbeddingBackendsResponse = get_json(response).await?;
+                let api = ApiClient::new(client.clone(), config.clone());
+                let payload = api.activate_embedding_backend(&args.name).await?;
                 print_embedding_backends(&payload);
             }
             EmbeddingsCommand::Reindex(args) => {
@@ -6582,6 +6573,36 @@ impl ApiClient {
                     &self.config,
                     &format!("/v1/memory/{memory_id}"),
                 ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn list_embedding_backends(
+        &self,
+        project: Option<&str>,
+    ) -> Result<mem_api::EmbeddingBackendsResponse> {
+        let mut request = self
+            .client
+            .get(service_url(&self.config, "/v1/embeddings/backends"));
+        if let Some(slug) = project {
+            request = request.query(&[("project", slug)]);
+        }
+        get_json(request.send().await?).await
+    }
+
+    pub(crate) async fn activate_embedding_backend(
+        &self,
+        name: &str,
+    ) -> Result<mem_api::EmbeddingBackendsResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/embeddings/activate"))
+                .headers(write_headers(&self.config)?)
+                .json(&mem_api::ActivateEmbeddingBackendRequest {
+                    name: name.to_string(),
+                })
                 .send()
                 .await?,
         )
