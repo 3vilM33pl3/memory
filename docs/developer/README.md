@@ -4,12 +4,29 @@ This section is for developers working on Memory Layer itself: architecture, int
 
 ## Table of Contents
 
+- [Quickstart](#quickstart)
 - [Architecture](#architecture)
 - [Implementation Material](#implementation-material)
 - [Related Docs](#related-docs)
 
+## Quickstart
+
+Run a fully isolated dev copy of Memory Layer alongside any packaged install on the same machine:
+
+```bash
+cargo run --bin memory -- init
+cargo run --bin memory -- dev init --copy-from-global
+cargo run --bin memory -- service run            # 4250 HTTP, 4251 capnp
+cargo run --bin memory -- tui                    # header reads [dev]
+```
+
+The dev stack is detected automatically when the binary path lives under `target/{debug,release}/` and reads its config from `.mem/config.toml` plus a `.mem/config.dev.toml` overlay — never from the installed global config.
+
+For the full isolation contract, default ports, override flags, and troubleshooting, see [Dev Stack vs Installed Stack](dev-stack.md).
+
 ## Architecture
 
+- [Dev Stack vs Installed Stack](dev-stack.md)
 - [Architecture Overview](architecture/overview.md)
 - [Memory Types Reference](architecture/memory-types.md)
 - [How Memory Layer Works](architecture/how-it-works.md)

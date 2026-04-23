@@ -22,6 +22,7 @@ Memory Layer is a local-first project memory system for coding agents and develo
 ## Developer Docs
 
 - [Developer Documentation Index](developer/README.md)
+- [Dev Stack vs Installed Stack](developer/dev-stack.md)
 - [How Skills Work](developer/skills/how-skills-work.md)
 - [Architecture Overview](developer/architecture/overview.md)
 - [Memory Types Reference](developer/architecture/memory-types.md)

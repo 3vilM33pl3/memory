@@ -471,19 +471,24 @@ memory commits sync --project my-project
 
 ## Running From Source
 
-If you are developing Memory Layer itself:
+If you are developing Memory Layer itself, a `cargo` checkout runs as a **dev** stack that is fully isolated from any packaged install on the same machine — separate ports (`4250`/`4251` instead of `4040`/`4041`), separate Cap'n Proto socket, and a separate runtime directory. The TUI shows `[dev]` in its header.
 
 ```bash
-cargo run --bin memory -- wizard
-cargo run --bin memory -- service run
-cargo run --bin memory -- tui --project memory
+cargo run --bin memory -- init
+cargo run --bin memory -- dev init --copy-from-global
+cargo run --bin memory -- service run            # in its own shell
+cargo run --bin memory -- tui                    # header reads [dev]
 ```
 
-Optional watcher:
+Optional watcher manager:
 
 ```bash
-cargo run --bin memory -- watcher run --project memory
+cargo run --bin memory -- watcher manager run
 ```
+
+`memory dev init` without `--copy-from-global` leaves the overlay without shared credentials — fine if you want the dev stack on a different database or LLM endpoint, otherwise rerun with the flag or copy `[database]`, `[llm]`, `[embeddings]` into `.mem/config.dev.toml` by hand.
+
+The full isolation contract, default endpoint table, and troubleshooting live in [Dev Stack vs Installed Stack](../developer/dev-stack.md).
 
 ## Related Docs
 

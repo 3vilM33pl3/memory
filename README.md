@@ -11,6 +11,7 @@ It supports multiple developers, multiple projects, and multiple coding agents a
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Quick Start (Developers)](#quick-start-developers)
 - [What It Does](#what-it-does)
 - [Documentation](#documentation)
 - [Development](#development)
@@ -64,6 +65,36 @@ Most mutating `memory` commands support `--dry-run` so you can preview writes, s
 
 For a visual walkthrough of the interface, use the [TUI Guide](docs/user/tui/README.md).
 
+## Quick Start (Developers)
+
+If you are working on Memory Layer itself, you can run a development copy from a `cargo` checkout that is **fully isolated** from any packaged install on the same machine — separate ports, separate Cap'n Proto socket, separate runtime directory. The TUI shows `[dev]` in its header so you cannot mistake one for the other.
+
+The mechanism: any `memory` binary launched from `target/{debug,release}/` activates the `dev` profile, which layers `.mem/config.dev.toml` on top of `.mem/config.toml` and ignores the global config entirely. Override with `MEMORY_LAYER_PROFILE=dev|prod` when needed.
+
+```bash
+git clone https://github.com/3vilM33pl3/memory
+cd memory
+npm --prefix web ci && npm --prefix web run build
+
+# Bootstrap the repo-local base config and the dev overlay.
+cargo run --bin memory -- init
+cargo run --bin memory -- dev init --copy-from-global
+
+# Each piece in its own shell, all on the dev stack.
+cargo run --bin memory -- service run            # backend (4250 HTTP, 4251 capnp)
+cargo run --bin memory -- watcher manager run    # optional
+cargo run --bin memory -- tui                    # header reads [dev]
+```
+
+`--copy-from-global` lifts the database URL and LLM/embedding endpoints from the installed config into the dev overlay so credentials are not duplicated.
+
+| Stack | HTTP | capnp TCP | capnp Unix socket |
+| --- | --- | --- | --- |
+| Installed (Debian/Homebrew package) | `127.0.0.1:4040` | `127.0.0.1:4041` | `/tmp/memory-layer.capnp.sock` |
+| Dev (cargo-run from repo) | `127.0.0.1:4250` | `127.0.0.1:4251` | `<repo>/.mem/runtime/dev/memory-layer.capnp.sock` |
+
+For the full isolation contract, override flags, troubleshooting, and the verification recipe, see [Dev Stack vs Installed Stack](docs/developer/dev-stack.md).
+
 ## What It Does
 
 - stores project memory in PostgreSQL with pgvector-backed chunk embeddings
@@ -113,6 +144,7 @@ Project-local customization now has two layers:
 ### Developer Docs
 
 - [Developer Documentation Index](docs/developer/README.md)
+- [Dev Stack vs Installed Stack](docs/developer/dev-stack.md)
 - [How Skills Work](docs/developer/skills/how-skills-work.md)
 - [Architecture Overview](docs/developer/architecture/overview.md)
 - [How Memory Layer Works](docs/developer/architecture/how-it-works.md)
@@ -137,18 +169,6 @@ Unless explicitly agreed otherwise in writing, contributions are accepted under 
 
 ## Development
 
-For working on this repository itself, start with the developer docs. The short version is:
+For working on this repository itself, start with [Quick Start (Developers)](#quick-start-developers) above and then [Dev Stack vs Installed Stack](docs/developer/dev-stack.md) for the isolation contract.
 
-```bash
-cargo run --bin memory -- wizard
-cargo run --bin memory -- service run
-cargo run --bin memory -- tui --project memory
-```
-
-Optional watcher:
-
-```bash
-cargo run --bin memory -- watcher run --project memory
-```
-
-Packaging and implementation details now live under [Developer Documentation](docs/developer/README.md).
+Packaging, architecture, and implementation details live under [Developer Documentation](docs/developer/README.md).
