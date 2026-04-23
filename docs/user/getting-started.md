@@ -181,6 +181,7 @@ Use this for values shared by many repos:
 - `service.api_token`
 - `[cluster]` settings for backend relay discovery on a local network
 - `[llm]` settings
+- `[[embeddings.backends]]` — one block per embedding backend you want available (OpenAI, Voyage, Cohere, Gemini). See [Embedding Operations](cli/embeddings.md#configuring-multiple-backends) for the full shape and the "enable two backends from day one" workflow.
 
 The shared service API token normally lives in the adjacent `memory-layer.env` file and is provisioned automatically during setup.
 
@@ -218,7 +219,10 @@ Use these for secrets such as:
 ```bash
 MEMORY_LAYER__SERVICE__API_TOKEN=auto-generated-or-manually-overridden
 OPENAI_API_KEY=your-api-key-here
+VOYAGE_API_KEY=your-voyage-key-here
 ```
+
+When you declare multiple `[[embeddings.backends]]` blocks, each one's `api_key_env` field names the variable the service will look up here. The name is arbitrary — whatever you put in `api_key_env` in the TOML, put the same key in `memory-layer.env`.
 
 ## Writer ID
 

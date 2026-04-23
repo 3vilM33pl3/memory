@@ -29,6 +29,10 @@ Every embedding row is keyed by a **space key** of the form `provider|base_url|m
 
 At any time, exactly one configured backend is **active**: that's the one `memory query` uses for semantic retrieval. Swapping activation is a constant-time metadata flip — no recomputation — as long as the target space is already populated.
 
+**Every new memory is embedded into every configured backend automatically.** The curate step that runs after `memory remember` (and after the watcher's idle captures) writes chunks into every space declared under `[[embeddings.backends]]`, not just the active one. So configuring two backends from the start means you never have to run `reembed` later just to switch. `reembed` and `reindex` are only for *backfilling* existing memories when you add a backend after the fact.
+
+Heads up on cost: with two backends configured, each new memory hits both providers' embedding APIs. That's usually negligible for text-embedding-3-small and voyage-code-3 (both in the low cents per thousand writes), but worth keeping in mind if you add a premium model.
+
 ## Configuring Multiple Backends
 
 Declare every backend you want available under `[[embeddings.backends]]` and pick one with `[embeddings].active`:
@@ -130,28 +134,93 @@ memory embeddings prune --project my-project --dry-run
 
 ## Typical Workflows
 
-**Enable embeddings for the first time:**
+Your config files live in the locations listed under [Getting Started → File Locations](../getting-started.md#file-locations) — on Debian that's `/etc/memory-layer/memory-layer.toml` and `/etc/memory-layer/memory-layer.env`; on Linux user-level installs it's `~/.config/memory-layer/memory-layer.toml` and `~/.config/memory-layer/memory-layer.env`.
 
-```bash
-memory doctor
-memory embeddings reindex --project my-project
-```
+### Enable embeddings for the first time (single backend)
 
-**Add a second backend so you can compare/switch freely:**
+1. Add your API key to `memory-layer.env`:
+   ```dotenv
+   OPENAI_API_KEY=sk-proj-...
+   ```
+2. Add an `[embeddings]` block to `memory-layer.toml`:
+   ```toml
+   [embeddings]
+   provider = "openai_compatible"
+   base_url = ""
+   api_key_env = "OPENAI_API_KEY"
+   model = "text-embedding-3-small"
+   batch_size = 16
+   ```
+3. Restart the service. Confirm the setup:
+   ```bash
+   memory doctor
+   memory embeddings list          # should show one backend, no "!"
+   ```
+4. Backfill embeddings for existing memories:
+   ```bash
+   memory embeddings reindex --project my-project
+   ```
 
-1. Add the new `[[embeddings.backends]]` entry to the global config and add its API key to `memory-layer.env`.
-2. Restart the service to pick up the new backend list.
-3. Populate the new space alongside the existing one:
+### Enable two backends from day one
+
+Do this if you know up-front you want the option to switch models freely — it avoids having to reembed the whole corpus later.
+
+1. Put both API keys in `memory-layer.env`:
+   ```dotenv
+   OPENAI_API_KEY=sk-proj-...
+   VOYAGE_API_KEY=pa-...
+   ```
+2. Declare both backends in `memory-layer.toml` and pick one with `active`:
+   ```toml
+   [embeddings]
+   active = "voyage-code"
+
+   [[embeddings.backends]]
+   name = "openai-3-small"
+   provider = "openai_compatible"
+   base_url = ""
+   api_key_env = "OPENAI_API_KEY"
+   model = "text-embedding-3-small"
+   batch_size = 16
+
+   [[embeddings.backends]]
+   name = "voyage-code"
+   provider = "voyage"
+   base_url = ""
+   api_key_env = "VOYAGE_API_KEY"
+   model = "voyage-code-3"
+   batch_size = 16
+   ```
+3. Restart the service. Confirm both resolved:
+   ```bash
+   memory embeddings list          # both listed; active marked with *; neither marked with !
+   ```
+4. Backfill every existing memory into both spaces (default behavior — no `--backend` flag):
+   ```bash
+   memory embeddings reindex --project my-project
+   ```
+5. From here on, every new memory is embedded into both spaces automatically. Swap which one search uses any time:
+   ```bash
+   memory embeddings activate openai-3-small
+   memory embeddings activate voyage-code
+   ```
+
+### Add a second backend to an existing install
+
+Same end state as the two-backend workflow, just applied incrementally:
+
+1. Add the new `[[embeddings.backends]]` block and its API key line in `memory-layer.env`.
+2. Restart the service. `memory embeddings list` should show both.
+3. Backfill existing memories into the new space:
    ```bash
    memory embeddings reembed --project my-project
    ```
-4. Switch search to the new backend:
+4. Switch search to the new backend whenever you're ready:
    ```bash
    memory embeddings activate <new-backend-name>
    ```
-5. Flip back and forth any time with `memory embeddings activate <name>` — no recomputation.
 
-**Retire a backend:**
+### Retire a backend
 
 1. Remove its `[[embeddings.backends]]` block from config. Restart the service.
 2. `memory embeddings prune --project my-project` drops the orphaned space.
