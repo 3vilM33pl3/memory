@@ -1242,6 +1242,10 @@ pub struct ReindexRequest {
     pub project: String,
     #[serde(default)]
     pub dry_run: bool,
+    /// Restrict to a single configured backend by name. `None` means
+    /// every configured backend is reindexed so all spaces stay covered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
 }
 
 impl ReindexRequest {
@@ -1265,6 +1269,10 @@ pub struct ReembedRequest {
     pub project: String,
     #[serde(default)]
     pub dry_run: bool,
+    /// Restrict to a single configured backend by name. `None` means
+    /// every configured backend is reembedded so all spaces stay covered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
 }
 
 impl ReembedRequest {
@@ -1288,6 +1296,40 @@ pub struct PruneEmbeddingsRequest {
     pub project: String,
     #[serde(default)]
     pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingBackendInfo {
+    pub name: String,
+    pub provider: String,
+    pub base_url: String,
+    pub model: String,
+    pub active: bool,
+    /// Whether the backend resolved at service-startup — `false` means
+    /// the backend is declared in config but the API key or model is
+    /// missing, so it won't embed until fixed.
+    pub ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingBackendsResponse {
+    pub backends: Vec<EmbeddingBackendInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivateEmbeddingBackendRequest {
+    pub name: String,
+}
+
+impl ActivateEmbeddingBackendRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.name.trim().is_empty() {
+            return Err(ValidationError::new("name must be non-empty"));
+        }
+        Ok(())
+    }
 }
 
 impl PruneEmbeddingsRequest {
@@ -1697,7 +1739,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub llm: LlmConfig,
     #[serde(default)]
-    pub embeddings: EmbeddingConfig,
+    pub embeddings: EmbeddingsConfig,
     #[serde(default)]
     pub cluster: ClusterConfig,
     #[serde(default, alias = "agent")]
@@ -1803,6 +1845,7 @@ impl AppConfig {
     }
 
     fn apply_runtime_defaults(&mut self) {
+        self.embeddings.normalize_backend_names();
         if self.cluster.service_id.trim().is_empty() {
             self.cluster.service_id = format!(
                 "service-{}",
@@ -1815,6 +1858,68 @@ impl AppConfig {
             );
         }
     }
+
+}
+
+impl EmbeddingsConfig {
+    /// Fills in a sensible `name` for every configured embedding backend
+    /// that didn't ship one, deduplicating against existing names.
+    /// Silently drops the `active` selector if it points at a missing
+    /// backend so search falls back to "no embeddings" rather than
+    /// crashing the service on startup — doctor/health will still flag it.
+    /// If no explicit `active` is set and exactly one backend is
+    /// configured, materialize that one into `active` so downstream
+    /// code can trust `active` as the persistent source of truth.
+    pub fn normalize_backend_names(&mut self) {
+        let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for backend in &mut self.backends {
+            if backend.name.trim().is_empty() {
+                backend.name = derive_embedding_backend_name(backend);
+            }
+            let mut candidate = backend.name.clone();
+            let mut suffix = 2;
+            while used.contains(&candidate) {
+                candidate = format!("{}-{suffix}", backend.name);
+                suffix += 1;
+            }
+            backend.name = candidate.clone();
+            used.insert(candidate);
+        }
+        if let Some(active) = self.active.as_deref() {
+            if !used.contains(active) {
+                self.active = None;
+            }
+        }
+        if self.active.is_none() && self.backends.len() == 1 {
+            self.active = Some(self.backends[0].name.clone());
+        }
+    }
+}
+
+fn derive_embedding_backend_name(backend: &EmbeddingBackendConfig) -> String {
+    let provider = backend.provider.trim();
+    let model = backend.model.trim();
+    let combined = if provider.is_empty() && model.is_empty() {
+        "embeddings".to_string()
+    } else if provider.is_empty() {
+        model.to_string()
+    } else if model.is_empty() {
+        provider.to_string()
+    } else {
+        format!("{provider}-{model}")
+    };
+    combined
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string()
 }
 
 fn normalize_legacy_config_keys(value: &mut serde_json::Value) {
@@ -2172,7 +2277,12 @@ impl Default for LlmConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EmbeddingConfig {
+pub struct EmbeddingBackendConfig {
+    /// Stable identifier used by CLI/API activation and user-visible
+    /// listings. When omitted in config, the loader auto-derives one
+    /// from `{provider}-{model}` so users can start without naming.
+    #[serde(default)]
+    pub name: String,
     #[serde(default = "default_embeddings_provider")]
     pub provider: String,
     #[serde(default = "default_embeddings_base_url")]
@@ -2185,15 +2295,113 @@ pub struct EmbeddingConfig {
     pub batch_size: usize,
 }
 
-impl Default for EmbeddingConfig {
+impl Default for EmbeddingBackendConfig {
     fn default() -> Self {
         Self {
+            name: String::new(),
             provider: default_embeddings_provider(),
             base_url: default_embeddings_base_url(),
             api_key_env: default_embeddings_api_key_env(),
             model: String::new(),
             batch_size: default_embeddings_batch_size(),
         }
+    }
+}
+
+/// Wraps one or more configured embedding backends plus the name of the
+/// one currently used for search. Accepts two TOML shapes:
+///
+/// 1. Legacy singleton — a flat `[embeddings]` table with `provider`,
+///    `model`, etc. Loads as a single backend named after
+///    `{provider}-{model}` and marked active.
+/// 2. Multi-backend — `[embeddings] active = "<name>"` plus one or
+///    more `[[embeddings.backends]]` array-of-tables.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct EmbeddingsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<String>,
+    #[serde(default)]
+    pub backends: Vec<EmbeddingBackendConfig>,
+}
+
+impl EmbeddingsConfig {
+    /// The currently-active backend according to `active`, falling back
+    /// to the sole backend when exactly one is configured and no
+    /// explicit `active` was given. Returns `None` when no backends are
+    /// configured at all.
+    pub fn active_backend(&self) -> Option<&EmbeddingBackendConfig> {
+        if let Some(name) = self.active.as_deref() {
+            return self.backends.iter().find(|b| b.name == name);
+        }
+        if self.backends.len() == 1 {
+            return self.backends.first();
+        }
+        None
+    }
+
+    /// Lookup a backend by name.
+    pub fn backend(&self, name: &str) -> Option<&EmbeddingBackendConfig> {
+        self.backends.iter().find(|b| b.name == name)
+    }
+}
+
+impl<'de> Deserialize<'de> for EmbeddingsConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let map = match value {
+            serde_json::Value::Null => return Ok(Self::default()),
+            serde_json::Value::Object(map) => map,
+            other => {
+                return Err(D::Error::custom(format!(
+                    "expected [embeddings] to be a table, got {other}"
+                )));
+            }
+        };
+
+        // New-form: presence of `backends` array wins.
+        if map.contains_key("backends") {
+            let active = match map.get("active") {
+                Some(serde_json::Value::String(s)) => Some(s.clone()),
+                Some(serde_json::Value::Null) | None => None,
+                Some(other) => {
+                    return Err(D::Error::custom(format!(
+                        "embeddings.active must be a string, got {other}"
+                    )));
+                }
+            };
+            let backends_value = map.get("backends").cloned().unwrap_or_default();
+            let backends: Vec<EmbeddingBackendConfig> =
+                serde_json::from_value(backends_value).map_err(D::Error::custom)?;
+            return Ok(Self { active, backends });
+        }
+
+        // Legacy singleton: if nothing relevant is set, return a wholly
+        // empty config so other code paths still see "no backends".
+        let is_empty = !map.contains_key("provider")
+            && !map.contains_key("model")
+            && !map.contains_key("base_url")
+            && !map.contains_key("api_key_env")
+            && !map.contains_key("batch_size")
+            && !map.contains_key("name");
+        if is_empty {
+            return Ok(Self::default());
+        }
+
+        let backend: EmbeddingBackendConfig =
+            serde_json::from_value(serde_json::Value::Object(map)).map_err(D::Error::custom)?;
+        Ok(Self {
+            active: if backend.name.is_empty() {
+                None
+            } else {
+                Some(backend.name.clone())
+            },
+            backends: vec![backend],
+        })
     }
 }
 
@@ -2475,6 +2683,136 @@ mod tests {
         assert_eq!(Profile::Dev.version_suffix(), "-dev");
         assert_eq!(Profile::Prod.display_version("0.6.0"), "0.6.0");
         assert_eq!(Profile::Dev.display_version("0.6.0"), "0.6.0-dev");
+    }
+
+    fn parse_embeddings(input: &str) -> EmbeddingsConfig {
+        #[derive(Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            embeddings: EmbeddingsConfig,
+        }
+        let wrap: Wrap = toml::from_str(input).expect("parse embeddings TOML");
+        wrap.embeddings
+    }
+
+    #[test]
+    fn embeddings_config_legacy_singleton_deserializes_and_auto_names() {
+        let mut cfg = parse_embeddings(
+            r#"
+            [embeddings]
+            provider = "voyage"
+            model = "voyage-code-3"
+            api_key_env = "VOYAGE_API_KEY"
+            "#,
+        );
+        cfg.normalize_backend_names();
+        assert_eq!(cfg.backends.len(), 1);
+        let only = &cfg.backends[0];
+        assert_eq!(only.provider, "voyage");
+        assert_eq!(only.model, "voyage-code-3");
+        assert_eq!(only.name, "voyage-voyage-code-3");
+        assert_eq!(cfg.active.as_deref(), Some("voyage-voyage-code-3"));
+    }
+
+    #[test]
+    fn embeddings_config_new_form_with_multiple_backends() {
+        let mut cfg = parse_embeddings(
+            r#"
+            [embeddings]
+            active = "voyage-code"
+
+            [[embeddings.backends]]
+            name = "openai-3-small"
+            provider = "openai_compatible"
+            model = "text-embedding-3-small"
+            api_key_env = "OPENAI_API_KEY"
+
+            [[embeddings.backends]]
+            name = "voyage-code"
+            provider = "voyage"
+            model = "voyage-code-3"
+            api_key_env = "VOYAGE_API_KEY"
+            "#,
+        );
+        cfg.normalize_backend_names();
+        assert_eq!(cfg.backends.len(), 2);
+        assert_eq!(cfg.active.as_deref(), Some("voyage-code"));
+        assert_eq!(
+            cfg.backend("openai-3-small").unwrap().provider,
+            "openai_compatible"
+        );
+        assert_eq!(cfg.active_backend().unwrap().model, "voyage-code-3");
+    }
+
+    #[test]
+    fn embeddings_config_duplicate_names_get_unique_suffixes() {
+        let mut cfg = parse_embeddings(
+            r#"
+            [[embeddings.backends]]
+            name = "shared"
+            provider = "openai_compatible"
+            model = "a"
+
+            [[embeddings.backends]]
+            name = "shared"
+            provider = "voyage"
+            model = "b"
+            "#,
+        );
+        cfg.normalize_backend_names();
+        let names: Vec<_> = cfg.backends.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, vec!["shared", "shared-2"]);
+    }
+
+    #[test]
+    fn embeddings_config_unknown_active_falls_back_to_sole_backend() {
+        let mut cfg = parse_embeddings(
+            r#"
+            [embeddings]
+            active = "does-not-exist"
+
+            [[embeddings.backends]]
+            name = "openai"
+            provider = "openai_compatible"
+            model = "text-embedding-3-small"
+            "#,
+        );
+        cfg.normalize_backend_names();
+        // With exactly one backend configured, an unknown `active`
+        // collapses onto that backend rather than leaving search
+        // silently disabled.
+        assert_eq!(cfg.active.as_deref(), Some("openai"));
+        assert_eq!(cfg.active_backend().unwrap().model, "text-embedding-3-small");
+    }
+
+    #[test]
+    fn embeddings_config_unknown_active_with_multiple_backends_clears_active() {
+        let mut cfg = parse_embeddings(
+            r#"
+            [embeddings]
+            active = "does-not-exist"
+
+            [[embeddings.backends]]
+            name = "a"
+            provider = "openai_compatible"
+            model = "m1"
+
+            [[embeddings.backends]]
+            name = "b"
+            provider = "voyage"
+            model = "m2"
+            "#,
+        );
+        cfg.normalize_backend_names();
+        assert_eq!(cfg.active, None);
+        assert!(cfg.active_backend().is_none());
+    }
+
+    #[test]
+    fn embeddings_config_empty_table_produces_no_backends() {
+        let cfg = parse_embeddings("[embeddings]\n");
+        assert!(cfg.backends.is_empty());
+        assert!(cfg.active.is_none());
     }
 
     #[test]

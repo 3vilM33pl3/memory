@@ -16,7 +16,7 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use mem_api::{EmbeddingConfig, resolve_secret_value};
+use mem_api::{EmbeddingBackendConfig, resolve_secret_value};
 use pgvector::Vector;
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
@@ -66,7 +66,7 @@ pub trait EmbeddingBackend: Send + Sync {
 /// Resolve a provider string + config into a concrete backend. Returns `None`
 /// when the config is unusable (unknown provider, empty model, missing API
 /// key) so the caller can decide to run without semantic search.
-pub fn build_backend(config: &EmbeddingConfig) -> Option<Arc<dyn EmbeddingBackend>> {
+pub fn build_backend(config: &EmbeddingBackendConfig) -> Option<Arc<dyn EmbeddingBackend>> {
     if config.model.trim().is_empty() {
         return None;
     }
@@ -453,14 +453,14 @@ mod tests {
     use super::*;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers};
 
-    fn config(provider: &str, base: &str, model: &str, key_env: &str) -> EmbeddingConfig {
-        EmbeddingConfig {
+    fn config(provider: &str, base: &str, model: &str, key_env: &str) -> EmbeddingBackendConfig {
+        EmbeddingBackendConfig {
             provider: provider.to_string(),
             base_url: base.to_string(),
             api_key_env: key_env.to_string(),
             model: model.to_string(),
             batch_size: 16,
-            ..EmbeddingConfig::default()
+            ..EmbeddingBackendConfig::default()
         }
     }
 

@@ -22,23 +22,22 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use mem_api::{
-    ActivityDetails, ActivityEvent, ActivityKind, AppConfig, ArchiveRequest, ArchiveResponse,
-    CaptureTaskRequest, CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest,
-    CommitSyncResponse, CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse,
+    ActivateEmbeddingBackendRequest, ActivityDetails, ActivityEvent, ActivityKind, AppConfig,
+    ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest,
+    CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest,
+    DeleteMemoryRequest, DeleteMemoryResponse, EmbeddingBackendInfo, EmbeddingBackendsResponse,
     MemoryEntryResponse, MemoryHistoryResponse, MemorySourceRecord, PlanActivityAction,
-    PlanActivityRequest,
-    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
-    ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
-    ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
-    ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
-    PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryRequest,
-    ReembedRequest, ReembedResponse, ReindexRequest,
-    ReindexResponse, RelatedMemorySummary, ReplacementProposalListResponse,
-    ReplacementProposalResolutionResponse, ResumeAction, ResumeRequest, ResumeResponse,
-    ScanActivityRequest, SourceKind, StatsResponse, StreamRequest, StreamResponse, ValidationError,
-    WatcherHealth, WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary,
-    WatcherRestartRequest, WatcherRestartResponse, WatcherUnregisterRequest, read_capnp_text_frame,
-    write_capnp_text_frame,
+    PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse,
+    ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest,
+    ProjectMemoryBundlePreview, ProjectMemoryBundleSource, ProjectMemoryExportOptions,
+    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectOverviewResponse,
+    PruneEmbeddingsRequest, PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse,
+    QueryRequest, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
+    RelatedMemorySummary, ReplacementProposalListResponse, ReplacementProposalResolutionResponse,
+    ResumeAction, ResumeRequest, ResumeResponse, ScanActivityRequest, SourceKind, StatsResponse,
+    StreamRequest, StreamResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest,
+    WatcherPresence, WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
+    WatcherUnregisterRequest, read_capnp_text_frame, write_capnp_text_frame,
 };
 use mem_curate::{
     approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
@@ -46,7 +45,7 @@ use mem_curate::{
 };
 use mem_platform::restart_local_watcher_service;
 use mem_search::{
-    EmbeddingService, parse_memory_type, parse_relation_type, parse_source_kind,
+    EmbeddingRegistry, parse_memory_type, parse_relation_type, parse_source_kind,
     prune_project_embeddings, query_memory, rebuild_chunks, reembed_project_chunks,
 };
 use mem_service::{
@@ -83,7 +82,7 @@ struct AppState {
     config: AppConfig,
     web_root: Option<PathBuf>,
     http_client: reqwest::Client,
-    embedder: Option<EmbeddingService>,
+    embedders: Arc<tokio::sync::RwLock<EmbeddingRegistry>>,
     events: broadcast::Sender<ServiceEvent>,
     recent_activity: Arc<Mutex<VecDeque<ServiceEvent>>>,
     watchers: Arc<Mutex<HashMap<String, WatcherPresence>>>,
@@ -267,7 +266,7 @@ async fn build_state(
         .connect(&config.database.url)
         .await;
     let (events, _) = broadcast::channel(128);
-    let (role, pool, embedder) = match pool_attempt {
+    let (role, pool) = match pool_attempt {
         Ok(pool) => {
             sqlx::migrate!("../../migrations")
                 .run(&pool)
@@ -275,21 +274,21 @@ async fn build_state(
                 .context(
                     "run migrations (pgvector extension 'vector' must be installed in PostgreSQL)",
                 )?;
-            (
-                ServiceRole::Primary,
-                Some(pool),
-                EmbeddingService::from_config(&config),
-            )
+            (ServiceRole::Primary, Some(pool))
         }
         Err(error) if config.cluster.enabled => {
             tracing::warn!(
                 error = %error,
                 "postgres unavailable; starting in relay mode"
             );
-            (ServiceRole::Relay, None, None)
+            (ServiceRole::Relay, None)
         }
         Err(error) => return Err(error).context("connect postgres"),
     };
+
+    let embedders = Arc::new(tokio::sync::RwLock::new(EmbeddingRegistry::from_config(
+        &config.embeddings,
+    )));
 
     Ok(AppState {
         role,
@@ -298,7 +297,7 @@ async fn build_state(
         api_token: config.service.api_token.clone(),
         web_root: discover_web_root(&config),
         http_client,
-        embedder,
+        embedders,
         config,
         events,
         recent_activity: Arc::new(Mutex::new(VecDeque::with_capacity(20))),
@@ -378,6 +377,8 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/reindex", post(reindex))
         .route("/v1/reembed", post(reembed))
         .route("/v1/prune-embeddings", post(prune_embeddings))
+        .route("/v1/embeddings/backends", get(list_embedding_backends))
+        .route("/v1/embeddings/activate", post(activate_embedding_backend))
         .route("/v1/memory/{id}", get(get_memory))
         .route("/v1/memory/{id}/history", get(get_memory_history))
         .route("/v1/memory", delete(delete_memory))
@@ -1969,7 +1970,8 @@ async fn query(
         ));
     }
     let pool = state.pool()?;
-    match query_memory(pool, &request, state.embedder.as_ref()).await {
+    let embedders = state.embedders.read().await;
+    match query_memory(pool, &request, embedders.active()).await {
         Ok(response) => {
             notify_project_changed(
                 &state,
@@ -2211,10 +2213,13 @@ async fn curate_memory(
     if request.dry_run {
         return Ok(Json(response));
     }
-    if state.embedder.is_some() {
-        rebuild_chunks(state.pool()?, &request.project, state.embedder.as_ref())
-            .await
-            .map_err(ApiError::io)?;
+    {
+        let embedders = state.embedders.read().await;
+        if !embedders.is_empty() {
+            rebuild_chunks(state.pool()?, &request.project, &embedders, None)
+                .await
+                .map_err(ApiError::io)?;
+        }
     }
     notify_project_changed(
         &state,
@@ -2288,9 +2293,15 @@ async fn reindex(
         .try_get::<i64, _>("count")
         .map_err(ApiError::sql)? as u64
     } else {
-        rebuild_chunks(state.pool()?, &request.project, state.embedder.as_ref())
-            .await
-            .map_err(ApiError::io)?
+        let embedders = state.embedders.read().await;
+        rebuild_chunks(
+            state.pool()?,
+            &request.project,
+            &embedders,
+            request.backend.as_deref(),
+        )
+        .await
+        .map_err(ApiError::io)?
     };
     if request.dry_run {
         return Ok(Json(ReindexResponse {
@@ -2326,41 +2337,65 @@ async fn reembed(
             proxy_post_json(&state, "/v1/reembed", &request, true).await?,
         ));
     }
-    let Some(embedder) = state.embedder.as_ref() else {
+    let embedders = state.embedders.read().await;
+    if embedders.is_empty() {
         return Err(ApiError::validation(ValidationError::new(
             "embeddings are not configured; cannot re-embed",
         )));
+    }
+    let selected_keys: Vec<(String, String)> = match request.backend.as_deref() {
+        Some(name) => {
+            let service = embedders.get(name).ok_or_else(|| {
+                ApiError::validation(ValidationError::new(format!(
+                    "unknown embedding backend: {name}"
+                )))
+            })?;
+            vec![(name.to_string(), service.embedding_space_key())]
+        }
+        None => embedders
+            .iter()
+            .map(|(name, service)| (name.to_string(), service.embedding_space_key()))
+            .collect(),
     };
     let project = request.project.clone();
     let count = if request.dry_run {
-        sqlx::query(
-            r#"
-            SELECT COUNT(*) AS count
-            FROM memory_chunks mc
-            JOIN memory_entries m ON m.id = mc.memory_entry_id
-            JOIN projects p ON p.id = m.project_id
-            LEFT JOIN memory_chunk_embeddings mce
-              ON mce.chunk_id = mc.id
-             AND mce.embedding_space = $2
-            WHERE p.slug = $1
-              AND m.status = 'active'
-              AND (
-                    mce.chunk_id IS NULL
-                    OR mce.embedding_dimension IS NULL
-                  )
-            "#,
-        )
-        .bind(&request.project)
-        .bind(embedder.embedding_space_key())
-        .fetch_one(state.pool()?)
-        .await
-        .map_err(ApiError::sql)?
-        .try_get::<i64, _>("count")
-        .map_err(ApiError::sql)? as u64
-    } else {
-        reembed_project_chunks(state.pool()?, &request.project, embedder)
+        let mut total: i64 = 0;
+        for (_, space_key) in &selected_keys {
+            total += sqlx::query(
+                r#"
+                SELECT COUNT(*) AS count
+                FROM memory_chunks mc
+                JOIN memory_entries m ON m.id = mc.memory_entry_id
+                JOIN projects p ON p.id = m.project_id
+                LEFT JOIN memory_chunk_embeddings mce
+                  ON mce.chunk_id = mc.id
+                 AND mce.embedding_space = $2
+                WHERE p.slug = $1
+                  AND m.status = 'active'
+                  AND (
+                        mce.chunk_id IS NULL
+                        OR mce.embedding_dimension IS NULL
+                      )
+                "#,
+            )
+            .bind(&request.project)
+            .bind(space_key)
+            .fetch_one(state.pool()?)
             .await
-            .map_err(ApiError::io)?
+            .map_err(ApiError::sql)?
+            .try_get::<i64, _>("count")
+            .map_err(ApiError::sql)?;
+        }
+        total as u64
+    } else {
+        reembed_project_chunks(
+            state.pool()?,
+            &request.project,
+            &embedders,
+            request.backend.as_deref(),
+        )
+        .await
+        .map_err(ApiError::io)?
     };
     if request.dry_run {
         return Ok(Json(ReembedResponse {
@@ -2396,11 +2431,16 @@ async fn prune_embeddings(
             proxy_post_json(&state, "/v1/prune-embeddings", &request, true).await?,
         ));
     }
-    let Some(embedder) = state.embedder.as_ref() else {
+    let embedders = state.embedders.read().await;
+    if embedders.is_empty() {
         return Err(ApiError::validation(ValidationError::new(
             "embeddings are not configured; cannot prune inactive spaces",
         )));
-    };
+    }
+    let keep: Vec<String> = embedders
+        .iter()
+        .map(|(_, service)| service.embedding_space_key())
+        .collect();
     let project = request.project.clone();
     let count = if request.dry_run {
         sqlx::query(
@@ -2412,18 +2452,18 @@ async fn prune_embeddings(
             JOIN projects p ON p.id = m.project_id
             WHERE p.slug = $1
               AND m.status = 'active'
-              AND mce.embedding_space <> $2
+              AND mce.embedding_space <> ALL($2)
             "#,
         )
         .bind(&request.project)
-        .bind(embedder.embedding_space_key())
+        .bind(&keep)
         .fetch_one(state.pool()?)
         .await
         .map_err(ApiError::sql)?
         .try_get::<i64, _>("count")
         .map_err(ApiError::sql)? as u64
     } else {
-        prune_project_embeddings(state.pool()?, &request.project, embedder)
+        prune_project_embeddings(state.pool()?, &request.project, &embedders)
             .await
             .map_err(ApiError::io)?
     };
@@ -2447,6 +2487,116 @@ async fn prune_embeddings(
         pruned_embeddings: count,
         dry_run: false,
     }))
+}
+
+async fn list_embedding_backends(
+    State(state): State<AppState>,
+) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
+    let embedders = state.embedders.read().await;
+    let active_name = embedders.active_name().map(|s| s.to_string());
+    let ready: std::collections::HashSet<String> =
+        embedders.iter().map(|(name, _)| name.to_string()).collect();
+    let backends = state
+        .config
+        .embeddings
+        .backends
+        .iter()
+        .map(|backend| {
+            let base_url = if backend.base_url.trim().is_empty() {
+                String::new()
+            } else {
+                backend.base_url.trim_end_matches('/').to_string()
+            };
+            EmbeddingBackendInfo {
+                name: backend.name.clone(),
+                provider: backend.provider.clone(),
+                base_url,
+                model: backend.model.clone(),
+                active: active_name.as_deref() == Some(backend.name.as_str()),
+                ready: ready.contains(&backend.name),
+            }
+        })
+        .collect();
+    Ok(Json(EmbeddingBackendsResponse {
+        backends,
+        active: active_name,
+    }))
+}
+
+async fn activate_embedding_backend(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ActivateEmbeddingBackendRequest>,
+) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/embeddings/activate", &request, true).await?,
+        ));
+    }
+
+    let previous_active = {
+        let mut embedders = state.embedders.write().await;
+        let previous = embedders.active_name().map(|s| s.to_string());
+        embedders.set_active(&request.name).map_err(|err| {
+            ApiError::validation(ValidationError::new(err.to_string()))
+        })?;
+        previous
+    };
+
+    if let Err(err) = persist_active_embedding_backend(&state, &request.name).await {
+        // Revert in-memory state so config and registry stay in sync.
+        let mut embedders = state.embedders.write().await;
+        if let Some(name) = previous_active {
+            let _ = embedders.set_active(&name);
+        }
+        return Err(err);
+    }
+
+    list_embedding_backends(State(state)).await
+}
+
+async fn persist_active_embedding_backend(state: &AppState, name: &str) -> Result<(), ApiError> {
+    let Some(config_path) = state.config.resolved_config_path.clone() else {
+        // Ephemeral (env-var only) config — no file to rewrite. The
+        // in-memory activation is still applied, but it will not survive
+        // a restart. Surface this to the caller as a soft warning via
+        // tracing rather than an error.
+        tracing::warn!(
+            "activated embedding backend {name} without persistence: no TOML config file is resolved"
+        );
+        return Ok(());
+    };
+    let existing = tokio::fs::read_to_string(&config_path)
+        .await
+        .map_err(|err| ApiError::io(anyhow::anyhow!("read {}: {err}", config_path.display())))?;
+    let mut doc = existing
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|err| ApiError::io(anyhow::anyhow!("parse {}: {err}", config_path.display())))?;
+    // Ensure [embeddings] table exists.
+    if !doc.contains_key("embeddings") {
+        doc["embeddings"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let embeddings = doc["embeddings"]
+        .as_table_mut()
+        .ok_or_else(|| ApiError::io(anyhow::anyhow!("[embeddings] is not a table in config")))?;
+    embeddings["active"] = toml_edit::value(name);
+    let rendered = doc.to_string();
+    let tmp_path = config_path.with_extension("toml.tmp");
+    tokio::fs::write(&tmp_path, rendered.as_bytes())
+        .await
+        .map_err(|err| ApiError::io(anyhow::anyhow!("write {}: {err}", tmp_path.display())))?;
+    tokio::fs::rename(&tmp_path, &config_path)
+        .await
+        .map_err(|err| {
+            ApiError::io(anyhow::anyhow!(
+                "rename {} -> {}: {err}",
+                tmp_path.display(),
+                config_path.display()
+            ))
+        })?;
+    Ok(())
 }
 
 async fn get_memory(
@@ -2933,9 +3083,12 @@ async fn project_bundle_import(
         }
     }
 
-    rebuild_chunks(pool, &slug, state.embedder.as_ref())
-        .await
-        .map_err(ApiError::io)?;
+    {
+        let embedders = state.embedders.read().await;
+        rebuild_chunks(pool, &slug, &embedders, None)
+            .await
+            .map_err(ApiError::io)?;
+    }
 
     notify_project_changed(
         &state,
@@ -4587,7 +4740,7 @@ async fn fetch_project_overview_with_watchers(
         pool,
         slug,
         &state.config.automation,
-        &state.config.embeddings,
+        state.config.embeddings.active_backend(),
     )
     .await?;
     overview.watchers = Some(watcher_summary_for_project(&state.watchers, slug));

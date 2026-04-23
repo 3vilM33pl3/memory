@@ -16,6 +16,7 @@ sqlx.workspace = true
 pgvector.workspace = true
 uuid.workspace = true
 async-trait = "0.1"
+thiserror.workspace = true
 
 [dev-dependencies]
 wiremock = "0.6"

@@ -7,8 +7,9 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
-    AppConfig, MemoryRelationType, MemoryType, QueryDiagnostics, QueryMatchKind, QueryRequest,
-    QueryResponse, QueryResult, QueryResultDebug, QuerySource, SourceKind,
+    EmbeddingBackendConfig, EmbeddingsConfig, MemoryRelationType, MemoryType, QueryDiagnostics,
+    QueryMatchKind, QueryRequest, QueryResponse, QueryResult, QueryResultDebug, QuerySource,
+    SourceKind,
 };
 use pgvector::Vector;
 use sqlx::{PgPool, Row};
@@ -41,11 +42,11 @@ struct EmbeddingBatch {
 }
 
 impl EmbeddingService {
-    pub fn from_config(config: &AppConfig) -> Option<Self> {
-        let backend = embedding_backend::build_backend(&config.embeddings)?;
+    pub fn from_backend_config(config: &EmbeddingBackendConfig) -> Option<Self> {
+        let backend = embedding_backend::build_backend(config)?;
         Some(Self {
             backend,
-            batch_size: config.embeddings.batch_size.max(1),
+            batch_size: config.batch_size.max(1),
         })
     }
 
@@ -85,6 +86,93 @@ impl EmbeddingService {
     pub fn embedding_space_key(&self) -> String {
         self.backend.space().space_key.clone()
     }
+}
+
+/// Holds one `EmbeddingService` per configured backend plus which one is
+/// currently active for search. Write paths iterate every entry so all
+/// configured spaces stay populated.
+#[derive(Clone, Default)]
+pub struct EmbeddingRegistry {
+    entries: Vec<(String, EmbeddingService)>,
+    active: Option<String>,
+}
+
+impl EmbeddingRegistry {
+    /// Build a registry from a full `EmbeddingsConfig`, silently skipping
+    /// any backend that fails to resolve (missing model, missing API key).
+    /// Those are surfaced by `memory doctor`; the service should still
+    /// start.
+    pub fn from_config(config: &EmbeddingsConfig) -> Self {
+        let mut entries = Vec::new();
+        for backend in &config.backends {
+            if let Some(service) = EmbeddingService::from_backend_config(backend) {
+                entries.push((backend.name.clone(), service));
+            }
+        }
+        let active = match config.active_backend() {
+            Some(backend) => Some(backend.name.clone()),
+            None => None,
+        };
+        let active = active.filter(|name| entries.iter().any(|(n, _)| n == name));
+        Self { entries, active }
+    }
+
+    /// Backend currently used for search, or `None` when nothing is
+    /// configured or the configured active name is not resolvable
+    /// (e.g. missing API key).
+    pub fn active(&self) -> Option<&EmbeddingService> {
+        let name = self.active.as_deref()?;
+        self.entries
+            .iter()
+            .find_map(|(n, service)| (n == name).then_some(service))
+    }
+
+    /// Name of the currently-active backend.
+    pub fn active_name(&self) -> Option<&str> {
+        self.active.as_deref()
+    }
+
+    /// Look up a backend by its configured name.
+    pub fn get(&self, name: &str) -> Option<&EmbeddingService> {
+        self.entries
+            .iter()
+            .find_map(|(n, service)| (n == name).then_some(service))
+    }
+
+    /// Every (name, backend) pair, in config order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &EmbeddingService)> {
+        self.entries
+            .iter()
+            .map(|(name, service)| (name.as_str(), service))
+    }
+
+    /// Names of all configured backends.
+    pub fn names(&self) -> Vec<String> {
+        self.entries.iter().map(|(n, _)| n.clone()).collect()
+    }
+
+    /// Whether any backends are configured (even if none are active).
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Switch the active backend in-memory. Returns an error when the
+    /// requested name is not configured; persistence (config-file
+    /// rewrite) is a caller responsibility.
+    pub fn set_active(&mut self, name: &str) -> Result<(), ActivateError> {
+        if self.entries.iter().any(|(n, _)| n == name) {
+            self.active = Some(name.to_string());
+            Ok(())
+        } else {
+            Err(ActivateError::UnknownBackend(name.to_string()))
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ActivateError {
+    #[error("unknown embedding backend: {0}")]
+    UnknownBackend(String),
 }
 
 fn empty_embedding_batch() -> EmbeddingBatch {
@@ -234,7 +322,8 @@ pub async fn query_memory(
 pub async fn rebuild_chunks(
     pool: &PgPool,
     project: &str,
-    embedder: Option<&EmbeddingService>,
+    registry: &EmbeddingRegistry,
+    target_backend: Option<&str>,
 ) -> Result<u64> {
     let rows = sqlx::query(
         r#"
@@ -249,6 +338,14 @@ pub async fn rebuild_chunks(
     .await
     .context("load memories for chunk rebuild")?;
 
+    let selected: Vec<(&str, &EmbeddingService)> = match target_backend {
+        Some(name) => registry
+            .get(name)
+            .map(|service| vec![(name, service)])
+            .ok_or_else(|| anyhow::anyhow!("unknown embedding backend: {name}"))?,
+        None => registry.iter().collect(),
+    };
+
     let mut count = 0_u64;
     for row in rows {
         let memory_id: Uuid = row.try_get("id")?;
@@ -261,17 +358,21 @@ pub async fn rebuild_chunks(
             .context("delete old chunks")?;
 
         let chunks = split_search_chunks(&summary, &canonical_text);
-        let embedding_batch = if let Some(embedder) = embedder {
-            embedder
-                .embed_texts(&chunks, EmbeddingPurpose::Document)
-                .await
-                .context("embed rebuilt chunks")?
-        } else {
-            empty_embedding_batch()
-        };
+
+        let mut batches: Vec<EmbeddingBatch> = Vec::with_capacity(selected.len());
+        for (_, service) in &selected {
+            batches.push(
+                service
+                    .embed_texts(&chunks, EmbeddingPurpose::Document)
+                    .await
+                    .context("embed rebuilt chunks")?,
+            );
+        }
+        if selected.is_empty() {
+            batches.push(empty_embedding_batch());
+        }
 
         for (index, chunk_text) in chunks.iter().enumerate() {
-            let embedding = embedding_batch.vectors.get(index).cloned();
             let chunk_id = Uuid::new_v4();
             sqlx::query(
                 r#"
@@ -294,12 +395,15 @@ pub async fn rebuild_chunks(
             .execute(pool)
             .await
             .context("insert rebuilt chunk")?;
-            if let Some(embedding) = embedding {
+            for batch in &batches {
+                let Some(embedding) = batch.vectors.get(index).cloned() else {
+                    continue;
+                };
                 upsert_chunk_embedding(
                     pool,
                     chunk_id,
-                    &embedding_batch.space,
-                    embedding_batch.dimension,
+                    &batch.space,
+                    batch.dimension,
                     embedding,
                 )
                 .await
@@ -312,6 +416,27 @@ pub async fn rebuild_chunks(
 }
 
 pub async fn reembed_project_chunks(
+    pool: &PgPool,
+    project: &str,
+    registry: &EmbeddingRegistry,
+    target_backend: Option<&str>,
+) -> Result<u64> {
+    let selected: Vec<(&str, &EmbeddingService)> = match target_backend {
+        Some(name) => registry
+            .get(name)
+            .map(|service| vec![(name, service)])
+            .ok_or_else(|| anyhow::anyhow!("unknown embedding backend: {name}"))?,
+        None => registry.iter().collect(),
+    };
+
+    let mut total_reembedded = 0u64;
+    for (_, embedder) in &selected {
+        total_reembedded += reembed_single_backend(pool, project, embedder).await?;
+    }
+    Ok(total_reembedded)
+}
+
+async fn reembed_single_backend(
     pool: &PgPool,
     project: &str,
     embedder: &EmbeddingService,
@@ -388,9 +513,12 @@ pub async fn reembed_project_chunks(
 pub async fn prune_project_embeddings(
     pool: &PgPool,
     project: &str,
-    embedder: &EmbeddingService,
+    registry: &EmbeddingRegistry,
 ) -> Result<u64> {
-    let target_space = embedder.embedding_space();
+    let keep: Vec<String> = registry
+        .iter()
+        .map(|(_, service)| service.embedding_space_key())
+        .collect();
     let result = sqlx::query(
         r#"
         DELETE FROM memory_chunk_embeddings mce
@@ -401,11 +529,11 @@ pub async fn prune_project_embeddings(
           AND p.slug = $1
           AND m.status = 'active'
           AND m.is_tombstone = FALSE
-          AND mce.embedding_space <> $2
+          AND mce.embedding_space <> ALL($2)
         "#,
     )
     .bind(project)
-    .bind(&target_space.space_key)
+    .bind(&keep)
     .execute(pool)
     .await
     .context("delete inactive embedding spaces")?;
@@ -1341,6 +1469,40 @@ pub fn split_search_chunks(summary: &str, canonical_text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedding_registry_is_empty_when_no_backends_ready() {
+        // An EmbeddingBackendConfig without a model never resolves to a
+        // concrete backend; the registry should be empty.
+        let mut cfg = EmbeddingsConfig {
+            active: None,
+            backends: vec![EmbeddingBackendConfig {
+                name: "openai".to_string(),
+                provider: "openai_compatible".to_string(),
+                base_url: String::new(),
+                api_key_env: "MISSING_ENV_VAR_FOR_TEST".to_string(),
+                model: String::new(),
+                batch_size: 16,
+            }],
+        };
+        cfg.normalize_backend_names();
+        let registry = EmbeddingRegistry::from_config(&cfg);
+        assert!(registry.is_empty());
+        assert!(registry.active().is_none());
+        assert!(registry.active_name().is_none());
+    }
+
+    #[test]
+    fn embedding_registry_set_active_rejects_unknown() {
+        let mut registry = EmbeddingRegistry::default();
+        let err = registry
+            .set_active("does-not-exist")
+            .expect_err("missing backend must error");
+        match err {
+            ActivateError::UnknownBackend(name) => assert_eq!(name, "does-not-exist"),
+        }
+        assert!(registry.active_name().is_none());
+    }
 
     #[test]
     fn extracts_quoted_phrases() {

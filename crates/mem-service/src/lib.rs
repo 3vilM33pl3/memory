@@ -131,7 +131,7 @@ pub async fn fetch_project_overview(
     pool: &PgPool,
     slug: &str,
     automation: &mem_api::AutomationConfig,
-    embeddings: &mem_api::EmbeddingConfig,
+    embeddings: Option<&mem_api::EmbeddingBackendConfig>,
 ) -> Result<ProjectOverviewResponse, sqlx::Error> {
     let project_exists_fut = project_exists(pool, slug);
     let memory_stats_fut = fetch_memory_stats(pool, slug);
@@ -738,7 +738,7 @@ fn empty_overview(
     source_kind_breakdown: Vec<SourceKindCount>,
     top_tags: Vec<NamedCount>,
     top_files: Vec<NamedCount>,
-    embeddings: &mem_api::EmbeddingConfig,
+    embeddings: Option<&mem_api::EmbeddingBackendConfig>,
     automation: Option<mem_api::AutomationStatus>,
 ) -> ProjectOverviewResponse {
     ProjectOverviewResponse {
@@ -767,20 +767,12 @@ fn empty_overview(
         stale_embedding_chunks: 0,
         missing_embedding_chunks: 0,
         embedding_spaces_total: 0,
-        active_embedding_provider: if embeddings.provider.trim().is_empty()
-            || embeddings.model.trim().is_empty()
-        {
-            None
-        } else {
-            Some(embeddings.provider.clone())
-        },
-        active_embedding_model: if embeddings.provider.trim().is_empty()
-            || embeddings.model.trim().is_empty()
-        {
-            None
-        } else {
-            Some(embeddings.model.clone())
-        },
+        active_embedding_provider: embeddings
+            .filter(|cfg| !cfg.provider.trim().is_empty() && !cfg.model.trim().is_empty())
+            .map(|cfg| cfg.provider.clone()),
+        active_embedding_model: embeddings
+            .filter(|cfg| !cfg.provider.trim().is_empty() && !cfg.model.trim().is_empty())
+            .map(|cfg| cfg.model.clone()),
         memory_type_breakdown,
         source_kind_breakdown,
         top_tags,
@@ -824,11 +816,11 @@ struct EmbeddingHealth {
 async fn fetch_embedding_health(
     pool: &PgPool,
     slug: &str,
-    config: &mem_api::EmbeddingConfig,
+    config: Option<&mem_api::EmbeddingBackendConfig>,
 ) -> Result<EmbeddingHealth, sqlx::Error> {
-    let active_provider = config.provider.trim();
-    let active_model = config.model.trim();
-    let active_base_url = config.base_url.trim_end_matches('/');
+    let active_provider = config.map(|c| c.provider.trim()).unwrap_or("");
+    let active_model = config.map(|c| c.model.trim()).unwrap_or("");
+    let active_base_url = config.map(|c| c.base_url.trim_end_matches('/')).unwrap_or("");
     let active_space = if active_provider.is_empty() || active_model.is_empty() {
         None
     } else {
@@ -954,7 +946,7 @@ mod tests {
             &pool,
             &slug,
             &mem_api::AutomationConfig::default(),
-            &mem_api::EmbeddingConfig::default(),
+            None,
         )
         .await
         .unwrap();

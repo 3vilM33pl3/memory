@@ -16,3 +16,6 @@ thiserror.workspace = true
 uuid.workspace = true
 tokio.workspace = true
 capnp.workspace = true
+
+[dev-dependencies]
+toml.workspace = true

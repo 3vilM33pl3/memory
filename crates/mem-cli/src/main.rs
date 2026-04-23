@@ -1205,12 +1205,22 @@ struct EmbeddingsArgs {
 
 #[derive(Debug, Subcommand)]
 enum EmbeddingsCommand {
+    #[command(about = "List configured embedding backends and show which is active.")]
+    List,
+    #[command(about = "Switch which configured embedding backend is used for search.")]
+    Activate(EmbeddingsActivateArgs),
     #[command(about = "Build or refresh the active embedding index.", after_help = EMBEDDINGS_REINDEX_AFTER_HELP)]
     Reindex(EmbeddingsProjectArgs),
     #[command(about = "Generate embeddings for eligible chunks.", after_help = EMBEDDINGS_REEMBED_AFTER_HELP)]
     Reembed(EmbeddingsProjectArgs),
     #[command(about = "Delete stale or orphaned embedding rows.", after_help = EMBEDDINGS_PRUNE_AFTER_HELP)]
     Prune(EmbeddingsProjectArgs),
+}
+
+#[derive(Debug, Args)]
+struct EmbeddingsActivateArgs {
+    /// Name of the configured backend to activate.
+    name: String,
 }
 
 #[derive(Debug, Args)]
@@ -1228,6 +1238,11 @@ struct EmbeddingsProjectArgs {
     /// Preview the embedding maintenance action without writing it.
     #[arg(long)]
     dry_run: bool,
+    /// Restrict to a single configured backend by name. Omit to
+    /// operate on every configured backend so every space stays
+    /// covered.
+    #[arg(long)]
+    backend: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -2171,6 +2186,25 @@ async fn main() -> Result<()> {
             print_json_response(response).await?;
         }
         Command::Embeddings(args) => match args.command {
+            EmbeddingsCommand::List => {
+                let response = client
+                    .get(service_url(&config, "/v1/embeddings/backends"))
+                    .headers(write_headers(&config)?)
+                    .send()
+                    .await?;
+                let payload: mem_api::EmbeddingBackendsResponse = get_json(response).await?;
+                print_embedding_backends(&payload);
+            }
+            EmbeddingsCommand::Activate(args) => {
+                let response = client
+                    .post(service_url(&config, "/v1/embeddings/activate"))
+                    .headers(write_headers(&config)?)
+                    .json(&mem_api::ActivateEmbeddingBackendRequest { name: args.name })
+                    .send()
+                    .await?;
+                let payload: mem_api::EmbeddingBackendsResponse = get_json(response).await?;
+                print_embedding_backends(&payload);
+            }
             EmbeddingsCommand::Reindex(args) => {
                 let response = client
                     .post(service_url(&config, "/v1/reindex"))
@@ -2178,6 +2212,7 @@ async fn main() -> Result<()> {
                     .json(&ReindexRequest {
                         project: args.project,
                         dry_run: args.dry_run,
+                        backend: args.backend,
                     })
                     .send()
                     .await?;
@@ -2190,6 +2225,7 @@ async fn main() -> Result<()> {
                     .json(&ReembedRequest {
                         project: args.project,
                         dry_run: args.dry_run,
+                        backend: args.backend,
                     })
                     .send()
                     .await?;
@@ -6628,6 +6664,7 @@ impl ApiClient {
                 .json(&ReindexRequest {
                     project: project.to_string(),
                     dry_run,
+                    backend: None,
                 })
                 .send()
                 .await?,
@@ -6643,6 +6680,7 @@ impl ApiClient {
                 .json(&ReembedRequest {
                     project: project.to_string(),
                     dry_run,
+                    backend: None,
                 })
                 .send()
                 .await?,
@@ -6720,6 +6758,72 @@ async fn print_json_response(response: reqwest::Response) -> Result<()> {
     }
     println!("{body}");
     Ok(())
+}
+
+fn print_embedding_backends(payload: &mem_api::EmbeddingBackendsResponse) {
+    if payload.backends.is_empty() {
+        println!("No embedding backends configured.");
+        return;
+    }
+    let active = payload.active.as_deref();
+    let name_width = payload
+        .backends
+        .iter()
+        .map(|b| b.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let provider_width = payload
+        .backends
+        .iter()
+        .map(|b| b.provider.len())
+        .max()
+        .unwrap_or(8)
+        .max(8);
+    println!(
+        "  {:name_width$}  {:provider_width$}  {}",
+        "NAME",
+        "PROVIDER",
+        "MODEL",
+        name_width = name_width,
+        provider_width = provider_width
+    );
+    for backend in &payload.backends {
+        let marker = if Some(backend.name.as_str()) == active {
+            "*"
+        } else if !backend.ready {
+            "!"
+        } else {
+            " "
+        };
+        println!(
+            "{marker} {:name_width$}  {:provider_width$}  {}",
+            backend.name,
+            backend.provider,
+            backend.model,
+            name_width = name_width,
+            provider_width = provider_width
+        );
+    }
+    println!();
+    if let Some(name) = active {
+        println!("Active: {name}");
+    } else {
+        println!("Active: (none) — run `memory embeddings activate <name>` to pick one.");
+    }
+    let not_ready: Vec<&str> = payload
+        .backends
+        .iter()
+        .filter(|b| !b.ready)
+        .map(|b| b.name.as_str())
+        .collect();
+    if !not_ready.is_empty() {
+        println!(
+            "Not ready ({} — missing API key or model): {}",
+            not_ready.len(),
+            not_ready.join(", ")
+        );
+    }
 }
 
 fn print_memory_history(payload: &mem_api::MemoryHistoryResponse) {
@@ -9158,7 +9262,7 @@ mod tests {
             },
             features: mem_api::FeatureFlags::default(),
             llm: mem_api::LlmConfig::default(),
-            embeddings: mem_api::EmbeddingConfig::default(),
+            embeddings: mem_api::EmbeddingsConfig::default(),
             cluster: mem_api::ClusterConfig::default(),
             writer: mem_api::WriterConfig::default(),
             automation: mem_api::AutomationConfig::default(),

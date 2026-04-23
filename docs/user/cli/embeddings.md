@@ -1,11 +1,12 @@
 # Embedding Operations
 
-This page explains the three commands used to build, refresh, and clean up semantic search embeddings in Memory Layer.
+This page explains the commands used to build, refresh, swap, and clean up semantic search embeddings in Memory Layer, and how to configure multiple embedding backends in parallel.
 
 ## Table of Contents
 
 - [When You Need This](#when-you-need-this)
 - [How Embeddings Work](#how-embeddings-work)
+- [Configuring Multiple Backends](#configuring-multiple-backends)
 - [Commands](#commands)
 - [Typical Workflows](#typical-workflows)
 - [Troubleshooting](#troubleshooting)
@@ -14,28 +15,77 @@ This page explains the three commands used to build, refresh, and clean up seman
 
 Use these commands when:
 
-- you enabled `[embeddings]` for the first time
+- you enabled embeddings for the first time
 - you want vector search for existing memories
-- you changed the embedding model
+- you changed the embedding model, or want to keep two models populated at once
+- you want to switch which backend search uses without recomputing
 - you want to clean up old embedding spaces after a model switch
 
 ## How Embeddings Work
 
 Memory Layer stores chunk embeddings in PostgreSQL with `pgvector`.
 
-The system now supports multiple embedding spaces side by side. That means:
+Every embedding row is keyed by a **space key** of the form `provider|base_url|model`, so vectors from different providers and models coexist without collision. A single chunk can have vectors in several spaces at once.
 
-- switching models does not overwrite older vectors
-- semantic search uses the currently active embedding space from `[embeddings]`
-- old spaces stay available until you explicitly remove them
+At any time, exactly one configured backend is **active**: that's the one `memory query` uses for semantic retrieval. Swapping activation is a constant-time metadata flip — no recomputation — as long as the target space is already populated.
 
-In practice:
+## Configuring Multiple Backends
 
-- `reindex` rebuilds chunks and materializes embeddings for the active space
-- `reembed` materializes or refreshes embeddings for the active space only
-- `memory embeddings prune` deletes non-active spaces for a project
+Declare every backend you want available under `[[embeddings.backends]]` and pick one with `[embeddings].active`:
+
+```toml
+[embeddings]
+active = "voyage-code"
+
+[[embeddings.backends]]
+name = "openai-3-small"
+provider = "openai_compatible"
+base_url = ""
+api_key_env = "OPENAI_API_KEY"
+model = "text-embedding-3-small"
+batch_size = 16
+
+[[embeddings.backends]]
+name = "voyage-code"
+provider = "voyage"
+base_url = ""
+api_key_env = "VOYAGE_API_KEY"
+model = "voyage-code-3"
+batch_size = 16
+```
+
+The `name` field is your activation handle and must be unique. If you leave `name` empty, Memory Layer derives one from `{provider}-{model}` at load time.
+
+The **legacy singleton shape** still works:
+
+```toml
+[embeddings]
+provider = "voyage"
+model = "voyage-code-3"
+api_key_env = "VOYAGE_API_KEY"
+```
+
+Internally this is normalized to a one-element `backends` list with an auto-derived name, so `memory embeddings list` will show the same information.
+
+`base_url = ""` falls back to the provider's well-known endpoint (`https://api.openai.com/v1`, `https://api.voyageai.com`, etc.).
 
 ## Commands
+
+List configured backends and show which is active:
+
+```bash
+memory embeddings list
+```
+
+Output marks the active backend with `*` and any backend that didn't resolve at startup (missing API key, empty model) with `!`.
+
+Switch which backend search uses:
+
+```bash
+memory embeddings activate voyage-code
+```
+
+The service rewrites `[embeddings].active` in the config file and updates its in-memory state without restarting. Existing embeddings for the new space are used immediately; nothing is recomputed.
 
 Build chunks and embeddings for a project:
 
@@ -43,103 +93,90 @@ Build chunks and embeddings for a project:
 memory embeddings reindex --project my-project
 ```
 
-Preview how many entries would be rebuilt without changing stored chunks or embeddings:
+By default this populates **every** configured backend so all spaces stay in sync. Restrict to one backend with `--backend`:
+
+```bash
+memory embeddings reindex --project my-project --backend voyage-code
+```
+
+Preview without writing:
 
 ```bash
 memory embeddings reindex --project my-project --dry-run
 ```
 
-Use this when:
-
-- embeddings were just enabled
-- you want full coverage for existing memories
-- chunk structure may have changed
-
-Refresh only the active embedding space:
+Refresh only the embeddings of configured backends for a project (does not rebuild chunks):
 
 ```bash
 memory embeddings reembed --project my-project
-```
-
-Preview how many chunks would be materialized in the active embedding space:
-
-```bash
+memory embeddings reembed --project my-project --backend voyage-code
 memory embeddings reembed --project my-project --dry-run
 ```
 
-Use this when:
+Use `reembed` when:
 
-- you changed the embedding model
-- you changed provider or base URL for embeddings
-- you want the new active space without doing a full chunk rebuild
+- you added a new backend to config and want to populate its space
+- an existing backend's space is only partially covered
+- you prefer not to do the full `reindex` chunk rebuild
 
-Delete non-active embedding spaces:
+Delete embedding rows whose space isn't in any configured backend:
 
 ```bash
 memory embeddings prune --project my-project
-```
-
-Preview how many inactive embedding rows would be removed:
-
-```bash
 memory embeddings prune --project my-project --dry-run
 ```
 
-Use this only when:
-
-- you have switched models and no longer want to keep the older vectors
-- you want to reclaim storage
+`prune` operates relative to the **set** of currently configured backends (not just the active one), so removing a backend from config before pruning is the right order when you want to retire a model completely.
 
 ## Typical Workflows
 
-Enable embeddings for the first time:
+**Enable embeddings for the first time:**
 
 ```bash
 memory doctor
 memory embeddings reindex --project my-project
 ```
 
-Switch to a new embedding model but keep the old one available:
+**Add a second backend so you can compare/switch freely:**
 
-1. Change `[embeddings]` in config.
-2. Run:
+1. Add the new `[[embeddings.backends]]` entry to the global config and add its API key to `memory-layer.env`.
+2. Restart the service to pick up the new backend list.
+3. Populate the new space alongside the existing one:
+   ```bash
+   memory embeddings reembed --project my-project
+   ```
+4. Switch search to the new backend:
+   ```bash
+   memory embeddings activate <new-backend-name>
+   ```
+5. Flip back and forth any time with `memory embeddings activate <name>` — no recomputation.
 
-```bash
-memory embeddings reembed --project my-project
-```
+**Retire a backend:**
 
-3. Query normally. Semantic retrieval will use the new active space.
-
-Switch models and later remove the old vectors:
-
-```bash
-memory embeddings reembed --project my-project
-memory embeddings prune --project my-project
-```
+1. Remove its `[[embeddings.backends]]` block from config. Restart the service.
+2. `memory embeddings prune --project my-project` drops the orphaned space.
 
 ## Troubleshooting
 
 If semantic search is not working:
 
 - run `memory doctor`
-- make sure `pgvector` is installed and the `vector` extension exists in the database
-- make sure `[embeddings].model` is configured
-- make sure the configured API key env var is present
+- confirm `pgvector` is installed and the `vector` extension exists in the target database
+- confirm at least one `[[embeddings.backends]]` entry has a non-empty `model`
+- confirm the API key env var referenced by `api_key_env` is present in `memory-layer.env`
+- `memory embeddings list` — the active backend should not be marked with `!`
 
-If you just enabled embeddings and old memories still are not searchable semantically, run:
-
-```bash
-memory embeddings reindex --project my-project
-```
-
-If you changed models and want the new model to be usable immediately, run:
+If the active space's vectors are missing for some memories (semantic search returns fewer results than lexical), run:
 
 ```bash
-memory embeddings reembed --project my-project
+memory embeddings reembed --project my-project --backend <active-name>
 ```
+
+If a newly-added backend is marked `!` even after a restart, check that the referenced API key env var is populated in `memory-layer.env` and that `model` is non-empty.
 
 ## Related Docs
 
 - [Getting Started](../getting-started.md)
 - [Scan Command](scan.md)
+- [Embeddings and Search](../../developer/architecture/embeddings-and-search.md)
 - [How Memory Layer Works](../../developer/architecture/how-it-works.md)
