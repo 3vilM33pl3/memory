@@ -2424,8 +2424,48 @@ fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
                 ),
             ]),
             Line::from(""),
-            Line::from(vec![section_span("Canonical Text")]),
+            Line::from(vec![section_span("Embeddings")]),
         ];
+        if detail.embedding_spaces.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No embeddings computed yet.",
+                Style::default().fg(Theme::MUTED),
+            )));
+        } else {
+            for space in &detail.embedding_spaces {
+                let chunks_label = if space.chunk_count == 1 {
+                    "1 chunk".to_string()
+                } else {
+                    format!("{} chunks", space.chunk_count)
+                };
+                let mut spans = vec![
+                    Span::styled(
+                        space.provider.clone(),
+                        Style::default().fg(Theme::ACCENT),
+                    ),
+                    Span::raw(" · "),
+                    Span::styled(space.model.clone(), Style::default().fg(Theme::TEXT)),
+                    Span::raw(" · "),
+                    Span::styled(chunks_label, Style::default().fg(Theme::TEXT)),
+                ];
+                if let Some(updated) = space.last_updated {
+                    spans.push(Span::raw(" · "));
+                    spans.push(Span::styled(
+                        format!("updated {}", format_timestamp_medium(updated)),
+                        Style::default().fg(Theme::MUTED),
+                    ));
+                }
+                lines.push(Line::from(spans));
+                if !embedding_base_url_is_default(&space.provider, &space.base_url) {
+                    lines.push(Line::from(Span::styled(
+                        format!("    {}", space.base_url),
+                        Style::default().fg(Theme::MUTED),
+                    )));
+                }
+            }
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("Canonical Text")]));
         lines.extend(render_markdown_lines(&detail.canonical_text));
         lines.push(Line::from(""));
         lines.extend([
@@ -2487,47 +2527,6 @@ fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
                     ),
                     Span::styled(related.summary.clone(), Style::default().fg(Theme::TEXT)),
                 ]));
-            }
-        }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![section_span("Embeddings")]));
-        if detail.embedding_spaces.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "No embeddings computed yet.",
-                Style::default().fg(Theme::MUTED),
-            )));
-        } else {
-            for space in &detail.embedding_spaces {
-                let chunks_label = if space.chunk_count == 1 {
-                    "1 chunk".to_string()
-                } else {
-                    format!("{} chunks", space.chunk_count)
-                };
-                let mut spans = vec![
-                    Span::styled(
-                        space.provider.clone(),
-                        Style::default().fg(Theme::ACCENT),
-                    ),
-                    Span::raw(" · "),
-                    Span::styled(space.model.clone(), Style::default().fg(Theme::TEXT)),
-                    Span::raw(" · "),
-                    Span::styled(chunks_label, Style::default().fg(Theme::TEXT)),
-                ];
-                if let Some(updated) = space.last_updated {
-                    spans.push(Span::raw(" · "));
-                    spans.push(Span::styled(
-                        format!("updated {}", format_timestamp_medium(updated)),
-                        Style::default().fg(Theme::MUTED),
-                    ));
-                }
-                lines.push(Line::from(spans));
-                if !embedding_base_url_is_default(&space.provider, &space.base_url) {
-                    lines.push(Line::from(Span::styled(
-                        format!("    {}", space.base_url),
-                        Style::default().fg(Theme::MUTED),
-                    )));
-                }
             }
         }
         return lines;
@@ -6406,6 +6405,43 @@ mod tests {
         assert!(!rendered.contains("https://api.openai.com/v1"));
         // Voyage is on a non-default base URL, so the URL appears on its own line.
         assert!(rendered.contains("https://proxy.internal/voyage"));
+    }
+
+    #[test]
+    fn build_memory_detail_lines_puts_embeddings_section_above_canonical_text() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.6.2".to_string(),
+                mem_service: "0.6.2".to_string(),
+                watch_manager: "0.6.2".to_string(),
+                memory_watch: "0.6.2".to_string(),
+            },
+            false,
+            Profile::Prod,
+            tx,
+        );
+        app.selected_detail = Some(test_memory_detail("body text"));
+
+        let lines = build_memory_detail_lines(&app);
+        let rendered = lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let embeddings_idx = rendered
+            .iter()
+            .position(|line| line.contains("Embeddings"))
+            .expect("Embeddings header present");
+        let canonical_idx = rendered
+            .iter()
+            .position(|line| line.contains("Canonical Text"))
+            .expect("Canonical Text header present");
+        assert!(
+            embeddings_idx < canonical_idx,
+            "Embeddings section must render above Canonical Text (embeddings at {embeddings_idx}, canonical at {canonical_idx})"
+        );
     }
 
     #[test]
