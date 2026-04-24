@@ -139,7 +139,7 @@ In the normal multi-project setup there is:
 
 - one shared `mem-service`
 - one shared PostgreSQL database
-- zero or more repo-local watcher processes
+- zero or more watcher processes, usually started by the agent-linked watcher manager
 - many repos, each with its own `.mem/` configuration and project slug
 
 In the local development setup for this repository there can also be a parallel repo-local backend with alternate ports so it does not clash with the installed shared service.
@@ -315,7 +315,7 @@ The broad pipeline is:
 9. refresh `memory_relations` for the new or replacement memory against other active memories in the same project
 10. record the curation run and any replacement events
 
-Canonical memories remain immutable. When curation decides that a new candidate updates an older memory, it inserts the new memory and deletes the old one rather than editing in place. Project policy for this lives in `.agents/memory-layer.toml` under `[curation].replacement_policy`.
+Canonical memories remain immutable. When curation decides that a new candidate updates an older memory, it writes a new version with the same `canonical_id` and a higher `version_no` rather than editing or deleting the previous row. Delete operations write a tombstone version. Default reads use the latest non-tombstone version for each canonical memory. Project policy for replacement decisions lives in `.agents/memory-layer.toml` under `[curation].replacement_policy`.
 
 The important tradeoff here is determinism over maximum semantic richness. The current implementation favors predictable, inspectable behavior and provenance-backed memory over aggressive inference.
 
@@ -375,9 +375,9 @@ The Activity tab is backed by streamed events. The backend keeps a recent in-mem
 
 ## Watcher Model
 
-`memory-watch` is a repo-local process, not a global daemon.
+The recommended watcher model is agent-linked. `memory watcher manager` runs as a user service, detects live Codex sessions, bootstraps each repo when needed, and starts one `memory watcher run` process per agent session.
 
-Its job is to observe a single repository and maintain a task window containing:
+Each watcher observes a single repository and maintains a task window containing:
 
 - changed files
 - derived notes
@@ -389,6 +389,8 @@ Two details matter here:
 
 1. The watcher now distinguishes between a file merely being dirty and new activity actually happening. Re-seeing the same dirty files on every poll does not reset the idle timer.
 2. The dedupe fingerprint includes file modification state, not just file names, so repeated edits in the same files can still create new raw captures.
+
+Legacy per-project watcher services and manual foreground watchers still exist for compatibility and diagnostics, but the manager-first model is the primary path for normal agent work.
 
 That makes the watcher materially more useful than a naive “check git status every few seconds” loop.
 

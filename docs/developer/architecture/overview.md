@@ -32,7 +32,7 @@ The architecture is split into five parts:
 2. a CLI and TUI for daily use
 3. a backend service for storage and retrieval
 4. PostgreSQL for durable data
-5. an optional watcher for background capture
+5. an optional watcher manager and watcher processes for background capture
 
 ## Main Components
 
@@ -96,9 +96,9 @@ PostgreSQL stores:
 - search chunks
 - curation runs
 
-### Automation Daemon (`memory watcher`)
+### Automation (`memory watcher`)
 
-`memory watcher` is an optional background process. It watches a repository, creates raw captures as work progresses, and can curate them later in batches.
+`memory watcher` is an optional background process. The recommended local automation model is the Codex-linked watcher manager, which detects live Codex sessions and starts one watcher per session. Legacy per-project watcher services and manual foreground watchers remain compatibility paths.
 
 It does not write directly to database tables. It only orchestrates the existing persistence path.
 
@@ -130,11 +130,12 @@ It does not write directly to database tables. It only orchestrates the existing
 
 ### Automation Flow
 
-1. `memory watcher` observes file and command activity for a repo
-2. It accumulates a task window
-3. After idle time or explicit flush, it decides whether to create a raw capture
-4. After enough raw captures accumulate, it can trigger curation
-5. It records the decision in a local audit log
+1. the watcher manager detects an agent session, or a user starts a legacy/manual watcher
+2. `memory watcher` observes file and command activity for a repo
+3. It accumulates a task window
+4. After idle time or explicit flush, it decides whether to create a raw capture
+5. After enough raw captures accumulate, it can trigger curation
+6. It records the decision in a local audit log
 
 ## Design Principles
 

@@ -63,6 +63,10 @@ Memory Layer currently supports these curated memory types:
 - `domain_fact`
 - `plan`
 - `implementation`
+- `user`
+- `feedback`
+- `project`
+- `reference`
 
 The type list is defined in code, but `memory_entries.memory_type` is stored in PostgreSQL as `TEXT`, not a database enum. The application layer is responsible for validating and interpreting the value.
 
@@ -319,6 +323,71 @@ Examples:
 
 - “Implemented first-class implementation memories.”
 - “Recorded watcher manager status and service role detail in the TUI footer.”
+
+### `user`
+
+Use this for durable user preferences or instructions that should guide future agent behavior.
+
+Contains:
+
+- stated user preferences
+- recurring workflow expectations
+- durable communication or tooling preferences
+
+Should not contain:
+
+- one-off task prompts
+- project facts better stored as `project` or `architecture`
+- implementation outcomes
+
+### `feedback`
+
+Use this for durable feedback about previous behavior, quality, or UX.
+
+Contains:
+
+- user feedback on application behavior
+- correction signals for future curation or UI behavior
+- review comments that should influence later work
+
+Should not contain:
+
+- transient debugging logs
+- raw replacement proposals
+- generic implementation summaries
+
+### `project`
+
+Use this for durable project-level state that is broader than one implementation result.
+
+Contains:
+
+- project goals
+- roadmap context
+- active baseline constraints
+- cross-cutting project status
+
+Should not contain:
+
+- fine-grained code architecture
+- personal user preferences
+- completed task details better stored as `implementation`
+
+### `reference`
+
+Use this for durable references to external or internal source material.
+
+Contains:
+
+- research references
+- documentation references
+- links or citations that future work should reuse
+
+Should not contain:
+
+- uncited claims that should be modeled as `domain_fact`
+- implementation summaries
+- raw source dumps without a durable reason to keep them
 
 ## How Types Get Triggered
 

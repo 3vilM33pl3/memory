@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "release/**"]
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Test workspace
+        run: cargo test --workspace --all-targets
+      - name: Lint workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm --prefix web ci
+      - name: Build web UI
+        run: npm --prefix web run build

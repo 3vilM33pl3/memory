@@ -149,6 +149,7 @@ Project-local customization now has two layers:
 - [Architecture Overview](docs/developer/architecture/overview.md)
 - [How Memory Layer Works](docs/developer/architecture/how-it-works.md)
 - [Hidden Memory Daemon](docs/developer/architecture/hidden-memory-daemon.md)
+- [Refactor Baseline](docs/developer/refactor-baseline.md)
 
 ## License
 
