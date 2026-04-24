@@ -62,16 +62,15 @@ In the TUI:
   - shows the owning agent session when the watcher is manager-started
 - `Project` tab:
   - shows the compact watcher summary
-- `Activity` tab:
-  - shows watcher-health transitions such as stale, restarting, failed, and recovered
+  - shows recent watcher-health transitions such as stale, restarting, failed, and recovered in the recent activity section
 
 ## Recovery Signals
 
 When a watcher recovers after being `stale`, `restarting`, or `failed`, the TUI now makes that explicit:
 
 - the status line shows a recovery message immediately
-- the `Activity` tab shows a watcher transition row for the recovery
-- the activity detail pane shows:
+- the `Project` tab recent activity section shows a watcher transition row for the recovery
+- the watcher and activity details include:
   - the current health
   - the previous health
   - whether the watcher is service-managed

@@ -371,7 +371,7 @@ It maintains a persistent connection to the backend and subscribes to streamed u
 - project overview metrics can update in place
 - recent backend activity can be replayed when the TUI connects
 
-The Activity tab is backed by streamed events. The backend keeps a recent in-memory backlog and replays it to new TUI sessions so the screen does not start empty after reconnect.
+Activity is now contextual rather than a top-level TUI tab. The backend still keeps a recent in-memory event backlog and replays it to new TUI sessions, but the TUI surfaces the most useful events inside workflow tabs such as Project, Query, Watchers, and Resume.
 
 ## Watcher Model
 
@@ -421,7 +421,7 @@ The system exposes several layers of observability:
 - `GET /healthz` for backend/database health
 - project overview endpoints for counts and recent activity
 - watcher audit logs in `.mem/runtime/`
-- TUI Activity streaming
+- contextual TUI activity summaries backed by the same event stream
 - `curation_runs` in PostgreSQL
 
 The overall design goal is that automatic behavior should never be magic. There should always be a way to inspect what was captured, what was curated, and why.

@@ -1277,7 +1277,7 @@ struct ArchiveArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    about = "Open the terminal UI for browsing memories, activity, and project state.",
+    about = "Open the terminal UI for browsing memories, querying memory, and inspecting project state.",
     after_help = TUI_AFTER_HELP
 )]
 struct TuiArgs {

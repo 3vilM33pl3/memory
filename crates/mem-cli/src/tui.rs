@@ -2159,6 +2159,7 @@ enum TabKind {
     Memories,
     Agents,
     Query,
+    #[allow(dead_code)]
     Activity,
     Project,
     Review,
@@ -2167,12 +2168,37 @@ enum TabKind {
     Resume,
 }
 
+const VISIBLE_TABS: [TabKind; 8] = [
+    TabKind::Memories,
+    TabKind::Agents,
+    TabKind::Query,
+    TabKind::Project,
+    TabKind::Review,
+    TabKind::Watchers,
+    TabKind::Embeddings,
+    TabKind::Resume,
+];
+
 impl TabKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Memories => "Memories",
+            Self::Agents => "Agents",
+            Self::Query => "Query",
+            Self::Activity => "Activity",
+            Self::Project => "Project",
+            Self::Review => "Review",
+            Self::Watchers => "Watchers",
+            Self::Embeddings => "Embeddings",
+            Self::Resume => "Resume",
+        }
+    }
+
     fn next(self) -> Self {
         match self {
             Self::Memories => Self::Agents,
             Self::Agents => Self::Query,
-            Self::Query => Self::Activity,
+            Self::Query => Self::Project,
             Self::Activity => Self::Project,
             Self::Project => Self::Review,
             Self::Review => Self::Watchers,
@@ -2188,7 +2214,7 @@ impl TabKind {
             Self::Agents => Self::Memories,
             Self::Query => Self::Agents,
             Self::Activity => Self::Query,
-            Self::Project => Self::Activity,
+            Self::Project => Self::Query,
             Self::Review => Self::Project,
             Self::Watchers => Self::Review,
             Self::Embeddings => Self::Watchers,
@@ -2201,12 +2227,11 @@ impl TabKind {
             Self::Memories => 0,
             Self::Agents => 1,
             Self::Query => 2,
-            Self::Activity => 3,
-            Self::Project => 4,
-            Self::Review => 5,
-            Self::Watchers => 6,
-            Self::Embeddings => 7,
-            Self::Resume => 8,
+            Self::Activity | Self::Project => 3,
+            Self::Review => 4,
+            Self::Watchers => 5,
+            Self::Embeddings => 6,
+            Self::Resume => 7,
         }
     }
 }
@@ -2388,20 +2413,10 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         ])
         .split(frame.area());
 
-    let titles = [
-        "Memories",
-        "Agents",
-        "Query",
-        "Activity",
-        "Project",
-        "Review",
-        "Watchers",
-        "Embeddings",
-        "Resume",
-    ]
-    .into_iter()
-    .map(|title| Line::from(Span::styled(title, Style::default().fg(Theme::TEXT))))
-    .collect::<Vec<_>>();
+    let titles = VISIBLE_TABS
+        .into_iter()
+        .map(|tab| Line::from(Span::styled(tab.label(), Style::default().fg(Theme::TEXT))))
+        .collect::<Vec<_>>();
     let title = match app.profile {
         Profile::Dev => format!("Memory Layer TUI [dev] - project {}", app.project),
         Profile::Prod => format!("Memory Layer TUI - project {}", app.project),
@@ -2498,11 +2513,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         ],
         TabKind::Activity => vec![
             accent_span("activity "),
-            Span::styled("j/k move  ", Style::default().fg(Theme::TEXT)),
-            Span::styled(
-                "shows queries and backend capture/curate/reindex/reembed/archive/delete events",
-                Style::default().fg(Theme::MUTED),
-            ),
+            Span::styled("hidden diagnostic view", Style::default().fg(Theme::MUTED)),
         ],
         TabKind::Project => vec![
             accent_span("scroll "),
@@ -3351,6 +3362,11 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .constraints([Constraint::Min(8), Constraint::Length(7)])
         .split(chunks[2]);
 
+    let bottom_top = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
+        .split(bottom[0]);
+
     frame.render_widget(
         Paragraph::new(lines_for_named_counts(
             app.overview
@@ -3362,7 +3378,13 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         ))
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block("Top Files")),
-        bottom[0],
+        bottom_top[0],
+    );
+    frame.render_widget(
+        Paragraph::new(recent_activity_lines(app))
+            .style(Style::default().bg(Theme::PANEL_ALT))
+            .block(themed_block("Recent Activity")),
+        bottom_top[1],
     );
     frame.render_widget(
         Paragraph::new(vec![
@@ -4571,6 +4593,32 @@ fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'s
             })
             .collect()
     }
+}
+
+fn recent_activity_lines(app: &App) -> Vec<Line<'static>> {
+    if app.activity_events.is_empty() {
+        return vec![Line::from(Span::styled(
+            "No recent activity in this TUI session.",
+            Style::default().fg(Theme::MUTED),
+        ))];
+    }
+
+    app.activity_events
+        .iter()
+        .take(6)
+        .map(|event| {
+            Line::from(vec![
+                Span::styled(
+                    format_timestamp_short(activity_recorded_at(event)),
+                    Style::default().fg(Theme::MUTED),
+                ),
+                Span::raw(" "),
+                activity_entry_kind_span(event),
+                Span::raw(" "),
+                Span::styled(activity_summary(event), Style::default().fg(Theme::TEXT)),
+            ])
+        })
+        .collect()
 }
 
 fn watcher_summary_text(app: &App) -> String {
@@ -7409,19 +7457,21 @@ mod tests {
     }
 
     #[test]
-    fn tab_order_places_review_between_project_and_watchers() {
+    fn tab_order_demotes_activity_and_places_review_between_project_and_watchers() {
         assert_eq!(TabKind::Memories.index(), 0);
         assert_eq!(TabKind::Agents.index(), 1);
         assert_eq!(TabKind::Query.index(), 2);
-        assert_eq!(TabKind::Activity.index(), 3);
-        assert_eq!(TabKind::Project.index(), 4);
-        assert_eq!(TabKind::Review.index(), 5);
-        assert_eq!(TabKind::Watchers.index(), 6);
-        assert_eq!(TabKind::Embeddings.index(), 7);
-        assert_eq!(TabKind::Resume.index(), 8);
+        assert_eq!(TabKind::Project.index(), 3);
+        assert_eq!(TabKind::Review.index(), 4);
+        assert_eq!(TabKind::Watchers.index(), 5);
+        assert_eq!(TabKind::Embeddings.index(), 6);
+        assert_eq!(TabKind::Resume.index(), 7);
+        assert_eq!(TabKind::Activity.index(), TabKind::Project.index());
 
         assert_eq!(TabKind::Memories.prev(), TabKind::Resume);
         assert_eq!(TabKind::Memories.next(), TabKind::Agents);
+        assert_eq!(TabKind::Query.next(), TabKind::Project);
+        assert_eq!(TabKind::Project.prev(), TabKind::Query);
         assert_eq!(TabKind::Project.next(), TabKind::Review);
         assert_eq!(TabKind::Review.prev(), TabKind::Project);
         assert_eq!(TabKind::Review.next(), TabKind::Watchers);

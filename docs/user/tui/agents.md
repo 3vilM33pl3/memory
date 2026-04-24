@@ -33,4 +33,4 @@ This tab is read-only. It is inspired by `abtop`, but it uses Memory Layer's own
 ## See Also
 
 - [TUI Guide](README.md)
-- [Activity Tab](activity.md)
+- [Project Tab](project.md)

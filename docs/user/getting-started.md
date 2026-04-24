@@ -342,7 +342,7 @@ memory watcher status --project my-project
 In the TUI:
 
 - the `Watchers` tab shows each watcher's health, restart attempts, and last heartbeat
-- the `Activity` tab shows watcher-health transitions such as `stale`, `restarting`, `failed`, and recovery back to `healthy`
+- the `Project` tab's recent activity section shows watcher-health transitions such as `stale`, `restarting`, `failed`, and recovery back to `healthy`
 - recovery events now show what state the watcher recovered from and, when relevant, how many restart attempts happened before recovery
 
 Disable it later:

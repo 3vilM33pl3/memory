@@ -12,6 +12,7 @@ The `Project` tab is the high-level health and maintenance dashboard for the cur
 - top tags and top files
 - replacement-policy status and pending-proposal count (the review queue itself lives in the [Review](review.md) tab)
 - a compact watcher summary
+- recent operational activity such as queries, captures, curation, plan lifecycle events, and watcher-health transitions
 
 This tab is where you look when the question is about project state rather than one specific memory.
 
@@ -26,12 +27,14 @@ This tab is where you look when the question is about project state rather than 
 - checking whether the project is healthy
 - reviewing embedding coverage or automation state
 - understanding top files, tags, or memory-type distribution
+- confirming what the backend or TUI did recently without opening a separate activity view
 
 For approving or rejecting queued memory replacements, use the [Review Tab](review.md).
 
 ## See Also
 
 - [Review Tab](review.md)
+- [Activity Events](activity.md)
 - [Embedding Operations](../cli/embeddings.md)
 - [Watcher Health](../cli/watchers.md)
 - [TUI Guide](README.md)

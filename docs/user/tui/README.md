@@ -28,10 +28,8 @@ Shared navigation:
   - Monitor live Codex and Claude sessions across projects with token, context, rate-limit, process, and port details.
 - [Query Tab](query.md)
   - Ask a question against project memory and inspect the ranked results.
-- [Activity Tab](activity.md)
-  - Review recent queries, captures, curation runs, scans, replacements, and watcher health events.
 - [Project Tab](project.md)
-  - Inspect project-level health, counts, embedding state, and automation status.
+  - Inspect project-level health, counts, embedding state, recent activity, and automation status.
 - [Review Tab](review.md)
   - Work the queue of pending replacement proposals: approve, reject, or change the curation replacement policy.
 - [Watchers Tab](watchers.md)
@@ -46,8 +44,7 @@ Shared navigation:
 - If you want to inspect or filter stored memory, open [Memories Tab](memories.md).
 - If you want to ask a question directly, open [Query Tab](query.md).
 - If you want to watch active coding-agent sessions across projects, open [Agents Tab](agents.md).
-- If you want to understand what changed recently, open [Activity Tab](activity.md).
-- If you want high-level health, open [Project Tab](project.md); for pending-proposal review, open [Review Tab](review.md).
+- If you want high-level health or recent operational activity, open [Project Tab](project.md); for pending-proposal review, open [Review Tab](review.md).
 - If you want watcher liveness and watchdog status, open [Watchers Tab](watchers.md).
 - If you want to see which embedding backends are configured and switch which one search uses, open [Embeddings Tab](embeddings.md).
 - If you are returning after time away, open [Resume Tab](resume.md) for the re-entry briefing.
