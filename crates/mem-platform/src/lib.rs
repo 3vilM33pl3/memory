@@ -195,6 +195,21 @@ pub fn watch_service_unit_name(project: &str) -> String {
     )
 }
 
+pub fn managed_watch_service_name(session_id: &str) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        managed_watch_launch_agent_label(session_id)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        format!(
+            "memory-watch-codex-{}.service",
+            sanitize_service_fragment(session_id)
+        )
+    }
+}
+
 pub fn current_exe_sibling_binary(name: &str) -> Option<PathBuf> {
     let current_exe = env::current_exe().ok()?;
     let bin_dir = current_exe.parent()?;
@@ -227,7 +242,7 @@ pub fn backend_service_available() -> bool {
     packaged_system_service_available()
 }
 
-pub fn restart_local_watcher_service(project: &str) -> Result<()> {
+pub fn restart_local_watcher_service_name(service_name: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let uid_output = Command::new("id")
@@ -241,7 +256,7 @@ pub fn restart_local_watcher_service(project: &str) -> Result<()> {
         let uid = String::from_utf8_lossy(&uid_output.stdout)
             .trim()
             .to_string();
-        let target = format!("gui/{uid}/{}", watch_launch_agent_label(project));
+        let target = format!("gui/{uid}/{service_name}");
         let output = Command::new("launchctl")
             .args(["kickstart", "-k", &target])
             .output()
@@ -255,26 +270,29 @@ pub fn restart_local_watcher_service(project: &str) -> Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        let _ = project;
+        let _ = service_name;
         anyhow::bail!("watcher watchdog restart is not implemented on Windows yet")
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        let unit_name = watch_service_unit_name(project);
         let output = Command::new("systemctl")
-            .args(["--user", "restart", &unit_name])
+            .args(["--user", "restart", service_name])
             .output()
-            .with_context(|| format!("run systemctl --user restart {unit_name}"))?;
+            .with_context(|| format!("run systemctl --user restart {service_name}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
-                "systemctl --user restart {unit_name} failed: {}",
+                "systemctl --user restart {service_name} failed: {}",
                 stderr.trim()
             );
         }
         Ok(())
     }
+}
+
+pub fn restart_local_watcher_service(project: &str) -> Result<()> {
+    restart_local_watcher_service_name(&watch_service_unit_name(project))
 }
 
 #[cfg(target_os = "macos")]
@@ -357,7 +375,7 @@ pub fn managed_watch_launch_agent_path(session_id: &str) -> Option<PathBuf> {
 mod tests {
     use std::sync::Mutex;
 
-    use super::derive_default_writer_id;
+    use super::{derive_default_writer_id, managed_watch_service_name, watch_service_unit_name};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -387,5 +405,32 @@ mod tests {
         restore_env_var("MEMORY_LAYER_WRITER_IDENTITY_HOST", old_host);
 
         assert_eq!(writer_id, "memory-olivier-smith-dev-box-local");
+    }
+
+    #[test]
+    fn watcher_service_names_distinguish_legacy_and_managed_units() {
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(
+                watch_service_unit_name("customer portal"),
+                "memory-watch-customer-portal.service"
+            );
+            assert_eq!(
+                managed_watch_service_name("session 123"),
+                "com.memory-layer.memory-watch.codex.session-123"
+            );
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(
+                watch_service_unit_name("customer portal"),
+                "memory-watch-customer-portal.service"
+            );
+            assert_eq!(
+                managed_watch_service_name("session 123"),
+                "memory-watch-codex-session-123.service"
+            );
+        }
     }
 }

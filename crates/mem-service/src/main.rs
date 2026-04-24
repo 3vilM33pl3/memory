@@ -43,7 +43,9 @@ use mem_curate::{
     approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
     preview_curate, refresh_memory_relations, reject_replacement_proposal, store_capture,
 };
-use mem_platform::restart_local_watcher_service;
+use mem_platform::{
+    managed_watch_service_name, restart_local_watcher_service_name, watch_service_unit_name,
+};
 use mem_search::{
     EmbeddingRegistry, parse_memory_type, parse_relation_type, parse_source_kind,
     prune_project_embeddings, query_memory, rebuild_chunks, reembed_project_chunks,
@@ -4376,7 +4378,8 @@ async fn watcher_restart_local(
         ));
     }
 
-    restart_local_watcher_service(&request.project).map_err(ApiError::io)?;
+    restart_local_watcher_service_name(&local_watcher_restart_service_name(&request))
+        .map_err(ApiError::io)?;
     update_local_watcher_restart_state(&state.watchers, &request.watcher_id);
     notify_project_refreshed(&state, request.project.clone());
 
@@ -5122,6 +5125,7 @@ async fn run_watcher_watchdog(state: AppState) -> Result<()> {
                     project: watcher.project.clone(),
                     watcher_id: watcher.watcher_id.clone(),
                     host_service_id: watcher.host_service_id.clone(),
+                    agent_session_id: watcher.agent_session_id.clone(),
                 });
                 activity_events.push((
                     watcher.project.clone(),
@@ -5196,7 +5200,7 @@ async fn run_watcher_watchdog(state: AppState) -> Result<()> {
 
 async fn dispatch_watcher_restart(state: &AppState, request: &WatcherRestartRequest) -> Result<()> {
     if request.host_service_id == state.config.cluster.service_id {
-        restart_local_watcher_service(&request.project)?;
+        restart_local_watcher_service_name(&local_watcher_restart_service_name(request))?;
         return Ok(());
     }
 
@@ -5219,6 +5223,15 @@ async fn dispatch_watcher_restart(state: &AppState, request: &WatcherRestartRequ
         anyhow::bail!("remote restart failed with {status}: {body}");
     }
     Ok(())
+}
+
+fn local_watcher_restart_service_name(request: &WatcherRestartRequest) -> String {
+    request
+        .agent_session_id
+        .as_deref()
+        .filter(|session_id| !session_id.trim().is_empty())
+        .map(managed_watch_service_name)
+        .unwrap_or_else(|| watch_service_unit_name(&request.project))
 }
 
 fn stream_activity_response(event: ServiceEvent) -> StreamResponse {
@@ -5410,6 +5423,31 @@ mod tests {
         let summary = watcher_summary_for_project(&watchers, "memory");
         assert_eq!(summary.active_count, 0);
         assert_eq!(summary.unhealthy_count, 1);
+    }
+
+    #[test]
+    fn watcher_restart_service_name_prefers_managed_session_identity() {
+        let managed = WatcherRestartRequest {
+            project: "memory".to_string(),
+            watcher_id: "watcher-1".to_string(),
+            host_service_id: "service-a".to_string(),
+            agent_session_id: Some("session 123".to_string()),
+        };
+        assert_eq!(
+            local_watcher_restart_service_name(&managed),
+            mem_platform::managed_watch_service_name("session 123")
+        );
+
+        let legacy = WatcherRestartRequest {
+            project: "customer portal".to_string(),
+            watcher_id: "watcher-2".to_string(),
+            host_service_id: "service-a".to_string(),
+            agent_session_id: None,
+        };
+        assert_eq!(
+            local_watcher_restart_service_name(&legacy),
+            mem_platform::watch_service_unit_name("customer portal")
+        );
     }
 }
 

@@ -1620,6 +1620,8 @@ pub struct WatcherRestartRequest {
     pub project: String,
     pub watcher_id: String,
     pub host_service_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_id: Option<String>,
 }
 
 impl WatcherRestartRequest {
@@ -1632,6 +1634,15 @@ impl WatcherRestartRequest {
         }
         if self.host_service_id.trim().is_empty() {
             return Err(ValidationError::new("host_service_id must be non-empty"));
+        }
+        if self
+            .agent_session_id
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(ValidationError::new(
+                "agent_session_id must be non-empty when set",
+            ));
         }
         Ok(())
     }
