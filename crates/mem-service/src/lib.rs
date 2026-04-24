@@ -18,6 +18,26 @@ use mem_watch::{load_state, to_status};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+const LATEST_PROJECT_MEMORIES_CTE: &str = r#"
+latest AS (
+    SELECT DISTINCT ON (m.canonical_id) m.*
+    FROM memory_entries m
+    JOIN projects p ON p.id = m.project_id
+    WHERE p.slug = $1
+    ORDER BY m.canonical_id, m.version_no DESC
+)
+"#;
+
+const LATEST_PROJECT_MEMORY_IDS_CTE: &str = r#"
+latest AS (
+    SELECT DISTINCT ON (m.canonical_id) m.id, m.is_tombstone
+    FROM memory_entries m
+    JOIN projects p ON p.id = m.project_id
+    WHERE p.slug = $1
+    ORDER BY m.canonical_id, m.version_no DESC
+)
+"#;
+
 pub fn parse_status_filter(input: &str) -> Result<String, ValidationError> {
     match input {
         "active" | "archived" => Ok(input.to_string()),
@@ -36,34 +56,24 @@ pub async fn fetch_project_memories(
     // non-tombstone version per canonical_id so a canonical memory appears
     // once even after updates. Older versions live on in the table and are
     // reachable via history-aware queries.
-    let total_row = sqlx::query(
+    let total_query = format!(
         r#"
-        WITH latest AS (
-            SELECT DISTINCT ON (m.canonical_id) m.id, m.status
-            FROM memory_entries m
-            JOIN projects p ON p.id = m.project_id
-            WHERE p.slug = $1 AND m.is_tombstone = FALSE
-            ORDER BY m.canonical_id, m.version_no DESC
-        )
+        WITH {LATEST_PROJECT_MEMORIES_CTE}
         SELECT COUNT(*) AS count FROM latest
-        WHERE ($2::text IS NULL OR latest.status = $2)
-        "#,
-    )
-    .bind(slug)
-    .bind(status_filter)
-    .fetch_one(pool)
-    .await?;
+        WHERE latest.is_tombstone = FALSE
+          AND ($2::text IS NULL OR latest.status = $2)
+        "#
+    );
+    let total_row = sqlx::query(&total_query)
+        .bind(slug)
+        .bind(status_filter)
+        .fetch_one(pool)
+        .await?;
     let total = total_row.try_get("count")?;
 
-    let rows = sqlx::query(
+    let list_query = format!(
         r#"
-        WITH latest AS (
-            SELECT DISTINCT ON (m.canonical_id) m.*
-            FROM memory_entries m
-            JOIN projects p ON p.id = m.project_id
-            WHERE p.slug = $1 AND m.is_tombstone = FALSE
-            ORDER BY m.canonical_id, m.version_no DESC
-        )
+        WITH {LATEST_PROJECT_MEMORIES_CTE}
         SELECT
             m.id,
             m.summary,
@@ -82,20 +92,22 @@ pub async fn fetch_project_memories(
         FROM latest m
         LEFT JOIN memory_tags mt ON mt.memory_entry_id = m.id
         LEFT JOIN memory_sources ms ON ms.memory_entry_id = m.id
-        WHERE ($2::text IS NULL OR m.status = $2)
+        WHERE m.is_tombstone = FALSE
+          AND ($2::text IS NULL OR m.status = $2)
         GROUP BY m.id, m.summary, m.canonical_text, m.memory_type, m.status,
                  m.confidence, m.importance, m.updated_at, m.canonical_id,
                  m.version_no, m.is_tombstone
         ORDER BY m.updated_at DESC, m.id DESC
         LIMIT $3 OFFSET $4
-        "#,
-    )
-    .bind(slug)
-    .bind(status_filter)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
+        "#
+    );
+    let rows = sqlx::query(&list_query)
+        .bind(slug)
+        .bind(status_filter)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
 
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
@@ -257,15 +269,9 @@ struct MemoryStats {
 }
 
 async fn fetch_memory_stats(pool: &PgPool, slug: &str) -> Result<MemoryStats, sqlx::Error> {
-    let row = sqlx::query(
+    let query = format!(
         r#"
-        WITH latest AS (
-            SELECT DISTINCT ON (m.canonical_id) m.*
-            FROM memory_entries m
-            JOIN projects p ON p.id = m.project_id
-            WHERE p.slug = $1 AND m.is_tombstone = FALSE
-            ORDER BY m.canonical_id, m.version_no DESC
-        )
+        WITH {LATEST_PROJECT_MEMORIES_CTE}
         SELECT
             COUNT(*) AS memory_entries_total,
             COUNT(*) FILTER (WHERE m.status = 'active') AS active_memories,
@@ -276,11 +282,10 @@ async fn fetch_memory_stats(pool: &PgPool, slug: &str) -> Result<MemoryStats, sq
             COUNT(*) FILTER (WHERE m.confidence < 0.5) AS low_confidence_memories,
             MAX(m.updated_at) AS last_memory_at
         FROM latest m
-        "#,
-    )
-    .bind(slug)
-    .fetch_one(pool)
-    .await?;
+        WHERE m.is_tombstone = FALSE
+        "#
+    );
+    let row = sqlx::query(&query).bind(slug).fetch_one(pool).await?;
 
     Ok(MemoryStats {
         memory_entries_total: row.try_get("memory_entries_total")?,
@@ -629,24 +634,17 @@ async fn fetch_memory_type_breakdown(
     pool: &PgPool,
     slug: &str,
 ) -> Result<Vec<MemoryTypeCount>, sqlx::Error> {
-    let rows = sqlx::query(
+    let query = format!(
         r#"
-        WITH latest AS (
-            SELECT DISTINCT ON (m.canonical_id) m.*
-            FROM memory_entries m
-            JOIN projects p ON p.id = m.project_id
-            WHERE p.slug = $1 AND m.is_tombstone = FALSE
-            ORDER BY m.canonical_id, m.version_no DESC
-        )
+        WITH {LATEST_PROJECT_MEMORIES_CTE}
         SELECT m.memory_type, COUNT(*) AS count
         FROM latest m
+        WHERE m.is_tombstone = FALSE
         GROUP BY m.memory_type
         ORDER BY count DESC, m.memory_type ASC
-        "#,
-    )
-    .bind(slug)
-    .fetch_all(pool)
-    .await?;
+        "#
+    );
+    let rows = sqlx::query(&query).bind(slug).fetch_all(pool).await?;
 
     rows.into_iter()
         .map(|row| {
@@ -662,25 +660,18 @@ async fn fetch_source_kind_breakdown(
     pool: &PgPool,
     slug: &str,
 ) -> Result<Vec<SourceKindCount>, sqlx::Error> {
-    let rows = sqlx::query(
+    let query = format!(
         r#"
-        WITH latest AS (
-            SELECT DISTINCT ON (m.canonical_id) m.id
-            FROM memory_entries m
-            JOIN projects p ON p.id = m.project_id
-            WHERE p.slug = $1 AND m.is_tombstone = FALSE
-            ORDER BY m.canonical_id, m.version_no DESC
-        )
+        WITH {LATEST_PROJECT_MEMORY_IDS_CTE}
         SELECT ms.source_kind, COUNT(*) AS count
         FROM memory_sources ms
         JOIN latest m ON m.id = ms.memory_entry_id
+        WHERE m.is_tombstone = FALSE
         GROUP BY ms.source_kind
         ORDER BY count DESC, ms.source_kind ASC
-        "#,
-    )
-    .bind(slug)
-    .fetch_all(pool)
-    .await?;
+        "#
+    );
+    let rows = sqlx::query(&query).bind(slug).fetch_all(pool).await?;
 
     rows.into_iter()
         .map(|row| {
@@ -693,26 +684,19 @@ async fn fetch_source_kind_breakdown(
 }
 
 async fn fetch_top_tags(pool: &PgPool, slug: &str) -> Result<Vec<NamedCount>, sqlx::Error> {
-    let rows = sqlx::query(
+    let query = format!(
         r#"
-        WITH latest AS (
-            SELECT DISTINCT ON (m.canonical_id) m.id
-            FROM memory_entries m
-            JOIN projects p ON p.id = m.project_id
-            WHERE p.slug = $1 AND m.is_tombstone = FALSE
-            ORDER BY m.canonical_id, m.version_no DESC
-        )
+        WITH {LATEST_PROJECT_MEMORY_IDS_CTE}
         SELECT mt.tag AS name, COUNT(*) AS count
         FROM memory_tags mt
         JOIN latest m ON m.id = mt.memory_entry_id
+        WHERE m.is_tombstone = FALSE
         GROUP BY mt.tag
         ORDER BY count DESC, mt.tag ASC
         LIMIT 5
-        "#,
-    )
-    .bind(slug)
-    .fetch_all(pool)
-    .await?;
+        "#
+    );
+    let rows = sqlx::query(&query).bind(slug).fetch_all(pool).await?;
 
     rows.into_iter()
         .map(|row| {
@@ -725,27 +709,20 @@ async fn fetch_top_tags(pool: &PgPool, slug: &str) -> Result<Vec<NamedCount>, sq
 }
 
 async fn fetch_top_files(pool: &PgPool, slug: &str) -> Result<Vec<NamedCount>, sqlx::Error> {
-    let rows = sqlx::query(
+    let query = format!(
         r#"
-        WITH latest AS (
-            SELECT DISTINCT ON (m.canonical_id) m.id
-            FROM memory_entries m
-            JOIN projects p ON p.id = m.project_id
-            WHERE p.slug = $1 AND m.is_tombstone = FALSE
-            ORDER BY m.canonical_id, m.version_no DESC
-        )
+        WITH {LATEST_PROJECT_MEMORY_IDS_CTE}
         SELECT ms.file_path AS name, COUNT(*) AS count
         FROM memory_sources ms
         JOIN latest m ON m.id = ms.memory_entry_id
-        WHERE ms.file_path IS NOT NULL
+        WHERE m.is_tombstone = FALSE
+          AND ms.file_path IS NOT NULL
         GROUP BY ms.file_path
         ORDER BY count DESC, ms.file_path ASC
         LIMIT 5
-        "#,
-    )
-    .bind(slug)
-    .fetch_all(pool)
-    .await?;
+        "#
+    );
+    let rows = sqlx::query(&query).bind(slug).fetch_all(pool).await?;
 
     rows.into_iter()
         .map(|row| {
@@ -988,6 +965,87 @@ mod tests {
         cleanup_project(&pool, &overview.project).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn project_views_use_latest_non_tombstone_versions() {
+        let pool = test_pool().await;
+        let slug = format!("test-{}", Uuid::new_v4());
+        let seed = seed_project(&pool, &slug).await.unwrap();
+        let updated_id = Uuid::new_v4();
+        let deleted_id = Uuid::new_v4();
+        let tombstone_id = Uuid::new_v4();
+
+        sqlx::query(
+            r#"
+            INSERT INTO memory_entries
+                (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
+            VALUES
+                ($1, $2, $3, 2, FALSE, 'Updated canonical memory.', 'Updated memory', 'decision', 'project', 4, 0.9, 'active', now(), now(), NULL, to_tsvector('english', 'Updated canonical memory Updated memory'))
+            "#,
+        )
+        .bind(updated_id)
+        .bind(seed.project_id)
+        .bind(seed.memory_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO memory_tags (memory_entry_id, tag) VALUES ($1, 'beta')")
+            .bind(updated_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO memory_sources (id, memory_entry_id, task_id, file_path, git_commit, source_kind, excerpt, created_at) VALUES ($1, $2, $3, 'docs/updated.md', NULL, 'file', 'updated source', now())",
+        )
+        .bind(Uuid::new_v4())
+        .bind(updated_id)
+        .bind(seed.task_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
+            INSERT INTO memory_entries
+                (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
+            VALUES
+                ($1, $2, $1, 1, FALSE, 'Deleted canonical memory.', 'Deleted memory', 'architecture', 'project', 1, 0.8, 'active', now(), now(), NULL, to_tsvector('english', 'Deleted canonical memory Deleted memory')),
+                ($3, $2, $1, 2, TRUE, '', '', 'implementation', 'project', 0, 0.0, 'active', now(), now(), NULL, to_tsvector('english', ''))
+            "#,
+        )
+        .bind(deleted_id)
+        .bind(seed.project_id)
+        .bind(tombstone_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let memories = fetch_project_memories(&pool, &slug, Some("active"), 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(memories.total, 1);
+        assert_eq!(memories.items.len(), 1);
+        assert_eq!(memories.items[0].id, updated_id);
+        assert_eq!(memories.items[0].summary, "Updated memory");
+        assert!(memories.items[0].tags.contains(&"beta".to_string()));
+        assert!(!memories.items[0].tags.contains(&"alpha".to_string()));
+
+        let overview =
+            fetch_project_overview(&pool, &slug, &mem_api::AutomationConfig::default(), None)
+                .await
+                .unwrap();
+        assert_eq!(overview.memory_entries_total, 1);
+        assert_eq!(overview.active_memories, 1);
+        assert_eq!(overview.memory_type_breakdown.len(), 1);
+        assert_eq!(
+            overview.memory_type_breakdown[0].memory_type,
+            mem_api::MemoryType::Decision
+        );
+        assert_eq!(overview.top_tags[0].name, "beta");
+        assert_eq!(overview.top_files[0].name, "docs/updated.md");
+
+        cleanup_project(&pool, &slug).await.unwrap();
+    }
+
     async fn test_pool() -> PgPool {
         let url = std::env::var("MEMORY_LAYER_TEST_DATABASE_URL")
             .ok()
@@ -1021,7 +1079,13 @@ mod tests {
         Ok(())
     }
 
-    async fn seed_project(pool: &PgPool, slug: &str) -> Result<(), sqlx::Error> {
+    struct SeededProject {
+        project_id: Uuid,
+        task_id: Uuid,
+        memory_id: Uuid,
+    }
+
+    async fn seed_project(pool: &PgPool, slug: &str) -> Result<SeededProject, sqlx::Error> {
         let project_id = Uuid::new_v4();
         let session_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
@@ -1111,6 +1175,10 @@ mod tests {
         )
         .await?;
         tx.commit().await?;
-        Ok(())
+        Ok(SeededProject {
+            project_id,
+            task_id,
+            memory_id,
+        })
     }
 }
