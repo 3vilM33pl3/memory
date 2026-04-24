@@ -4,6 +4,7 @@ mod resume;
 mod scan;
 mod tui;
 mod wizard;
+mod writer_identity;
 
 #[cfg(target_os = "macos")]
 use std::collections::BTreeMap;
@@ -55,6 +56,9 @@ use uuid::Uuid;
 use crate::plan_execution::{
     derive_plan_thread_key, derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
     normalize_plan_markdown_for_hash, parse_plan_checkboxes,
+};
+use crate::writer_identity::{
+    WriterIdentity, resolve_writer_identity, resolve_writer_identity_for_tool,
 };
 
 const ROOT_AFTER_HELP: &str = "\
@@ -8099,64 +8103,6 @@ fn plan_detail_from_markdown(
         canonical_id: memory_id,
         version_no: 1,
         is_tombstone: false,
-    })
-}
-
-#[derive(Debug, Clone)]
-struct WriterIdentity {
-    id: String,
-    name: Option<String>,
-}
-
-fn resolve_writer_identity(
-    config: &AppConfig,
-    cli_writer_id: Option<&str>,
-) -> Result<WriterIdentity> {
-    resolve_writer_identity_for_tool(config, cli_writer_id, "memory")
-}
-
-fn resolve_writer_identity_for_tool(
-    config: &AppConfig,
-    cli_writer_id: Option<&str>,
-    tool_name: &str,
-) -> Result<WriterIdentity> {
-    if let Some(writer_id) = cli_writer_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(WriterIdentity {
-            id: writer_id.to_string(),
-            name: config.writer.name.clone(),
-        });
-    }
-    if let Ok(writer_id) = env::var("MEMORY_LAYER_WRITER_ID") {
-        let trimmed = writer_id.trim();
-        if !trimmed.is_empty() {
-            return Ok(WriterIdentity {
-                id: trimmed.to_string(),
-                name: config.writer.name.clone(),
-            });
-        }
-    }
-    if let Ok(writer_id) = env::var("MEMORY_LAYER_AGENT_ID") {
-        let trimmed = writer_id.trim();
-        if !trimmed.is_empty() {
-            return Ok(WriterIdentity {
-                id: trimmed.to_string(),
-                name: config.writer.name.clone(),
-            });
-        }
-    }
-    let trimmed = config.writer.id.trim();
-    if !trimmed.is_empty() {
-        return Ok(WriterIdentity {
-            id: trimmed.to_string(),
-            name: config.writer.name.clone(),
-        });
-    }
-    Ok(WriterIdentity {
-        id: platform::derive_default_writer_id(tool_name),
-        name: config.writer.name.clone(),
     })
 }
 
