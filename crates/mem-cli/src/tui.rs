@@ -316,6 +316,7 @@ struct App {
     replacement_policy: ReplacementPolicy,
     replacement_proposals: Vec<ReplacementProposalRecord>,
     replacement_selected_index: usize,
+    review_table_state: TableState,
     versions: ToolVersions,
     ui_status: UiStatus,
     status_message: String,
@@ -473,6 +474,8 @@ impl App {
         let (embeddings_wake_tx, embeddings_wake_rx) = std_mpsc::channel();
         let mut embeddings_table_state = TableState::default();
         embeddings_table_state.select(Some(0));
+        let mut review_table_state = TableState::default();
+        review_table_state.select(Some(0));
         Self {
             project: project.clone(),
             repo_root: repo_root.clone(),
@@ -513,6 +516,7 @@ impl App {
             replacement_policy: load_repo_replacement_policy(&repo_root).unwrap_or_default(),
             replacement_proposals: Vec::new(),
             replacement_selected_index: 0,
+            review_table_state,
             versions,
             ui_status: UiStatus::Loading,
             status_message: "Loading project data...".to_string(),
@@ -656,16 +660,20 @@ impl App {
                 self.replacement_proposals = response.proposals;
                 if self.replacement_proposals.is_empty() {
                     self.replacement_selected_index = 0;
+                    self.review_table_state.select(None);
                 } else {
                     self.replacement_selected_index = self
                         .replacement_selected_index
                         .min(self.replacement_proposals.len() - 1);
+                    self.review_table_state
+                        .select(Some(self.replacement_selected_index));
                 }
             }
             Err(error) => {
                 had_error = true;
                 self.replacement_proposals.clear();
                 self.replacement_selected_index = 0;
+                self.review_table_state.select(None);
                 self.status_message = error.to_string();
             }
         }
@@ -1115,29 +1123,48 @@ impl App {
                 self.project_scroll = 0;
             }
             KeyCode::Char('p')
-                if self.active_tab == TabKind::Project && key.modifiers.is_empty() =>
+                if self.active_tab == TabKind::Review && key.modifiers.is_empty() =>
             {
                 self.cycle_replacement_policy().await?;
             }
             KeyCode::Char('[')
-                if self.active_tab == TabKind::Project && key.modifiers.is_empty() =>
+                if self.active_tab == TabKind::Review && key.modifiers.is_empty() =>
             {
                 self.select_replacement_proposal(-1);
             }
             KeyCode::Char(']')
-                if self.active_tab == TabKind::Project && key.modifiers.is_empty() =>
+                if self.active_tab == TabKind::Review && key.modifiers.is_empty() =>
             {
                 self.select_replacement_proposal(1);
             }
             KeyCode::Char('y')
-                if self.active_tab == TabKind::Project && key.modifiers.is_empty() =>
+                if self.active_tab == TabKind::Review && key.modifiers.is_empty() =>
             {
                 self.approve_selected_replacement_proposal(api).await?;
             }
             KeyCode::Char('n')
-                if self.active_tab == TabKind::Project && key.modifiers.is_empty() =>
+                if self.active_tab == TabKind::Review && key.modifiers.is_empty() =>
             {
                 self.reject_selected_replacement_proposal(api).await?;
+            }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Review => {
+                self.select_replacement_proposal(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Review => {
+                self.select_replacement_proposal(-1);
+            }
+            KeyCode::PageDown if self.active_tab == TabKind::Review => {
+                self.select_replacement_proposal(8);
+            }
+            KeyCode::PageUp if self.active_tab == TabKind::Review => {
+                self.select_replacement_proposal(-8);
+            }
+            KeyCode::Home if self.active_tab == TabKind::Review => {
+                self.jump_replacement_proposal(0);
+            }
+            KeyCode::End if self.active_tab == TabKind::Review => {
+                let len = self.replacement_proposals.len();
+                self.jump_replacement_proposal(len.saturating_sub(1));
             }
             KeyCode::PageDown if self.active_tab == TabKind::Watchers => {
                 self.scroll_watchers(8);
@@ -1582,14 +1609,30 @@ impl App {
     }
 
     fn select_replacement_proposal(&mut self, delta: isize) {
-        if self.replacement_proposals.is_empty() {
+        let len = self.replacement_proposals.len();
+        if len == 0 {
+            self.replacement_selected_index = 0;
+            self.review_table_state.select(None);
             return;
         }
-        let next = (self.replacement_selected_index as isize + delta).clamp(
-            0,
-            self.replacement_proposals.len().saturating_sub(1) as isize,
-        ) as usize;
-        self.replacement_selected_index = next;
+        // Cyclic wrap so j/k/[ ] loops within the list.
+        let cur = self.replacement_selected_index as isize;
+        let next = ((cur + delta) % len as isize + len as isize) % len as isize;
+        self.replacement_selected_index = next as usize;
+        self.review_table_state
+            .select(Some(self.replacement_selected_index));
+    }
+
+    fn jump_replacement_proposal(&mut self, index: usize) {
+        let len = self.replacement_proposals.len();
+        if len == 0 {
+            self.replacement_selected_index = 0;
+            self.review_table_state.select(None);
+            return;
+        }
+        self.replacement_selected_index = index.min(len - 1);
+        self.review_table_state
+            .select(Some(self.replacement_selected_index));
     }
 
     async fn cycle_replacement_policy(&mut self) -> Result<()> {
@@ -1860,6 +1903,7 @@ enum TabKind {
     Query,
     Activity,
     Project,
+    Review,
     Watchers,
     Embeddings,
     Resume,
@@ -1872,7 +1916,8 @@ impl TabKind {
             Self::Agents => Self::Query,
             Self::Query => Self::Activity,
             Self::Activity => Self::Project,
-            Self::Project => Self::Watchers,
+            Self::Project => Self::Review,
+            Self::Review => Self::Watchers,
             Self::Watchers => Self::Embeddings,
             Self::Embeddings => Self::Resume,
             Self::Resume => Self::Memories,
@@ -1886,7 +1931,8 @@ impl TabKind {
             Self::Query => Self::Agents,
             Self::Activity => Self::Query,
             Self::Project => Self::Activity,
-            Self::Watchers => Self::Project,
+            Self::Review => Self::Project,
+            Self::Watchers => Self::Review,
             Self::Embeddings => Self::Watchers,
             Self::Resume => Self::Embeddings,
         }
@@ -1899,9 +1945,10 @@ impl TabKind {
             Self::Query => 2,
             Self::Activity => 3,
             Self::Project => 4,
-            Self::Watchers => 5,
-            Self::Embeddings => 6,
-            Self::Resume => 7,
+            Self::Review => 5,
+            Self::Watchers => 6,
+            Self::Embeddings => 7,
+            Self::Resume => 8,
         }
     }
 }
@@ -2089,6 +2136,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         "Query",
         "Activity",
         "Project",
+        "Review",
         "Watchers",
         "Embeddings",
         "Resume",
@@ -2206,6 +2254,18 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             accent_span("jump "),
             Span::styled("Home", Style::default().fg(Theme::TEXT)),
         ],
+        TabKind::Review => vec![
+            accent_span("move "),
+            Span::styled("j/k [ ]  ", Style::default().fg(Theme::TEXT)),
+            accent_span("approve "),
+            Span::styled("y  ", Style::default().fg(Theme::TEXT)),
+            accent_span("reject "),
+            Span::styled("n  ", Style::default().fg(Theme::TEXT)),
+            accent_span("policy "),
+            Span::styled("p  ", Style::default().fg(Theme::TEXT)),
+            accent_span("refresh "),
+            Span::styled("r", Style::default().fg(Theme::TEXT)),
+        ],
         TabKind::Watchers => vec![
             accent_span("scroll "),
             Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
@@ -2258,6 +2318,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             TabKind::Query => draw_query_tab(frame, app, chunks[2]),
             TabKind::Activity => draw_activity_tab(frame, app, chunks[2]),
             TabKind::Project => draw_project_tab(frame, app, chunks[2]),
+            TabKind::Review => draw_review_tab(frame, app, chunks[2]),
             TabKind::Watchers => draw_watchers_tab(frame, app, chunks[2]),
             TabKind::Embeddings => draw_embeddings_tab(frame, app, chunks[2]),
         }
@@ -2965,7 +3026,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             "Curation policy",
             Span::styled(
                 format!(
-                    "{} / {} pending proposal(s)",
+                    "{} / {} pending (see Review tab)",
                     app.replacement_policy, app.overview.pending_replacement_proposals
                 ),
                 Style::default().fg(Theme::TEXT),
@@ -3036,20 +3097,9 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 
     let bottom = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(8),
-            Constraint::Min(8),
-            Constraint::Length(7),
-        ])
+        .constraints([Constraint::Min(8), Constraint::Length(7)])
         .split(chunks[2]);
 
-    frame.render_widget(
-        Paragraph::new(replacement_proposal_lines(app))
-            .style(Style::default().bg(Theme::PANEL_ALT))
-            .wrap(Wrap { trim: false })
-            .block(themed_block("Curation Review")),
-        bottom[0],
-    );
     frame.render_widget(
         Paragraph::new(lines_for_named_counts(
             app.overview
@@ -3061,7 +3111,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         ))
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block("Top Files")),
-        bottom[1],
+        bottom[0],
     );
     frame.render_widget(
         Paragraph::new(vec![
@@ -3086,19 +3136,219 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::TEXT),
             )),
             Line::from(Span::styled(
-                "p cycle policy / [ ] select proposal",
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(Span::styled(
-                "y approve / n reject selected proposal",
-                Style::default().fg(Theme::TEXT),
+                "Review tab: y approve / n reject / p cycle policy",
+                Style::default().fg(Theme::MUTED),
             )),
             Line::from(Span::styled("r refresh", Style::default().fg(Theme::TEXT))),
         ])
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block("Operations")),
-        bottom[2],
+        bottom[1],
     );
+}
+
+fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(8),
+            Constraint::Length(3),
+        ])
+        .split(area);
+
+    let pending = app.replacement_proposals.len();
+    let selected_label = if pending == 0 {
+        "—".to_string()
+    } else {
+        format!("{}/{}", app.replacement_selected_index + 1, pending)
+    };
+    let header = Paragraph::new(vec![
+        Line::from(vec![
+            label_span("Policy: "),
+            Span::styled(
+                app.replacement_policy.to_string(),
+                Style::default()
+                    .fg(Theme::ACCENT_STRONG)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   "),
+            label_span("Pending: "),
+            Span::styled(
+                pending.to_string(),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Selected: "),
+            Span::styled(selected_label, Style::default().fg(Theme::TEXT)),
+        ]),
+        Line::from(Span::styled(
+            "Clear updates replace automatically; ambiguous ones queue here for your approval.",
+            Style::default().fg(Theme::MUTED),
+        )),
+    ])
+    .style(Style::default().bg(Theme::PANEL))
+    .block(themed_block("Curation Review"));
+    frame.render_widget(header, chunks[0]);
+
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(chunks[1]);
+
+    if app.replacement_proposals.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "No pending replacement proposals. New ambiguous curation candidates will appear here.",
+                Style::default().fg(Theme::MUTED),
+            )))
+            .wrap(Wrap { trim: false })
+            .style(Style::default().bg(Theme::PANEL_ALT))
+            .block(themed_block("Proposals")),
+            body[0],
+        );
+    } else {
+        let header_row = Row::new(["#", "TARGET", "CANDIDATE", "SCORE"])
+            .style(
+                Style::default()
+                    .fg(Theme::ACCENT_STRONG)
+                    .bg(Theme::PANEL_ALT)
+                    .add_modifier(Modifier::BOLD),
+            );
+        let rows = app
+            .replacement_proposals
+            .iter()
+            .enumerate()
+            .map(|(idx, proposal)| {
+                Row::new(vec![
+                    Line::from(Span::styled(
+                        (idx + 1).to_string(),
+                        Style::default().fg(Theme::MUTED),
+                    )),
+                    Line::from(Span::styled(
+                        truncate_for_list(&proposal.target_summary, 48),
+                        Style::default().fg(Theme::TEXT),
+                    )),
+                    Line::from(Span::styled(
+                        truncate_for_list(&proposal.candidate_summary, 48),
+                        Style::default().fg(Theme::ACCENT),
+                    )),
+                    Line::from(Span::styled(
+                        proposal.score.to_string(),
+                        Style::default().fg(Theme::TEXT),
+                    )),
+                ])
+            });
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(4),
+                Constraint::Percentage(45),
+                Constraint::Percentage(45),
+                Constraint::Length(6),
+            ],
+        )
+        .header(header_row)
+        .row_highlight_style(
+            Style::default()
+                .bg(Theme::SELECTION_BG)
+                .fg(Theme::SELECTION_FG),
+        )
+        .style(Style::default().bg(Theme::PANEL_ALT))
+        .block(themed_block(format!("Proposals ({pending})")));
+        let mut state = app.review_table_state.clone();
+        frame.render_stateful_widget(table, body[0], &mut state);
+    }
+
+    frame.render_widget(
+        Paragraph::new(review_detail_lines(app))
+            .wrap(Wrap { trim: false })
+            .style(Style::default().bg(Theme::PANEL_ALT))
+            .block(themed_block("Detail")),
+        body[1],
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            accent_span("j/k [ ] "),
+            Span::styled("select  ", Style::default().fg(Theme::TEXT)),
+            accent_span("y "),
+            Span::styled("approve  ", Style::default().fg(Theme::TEXT)),
+            accent_span("n "),
+            Span::styled("reject  ", Style::default().fg(Theme::TEXT)),
+            accent_span("p "),
+            Span::styled("cycle policy  ", Style::default().fg(Theme::TEXT)),
+            accent_span("r "),
+            Span::styled("refresh", Style::default().fg(Theme::TEXT)),
+        ]))
+        .style(Style::default().bg(Theme::PANEL))
+        .block(themed_block("Actions")),
+        chunks[2],
+    );
+}
+
+fn review_detail_lines(app: &App) -> Vec<Line<'static>> {
+    let Some(proposal) = app
+        .replacement_proposals
+        .get(app.replacement_selected_index)
+    else {
+        return vec![Line::from(Span::styled(
+            "Select a proposal on the left to inspect it here.",
+            Style::default().fg(Theme::MUTED),
+        ))];
+    };
+
+    let mut lines = vec![
+        Line::from(vec![
+            label_span("Target: "),
+            Span::styled(
+                proposal.target_summary.clone(),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Candidate: "),
+            Span::styled(
+                proposal.candidate_summary.clone(),
+                Style::default().fg(Theme::ACCENT),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Type / Score / Policy: "),
+            Span::styled(
+                format!(
+                    "{} / {} / {}",
+                    proposal.candidate_memory_type, proposal.score, proposal.policy
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+    ];
+    if !proposal.reasons.is_empty() {
+        lines.push(Line::from(vec![
+            label_span("Why: "),
+            Span::styled(
+                proposal.reasons.join(", "),
+                Style::default().fg(Theme::MUTED),
+            ),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        proposal.candidate_canonical_text.clone(),
+        Style::default().fg(Theme::MUTED),
+    )));
+    lines
+}
+
+fn truncate_for_list(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
 }
 
 fn draw_watchers_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
@@ -4033,75 +4283,6 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
         }
         lines.push(Line::from(""));
     }
-    lines
-}
-
-fn replacement_proposal_lines(app: &App) -> Vec<Line<'static>> {
-    if app.replacement_proposals.is_empty() {
-        return vec![
-            Line::from(Span::styled(
-                format!(
-                    "Policy: {}. No pending replacement proposals.",
-                    app.replacement_policy
-                ),
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(Span::styled(
-                "Use `p` to cycle policy. Clear updates replace automatically; ambiguous ones queue here.",
-                Style::default().fg(Theme::MUTED),
-            )),
-        ];
-    }
-
-    let proposal = &app.replacement_proposals[app.replacement_selected_index];
-    let mut lines = vec![
-        Line::from(Span::styled(
-            format!(
-                "{} pending proposal(s) / selected {}/{}",
-                app.replacement_proposals.len(),
-                app.replacement_selected_index + 1,
-                app.replacement_proposals.len()
-            ),
-            Style::default().fg(Theme::TEXT),
-        )),
-        Line::from(vec![
-            label_span("Target: "),
-            Span::styled(
-                proposal.target_summary.clone(),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ]),
-        Line::from(vec![
-            label_span("Candidate: "),
-            Span::styled(
-                proposal.candidate_summary.clone(),
-                Style::default().fg(Theme::ACCENT),
-            ),
-        ]),
-        Line::from(vec![
-            label_span("Type / Score / Policy: "),
-            Span::styled(
-                format!(
-                    "{} / {} / {}",
-                    proposal.candidate_memory_type, proposal.score, proposal.policy
-                ),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ]),
-    ];
-    if !proposal.reasons.is_empty() {
-        lines.push(Line::from(vec![
-            label_span("Why: "),
-            Span::styled(
-                proposal.reasons.join(", "),
-                Style::default().fg(Theme::MUTED),
-            ),
-        ]));
-    }
-    lines.push(Line::from(Span::styled(
-        proposal.candidate_canonical_text.clone(),
-        Style::default().fg(Theme::MUTED),
-    )));
     lines
 }
 
@@ -6660,18 +6841,23 @@ mod tests {
     }
 
     #[test]
-    fn tab_order_includes_embeddings_between_watchers_and_resume() {
+    fn tab_order_places_review_between_project_and_watchers() {
         assert_eq!(TabKind::Memories.index(), 0);
         assert_eq!(TabKind::Agents.index(), 1);
         assert_eq!(TabKind::Query.index(), 2);
         assert_eq!(TabKind::Activity.index(), 3);
         assert_eq!(TabKind::Project.index(), 4);
-        assert_eq!(TabKind::Watchers.index(), 5);
-        assert_eq!(TabKind::Embeddings.index(), 6);
-        assert_eq!(TabKind::Resume.index(), 7);
+        assert_eq!(TabKind::Review.index(), 5);
+        assert_eq!(TabKind::Watchers.index(), 6);
+        assert_eq!(TabKind::Embeddings.index(), 7);
+        assert_eq!(TabKind::Resume.index(), 8);
 
         assert_eq!(TabKind::Memories.prev(), TabKind::Resume);
         assert_eq!(TabKind::Memories.next(), TabKind::Agents);
+        assert_eq!(TabKind::Project.next(), TabKind::Review);
+        assert_eq!(TabKind::Review.prev(), TabKind::Project);
+        assert_eq!(TabKind::Review.next(), TabKind::Watchers);
+        assert_eq!(TabKind::Watchers.prev(), TabKind::Review);
         assert_eq!(TabKind::Watchers.next(), TabKind::Embeddings);
         assert_eq!(TabKind::Embeddings.prev(), TabKind::Watchers);
         assert_eq!(TabKind::Embeddings.next(), TabKind::Resume);
