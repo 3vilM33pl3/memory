@@ -26,10 +26,10 @@ use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
     NamedCount, PlanActivityAction, Profile, ProjectMemoriesResponse, ProjectMemoryListItem,
     ProjectOverviewResponse, QueryAnswerMethod, QueryFilters, QueryMatchKind, QueryRequest,
-    QueryResponse, QueryResult, ReplacementPolicy, ReplacementProposalRecord, ResumeCheckpoint,
-    ResumeRequest, ResumeResponse, StreamRequest, StreamResponse, WatcherHealth,
-    load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
-    write_capnp_text_frame,
+    QueryResponse, QueryResult, ReplacementPolicy, ReplacementProposalListResponse,
+    ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest, ResumeResponse, StreamRequest,
+    StreamResponse, WatcherHealth, load_repo_replacement_policy, read_capnp_text_frame,
+    repo_agent_settings_path, write_capnp_text_frame,
 };
 use mem_platform::preferred_user_state_dir;
 use ratatui::{
@@ -97,7 +97,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
             .expect("embeddings_wake_rx present on fresh App"),
     );
     terminal.draw(|frame| draw(frame, &app))?;
-    app.refresh(&api, RefreshMode::Startup).await;
+    app.request_refresh(&api, RefreshMode::Startup);
     let mut stream = StreamSession::connect(&api).await.ok();
     let mut last_stream_connect_attempt = Instant::now();
     if let Some(stream_session) = stream.as_mut() {
@@ -273,6 +273,26 @@ fn start_manager_status_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
     });
 }
 
+async fn load_project_refresh(
+    api: &ApiClient,
+    project: String,
+    mode: RefreshMode,
+) -> ProjectRefreshResult {
+    let health_fut = api.health();
+    let overview_fut = api.project_overview(&project);
+    let memories_fut = api.project_memories(&project);
+    let proposals_fut = api.replacement_proposals(&project);
+    let (health, overview, memories, proposals) =
+        tokio::join!(health_fut, overview_fut, memories_fut, proposals_fut);
+    ProjectRefreshResult {
+        mode,
+        health: health.map_err(|error| error.to_string()),
+        overview: overview.map_err(|error| error.to_string()),
+        memories: memories.map_err(|error| error.to_string()),
+        proposals: proposals.map_err(|error| error.to_string()),
+    }
+}
+
 struct App {
     project: String,
     repo_root: PathBuf,
@@ -426,7 +446,16 @@ enum QueryLogOutcome {
     Error(String),
 }
 
+struct ProjectRefreshResult {
+    mode: RefreshMode,
+    health: Result<serde_json::Value, String>,
+    overview: Result<ProjectOverviewResponse, String>,
+    memories: Result<ProjectMemoriesResponse, String>,
+    proposals: Result<ReplacementProposalListResponse, String>,
+}
+
 enum BackgroundEvent {
+    ProjectRefreshLoaded(Box<ProjectRefreshResult>),
     ResumeLoaded {
         response: Box<Result<ResumeResponse, String>>,
         checkpoint_present: bool,
@@ -592,7 +621,7 @@ impl App {
         }
     }
 
-    async fn refresh(&mut self, api: &ApiClient, mode: RefreshMode) {
+    fn begin_refresh(&mut self, mode: RefreshMode) {
         self.needs_redraw = true;
         self.status_message = "Refreshing...".to_string();
         self.ui_status = if mode == RefreshMode::Startup {
@@ -602,16 +631,73 @@ impl App {
         };
         self.selected_detail = None;
         self.replacement_policy = load_repo_replacement_policy(&self.repo_root).unwrap_or_default();
+    }
 
-        let health_fut = api.health();
-        let overview_fut = api.project_overview(&self.project);
-        let memories_fut = api.project_memories(&self.project);
-        let proposals_fut = api.replacement_proposals(&self.project);
-        let (health_result, overview_result, memories_result, proposals_result) =
-            tokio::join!(health_fut, overview_fut, memories_fut, proposals_fut);
+    fn request_refresh(&mut self, api: &ApiClient, mode: RefreshMode) {
+        self.begin_refresh(mode);
+        let checkpoint = if mode == RefreshMode::Startup {
+            self.resume_checkpoint()
+        } else {
+            None
+        };
+        let api = api.clone();
+        let project = self.project.clone();
+        let tx = self.background_tx.clone();
+        tokio::spawn(async move {
+            let result = load_project_refresh(&api, project.clone(), mode).await;
+            let _ = tx.send(BackgroundEvent::ProjectRefreshLoaded(Box::new(result)));
+            if mode == RefreshMode::Startup && checkpoint.is_some() {
+                let request = ResumeRequest {
+                    project: project.clone(),
+                    checkpoint: checkpoint.clone(),
+                    since: None,
+                    include_llm_summary: false,
+                    limit: 12,
+                };
+                let response = api
+                    .resume(&request)
+                    .await
+                    .map_err(|error| error.to_string());
+                let has_changes = match &response {
+                    Ok(response) => {
+                        !response.timeline.is_empty()
+                            || !response.commits.is_empty()
+                            || !response.changed_memories.is_empty()
+                    }
+                    Err(_) => false,
+                };
+                let _ = tx.send(BackgroundEvent::ResumeLoaded {
+                    response: Box::new(response),
+                    checkpoint_present: true,
+                    has_changes,
+                    allow_autoselect: true,
+                });
+            }
+        });
+    }
+
+    async fn refresh(&mut self, api: &ApiClient, mode: RefreshMode) {
+        self.begin_refresh(mode);
+        let result = load_project_refresh(api, self.project.clone(), mode).await;
+        let loaded_memories = self.apply_project_refresh(result);
+        if loaded_memories {
+            self.fetch_selected_detail(api, None).await;
+        }
+        if mode == RefreshMode::Startup {
+            if self.resume_checkpoint().is_some() {
+                self.request_resume_refresh(api, true);
+            }
+        } else if mode == RefreshMode::Full || self.active_tab == TabKind::Resume {
+            self.request_resume_refresh(api, false);
+        }
+    }
+
+    fn apply_project_refresh(&mut self, result: ProjectRefreshResult) -> bool {
+        let mode = result.mode;
         let mut had_error = false;
+        let mut loaded_memories = false;
 
-        match health_result {
+        match result.health {
             Ok(health) => {
                 self.health_ok = true;
                 if let Some(version) = health.get("version").and_then(|value| value.as_str()) {
@@ -642,7 +728,7 @@ impl App {
             }
         }
 
-        match overview_result {
+        match result.overview {
             Ok(overview) => self.overview = overview,
             Err(error) => {
                 if self.health_ok {
@@ -652,7 +738,7 @@ impl App {
             }
         }
 
-        match memories_result {
+        match result.memories {
             Ok(ProjectMemoriesResponse {
                 project: _,
                 total,
@@ -661,12 +747,12 @@ impl App {
                 self.total_memories = total;
                 self.all_memories = items;
                 self.apply_filters();
-                self.fetch_selected_detail(api, None).await;
                 self.status_message = format!(
                     "Loaded {} visible memories ({} total).",
                     self.filtered_memories.len(),
                     self.total_memories
                 );
+                loaded_memories = true;
             }
             Err(error) => {
                 had_error = true;
@@ -681,7 +767,7 @@ impl App {
             }
         }
 
-        match proposals_result {
+        match result.proposals {
             Ok(response) => {
                 self.replacement_proposals = response.proposals;
                 if self.replacement_proposals.is_empty() {
@@ -712,13 +798,13 @@ impl App {
             UiStatus::Ready
         };
 
-        if mode == RefreshMode::Startup {
-            if self.resume_checkpoint().is_some() {
-                self.request_resume_refresh(api, true);
-            }
-        } else if mode == RefreshMode::Full || self.active_tab == TabKind::Resume {
-            self.request_resume_refresh(api, false);
+        if mode == RefreshMode::Startup && self.resume_checkpoint().is_some() && loaded_memories {
+            self.status_message = format!(
+                "{} Resume checkpoint available; open Resume to refresh.",
+                self.status_message
+            );
         }
+        loaded_memories
     }
 
     fn resume_checkpoint(&self) -> Option<ResumeCheckpoint> {
@@ -787,6 +873,9 @@ impl App {
     fn apply_background_event(&mut self, event: BackgroundEvent) {
         self.needs_redraw = true;
         match event {
+            BackgroundEvent::ProjectRefreshLoaded(result) => {
+                self.apply_project_refresh(*result);
+            }
             BackgroundEvent::ResumeLoaded {
                 response,
                 checkpoint_present,
