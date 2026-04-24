@@ -380,6 +380,50 @@ pub struct QueryDiagnostics {
     pub semantic_status: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[derive(Default)]
+pub enum QueryAnswerMethod {
+    #[default]
+    Deterministic,
+    Llm,
+    Fallback,
+}
+
+impl fmt::Display for QueryAnswerMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Deterministic => "deterministic",
+            Self::Llm => "llm",
+            Self::Fallback => "fallback",
+        };
+        f.write_str(value)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QueryAnswerGeneration {
+    #[serde(default)]
+    pub method: QueryAnswerMethod,
+    #[serde(default)]
+    pub cited_result_numbers: Vec<usize>,
+    #[serde(default)]
+    pub evidence_count: usize,
+    #[serde(default)]
+    pub duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryAnswerCitation {
+    pub result_number: usize,
+    pub memory_id: Uuid,
+    pub memory_type: MemoryType,
+    pub summary: String,
+    pub snippet: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelatedMemorySummary {
     pub memory_id: Uuid,
@@ -395,6 +439,10 @@ pub struct QueryResponse {
     pub confidence: f32,
     pub results: Vec<QueryResult>,
     pub insufficient_evidence: bool,
+    #[serde(default)]
+    pub answer_generation: QueryAnswerGeneration,
+    #[serde(default)]
+    pub answer_citations: Vec<QueryAnswerCitation>,
     #[serde(default)]
     pub diagnostics: QueryDiagnostics,
 }
@@ -2871,6 +2919,27 @@ mod tests {
         };
 
         assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn query_response_defaults_answer_metadata_for_older_json() {
+        let payload = serde_json::json!({
+            "answer": "Stored answer",
+            "confidence": 0.7,
+            "results": [],
+            "insufficient_evidence": false
+        });
+
+        let response: QueryResponse =
+            serde_json::from_value(payload).expect("query response should deserialize");
+
+        assert_eq!(response.answer, "Stored answer");
+        assert_eq!(
+            response.answer_generation.method,
+            QueryAnswerMethod::Deterministic
+        );
+        assert!(response.answer_generation.cited_result_numbers.is_empty());
+        assert!(response.answer_citations.is_empty());
     }
 
     #[test]

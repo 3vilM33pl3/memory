@@ -16,7 +16,7 @@ The goal is to make `memory query` predictable for:
 1. Caller provides a project and natural-language question.
 2. Backend performs PostgreSQL BM25 retrieval over canonical memory and chunks.
 3. Backend groups and ranks results.
-4. Backend returns a concise answer summary, ranked results, provenance, and confidence.
+4. Backend returns a concise answer, ranked results, provenance, citations, and confidence.
 
 ---
 
@@ -84,6 +84,21 @@ memory query --project <project-slug> --question "<question>"
 {
   "answer": "Refresh tokens are single-use and rotated on renewal.",
   "confidence": 0.84,
+  "answer_generation": {
+    "method": "llm",
+    "cited_result_numbers": [1],
+    "evidence_count": 1,
+    "duration_ms": 420
+  },
+  "answer_citations": [
+    {
+      "result_number": 1,
+      "memory_id": "mem_123",
+      "memory_type": "architecture",
+      "summary": "JWT refresh token rotation",
+      "snippet": "Refresh tokens are invalidated after successful rotation..."
+    }
+  ],
   "results": [
     {
       "memory_id": "mem_123",
@@ -110,6 +125,8 @@ memory query --project <project-slug> --question "<question>"
 - `confidence`: `0.0..1.0`
 - `results`: ranked supporting entries
 - `insufficient_evidence`: explicit signal for weak or absent memory support
+- `answer_generation`: how the answer was created (`llm`, `deterministic`, or `fallback`) plus cited result numbers
+- `answer_citations`: cited memories used by the answer, with result numbers matching the ranked result list
 
 ### Result Fields
 - `memory_id`: canonical memory identifier
@@ -141,6 +158,8 @@ Rules:
 - do not fabricate an answer summary from unrelated matches
 - prefer low confidence plus explicit insufficiency
 - still include weak matches only if they are genuinely relevant
+- citations must refer only to memories present in `results`
+- if LLM synthesis fails, return the deterministic fallback answer with `answer_generation.method = "fallback"` and a `fallback_reason`
 
 ---
 

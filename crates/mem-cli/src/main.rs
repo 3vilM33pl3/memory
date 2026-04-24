@@ -6904,14 +6904,19 @@ fn print_memory_history(payload: &mem_api::MemoryHistoryResponse) {
 fn print_query_response(payload: QueryResponse) {
     println!("Answer:\n{}\n", payload.answer);
     println!(
-        "Confidence: {:.2} | Evidence: {}\n",
+        "Confidence: {:.2} | Evidence: {} | Method: {} | Citations: {}\n",
         payload.confidence,
         if payload.insufficient_evidence {
             "insufficient"
         } else {
             "sufficient"
-        }
+        },
+        payload.answer_generation.method,
+        format_query_citations(&payload.answer_generation.cited_result_numbers)
     );
+    if let Some(reason) = &payload.answer_generation.fallback_reason {
+        println!("Fallback: {reason}\n");
+    }
     println!(
         "Diagnostics: lexical {} ({} ms) | semantic {} ({} ms) | merged {} | returned {} | rerank {} ms | total {} ms\n",
         payload.diagnostics.lexical_candidates,
@@ -6923,10 +6928,24 @@ fn print_query_response(payload: QueryResponse) {
         payload.diagnostics.rerank_duration_ms,
         payload.diagnostics.total_duration_ms,
     );
-    for result in payload.results {
+    if !payload.answer_citations.is_empty() {
+        println!("Cited memories:");
+        for citation in &payload.answer_citations {
+            println!(
+                "{}. {} [{}] {}",
+                citation.result_number, citation.summary, citation.memory_type, citation.snippet
+            );
+        }
+        println!();
+    }
+    for (index, result) in payload.results.into_iter().enumerate() {
         println!(
-            "- {} [{} / {}] score={:.2}",
-            result.summary, result.memory_type, result.match_kind, result.score
+            "{}. {} [{} / {}] score={:.2}",
+            index + 1,
+            result.summary,
+            result.memory_type,
+            result.match_kind,
+            result.score
         );
         println!("  {}", result.snippet);
         println!(
@@ -6950,6 +6969,18 @@ fn print_query_response(payload: QueryResponse) {
                 source.source_kind.source_kind_string()
             );
         }
+    }
+}
+
+fn format_query_citations(numbers: &[usize]) -> String {
+    if numbers.is_empty() {
+        "none".to_string()
+    } else {
+        numbers
+            .iter()
+            .map(|number| format!("[{number}]"))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 

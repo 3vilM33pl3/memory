@@ -25,10 +25,11 @@ use mem_agenttop::{
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
     NamedCount, PlanActivityAction, Profile, ProjectMemoriesResponse, ProjectMemoryListItem,
-    ProjectOverviewResponse, QueryFilters, QueryMatchKind, QueryRequest, QueryResponse,
-    QueryResult, ReplacementPolicy, ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest,
-    ResumeResponse, StreamRequest, StreamResponse, WatcherHealth, load_repo_replacement_policy,
-    read_capnp_text_frame, repo_agent_settings_path, write_capnp_text_frame,
+    ProjectOverviewResponse, QueryAnswerMethod, QueryFilters, QueryMatchKind, QueryRequest,
+    QueryResponse, QueryResult, ReplacementPolicy, ReplacementProposalRecord, ResumeCheckpoint,
+    ResumeRequest, ResumeResponse, StreamRequest, StreamResponse, WatcherHealth,
+    load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
+    write_capnp_text_frame,
 };
 use mem_platform::preferred_user_state_dir;
 use ratatui::{
@@ -414,7 +415,7 @@ struct QueryActivityEntry {
 
 #[derive(Clone)]
 enum QueryLogOutcome {
-    Success(QueryResponse),
+    Success(Box<QueryResponse>),
     Error(String),
 }
 
@@ -1476,7 +1477,7 @@ impl App {
                 self.record_query_activity(
                     request.clone(),
                     elapsed_ms,
-                    QueryLogOutcome::Success(response.clone()),
+                    QueryLogOutcome::Success(Box::new(response.clone())),
                 );
                 self.resume_loaded = false;
                 self.query_last_duration_ms = Some(elapsed_ms);
@@ -3549,7 +3550,7 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(11), Constraint::Min(12)])
+        .constraints([Constraint::Length(12), Constraint::Min(12)])
         .split(area);
 
     let answer_text = if let Some(response) = &app.query_response {
@@ -3568,6 +3569,22 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             Line::from(vec![
                 label_span("Answer: "),
                 Span::styled(response.answer.clone(), Style::default().fg(Theme::TEXT)),
+            ]),
+            Line::from(vec![
+                label_span("Method: "),
+                query_answer_method_span(&response.answer_generation.method),
+                Span::raw("   "),
+                label_span("Citations: "),
+                Span::styled(
+                    format_query_citation_numbers(&response.answer_generation.cited_result_numbers),
+                    Style::default().fg(Theme::ACCENT),
+                ),
+                Span::raw("   "),
+                label_span("Answer gen: "),
+                Span::styled(
+                    format!("{} ms", response.answer_generation.duration_ms),
+                    Style::default().fg(Theme::TEXT),
+                ),
             ]),
             Line::from(vec![
                 label_span("Confidence: "),
@@ -3644,6 +3661,14 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                     Style::default().fg(Theme::TEXT),
                 ),
             ]),
+            if let Some(reason) = &response.answer_generation.fallback_reason {
+                Line::from(vec![
+                    label_span("Fallback: "),
+                    Span::styled(reason.clone(), Style::default().fg(Theme::WARNING)),
+                ])
+            } else {
+                Line::from("")
+            },
         ]
     } else {
         vec![
@@ -3672,16 +3697,31 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[1]);
 
-    let header = Row::new(["Summary", "Type", "Match", "Score"]).style(
+    let header = Row::new(["#", "Summary", "Type", "Match", "Score"]).style(
         Style::default()
             .fg(Theme::ACCENT_STRONG)
             .bg(Theme::PANEL_ALT)
             .add_modifier(Modifier::BOLD),
     );
-    let rows = app.query_results().iter().map(query_row);
+    let cited_numbers = app
+        .query_response
+        .as_ref()
+        .map(|response| &response.answer_generation.cited_result_numbers);
+    let rows = app
+        .query_results()
+        .iter()
+        .enumerate()
+        .map(|(index, result)| {
+            query_row(
+                index + 1,
+                result,
+                cited_numbers.is_some_and(|numbers| numbers.contains(&(index + 1))),
+            )
+        });
     let table = Table::new(
         rows,
         [
+            Constraint::Length(4),
             Constraint::Percentage(52),
             Constraint::Length(13),
             Constraint::Length(10),
@@ -3704,6 +3744,13 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     frame.render_stateful_widget(table, lower[0], &mut state);
 
     let detail_text = if let Some(result) = app.query_results().get(app.query_selected_index) {
+        let result_number = app.query_selected_index + 1;
+        let cited_in_answer = app.query_response.as_ref().is_some_and(|response| {
+            response
+                .answer_generation
+                .cited_result_numbers
+                .contains(&result_number)
+        });
         let mut lines = vec![
             Line::from(vec![
                 label_span("Summary: "),
@@ -3720,6 +3767,16 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Span::styled(
                     format!("{:.2}", result.score),
                     Style::default().fg(Theme::ACCENT_STRONG),
+                ),
+                Span::raw("   "),
+                label_span("Cited: "),
+                Span::styled(
+                    if cited_in_answer { "yes" } else { "no" },
+                    if cited_in_answer {
+                        Style::default().fg(Theme::SUCCESS)
+                    } else {
+                        Style::default().fg(Theme::MUTED)
+                    },
                 ),
             ]),
             Line::from(""),
@@ -4366,8 +4423,21 @@ fn agent_row(session: &AgentSession) -> Row<'static> {
     ])
 }
 
-fn query_row(item: &QueryResult) -> Row<'static> {
+fn query_row(result_number: usize, item: &QueryResult, cited: bool) -> Row<'static> {
+    let number = if cited {
+        format!("[{result_number}]")
+    } else {
+        result_number.to_string()
+    };
+    let number_style = if cited {
+        Style::default()
+            .fg(Theme::SUCCESS)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Theme::MUTED)
+    };
     Row::new(vec![
+        Cell::from(Span::styled(number, number_style)),
         Cell::from(Span::styled(
             item.summary.clone(),
             Style::default().fg(Theme::TEXT),
@@ -4379,6 +4449,27 @@ fn query_row(item: &QueryResult) -> Row<'static> {
             Style::default().fg(Theme::ACCENT_STRONG),
         )),
     ])
+}
+
+fn format_query_citation_numbers(numbers: &[usize]) -> String {
+    if numbers.is_empty() {
+        "none".to_string()
+    } else {
+        numbers
+            .iter()
+            .map(|number| format!("[{number}]"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+fn query_answer_method_span(method: &QueryAnswerMethod) -> Span<'static> {
+    let color = match method {
+        QueryAnswerMethod::Llm => Theme::SUCCESS,
+        QueryAnswerMethod::Deterministic => Theme::ACCENT,
+        QueryAnswerMethod::Fallback => Theme::WARNING,
+    };
+    Span::styled(method.to_string(), Style::default().fg(color))
 }
 
 fn activity_row(item: &ActivityEntry) -> Row<'static> {
@@ -6504,11 +6595,12 @@ mod tests {
         AgentSnapshot, App, BackgroundEvent, ManagerState, MemoriesFocus, TabKind, Theme,
         ToolVersions, UiStatus, build_memory_detail_lines, context_gradient_color,
         derive_manager_state, empty_overview, filled_bar_cells, format_context_percent,
-        format_epoch_reset_time, format_timestamp, format_timestamp_full, format_timestamp_medium,
-        format_timestamp_short, format_timestamp_timeline, manager_status_detail,
-        manager_status_label, memory_detail_max_scroll, normalized_percent, remaining_bar_cells,
-        render_markdown_lines, service_status_detail, service_status_label,
-        should_attempt_stream_reconnect, watcher_bar_status_label,
+        format_epoch_reset_time, format_query_citation_numbers, format_timestamp,
+        format_timestamp_full, format_timestamp_medium, format_timestamp_short,
+        format_timestamp_timeline, manager_status_detail, manager_status_label,
+        memory_detail_max_scroll, normalized_percent, remaining_bar_cells, render_markdown_lines,
+        service_status_detail, service_status_label, should_attempt_stream_reconnect,
+        watcher_bar_status_label,
     };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
@@ -6539,6 +6631,12 @@ mod tests {
         assert_eq!(medium, local.format("%Y-%m-%d %H:%M %Z").to_string());
         assert_eq!(short, local.format("%H:%M:%S %Z").to_string());
         assert_eq!(timeline, local.format("%m-%d %H:%M %Z").to_string());
+    }
+
+    #[test]
+    fn query_citation_numbers_render_bracketed_result_ids() {
+        assert_eq!(format_query_citation_numbers(&[]), "none");
+        assert_eq!(format_query_citation_numbers(&[1, 3]), "[1] [3]");
     }
 
     #[test]

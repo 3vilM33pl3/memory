@@ -31,8 +31,9 @@ use mem_api::{
     ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
     ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
     ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
-    PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryRequest,
-    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
+    PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryAnswerCitation,
+    QueryAnswerGeneration, QueryAnswerMethod, QueryRequest, QueryResponse, ReembedRequest,
+    ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
     ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
     ResumeRequest, ResumeResponse, ScanActivityRequest, SourceKind, StatsResponse, StreamRequest,
     StreamResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
@@ -1970,7 +1971,8 @@ async fn query(
     let pool = state.pool()?;
     let embedders = state.embedders.read().await;
     match query_memory(pool, &request, embedders.active()).await {
-        Ok(response) => {
+        Ok(mut response) => {
+            enrich_query_answer_with_llm(&state, &request, &mut response).await;
             notify_project_changed(
                 &state,
                 request.project.clone(),
@@ -4263,6 +4265,254 @@ async fn summarize_resume_with_llm(
     Ok(content.to_string())
 }
 
+async fn enrich_query_answer_with_llm(
+    state: &AppState,
+    request: &QueryRequest,
+    response: &mut QueryResponse,
+) {
+    let started = std::time::Instant::now();
+    let result = synthesize_query_answer_with_llm(state, request, response).await;
+    match result {
+        Ok(answer) => {
+            response.answer = answer.answer;
+            response.confidence = answer.confidence;
+            response.insufficient_evidence = answer.insufficient_evidence;
+            response.answer_citations = answer.citations;
+            response.answer_generation = QueryAnswerGeneration {
+                method: QueryAnswerMethod::Llm,
+                cited_result_numbers: answer.cited_result_numbers,
+                evidence_count: response.answer_citations.len(),
+                duration_ms: started.elapsed().as_millis() as u64,
+                fallback_reason: None,
+            };
+        }
+        Err(error) => {
+            let cited_result_numbers = response
+                .answer_citations
+                .iter()
+                .map(|citation| citation.result_number)
+                .collect::<Vec<_>>();
+            response.answer_generation = QueryAnswerGeneration {
+                method: QueryAnswerMethod::Fallback,
+                cited_result_numbers,
+                evidence_count: response.answer_citations.len(),
+                duration_ms: started.elapsed().as_millis() as u64,
+                fallback_reason: Some(error.to_string()),
+            };
+        }
+    }
+}
+
+#[derive(Debug)]
+struct LlmQueryAnswer {
+    answer: String,
+    confidence: f32,
+    insufficient_evidence: bool,
+    cited_result_numbers: Vec<usize>,
+    citations: Vec<QueryAnswerCitation>,
+}
+
+#[derive(Debug, SerdeDeserialize)]
+struct LlmQueryAnswerPayload {
+    answer: String,
+    #[serde(default)]
+    confidence: f32,
+    #[serde(default)]
+    insufficient_evidence: bool,
+    #[serde(default)]
+    citations: Vec<usize>,
+}
+
+async fn synthesize_query_answer_with_llm(
+    state: &AppState,
+    request: &QueryRequest,
+    response: &QueryResponse,
+) -> Result<LlmQueryAnswer> {
+    if response.results.is_empty() {
+        anyhow::bail!("no query memories available for llm answer synthesis");
+    }
+    if state.config.llm.provider.trim() != "openai_compatible"
+        || state.config.llm.model.trim().is_empty()
+    {
+        anyhow::bail!("llm query answer is not configured");
+    }
+    let api_key = std::env::var(&state.config.llm.api_key_env)
+        .context("read llm api key for query answer")?;
+    let url = format!(
+        "{}/chat/completions",
+        state.config.llm.base_url.trim_end_matches('/')
+    );
+    let request_body = serde_json::json!({
+        "model": state.config.llm.model,
+        "temperature": 0.0,
+        "max_completion_tokens": state.config.llm.max_output_tokens.min(800),
+        "messages": [
+            {
+                "role": "system",
+                "content": "Answer project-memory questions using only the numbered memories supplied by the user. Return strict JSON with keys: answer (string), citations (array of result numbers), confidence (0..1), insufficient_evidence (boolean). Cite only memories that directly support the answer. If evidence is weak, say so and set insufficient_evidence true."
+            },
+            {
+                "role": "user",
+                "content": build_query_answer_prompt(request, response)
+            }
+        ]
+    });
+    let http_response = state
+        .http_client
+        .post(url)
+        .bearer_auth(api_key)
+        .json(&request_body)
+        .send()
+        .await
+        .context("send llm query answer request")?;
+    let status = http_response.status();
+    let body = http_response
+        .text()
+        .await
+        .context("read llm query answer body")?;
+    if !status.is_success() {
+        anyhow::bail!("llm query answer failed: {status} {body}");
+    }
+    parse_llm_query_answer_body(&body, response)
+}
+
+fn build_query_answer_prompt(request: &QueryRequest, response: &QueryResponse) -> String {
+    let mut lines = vec![
+        format!("Project: {}", request.project),
+        format!("Question: {}", request.query),
+        String::new(),
+        "Returned memories:".to_string(),
+    ];
+    for (index, result) in response.results.iter().enumerate() {
+        lines.push(format!(
+            "[{}] type={} score={:.2} summary={}",
+            index + 1,
+            result.memory_type,
+            result.score,
+            result.summary
+        ));
+        lines.push(format!("snippet: {}", result.snippet));
+        if !result.sources.is_empty() {
+            let sources = result
+                .sources
+                .iter()
+                .take(3)
+                .map(|source| {
+                    let mut parts = vec![source_kind_name(&source.source_kind).to_string()];
+                    if let Some(path) = &source.file_path {
+                        parts.push(path.clone());
+                    }
+                    if let Some(excerpt) = &source.excerpt {
+                        parts.push(excerpt.clone());
+                    }
+                    parts.join(" | ")
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            lines.push(format!("sources: {sources}"));
+        }
+        lines.push(String::new());
+    }
+    lines.push(
+        "Return JSON only, for example: {\"answer\":\"... [1]\",\"citations\":[1],\"confidence\":0.82,\"insufficient_evidence\":false}"
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+fn parse_llm_query_answer_body(body: &str, response: &QueryResponse) -> Result<LlmQueryAnswer> {
+    let payload: serde_json::Value =
+        serde_json::from_str(body).context("parse llm query answer response")?;
+    let content = payload
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(|content| content.as_str())
+        .map(str::trim)
+        .filter(|content| !content.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("llm query answer missing content"))?;
+    parse_llm_query_answer_content(content, response)
+}
+
+fn parse_llm_query_answer_content(
+    content: &str,
+    response: &QueryResponse,
+) -> Result<LlmQueryAnswer> {
+    let json = content
+        .strip_prefix("```json")
+        .and_then(|value| value.strip_suffix("```"))
+        .or_else(|| {
+            content
+                .strip_prefix("```")
+                .and_then(|value| value.strip_suffix("```"))
+        })
+        .map(str::trim)
+        .unwrap_or(content);
+    let payload: LlmQueryAnswerPayload =
+        serde_json::from_str(json).context("parse llm query answer content")?;
+    let answer = payload.answer.trim();
+    if answer.is_empty() {
+        anyhow::bail!("llm query answer was empty");
+    }
+    let cited_result_numbers = validate_query_answer_citations(&payload.citations, response)?;
+    let citations = citations_from_result_numbers(&cited_result_numbers, response);
+    Ok(LlmQueryAnswer {
+        answer: answer.to_string(),
+        confidence: payload.confidence.clamp(0.0, 1.0),
+        insufficient_evidence: payload.insufficient_evidence || citations.is_empty(),
+        cited_result_numbers,
+        citations,
+    })
+}
+
+fn validate_query_answer_citations(
+    citations: &[usize],
+    response: &QueryResponse,
+) -> Result<Vec<usize>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for citation in citations {
+        if *citation == 0 || *citation > response.results.len() {
+            anyhow::bail!("llm query answer cited unavailable result {citation}");
+        }
+        if seen.insert(*citation) {
+            result.push(*citation);
+        }
+    }
+    Ok(result)
+}
+
+fn citations_from_result_numbers(
+    cited_result_numbers: &[usize],
+    response: &QueryResponse,
+) -> Vec<QueryAnswerCitation> {
+    cited_result_numbers
+        .iter()
+        .filter_map(|number| {
+            let result = response.results.get(number.saturating_sub(1))?;
+            Some(QueryAnswerCitation {
+                result_number: *number,
+                memory_id: result.memory_id,
+                memory_type: result.memory_type.clone(),
+                summary: result.summary.clone(),
+                snippet: result.snippet.clone(),
+            })
+        })
+        .collect()
+}
+
+fn source_kind_name(source_kind: &SourceKind) -> &'static str {
+    match source_kind {
+        SourceKind::TaskPrompt => "task_prompt",
+        SourceKind::File => "file",
+        SourceKind::GitCommit => "git_commit",
+        SourceKind::CommandOutput => "command_output",
+        SourceKind::Test => "test",
+        SourceKind::Note => "note",
+    }
+}
+
 fn parse_activity_kind(value: &str) -> ActivityKind {
     match value {
         "checkpoint" => ActivityKind::Checkpoint,
@@ -5278,6 +5528,57 @@ mod tests {
             last_restart_attempt_at: None,
             restart_attempt_count: 0,
         }
+    }
+
+    fn test_query_response() -> QueryResponse {
+        QueryResponse {
+            answer: "fallback answer".to_string(),
+            confidence: 0.5,
+            results: vec![mem_api::QueryResult {
+                memory_id: uuid::Uuid::new_v4(),
+                summary: "Primary memory".to_string(),
+                memory_type: mem_api::MemoryType::Architecture,
+                score: 12.0,
+                snippet: "Primary evidence snippet".to_string(),
+                match_kind: mem_api::QueryMatchKind::Hybrid,
+                score_explanation: Vec::new(),
+                debug: mem_api::QueryResultDebug::default(),
+                tags: Vec::new(),
+                sources: Vec::new(),
+            }],
+            insufficient_evidence: false,
+            answer_generation: QueryAnswerGeneration::default(),
+            answer_citations: Vec::new(),
+            diagnostics: mem_api::QueryDiagnostics::default(),
+        }
+    }
+
+    #[test]
+    fn llm_query_answer_content_accepts_valid_citations() {
+        let response = test_query_response();
+        let parsed = parse_llm_query_answer_content(
+            r#"{"answer":"Use the primary memory. [1]","citations":[1],"confidence":0.88,"insufficient_evidence":false}"#,
+            &response,
+        )
+        .expect("valid llm answer");
+
+        assert_eq!(parsed.answer, "Use the primary memory. [1]");
+        assert_eq!(parsed.cited_result_numbers, vec![1]);
+        assert_eq!(parsed.citations.len(), 1);
+        assert_eq!(parsed.confidence, 0.88);
+        assert!(!parsed.insufficient_evidence);
+    }
+
+    #[test]
+    fn llm_query_answer_content_rejects_unavailable_citation() {
+        let response = test_query_response();
+        let err = parse_llm_query_answer_content(
+            r#"{"answer":"Unsupported","citations":[2],"confidence":0.8,"insufficient_evidence":false}"#,
+            &response,
+        )
+        .expect_err("invalid citation should fail");
+
+        assert!(err.to_string().contains("cited unavailable result 2"));
     }
 
     #[tokio::test]

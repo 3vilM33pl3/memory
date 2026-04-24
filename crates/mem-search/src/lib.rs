@@ -7,9 +7,9 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
-    EmbeddingBackendConfig, EmbeddingsConfig, MemoryRelationType, MemoryType, QueryDiagnostics,
-    QueryMatchKind, QueryRequest, QueryResponse, QueryResult, QueryResultDebug, QuerySource,
-    SourceKind,
+    EmbeddingBackendConfig, EmbeddingsConfig, MemoryRelationType, MemoryType, QueryAnswerCitation,
+    QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics, QueryMatchKind, QueryRequest,
+    QueryResponse, QueryResult, QueryResultDebug, QuerySource, SourceKind,
 };
 use pgvector::Vector;
 use sqlx::{PgPool, Row};
@@ -297,13 +297,15 @@ pub async fn query_memory(
     }
     let returned_results = results.len();
 
-    let (answer, confidence, insufficient_evidence) = synthesize_answer(&results);
+    let synthesis = synthesize_answer(&results);
 
     Ok(QueryResponse {
-        answer,
-        confidence,
+        answer: synthesis.answer,
+        confidence: synthesis.confidence,
         results,
-        insufficient_evidence,
+        insufficient_evidence: synthesis.insufficient_evidence,
+        answer_generation: synthesis.answer_generation,
+        answer_citations: synthesis.answer_citations,
         diagnostics: QueryDiagnostics {
             lexical_candidates: lexical_count,
             semantic_candidates: semantic_count,
@@ -1256,44 +1258,73 @@ fn rank_candidate(
     }
 }
 
-fn synthesize_answer(results: &[QueryResult]) -> (String, f32, bool) {
+#[derive(Debug, Clone)]
+struct QueryAnswerSynthesis {
+    answer: String,
+    confidence: f32,
+    insufficient_evidence: bool,
+    answer_generation: QueryAnswerGeneration,
+    answer_citations: Vec<QueryAnswerCitation>,
+}
+
+fn synthesize_answer(results: &[QueryResult]) -> QueryAnswerSynthesis {
     let Some(top) = results.first() else {
-        return (
-            "I could not find enough project memory to answer confidently.".to_string(),
-            0.0,
-            true,
-        );
+        return QueryAnswerSynthesis {
+            answer: "I could not find enough project memory to answer confidently.".to_string(),
+            confidence: 0.0,
+            insufficient_evidence: true,
+            answer_generation: QueryAnswerGeneration {
+                method: QueryAnswerMethod::Deterministic,
+                ..QueryAnswerGeneration::default()
+            },
+            answer_citations: Vec::new(),
+        };
     };
 
     let best_score = top.score;
     let normalized = (best_score / (best_score + 6.0)).clamp(0.0, 1.0) as f32;
     let strong_results = results
         .iter()
+        .enumerate()
         .take(3)
-        .filter(|result| result.score >= best_score * 0.72)
+        .filter(|(_, result)| result.score >= best_score * 0.72)
         .collect::<Vec<_>>();
 
     let insufficient = strong_results.is_empty()
         || normalized < 0.38
         || strong_results[0]
+            .1
             .score_explanation
             .iter()
             .all(|item| item.starts_with("term overlap 0%"));
 
     if insufficient {
-        return (
-            "I could not find enough project memory to answer confidently.".to_string(),
-            normalized.min(0.3),
-            true,
-        );
+        return QueryAnswerSynthesis {
+            answer: "I could not find enough project memory to answer confidently.".to_string(),
+            confidence: normalized.min(0.3),
+            insufficient_evidence: true,
+            answer_generation: QueryAnswerGeneration {
+                method: QueryAnswerMethod::Deterministic,
+                ..QueryAnswerGeneration::default()
+            },
+            answer_citations: Vec::new(),
+        };
     }
 
     let mut summaries = Vec::new();
+    let mut citations = Vec::new();
     let mut seen = HashSet::new();
-    for result in strong_results {
+    for (index, result) in strong_results {
         let normalized_summary = result.summary.to_lowercase();
         if seen.insert(normalized_summary) {
             summaries.push(result.summary.clone());
+            citations.push(QueryAnswerCitation {
+                result_number: index + 1,
+                memory_id: result.memory_id,
+                memory_type: result.memory_type.clone(),
+                summary: result.summary.clone(),
+                snippet: result.snippet.clone(),
+            });
         }
     }
 
@@ -1307,7 +1338,22 @@ fn synthesize_answer(results: &[QueryResult]) -> (String, f32, bool) {
     };
 
     let confidence = (normalized + ((summaries.len().saturating_sub(1) as f32) * 0.08)).min(0.95);
-    (answer, confidence, false)
+    QueryAnswerSynthesis {
+        answer,
+        confidence,
+        insufficient_evidence: false,
+        answer_generation: QueryAnswerGeneration {
+            method: QueryAnswerMethod::Deterministic,
+            cited_result_numbers: citations
+                .iter()
+                .map(|citation| citation.result_number)
+                .collect(),
+            evidence_count: citations.len(),
+            duration_ms: 0,
+            fallback_reason: None,
+        },
+        answer_citations: citations,
+    }
 }
 
 fn extract_quoted_phrases(query: &str) -> Vec<String> {
@@ -1584,10 +1630,16 @@ mod tests {
             },
         ];
 
-        let (answer, confidence, insufficient) = synthesize_answer(&results);
-        assert!(answer.contains("Primary summary"));
-        assert!(answer.contains("Secondary summary"));
-        assert!(confidence > 0.45);
-        assert!(!insufficient);
+        let synthesis = synthesize_answer(&results);
+        assert!(synthesis.answer.contains("Primary summary"));
+        assert!(synthesis.answer.contains("Secondary summary"));
+        assert!(synthesis.confidence > 0.45);
+        assert!(!synthesis.insufficient_evidence);
+        assert_eq!(
+            synthesis.answer_generation.method,
+            QueryAnswerMethod::Deterministic
+        );
+        assert_eq!(synthesis.answer_generation.cited_result_numbers, vec![1, 2]);
+        assert_eq!(synthesis.answer_citations.len(), 2);
     }
 }
