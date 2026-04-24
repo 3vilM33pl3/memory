@@ -36,7 +36,7 @@ fn load_store() -> Result<StoredCheckpoints> {
         return Ok(StoredCheckpoints::default());
     }
     let contents = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    Ok(serde_json::from_str(&contents).context("parse checkpoint store")?)
+    serde_json::from_str(&contents).context("parse checkpoint store")
 }
 
 fn save_store(store: &StoredCheckpoints) -> Result<PathBuf> {

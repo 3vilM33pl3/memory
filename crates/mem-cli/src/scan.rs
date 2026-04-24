@@ -129,6 +129,7 @@ struct PersistedRepoIndex {
     dossier: ScanDossier,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_scan(
     api: &ApiClient,
     repo_root: &Path,
@@ -432,15 +433,13 @@ fn resolve_repo_index(
         .map(|text| text.trim().to_string())
         .filter(|text| !text.is_empty());
 
-    if !rebuild_index {
-        if let Some(existing) = read_repo_index(&index_path)? {
-            if existing.project == project
-                && existing.head == current_head
-                && existing.since.as_deref() == since
-            {
-                return Ok((existing, index_path, true));
-            }
-        }
+    if !rebuild_index
+        && let Some(existing) = read_repo_index(&index_path)?
+        && existing.project == project
+        && existing.head == current_head
+        && existing.since.as_deref() == since
+    {
+        return Ok((existing, index_path, true));
     }
 
     let index = if dry_run {
@@ -848,10 +847,10 @@ fn shared_env_lookup(path: &Path, key: &str) -> Option<String> {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        if let Some((name, value)) = trimmed.split_once('=') {
-            if name.trim() == key {
-                return Some(value.trim().to_string());
-            }
+        if let Some((name, value)) = trimmed.split_once('=')
+            && name.trim() == key
+        {
+            return Some(value.trim().to_string());
         }
     }
     None

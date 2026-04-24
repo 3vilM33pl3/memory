@@ -212,10 +212,10 @@ impl CurateRequest {
         if self.project.trim().is_empty() {
             return Err(ValidationError::new("project must be non-empty"));
         }
-        if let Some(batch_size) = self.batch_size {
-            if batch_size <= 0 {
-                return Err(ValidationError::new("batch_size must be positive"));
-            }
+        if let Some(batch_size) = self.batch_size
+            && batch_size <= 0
+        {
+            return Err(ValidationError::new("batch_size must be positive"));
         }
         Ok(())
     }
@@ -258,10 +258,10 @@ impl QueryRequest {
         if !(1..=50).contains(&self.top_k) {
             return Err(ValidationError::new("top_k must be in 1..=50"));
         }
-        if let Some(value) = self.min_confidence {
-            if !(0.0..=1.0).contains(&value) {
-                return Err(ValidationError::new("min_confidence must be in 0.0..=1.0"));
-            }
+        if let Some(value) = self.min_confidence
+            && !(0.0..=1.0).contains(&value)
+        {
+            return Err(ValidationError::new("min_confidence must be in 0.0..=1.0"));
         }
         Ok(())
     }
@@ -311,16 +311,12 @@ pub struct QueryResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum QueryMatchKind {
+    #[default]
     Lexical,
     Semantic,
     Hybrid,
-}
-
-impl Default for QueryMatchKind {
-    fn default() -> Self {
-        Self::Lexical
-    }
 }
 
 impl fmt::Display for QueryMatchKind {
@@ -1777,10 +1773,7 @@ impl AppConfig {
         Self::load_with_profile(path, Profile::detect())
     }
 
-    pub fn load_with_profile(
-        path: Option<PathBuf>,
-        profile: Profile,
-    ) -> Result<Self, ConfigError> {
+    pub fn load_with_profile(path: Option<PathBuf>, profile: Profile) -> Result<Self, ConfigError> {
         let mut builder = Config::builder();
         let mut env_files = Vec::new();
         let mut resolved_config_path: Option<PathBuf> = None;
@@ -1867,7 +1860,6 @@ impl AppConfig {
             );
         }
     }
-
 }
 
 impl EmbeddingsConfig {
@@ -1894,10 +1886,10 @@ impl EmbeddingsConfig {
             backend.name = candidate.clone();
             used.insert(candidate);
         }
-        if let Some(active) = self.active.as_deref() {
-            if !used.contains(active) {
-                self.active = None;
-            }
+        if let Some(active) = self.active.as_deref()
+            && !used.contains(active)
+        {
+            self.active = None;
         }
         if self.active.is_none() && self.backends.len() == 1 {
             self.active = Some(self.backends[0].name.clone());
@@ -2055,7 +2047,7 @@ pub fn find_repo_config_path(start: &Path) -> Option<PathBuf> {
     None
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentProjectConfig {
     #[serde(default)]
     pub capture: AgentCaptureConfig,
@@ -2065,17 +2057,6 @@ pub struct AgentProjectConfig {
     pub retrieval: AgentRetrievalConfig,
     #[serde(default)]
     pub curation: AgentCurationConfig,
-}
-
-impl Default for AgentProjectConfig {
-    fn default() -> Self {
-        Self {
-            capture: AgentCaptureConfig::default(),
-            analysis: AgentAnalysisConfig::default(),
-            retrieval: AgentRetrievalConfig::default(),
-            curation: AgentCurationConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -2174,10 +2155,10 @@ fn env_lookup(path: &Path, key: &str) -> Option<String> {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        if let Some((name, value)) = trimmed.split_once('=') {
-            if name.trim() == key {
-                return Some(value.trim().to_string());
-            }
+        if let Some((name, value)) = trimmed.split_once('=')
+            && name.trim() == key
+        {
+            return Some(value.trim().to_string());
         }
     }
     None
@@ -2484,10 +2465,12 @@ impl PruneHistoryRequest {
                  or set retention.tombstone_after / retention.superseded_after in config",
             ));
         }
-        if let Some(project) = &self.project {
-            if project.trim().is_empty() {
-                return Err(ValidationError::new("project must be non-empty when provided"));
-            }
+        if let Some(project) = &self.project
+            && project.trim().is_empty()
+        {
+            return Err(ValidationError::new(
+                "project must be non-empty when provided",
+            ));
         }
         Ok(())
     }
@@ -2791,7 +2774,10 @@ mod tests {
         // collapses onto that backend rather than leaving search
         // silently disabled.
         assert_eq!(cfg.active.as_deref(), Some("openai"));
-        assert_eq!(cfg.active_backend().unwrap().model, "text-embedding-3-small");
+        assert_eq!(
+            cfg.active_backend().unwrap().model,
+            "text-embedding-3-small"
+        );
     }
 
     #[test]
@@ -2827,7 +2813,9 @@ mod tests {
     #[test]
     fn prune_history_rejects_missing_thresholds() {
         let request = PruneHistoryRequest::default();
-        let err = request.validate().expect_err("missing thresholds must fail");
+        let err = request
+            .validate()
+            .expect_err("missing thresholds must fail");
         let message = format!("{err}");
         assert!(
             message.contains("no retention threshold configured"),
@@ -3182,11 +3170,8 @@ mod tests {
         )
         .unwrap();
 
-        let config = AppConfig::load_with_profile(
-            Some(mem_dir.join("config.toml")),
-            Profile::Dev,
-        )
-        .unwrap();
+        let config =
+            AppConfig::load_with_profile(Some(mem_dir.join("config.toml")), Profile::Dev).unwrap();
 
         assert_eq!(config.profile, Profile::Dev);
         assert_eq!(config.service.bind_addr, "127.0.0.1:4250");
@@ -3209,11 +3194,8 @@ mod tests {
         )
         .unwrap();
 
-        let err = AppConfig::load_with_profile(
-            Some(mem_dir.join("config.toml")),
-            Profile::Dev,
-        )
-        .unwrap_err();
+        let err = AppConfig::load_with_profile(Some(mem_dir.join("config.toml")), Profile::Dev)
+            .unwrap_err();
         let message = format!("{err}");
         assert!(message.contains("config.dev.toml"), "message: {message}");
         let _ = fs::remove_dir_all(temp_dir);

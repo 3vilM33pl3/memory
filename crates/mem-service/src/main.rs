@@ -27,16 +27,16 @@ use mem_api::{
     CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest,
     DeleteMemoryRequest, DeleteMemoryResponse, EmbeddingBackendInfo, EmbeddingBackendsResponse,
     MemoryEntryResponse, MemoryHistoryResponse, MemorySourceRecord, PlanActivityAction,
-    PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse,
-    ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest,
-    ProjectMemoryBundlePreview, ProjectMemoryBundleSource, ProjectMemoryExportOptions,
-    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectOverviewResponse,
-    PruneEmbeddingsRequest, PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse,
-    QueryRequest, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
-    RelatedMemorySummary, ReplacementProposalListResponse, ReplacementProposalResolutionResponse,
-    ResumeAction, ResumeRequest, ResumeResponse, ScanActivityRequest, SourceKind, StatsResponse,
-    StreamRequest, StreamResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest,
-    WatcherPresence, WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
+    PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
+    ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
+    ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
+    ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
+    PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryRequest,
+    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
+    ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
+    ResumeRequest, ResumeResponse, ScanActivityRequest, SourceKind, StatsResponse, StreamRequest,
+    StreamResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
+    WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
     WatcherUnregisterRequest, read_capnp_text_frame, write_capnp_text_frame,
 };
 use mem_curate::{
@@ -327,13 +327,10 @@ fn discover_web_root(config: &AppConfig) -> Option<PathBuf> {
         Some(PathBuf::from("/usr/share/memory-layer/web")),
     ];
 
-    for candidate in candidates.into_iter().flatten() {
-        if candidate.join("index.html").is_file() {
-            return Some(candidate);
-        }
-    }
-
-    None
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|candidate| candidate.join("index.html").is_file())
 }
 
 impl AppState {
@@ -1039,22 +1036,22 @@ async fn render_subscription_updates(
         .as_ref()
         .context("primary state missing database pool")?;
     let mut responses = Vec::new();
-    if let Some(project) = &subscriptions.project {
-        if project == &event.project {
-            if event.include_activity {
-                responses.push(stream_activity_response(event.clone()));
-            }
-            let overview = fetch_project_overview_with_watchers(state, project).await?;
-            let memories = fetch_project_memories(pool, project, None, 500, 0).await?;
-            responses.push(StreamResponse::ProjectChanged { overview, memories });
+    if let Some(project) = &subscriptions.project
+        && project == &event.project
+    {
+        if event.include_activity {
+            responses.push(stream_activity_response(event.clone()));
         }
+        let overview = fetch_project_overview_with_watchers(state, project).await?;
+        let memories = fetch_project_memories(pool, project, None, 500, 0).await?;
+        responses.push(StreamResponse::ProjectChanged { overview, memories });
     }
 
-    if let Some(memory_id) = subscriptions.memory_id {
-        if event.memory_id == Some(memory_id) {
-            let detail = fetch_memory_entry(pool, memory_id).await?;
-            responses.push(StreamResponse::MemoryChanged { detail });
-        }
+    if let Some(memory_id) = subscriptions.memory_id
+        && event.memory_id == Some(memory_id)
+    {
+        let detail = fetch_memory_entry(pool, memory_id).await?;
+        responses.push(StreamResponse::MemoryChanged { detail });
     }
 
     Ok(responses)
@@ -1484,18 +1481,17 @@ fn detect_bundle_warnings(
         }
         if options.include_source_excerpts {
             for source in &entry.sources {
-                if let Some(excerpt) = &source.excerpt {
-                    if email_re.is_match(excerpt)
+                if let Some(excerpt) = &source.excerpt
+                    && (email_re.is_match(excerpt)
                         || token_re.is_match(excerpt)
                         || path_re.is_match(excerpt)
-                        || phone_re.is_match(excerpt)
-                    {
-                        warnings.push(format!(
-                            "Memory '{}' includes a source excerpt that looks sensitive.",
-                            entry.summary
-                        ));
-                        break;
-                    }
+                        || phone_re.is_match(excerpt))
+                {
+                    warnings.push(format!(
+                        "Memory '{}' includes a source excerpt that looks sensitive.",
+                        entry.summary
+                    ));
+                    break;
                 }
             }
         }
@@ -2613,9 +2609,9 @@ async fn activate_embedding_backend(
     let previous_active = {
         let mut embedders = state.embedders.write().await;
         let previous = embedders.active_name().map(|s| s.to_string());
-        embedders.set_active(&request.name).map_err(|err| {
-            ApiError::validation(ValidationError::new(err.to_string()))
-        })?;
+        embedders
+            .set_active(&request.name)
+            .map_err(|err| ApiError::validation(ValidationError::new(err.to_string())))?;
         previous
     };
 
@@ -3022,6 +3018,7 @@ async fn project_bundle_import(
         .await
         .map_err(ApiError::sql)?;
 
+        let mut superseded_memory_id = None;
         if let Some(row) = existing {
             let existing_memory_id: Uuid = row.try_get("memory_entry_id").map_err(ApiError::sql)?;
             let existing_hash: String = row.try_get("entry_hash").map_err(ApiError::sql)?;
@@ -3030,25 +3027,43 @@ async fn project_bundle_import(
                 skipped_count += 1;
                 continue;
             }
-            sqlx::query("DELETE FROM memory_entries WHERE id = $1")
-                .bind(existing_memory_id)
-                .execute(pool)
-                .await
-                .map_err(ApiError::sql)?;
+            superseded_memory_id = Some(existing_memory_id);
             replaced_count += 1;
         }
 
         let memory_id = Uuid::new_v4();
+        let (canonical_id, version_no) = if let Some(existing_memory_id) = superseded_memory_id {
+            let row = sqlx::query(
+                r#"
+                SELECT canonical_id, MAX(version_no) OVER (PARTITION BY canonical_id) AS latest
+                FROM memory_entries
+                WHERE id = $1
+                "#,
+            )
+            .bind(existing_memory_id)
+            .fetch_one(pool)
+            .await
+            .map_err(ApiError::sql)?;
+            (
+                row.try_get::<Uuid, _>("canonical_id")
+                    .map_err(ApiError::sql)?,
+                row.try_get::<i32, _>("latest").map_err(ApiError::sql)? + 1,
+            )
+        } else {
+            (memory_id, 1)
+        };
         sqlx::query(
             r#"
             INSERT INTO memory_entries
-                (id, project_id, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
+                (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
             VALUES
-                ($1, $2, $3, $4, $5, 'project', $6, $7, 'active', $8, $9, NULL, to_tsvector('english', $3 || ' ' || $4))
+                ($1, $2, $3, $4, FALSE, $5, $6, $7, 'project', $8, $9, 'active', $10, $11, NULL, to_tsvector('english', $5 || ' ' || $6))
             "#,
         )
         .bind(memory_id)
         .bind(target_project_id)
+        .bind(canonical_id)
+        .bind(version_no)
         .bind(&entry.canonical_text)
         .bind(&entry.summary)
         .bind(entry.memory_type.to_string())
@@ -3880,15 +3895,15 @@ fn build_change_summary(
     let mut items = Vec::new();
     let mut seen_titles = Vec::new();
     for event in timeline.iter().take(6) {
-        if let Some(task_title) = extract_capture_task_title(event) {
-            if !seen_titles.contains(&task_title) {
-                items.push(format!(
-                    "{} Worked on: {}",
-                    event.recorded_at.format("%m-%d %H:%M"),
-                    task_title
-                ));
-                seen_titles.push(task_title);
-            }
+        if let Some(task_title) = extract_capture_task_title(event)
+            && !seen_titles.contains(&task_title)
+        {
+            items.push(format!(
+                "{} Worked on: {}",
+                event.recorded_at.format("%m-%d %H:%M"),
+                task_title
+            ));
+            seen_titles.push(task_title);
         }
     }
     if let Some(commit) = commits.first() {
@@ -4117,6 +4132,7 @@ fn select_resume_context(
     selected
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_resume_briefing(
     project: &str,
     checkpoint: Option<&mem_api::ResumeCheckpoint>,

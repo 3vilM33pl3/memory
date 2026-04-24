@@ -80,15 +80,13 @@ fn read_rate_file_impl(
     let file: RateLimitFile = serde_json::from_str(&content).ok()?;
 
     // Ignore stale data (older than 10 minutes) when staleness check is enabled
-    if check_staleness {
-        if let Some(updated) = file.updated_at {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            if now.saturating_sub(updated) > 600 {
-                return None;
-            }
+    if check_staleness && let Some(updated) = file.updated_at {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if now.saturating_sub(updated) > 600 {
+            return None;
         }
     }
 

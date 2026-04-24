@@ -136,8 +136,8 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
         }
         if should_attempt_stream_reconnect(stream.is_some(), last_stream_connect_attempt) {
             last_stream_connect_attempt = Instant::now();
-            match StreamSession::connect(&api).await {
-                Ok(mut stream_session) => match subscribe_stream(&mut stream_session, &app).await {
+            if let Ok(mut stream_session) = StreamSession::connect(&api).await {
+                match subscribe_stream(&mut stream_session, &app).await {
                     Ok(()) => {
                         stream = Some(stream_session);
                         app.status_message =
@@ -151,8 +151,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
                         app.ui_status = UiStatus::Error;
                         app.needs_redraw = true;
                     }
-                },
-                Err(_) => {}
+                }
             }
         }
         if app.needs_redraw || last_draw.elapsed() >= Duration::from_secs(1) {
@@ -421,7 +420,7 @@ enum QueryLogOutcome {
 
 enum BackgroundEvent {
     ResumeLoaded {
-        response: Result<ResumeResponse, String>,
+        response: Box<Result<ResumeResponse, String>>,
         checkpoint_present: bool,
         has_changes: bool,
         allow_autoselect: bool,
@@ -750,7 +749,7 @@ impl App {
                 Err(_) => false,
             };
             let _ = tx.send(BackgroundEvent::ResumeLoaded {
-                response,
+                response: Box::new(response),
                 checkpoint_present: checkpoint.is_some(),
                 has_changes,
                 allow_autoselect,
@@ -768,7 +767,7 @@ impl App {
                 allow_autoselect,
             } => {
                 self.resume_loading = false;
-                match response {
+                match *response {
                     Ok(response) => {
                         self.resume_response = Some(response);
                         self.resume_loaded = true;
@@ -969,7 +968,9 @@ impl App {
                     self.request_resume_refresh(api, false);
                 }
             }
-            KeyCode::BackTab if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() => {
+            KeyCode::BackTab
+                if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() =>
+            {
                 self.set_active_tab(self.active_tab.prev());
                 if self.active_tab == TabKind::Resume && !self.resume_loaded {
                     self.request_resume_refresh(api, false);
@@ -1067,10 +1068,8 @@ impl App {
                             .activate_embedding_backend(&name)
                             .await
                             .map_err(|err| err.to_string());
-                        let _ = tx.send(BackgroundEvent::EmbeddingBackendActivated {
-                            name,
-                            result,
-                        });
+                        let _ =
+                            tx.send(BackgroundEvent::EmbeddingBackendActivated { name, result });
                     });
                 }
             }
@@ -2580,7 +2579,9 @@ fn build_history_lines(history: &mem_api::MemoryHistoryResponse) -> Vec<Line<'st
     lines.push(Line::from(""));
     for version in &history.versions {
         let header_style = if version.is_tombstone {
-            Style::default().fg(Theme::DANGER).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Theme::DANGER)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
                 .fg(Theme::ACCENT_STRONG)
@@ -2607,10 +2608,7 @@ fn build_history_lines(history: &mem_api::MemoryHistoryResponse) -> Vec<Line<'st
         ]));
         lines.push(Line::from(vec![
             label_span("id: "),
-            Span::styled(
-                version.id.to_string(),
-                Style::default().fg(Theme::MUTED),
-            ),
+            Span::styled(version.id.to_string(), Style::default().fg(Theme::MUTED)),
             Span::raw("   "),
             label_span("updated: "),
             Span::styled(
@@ -2626,10 +2624,7 @@ fn build_history_lines(history: &mem_api::MemoryHistoryResponse) -> Vec<Line<'st
         } else {
             lines.push(Line::from(vec![
                 label_span("summary: "),
-                Span::styled(
-                    version.summary.clone(),
-                    Style::default().fg(Theme::TEXT),
-                ),
+                Span::styled(version.summary.clone(), Style::default().fg(Theme::TEXT)),
             ]));
             let preview: String = version.canonical_text.chars().take(320).collect();
             let ellipsis = if version.canonical_text.chars().count() > 320 {
@@ -2703,10 +2698,7 @@ fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
                     format!("{} chunks", space.chunk_count)
                 };
                 let mut spans = vec![
-                    Span::styled(
-                        space.provider.clone(),
-                        Style::default().fg(Theme::ACCENT),
-                    ),
+                    Span::styled(space.provider.clone(), Style::default().fg(Theme::ACCENT)),
                     Span::raw(" · "),
                     Span::styled(space.model.clone(), Style::default().fg(Theme::TEXT)),
                     Span::raw(" · "),
@@ -2793,20 +2785,20 @@ fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
                 ]));
             }
         }
-        return lines;
+        lines
     } else if app.filtered_memories.is_empty() {
-        return vec![Line::from(Span::styled(
+        vec![Line::from(Span::styled(
             format!(
                 "No memories match the current filters for project {}.",
                 app.project
             ),
             Style::default().fg(Theme::MUTED),
-        ))];
+        ))]
     } else {
-        return vec![Line::from(Span::styled(
+        vec![Line::from(Span::styled(
             "Select a memory to load its details.",
             Style::default().fg(Theme::MUTED),
-        ))];
+        ))]
     }
 }
 
@@ -2826,17 +2818,17 @@ fn draw_agents_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         return;
     }
 
-    if let Some(error) = &app.agent_error {
-        if app.agent_snapshot.is_none() {
-            frame.render_widget(
-                Paragraph::new(format!("Agents unavailable: {error}"))
-                    .style(Style::default().fg(Theme::WARNING).bg(Theme::PANEL_ALT))
-                    .wrap(Wrap { trim: false })
-                    .block(themed_block("Agents")),
-                area,
-            );
-            return;
-        }
+    if let Some(error) = &app.agent_error
+        && app.agent_snapshot.is_none()
+    {
+        frame.render_widget(
+            Paragraph::new(format!("Agents unavailable: {error}"))
+                .style(Style::default().fg(Theme::WARNING).bg(Theme::PANEL_ALT))
+                .wrap(Wrap { trim: false })
+                .block(themed_block("Agents")),
+            area,
+        );
+        return;
     }
 
     let Some(snapshot) = &app.agent_snapshot else {
@@ -3174,10 +3166,7 @@ fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             ),
             Span::raw("   "),
             label_span("Pending: "),
-            Span::styled(
-                pending.to_string(),
-                Style::default().fg(Theme::TEXT),
-            ),
+            Span::styled(pending.to_string(), Style::default().fg(Theme::TEXT)),
             Span::raw("   "),
             label_span("Selected: "),
             Span::styled(selected_label, Style::default().fg(Theme::TEXT)),
@@ -3208,13 +3197,12 @@ fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             body[0],
         );
     } else {
-        let header_row = Row::new(["#", "TARGET", "CANDIDATE", "SCORE"])
-            .style(
-                Style::default()
-                    .fg(Theme::ACCENT_STRONG)
-                    .bg(Theme::PANEL_ALT)
-                    .add_modifier(Modifier::BOLD),
-            );
+        let header_row = Row::new(["#", "TARGET", "CANDIDATE", "SCORE"]).style(
+            Style::default()
+                .fg(Theme::ACCENT_STRONG)
+                .bg(Theme::PANEL_ALT)
+                .add_modifier(Modifier::BOLD),
+        );
         let rows = app
             .replacement_proposals
             .iter()
@@ -3467,16 +3455,23 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         return;
     }
 
-    let header = Row::new([" ", "NAME", "PROVIDER", "MODEL", "BASE URL", "CHUNKS", "MEMORIES"])
-        .style(
-            Style::default()
-                .fg(Theme::ACCENT_STRONG)
-                .bg(Theme::PANEL_ALT)
-                .add_modifier(Modifier::BOLD),
-        );
+    let header = Row::new([
+        " ", "NAME", "PROVIDER", "MODEL", "BASE URL", "CHUNKS", "MEMORIES",
+    ])
+    .style(
+        Style::default()
+            .fg(Theme::ACCENT_STRONG)
+            .bg(Theme::PANEL_ALT)
+            .add_modifier(Modifier::BOLD),
+    );
     let rows = backends.iter().map(|backend| {
         let marker = if backend.active {
-            Span::styled("*", Style::default().fg(Theme::ACCENT_STRONG).add_modifier(Modifier::BOLD))
+            Span::styled(
+                "*",
+                Style::default()
+                    .fg(Theme::ACCENT_STRONG)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else if !backend.ready {
             Span::styled("!", Style::default().fg(Theme::DANGER))
         } else {
@@ -3515,14 +3510,8 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 backend.model.clone(),
                 Style::default().fg(Theme::TEXT),
             )),
-            Line::from(Span::styled(
-                base_url,
-                Style::default().fg(Theme::MUTED),
-            )),
-            Line::from(Span::styled(
-                chunks_cell,
-                Style::default().fg(Theme::TEXT),
-            )),
+            Line::from(Span::styled(base_url, Style::default().fg(Theme::MUTED))),
+            Line::from(Span::styled(chunks_cell, Style::default().fg(Theme::TEXT))),
             Line::from(Span::styled(
                 memories_cell,
                 Style::default().fg(Theme::TEXT),
@@ -4047,11 +4036,6 @@ fn append_resume_briefing_lines(lines: &mut Vec<Line<'static>>, briefing: &str) 
                 Style::default()
                     .fg(Theme::ACCENT_STRONG)
                     .add_modifier(Modifier::BOLD),
-            ))
-        } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-            Line::from(Span::styled(
-                trimmed.to_string(),
-                Style::default().fg(Theme::TEXT),
             ))
         } else {
             Line::from(Span::styled(
@@ -5577,7 +5561,7 @@ fn render_inline_markdown(input: &str, base_style: Style) -> Vec<Span<'static>> 
             let mut label = String::new();
             let mut temp = chars.clone();
             let mut found_close = false;
-            while let Some(next) = temp.next() {
+            for next in temp.by_ref() {
                 if next == ']' {
                     found_close = true;
                     break;
@@ -5589,7 +5573,7 @@ fn render_inline_markdown(input: &str, base_style: Style) -> Vec<Span<'static>> 
                 if temp_after.next() == Some('(') {
                     let mut url = String::new();
                     let mut found_url_close = false;
-                    while let Some(next) = temp_after.next() {
+                    for next in temp_after {
                         if next == ')' {
                             found_url_close = true;
                             break;
@@ -6089,7 +6073,7 @@ fn usage_bar_line(
     let filled = filled_bar_cells(percent, width).min(width);
     let empty = width.saturating_sub(filled);
     let percent_color = context_gradient_color(percent);
-    let mut spans = vec![label_span(&format!("{label}: "))];
+    let mut spans = vec![label_span(format!("{label}: "))];
     for idx in 0..filled {
         let cell_percent = ((idx + 1) as f64 / width as f64) * 100.0;
         spans.push(Span::styled(
@@ -6128,7 +6112,7 @@ fn quota_bar_line(
     let remaining_percent = 100.0 - normalized_percent(percent_used);
     let remaining_style = context_percent_style(100.0 - remaining_percent);
     let mut spans = vec![
-        label_span(&format!("{label}: ")),
+        label_span(format!("{label}: ")),
         Span::styled("█".repeat(remaining_cells), remaining_style),
         Span::styled("░".repeat(used_cells), Style::default().fg(Theme::BORDER)),
         Span::raw(" "),
@@ -6991,10 +6975,7 @@ mod tests {
         app.selected_detail = Some(test_memory_detail("body text"));
 
         let lines = build_memory_detail_lines(&app);
-        let rendered = lines
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        let rendered = lines.iter().map(ToString::to_string).collect::<Vec<_>>();
         let embeddings_idx = rendered
             .iter()
             .position(|line| line.contains("Embeddings"))
@@ -7105,7 +7086,10 @@ mod tests {
         app.embeddings_selected_index = 0;
         app.move_embeddings_selection(1);
         assert_eq!(app.embeddings_selected_index, 1);
-        assert_eq!(app.selected_embedding_backend_name().as_deref(), Some("voyage-code"));
+        assert_eq!(
+            app.selected_embedding_backend_name().as_deref(),
+            Some("voyage-code")
+        );
         app.move_embeddings_selection(1);
         assert_eq!(app.embeddings_selected_index, 0);
         app.move_embeddings_selection(-1);

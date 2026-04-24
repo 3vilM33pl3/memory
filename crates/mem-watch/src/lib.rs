@@ -120,7 +120,7 @@ pub async fn load_state(
     let content = tokio::fs::read_to_string(&path)
         .await
         .with_context(|| format!("read automation state {}", path.display()))?;
-    Ok(serde_json::from_str(&content).context("parse automation state")?)
+    serde_json::from_str(&content).context("parse automation state")
 }
 
 pub async fn save_state(state: &AutomationState, config: &AutomationConfig) -> Result<()> {
@@ -430,6 +430,7 @@ pub struct WatcherAgentOwner {
     pub agent_started_at: Option<DateTime<Utc>>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_watcher_heartbeat_request(
     state: &AutomationState,
     watcher_id: &str,
@@ -552,6 +553,7 @@ pub fn build_capture_request(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_once(
     config: &AppConfig,
     client: &Client,
@@ -760,11 +762,11 @@ fn fingerprint(repo_root: &Path, files: &[String]) -> String {
         hasher.update(file.as_bytes());
         let full_path = repo_root.join(file);
         if let Ok(metadata) = fs::metadata(&full_path) {
-            if let Ok(modified) = metadata.modified() {
-                if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
-                    hasher.update(duration.as_secs().to_le_bytes());
-                    hasher.update(duration.subsec_nanos().to_le_bytes());
-                }
+            if let Ok(modified) = metadata.modified()
+                && let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH)
+            {
+                hasher.update(duration.as_secs().to_le_bytes());
+                hasher.update(duration.subsec_nanos().to_le_bytes());
             }
             hasher.update(metadata.len().to_le_bytes());
         }
@@ -891,7 +893,7 @@ mod tests {
         config.service.bind_addr = "127.0.0.1:4040".to_string();
         config.service.api_token = "ml_testtoken".to_string();
 
-        let headers = write_headers(&config).unwrap();
+        let headers = write_headers(&config).expect("build loopback headers");
 
         assert!(headers.get("x-api-token").is_none());
         assert_eq!(

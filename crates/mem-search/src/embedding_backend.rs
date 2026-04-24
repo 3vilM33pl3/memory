@@ -186,7 +186,10 @@ impl EmbeddingBackend for OpenAiBackend {
             serde_json::from_str(&text).context("parse openai embedding response")?;
         let mut data = parsed.data;
         data.sort_by_key(|item| item.index);
-        Ok(data.into_iter().map(|item| Vector::from(item.embedding)).collect())
+        Ok(data
+            .into_iter()
+            .map(|item| Vector::from(item.embedding))
+            .collect())
     }
 }
 
@@ -256,7 +259,10 @@ impl EmbeddingBackend for VoyageBackend {
             serde_json::from_str(&text).context("parse voyage embedding response")?;
         let mut data = parsed.data;
         data.sort_by_key(|item| item.index);
-        Ok(data.into_iter().map(|item| Vector::from(item.embedding)).collect())
+        Ok(data
+            .into_iter()
+            .map(|item| Vector::from(item.embedding))
+            .collect())
     }
 }
 
@@ -473,10 +479,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(matchers::method("POST"))
             .and(matchers::path("/embeddings"))
-            .and(matchers::header(
-                "authorization",
-                "Bearer sk-test",
-            ))
+            .and(matchers::header("authorization", "Bearer sk-test"))
             .and(matchers::body_json(serde_json::json!({
                 "model": "text-embedding-3-small",
                 "input": ["hello", "world"],
@@ -525,9 +528,8 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let backend =
-            build_backend(&config("voyage", &server.uri(), "voyage-3-large", KEY_ENV))
-                .expect("backend");
+        let backend = build_backend(&config("voyage", &server.uri(), "voyage-3-large", KEY_ENV))
+            .expect("backend");
         let vectors = backend
             .embed(&["hi".to_string()], EmbeddingPurpose::Query)
             .await
@@ -555,9 +557,13 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let backend =
-            build_backend(&config("cohere", &server.uri(), "embed-english-v3.0", KEY_ENV))
-                .expect("backend");
+        let backend = build_backend(&config(
+            "cohere",
+            &server.uri(),
+            "embed-english-v3.0",
+            KEY_ENV,
+        ))
+        .expect("backend");
         let vectors = backend
             .embed(&["doc".to_string()], EmbeddingPurpose::Document)
             .await

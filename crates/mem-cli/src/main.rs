@@ -22,9 +22,9 @@ use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
 use mem_agenttop::{AgentSession, AgentTop, SessionStatus};
 use mem_api::{
-    AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest, MemoryType,
+    AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest,
     CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest, CurateResponse,
-    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, PlanActivityAction,
+    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, MemoryType, PlanActivityAction,
     PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse,
     ProjectMemoryBundlePreview, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
     ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
@@ -1308,7 +1308,10 @@ struct AutomationFlushArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if env::args().nth(1).is_some_and(|arg| arg == "--version" || arg == "-V") {
+    if env::args()
+        .nth(1)
+        .is_some_and(|arg| arg == "--version" || arg == "-V")
+    {
         println!(
             "memory {}",
             mem_api::Profile::detect().display_version(env!("CARGO_PKG_VERSION"))
@@ -1625,7 +1628,11 @@ async fn main() -> Result<()> {
             if args.json {
                 println!("{}", serde_json::to_string(&payload)?);
             } else {
-                let verb = if payload.dry_run { "Would prune" } else { "Pruned" };
+                let verb = if payload.dry_run {
+                    "Would prune"
+                } else {
+                    "Pruned"
+                };
                 let scope = payload
                     .project
                     .as_deref()
@@ -1633,8 +1640,7 @@ async fn main() -> Result<()> {
                     .unwrap_or_default();
                 println!(
                     "{verb} {} canonical tombstone(s) and {} superseded version(s){scope}.",
-                    payload.canonicals_tombstoned_deleted,
-                    payload.superseded_versions_pruned
+                    payload.canonicals_tombstoned_deleted, payload.superseded_versions_pruned
                 );
             }
         }
@@ -1867,12 +1873,10 @@ async fn main() -> Result<()> {
                             .collect(),
                         source_path.as_ref().map(|path| path.display().to_string()),
                     );
-                    if !args.dry_run {
-                        if let Err(error) = api.log_plan_activity(&start_request).await {
-                            eprintln!(
-                                "warning: failed to log plan activity for `{project}`: {error}"
-                            );
-                        }
+                    if !args.dry_run
+                        && let Err(error) = api.log_plan_activity(&start_request).await
+                    {
+                        eprintln!("warning: failed to log plan activity for `{project}`: {error}");
                     }
                     println!(
                         "{}",
@@ -2522,10 +2526,10 @@ fn shared_env_lookup(path: &Path, key: &str) -> Option<String> {
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        if let Some((name, value)) = trimmed.split_once('=') {
-            if name.trim() == key {
-                return Some(value.trim().to_string());
-            }
+        if let Some((name, value)) = trimmed.split_once('=')
+            && name.trim() == key
+        {
+            return Some(value.trim().to_string());
         }
     }
     None
@@ -2996,12 +3000,9 @@ async fn run_doctor(
                 "API token is configured."
             },
             None,
-            if config.service.api_token.trim().is_empty() {
-                Some(
-                    "Run `memory wizard --global` or `memory service ensure-api-token --rotate-placeholder` to provision a machine-local token."
-                        .to_string(),
-                )
-            } else if config.service.api_token == DEV_API_TOKEN {
+            if config.service.api_token.trim().is_empty()
+                || config.service.api_token == DEV_API_TOKEN
+            {
                 Some(
                     "Run `memory wizard --global` or `memory service ensure-api-token --rotate-placeholder` to provision a machine-local token."
                         .to_string(),
@@ -3180,8 +3181,6 @@ async fn run_doctor(
             "automation.runtime_dir",
             if runtime_dir.exists() {
                 DoctorStatus::Ok
-            } else if config.automation.enabled {
-                DoctorStatus::Warn
             } else {
                 DoctorStatus::Warn
             },
@@ -3781,12 +3780,11 @@ fn is_placeholder_database_url(value: &str) -> bool {
 }
 
 fn mask_database_url(value: &str) -> String {
-    if let Some((prefix, rest)) = value.split_once("://") {
-        if let Some((creds, suffix)) = rest.split_once('@') {
-            if creds.contains(':') {
-                return format!("{prefix}://<redacted>@{suffix}");
-            }
-        }
+    if let Some((prefix, rest)) = value.split_once("://")
+        && let Some((creds, suffix)) = rest.split_once('@')
+        && creds.contains(':')
+    {
+        return format!("{prefix}://<redacted>@{suffix}");
     }
     value.to_string()
 }
@@ -4118,8 +4116,7 @@ fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String
 /// Tables we willingly copy from the global config into the dev overlay. The
 /// service endpoint + automation paths + cluster id are intentionally
 /// excluded so the dev stack always diverges where it matters.
-const SHARED_GLOBAL_SECTIONS: &[&str] =
-    &["database", "llm", "embeddings", "features", "writer"];
+const SHARED_GLOBAL_SECTIONS: &[&str] = &["database", "llm", "embeddings", "features", "writer"];
 
 fn resolve_shared_global_snippet(args: &DevInitArgs) -> Result<String> {
     let Some(global_path) = mem_api::discover_global_config_path() else {
@@ -4148,8 +4145,8 @@ fn resolve_shared_global_snippet(args: &DevInitArgs) -> Result<String> {
     }
     let raw = fs::read_to_string(&global_path)
         .with_context(|| format!("read {}", global_path.display()))?;
-    let value: toml::Value = toml::from_str(&raw)
-        .with_context(|| format!("parse {}", global_path.display()))?;
+    let value: toml::Value =
+        toml::from_str(&raw).with_context(|| format!("parse {}", global_path.display()))?;
     let Some(table) = value.as_table() else {
         return Ok(String::new());
     };
@@ -4162,8 +4159,8 @@ fn resolve_shared_global_snippet(args: &DevInitArgs) -> Result<String> {
     if copied.is_empty() {
         return Ok(String::new());
     }
-    let rendered = toml::to_string(&toml::Value::Table(copied))
-        .context("serialize shared sections")?;
+    let rendered =
+        toml::to_string(&toml::Value::Table(copied)).context("serialize shared sections")?;
     Ok(format!(
         "# Copied from {} — re-run `memory dev init --copy-from-global --force` to refresh.\n{}",
         global_path.display(),
@@ -4182,8 +4179,9 @@ async fn enable_backend_service(config_path: &Path) -> Result<String> {
         )),
         Err(start_error) => {
             let database_error = check_database_connectivity(&config).await.err();
-            if !config.cluster.enabled && database_error.is_some() {
-                let database_error = database_error.expect("checked is_some");
+            if !config.cluster.enabled
+                && let Some(database_error) = database_error
+            {
                 if io::stdin().is_terminal()
                     && io::stdout().is_terminal()
                     && prompt_yes_no(&format!(
@@ -4402,7 +4400,7 @@ async fn check_database_connectivity(config: &AppConfig) -> Result<()> {
         .acquire_timeout(Duration::from_secs(3))
         .connect(&config.database.url)
         .await
-        .map(|pool| drop(pool))
+        .map(drop)
         .context("connect postgres")
 }
 
@@ -4822,16 +4820,16 @@ fn resolve_agent_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
         .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
         .current_dir(cwd)
         .output();
-    if let Ok(common_output) = common_dir_output {
-        if common_output.status.success() {
-            let common_dir = String::from_utf8_lossy(&common_output.stdout)
-                .trim()
-                .to_string();
-            if let Some(main_root) = PathBuf::from(&common_dir).parent() {
-                if main_root.join(".mem").join("project.toml").exists() {
-                    return Ok(Some(main_root.to_path_buf()));
-                }
-            }
+    if let Ok(common_output) = common_dir_output
+        && common_output.status.success()
+    {
+        let common_dir = String::from_utf8_lossy(&common_output.stdout)
+            .trim()
+            .to_string();
+        if let Some(main_root) = PathBuf::from(&common_dir).parent()
+            && main_root.join(".mem").join("project.toml").exists()
+        {
+            return Ok(Some(main_root.to_path_buf()));
         }
     }
     Ok(Some(PathBuf::from(repo_root)))
@@ -4983,7 +4981,13 @@ fn start_managed_agent_watcher(
         let label = managed_watch_launch_agent_label(&session.session_id);
         write_launch_agent(
             &plist_path,
-            render_managed_watch_launch_agent(repo_root, project, session, &started_at, config_path)?,
+            render_managed_watch_launch_agent(
+                repo_root,
+                project,
+                session,
+                &started_at,
+                config_path,
+            )?,
             &label,
         )?;
         bootstrap_launch_agent(&plist_path, &label)?;
@@ -6259,13 +6263,13 @@ fn resolve_repo_root(cwd: &Path) -> Result<PathBuf> {
         .current_dir(cwd)
         .output();
 
-    if let Ok(output) = output {
-        if output.status.success() {
-            let stdout = String::from_utf8(output.stdout).context("decode git rev-parse output")?;
-            let root = stdout.trim();
-            if !root.is_empty() {
-                return Ok(PathBuf::from(root));
-            }
+    if let Ok(output) = output
+        && output.status.success()
+    {
+        let stdout = String::from_utf8(output.stdout).context("decode git rev-parse output")?;
+        let root = stdout.trim();
+        if !root.is_empty() {
+            return Ok(PathBuf::from(root));
         }
     }
 
@@ -6802,10 +6806,9 @@ fn print_embedding_backends(payload: &mem_api::EmbeddingBackendsResponse) {
         .unwrap_or(8)
         .max(8);
     println!(
-        "  {:name_width$}  {:provider_width$}  {}",
+        "  {:name_width$}  {:provider_width$}  MODEL",
         "NAME",
         "PROVIDER",
-        "MODEL",
         name_width = name_width,
         provider_width = provider_width
     );
@@ -7546,6 +7549,7 @@ async fn preview_automation_flush(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_plan_activity_request(
     project: &str,
     action: PlanActivityAction,
@@ -7734,7 +7738,7 @@ fn derive_plan_thread_key(explicit_key: Option<&str>, title: &str, project: &str
 fn parse_plan_checkboxes(markdown: &str) -> Vec<PlanChecklistItem> {
     markdown
         .lines()
-        .filter_map(|line| parse_plan_checkbox_line(line))
+        .filter_map(parse_plan_checkbox_line)
         .collect()
 }
 
@@ -7801,6 +7805,7 @@ fn build_plan_execution_idempotency_key(
     format!("plan-execution:{:x}", hasher.finalize())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_plan_execution_request(
     project: &str,
     writer: &WriterIdentity,
@@ -7824,20 +7829,20 @@ fn build_plan_execution_request(
             excerpt: Some(normalized_plan.clone()),
         },
     ];
-    if let Some(source_path) = source_path {
-        if let Some(source_path) = durable_plan_source_path(source_path, repo_root) {
-            sources.insert(
-                0,
-                mem_api::CaptureCandidateSourceInput {
-                    file_path: Some(source_path.display().to_string()),
-                    source_kind: mem_api::SourceKind::File,
-                    excerpt: Some(format!(
-                        "Approved plan source file: {}",
-                        source_path.display()
-                    )),
-                },
-            );
-        }
+    if let Some(source_path) = source_path
+        && let Some(source_path) = durable_plan_source_path(source_path, repo_root)
+    {
+        sources.insert(
+            0,
+            mem_api::CaptureCandidateSourceInput {
+                file_path: Some(source_path.display().to_string()),
+                source_kind: mem_api::SourceKind::File,
+                excerpt: Some(format!(
+                    "Approved plan source file: {}",
+                    source_path.display()
+                )),
+            },
+        );
     }
 
     CaptureTaskRequest {
@@ -8360,9 +8365,7 @@ mod tests {
         time::Duration,
     };
 
-    use chrono::Utc;
     use clap::{Command, CommandFactory, Parser, error::ErrorKind};
-    use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use uuid::Uuid;
 
     use super::{

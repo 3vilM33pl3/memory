@@ -95,47 +95,47 @@ impl CodexCollector {
 
         // Recently finished sessions: scan today's JSONL files not owned by any running process.
         // This ensures Codex sessions transition to Done instead of vanishing.
-        if let Some(recent_dir) = Self::today_session_dir(&self.sessions_dir) {
-            if let Ok(entries) = fs::read_dir(&recent_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        if let Some(recent_dir) = Self::today_session_dir(&self.sessions_dir)
+            && let Ok(entries) = fs::read_dir(&recent_dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                    continue;
+                }
+                if seen_jsonl.contains(&path) {
+                    continue;
+                }
+                // Only show recently finished sessions (< 5 min old)
+                if let Ok(meta) = fs::metadata(&path)
+                    && let Ok(modified) = meta.modified()
+                {
+                    let age = std::time::SystemTime::now()
+                        .duration_since(modified)
+                        .unwrap_or_default();
+                    if age.as_secs() > 300 {
                         continue;
                     }
-                    if seen_jsonl.contains(&path) {
-                        continue;
-                    }
-                    // Only show recently finished sessions (< 5 min old)
-                    if let Ok(meta) = fs::metadata(&path) {
-                        if let Ok(modified) = meta.modified() {
-                            let age = std::time::SystemTime::now()
-                                .duration_since(modified)
-                                .unwrap_or_default();
-                            if age.as_secs() > 300 {
-                                continue;
-                            }
+                }
+                if let Some((session, rl)) = self.load_session_with_rate_limit(
+                    None,
+                    false,
+                    &path,
+                    &shared.process_info,
+                    &shared.children_map,
+                    &shared.ports,
+                ) {
+                    if let Some(new_rl) = rl {
+                        let newer = self
+                            .last_rate_limit
+                            .as_ref()
+                            .is_none_or(|old| new_rl.updated_at > old.updated_at);
+                        if newer {
+                            super::rate_limit::write_codex_cache(&new_rl);
+                            self.last_rate_limit = Some(new_rl);
                         }
                     }
-                    if let Some((session, rl)) = self.load_session_with_rate_limit(
-                        None,
-                        false,
-                        &path,
-                        &shared.process_info,
-                        &shared.children_map,
-                        &shared.ports,
-                    ) {
-                        if let Some(new_rl) = rl {
-                            let newer = self
-                                .last_rate_limit
-                                .as_ref()
-                                .is_none_or(|old| new_rl.updated_at > old.updated_at);
-                            if newer {
-                                super::rate_limit::write_codex_cache(&new_rl);
-                                self.last_rate_limit = Some(new_rl);
-                            }
-                        }
-                        sessions.push(session);
-                    }
+                    sessions.push(session);
                 }
             }
         }
@@ -402,12 +402,12 @@ impl CodexCollector {
             for line in stdout.lines() {
                 if let Some(pid_str) = line.strip_prefix('p') {
                     current_pid = pid_str.parse::<u32>().ok();
-                } else if let Some(name) = line.strip_prefix('n') {
-                    if let Some(pid) = current_pid {
-                        if name.contains("rollout-") && name.ends_with(".jsonl") {
-                            map.insert(pid, PathBuf::from(name));
-                        }
-                    }
+                } else if let Some(name) = line.strip_prefix('n')
+                    && let Some(pid) = current_pid
+                    && name.contains("rollout-")
+                    && name.ends_with(".jsonl")
+                {
+                    map.insert(pid, PathBuf::from(name));
                 }
             }
         }
@@ -570,13 +570,13 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
         };
 
         // Update last_activity from timestamp
-        if let Some(ts_str) = val["timestamp"].as_str() {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_str) {
-                let sys_time = std::time::UNIX_EPOCH
-                    + std::time::Duration::from_millis(dt.timestamp_millis() as u64);
-                if sys_time > result.last_activity {
-                    result.last_activity = sys_time;
-                }
+        if let Some(ts_str) = val["timestamp"].as_str()
+            && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts_str)
+        {
+            let sys_time = std::time::UNIX_EPOCH
+                + std::time::Duration::from_millis(dt.timestamp_millis() as u64);
+            if sys_time > result.last_activity {
+                result.last_activity = sys_time;
             }
         }
 
@@ -593,10 +593,10 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                     result.version = ver.to_string();
                 }
                 // started_at from timestamp
-                if let Some(ts) = payload["timestamp"].as_str() {
-                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
-                        result.started_at = dt.timestamp_millis() as u64;
-                    }
+                if let Some(ts) = payload["timestamp"].as_str()
+                    && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts)
+                {
+                    result.started_at = dt.timestamp_millis() as u64;
                 }
                 // Git branch
                 if let Some(branch) = payload["git"]["branch"].as_str() {
@@ -613,10 +613,10 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                         }
                     }
                     Some("user_message") => {
-                        if result.initial_prompt.is_empty() {
-                            if let Some(msg) = payload["message"].as_str() {
-                                result.initial_prompt = msg.chars().take(120).collect();
-                            }
+                        if result.initial_prompt.is_empty()
+                            && let Some(msg) = payload["message"].as_str()
+                        {
+                            result.initial_prompt = msg.chars().take(120).collect();
                         }
                     }
                     Some("token_count") => {
@@ -696,27 +696,27 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
             Some("response_item") => {
                 let payload = &val["payload"];
                 // Track current tool use
-                if payload["type"].as_str() == Some("function_call") {
-                    if let Some(name) = payload["name"].as_str() {
-                        // Extract first arg (typically file path or command)
-                        let arg = payload["arguments"]
-                            .as_str()
-                            .and_then(|s| serde_json::from_str::<Value>(s).ok())
-                            .and_then(|v| {
-                                v["file_path"]
-                                    .as_str()
-                                    .or_else(|| v["cmd"].as_str())
-                                    .map(|s| s.to_string())
-                            })
-                            .unwrap_or_default();
+                if payload["type"].as_str() == Some("function_call")
+                    && let Some(name) = payload["name"].as_str()
+                {
+                    // Extract first arg (typically file path or command)
+                    let arg = payload["arguments"]
+                        .as_str()
+                        .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                        .and_then(|v| {
+                            v["file_path"]
+                                .as_str()
+                                .or_else(|| v["cmd"].as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .unwrap_or_default();
 
-                        if arg.is_empty() {
-                            result.current_task = name.to_string();
-                        } else {
-                            // Shorten path: just filename
-                            let short = arg.rsplit('/').next().unwrap_or(&arg);
-                            result.current_task = format!("{} {}", name, short);
-                        }
+                    if arg.is_empty() {
+                        result.current_task = name.to_string();
+                    } else {
+                        // Shorten path: just filename
+                        let short = arg.rsplit('/').next().unwrap_or(&arg);
+                        result.current_task = format!("{} {}", name, short);
                     }
                 }
             }

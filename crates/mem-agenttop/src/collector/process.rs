@@ -21,25 +21,25 @@ pub fn get_process_info() -> HashMap<u32, ProcInfo> {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines().skip(1) {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 5 {
-                if let (Ok(pid), Ok(ppid), Ok(rss)) = (
+            if parts.len() >= 5
+                && let (Ok(pid), Ok(ppid), Ok(rss)) = (
                     parts[0].parse::<u32>(),
                     parts[1].parse::<u32>(),
                     parts[2].parse::<u64>(),
-                ) {
-                    let cpu = parts[3].parse::<f64>().unwrap_or(0.0);
-                    let command = parts[4..].join(" ");
-                    map.insert(
+                )
+            {
+                let cpu = parts[3].parse::<f64>().unwrap_or(0.0);
+                let command = parts[4..].join(" ");
+                map.insert(
+                    pid,
+                    ProcInfo {
                         pid,
-                        ProcInfo {
-                            pid,
-                            ppid,
-                            rss_kb: rss,
-                            cpu_pct: cpu,
-                            command,
-                        },
-                    );
-                }
+                        ppid,
+                        rss_kb: rss,
+                        cpu_pct: cpu,
+                        command,
+                    },
+                );
             }
         }
     }
@@ -89,16 +89,13 @@ pub fn get_listening_ports() -> HashMap<u32, Vec<u16>> {
         for line in stdout.lines().skip(1) {
             let parts: Vec<&str> = line.split_whitespace().collect();
             let is_tcp_listen = parts.len() >= 9 && parts[7] == "TCP" && line.contains("(LISTEN)");
-            if is_tcp_listen {
-                if let Ok(pid) = parts[1].parse::<u32>() {
-                    if let Some(addr) = parts.get(8) {
-                        if let Some(port_str) = addr.rsplit(':').next() {
-                            if let Ok(port) = port_str.parse::<u16>() {
-                                map.entry(pid).or_default().push(port);
-                            }
-                        }
-                    }
-                }
+            if is_tcp_listen
+                && let Ok(pid) = parts[1].parse::<u32>()
+                && let Some(addr) = parts.get(8)
+                && let Some(port_str) = addr.rsplit(':').next()
+                && let Ok(port) = port_str.parse::<u16>()
+            {
+                map.entry(pid).or_default().push(port);
             }
         }
     }
@@ -125,19 +122,19 @@ pub fn collect_git_stats(cwd: &str) -> (u32, u32) {
     let mut added = 0u32;
     let mut modified = 0u32;
 
-    if let Some(output) = output {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if line.len() < 2 {
-                    continue;
-                }
-                let status_code = &line[..2];
-                if status_code.contains('?') || status_code.contains('A') {
-                    added += 1;
-                } else if status_code.contains('M') {
-                    modified += 1;
-                }
+    if let Some(output) = output
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if line.len() < 2 {
+                continue;
+            }
+            let status_code = &line[..2];
+            if status_code.contains('?') || status_code.contains('A') {
+                added += 1;
+            } else if status_code.contains('M') {
+                modified += 1;
             }
         }
     }

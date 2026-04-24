@@ -259,6 +259,13 @@ struct MemoryStats {
 async fn fetch_memory_stats(pool: &PgPool, slug: &str) -> Result<MemoryStats, sqlx::Error> {
     let row = sqlx::query(
         r#"
+        WITH latest AS (
+            SELECT DISTINCT ON (m.canonical_id) m.*
+            FROM memory_entries m
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1 AND m.is_tombstone = FALSE
+            ORDER BY m.canonical_id, m.version_no DESC
+        )
         SELECT
             COUNT(*) AS memory_entries_total,
             COUNT(*) FILTER (WHERE m.status = 'active') AS active_memories,
@@ -268,9 +275,7 @@ async fn fetch_memory_stats(pool: &PgPool, slug: &str) -> Result<MemoryStats, sq
             COUNT(*) FILTER (WHERE m.confidence >= 0.5 AND m.confidence < 0.8) AS medium_confidence_memories,
             COUNT(*) FILTER (WHERE m.confidence < 0.5) AS low_confidence_memories,
             MAX(m.updated_at) AS last_memory_at
-        FROM memory_entries m
-        JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
+        FROM latest m
         "#,
     )
     .bind(slug)
@@ -626,10 +631,15 @@ async fn fetch_memory_type_breakdown(
 ) -> Result<Vec<MemoryTypeCount>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
+        WITH latest AS (
+            SELECT DISTINCT ON (m.canonical_id) m.*
+            FROM memory_entries m
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1 AND m.is_tombstone = FALSE
+            ORDER BY m.canonical_id, m.version_no DESC
+        )
         SELECT m.memory_type, COUNT(*) AS count
-        FROM memory_entries m
-        JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
+        FROM latest m
         GROUP BY m.memory_type
         ORDER BY count DESC, m.memory_type ASC
         "#,
@@ -654,11 +664,16 @@ async fn fetch_source_kind_breakdown(
 ) -> Result<Vec<SourceKindCount>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
+        WITH latest AS (
+            SELECT DISTINCT ON (m.canonical_id) m.id
+            FROM memory_entries m
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1 AND m.is_tombstone = FALSE
+            ORDER BY m.canonical_id, m.version_no DESC
+        )
         SELECT ms.source_kind, COUNT(*) AS count
         FROM memory_sources ms
-        JOIN memory_entries m ON m.id = ms.memory_entry_id
-        JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
+        JOIN latest m ON m.id = ms.memory_entry_id
         GROUP BY ms.source_kind
         ORDER BY count DESC, ms.source_kind ASC
         "#,
@@ -680,11 +695,16 @@ async fn fetch_source_kind_breakdown(
 async fn fetch_top_tags(pool: &PgPool, slug: &str) -> Result<Vec<NamedCount>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
+        WITH latest AS (
+            SELECT DISTINCT ON (m.canonical_id) m.id
+            FROM memory_entries m
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1 AND m.is_tombstone = FALSE
+            ORDER BY m.canonical_id, m.version_no DESC
+        )
         SELECT mt.tag AS name, COUNT(*) AS count
         FROM memory_tags mt
-        JOIN memory_entries m ON m.id = mt.memory_entry_id
-        JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
+        JOIN latest m ON m.id = mt.memory_entry_id
         GROUP BY mt.tag
         ORDER BY count DESC, mt.tag ASC
         LIMIT 5
@@ -707,12 +727,17 @@ async fn fetch_top_tags(pool: &PgPool, slug: &str) -> Result<Vec<NamedCount>, sq
 async fn fetch_top_files(pool: &PgPool, slug: &str) -> Result<Vec<NamedCount>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
+        WITH latest AS (
+            SELECT DISTINCT ON (m.canonical_id) m.id
+            FROM memory_entries m
+            JOIN projects p ON p.id = m.project_id
+            WHERE p.slug = $1 AND m.is_tombstone = FALSE
+            ORDER BY m.canonical_id, m.version_no DESC
+        )
         SELECT ms.file_path AS name, COUNT(*) AS count
         FROM memory_sources ms
-        JOIN memory_entries m ON m.id = ms.memory_entry_id
-        JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
-          AND ms.file_path IS NOT NULL
+        JOIN latest m ON m.id = ms.memory_entry_id
+        WHERE ms.file_path IS NOT NULL
         GROUP BY ms.file_path
         ORDER BY count DESC, ms.file_path ASC
         LIMIT 5
@@ -820,7 +845,9 @@ async fn fetch_embedding_health(
 ) -> Result<EmbeddingHealth, sqlx::Error> {
     let active_provider = config.map(|c| c.provider.trim()).unwrap_or("");
     let active_model = config.map(|c| c.model.trim()).unwrap_or("");
-    let active_base_url = config.map(|c| c.base_url.trim_end_matches('/')).unwrap_or("");
+    let active_base_url = config
+        .map(|c| c.base_url.trim_end_matches('/'))
+        .unwrap_or("");
     let active_space = if active_provider.is_empty() || active_model.is_empty() {
         None
     } else {
@@ -942,14 +969,10 @@ mod tests {
         let slug = format!("test-{}", Uuid::new_v4());
         seed_project(&pool, &slug).await.unwrap();
 
-        let overview = fetch_project_overview(
-            &pool,
-            &slug,
-            &mem_api::AutomationConfig::default(),
-            None,
-        )
-        .await
-        .unwrap();
+        let overview =
+            fetch_project_overview(&pool, &slug, &mem_api::AutomationConfig::default(), None)
+                .await
+                .unwrap();
         assert_eq!(overview.project, slug);
         assert_eq!(overview.memory_entries_total, 1);
         assert_eq!(overview.active_memories, 1);
@@ -968,7 +991,7 @@ mod tests {
     async fn test_pool() -> PgPool {
         let url = std::env::var("MEMORY_LAYER_TEST_DATABASE_URL")
             .ok()
-            .or_else(|| read_local_test_database_url())
+            .or_else(read_local_test_database_url)
             .expect("test database url");
         let pool = PgPool::connect(&url).await.unwrap();
         sqlx::migrate!("../../migrations").run(&pool).await.unwrap();
@@ -1053,7 +1076,7 @@ mod tests {
         .await?;
         tx.execute(
             sqlx::query(
-                "INSERT INTO memory_entries (id, project_id, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document) VALUES ($1, $2, $3, $4, 'architecture', 'project', 3, 0.85, 'active', now(), now(), NULL, to_tsvector('english', $3 || ' ' || $4))",
+                "INSERT INTO memory_entries (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document) VALUES ($1, $2, $1, 1, FALSE, $3, $4, 'architecture', 'project', 3, 0.85, 'active', now(), now(), NULL, to_tsvector('english', $3 || ' ' || $4))",
             )
             .bind(memory_id)
             .bind(project_id)

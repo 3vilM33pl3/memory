@@ -109,10 +109,7 @@ impl EmbeddingRegistry {
                 entries.push((backend.name.clone(), service));
             }
         }
-        let active = match config.active_backend() {
-            Some(backend) => Some(backend.name.clone()),
-            None => None,
-        };
+        let active = config.active_backend().map(|backend| backend.name.clone());
         let active = active.filter(|name| entries.iter().any(|(n, _)| n == name));
         Self { entries, active }
     }
@@ -206,7 +203,10 @@ pub async fn query_memory(
     let semantic_started = Instant::now();
     let (semantic_candidates, semantic_status) = if let Some(embedder) = embedder {
         match embedder
-            .embed_texts(std::slice::from_ref(&request.query), EmbeddingPurpose::Query)
+            .embed_texts(
+                std::slice::from_ref(&request.query),
+                EmbeddingPurpose::Query,
+            )
             .await
         {
             Ok(embedding_batch) => {
@@ -399,15 +399,9 @@ pub async fn rebuild_chunks(
                 let Some(embedding) = batch.vectors.get(index).cloned() else {
                     continue;
                 };
-                upsert_chunk_embedding(
-                    pool,
-                    chunk_id,
-                    &batch.space,
-                    batch.dimension,
-                    embedding,
-                )
-                .await
-                .context("upsert rebuilt chunk embedding")?;
+                upsert_chunk_embedding(pool, chunk_id, &batch.space, batch.dimension, embedding)
+                    .await
+                    .context("upsert rebuilt chunk embedding")?;
             }
         }
         count += 1;

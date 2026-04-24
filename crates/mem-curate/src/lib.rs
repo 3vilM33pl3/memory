@@ -202,13 +202,9 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
                         // instead of deleting the old row. Old version stays
                         // visible to history-aware queries; default search
                         // sees only the new version.
-                        let memory_id = insert_memory_version(
-                            &mut tx,
-                            project_id,
-                            &candidate,
-                            Some(target.id),
-                        )
-                        .await?;
+                        let memory_id =
+                            insert_memory_version(&mut tx, project_id, &candidate, Some(target.id))
+                                .await?;
                         output_count += 1;
                         replaced_count += 1;
                         replacements.push(AppliedMemoryReplacement {
@@ -377,18 +373,16 @@ async fn determine_replacement_decision(
     candidate: &CandidateAssertion,
     policy: ReplacementPolicy,
 ) -> Result<ReplacementDecision, sqlx::Error> {
-    if candidate.memory_type == mem_api::MemoryType::Plan {
-        if let Some(thread_tag) = plan_thread_tag(candidate) {
-            if let Some(target) =
-                load_existing_plan_for_thread(tx, project_id, thread_tag, candidate).await?
-            {
-                return Ok(ReplacementDecision::Replace {
-                    target,
-                    score: i32::MAX,
-                    reasons: vec!["same plan thread".to_string()],
-                });
-            }
-        }
+    if candidate.memory_type == mem_api::MemoryType::Plan
+        && let Some(thread_tag) = plan_thread_tag(candidate)
+        && let Some(target) =
+            load_existing_plan_for_thread(tx, project_id, thread_tag, candidate).await?
+    {
+        return Ok(ReplacementDecision::Replace {
+            target,
+            score: i32::MAX,
+            reasons: vec!["same plan thread".to_string()],
+        });
     }
 
     let profiles = load_candidate_replacement_targets(tx, project_id, candidate).await?;
@@ -687,6 +681,7 @@ async fn rebuild_memory_chunks(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn queue_replacement_proposal(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_id: Uuid,
@@ -1227,13 +1222,8 @@ pub async fn approve_replacement_proposal(
 
     // Record the approval as a new version of the target canonical memory;
     // the old version stays on disk and is visible to history-aware queries.
-    let new_memory_id = insert_memory_version(
-        &mut tx,
-        project_id,
-        &candidate.0,
-        Some(target_memory_id),
-    )
-    .await?;
+    let new_memory_id =
+        insert_memory_version(&mut tx, project_id, &candidate.0, Some(target_memory_id)).await?;
     attach_candidate_metadata(&mut tx, new_memory_id, task_id, &candidate.0).await?;
     rebuild_memory_chunks(&mut tx, new_memory_id).await?;
     sqlx::query(

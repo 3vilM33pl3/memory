@@ -422,28 +422,32 @@ mod tests {
     #[test]
     fn backend_instance_is_seeded_when_first_seen() {
         let mut state = BackendInstanceState::default();
-        update_backend_instance_state(&mut state, Some("instance-a".to_string())).unwrap();
+        update_backend_instance_state(&mut state, Some("instance-a".to_string()))
+            .expect("seed backend instance");
         assert_eq!(state.current.as_deref(), Some("instance-a"));
     }
 
     #[test]
     fn resolve_project_uses_repo_metadata_when_present() {
         let repo_root = unique_temp_dir("mem-watch-project-slug");
-        fs::create_dir_all(repo_root.join(".mem")).unwrap();
+        fs::create_dir_all(repo_root.join(".mem")).expect("create .mem directory");
         fs::write(
             repo_root.join(".mem").join("project.toml"),
             "slug = \"sctp\"\nrepo_root = \"/tmp/sctp-conformance\"\n",
         )
-        .unwrap();
+        .expect("write project metadata");
 
-        assert_eq!(resolve_project(None, &repo_root).unwrap(), "sctp");
+        assert_eq!(
+            resolve_project(None, &repo_root).expect("resolve project from metadata"),
+            "sctp"
+        );
 
         let _ = fs::remove_dir_all(repo_root);
     }
 
     #[test]
     fn writer_id_falls_back_to_derived_value() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().expect("lock test environment");
         let old_user = std::env::var("MEMORY_LAYER_WRITER_IDENTITY_USER").ok();
         let old_host = std::env::var("MEMORY_LAYER_WRITER_IDENTITY_HOST").ok();
         let old_writer = std::env::var("MEMORY_LAYER_WRITER_ID").ok();
@@ -475,7 +479,7 @@ mod tests {
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("system time should be after Unix epoch")
                 .as_nanos()
         ));
         if path.exists() {

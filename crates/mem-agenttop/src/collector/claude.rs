@@ -386,10 +386,10 @@ impl ClaudeCollector {
         let mut meta_files: Vec<PathBuf> = Vec::new();
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.ends_with(".meta.json") {
-                    meta_files.push(path);
-                }
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && name.ends_with(".meta.json")
+            {
+                meta_files.push(path);
             }
         }
 
@@ -424,10 +424,10 @@ impl ClaudeCollector {
 
             if jsonl_path.exists() {
                 // Get file mtime for status
-                if let Ok(metadata) = fs::metadata(&jsonl_path) {
-                    if let Ok(mtime) = metadata.modified() {
-                        last_activity = mtime;
-                    }
+                if let Ok(metadata) = fs::metadata(&jsonl_path)
+                    && let Ok(mtime) = metadata.modified()
+                {
+                    last_activity = mtime;
                 }
 
                 // Parse jsonl for token totals
@@ -658,33 +658,31 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                                     result.token_history.push(inp + out + cr + cc);
                                 }
                                 // Extract first assistant text (text blocks only) for summary fallback
-                                if result.first_assistant_text.is_empty() {
-                                    if let Some(content) =
+                                if result.first_assistant_text.is_empty()
+                                    && let Some(content) =
                                         msg.get("content").and_then(|c| c.as_array())
-                                    {
-                                        let texts: Vec<&str> = content
-                                            .iter()
-                                            .filter_map(|block| {
-                                                if block.get("type").and_then(|t| t.as_str())
-                                                    == Some("text")
-                                                {
-                                                    block.get("text").and_then(|t| t.as_str())
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                            .collect();
-                                        if !texts.is_empty() {
-                                            let joined = texts.join(" ");
-                                            let normalized: String = joined
-                                                .lines()
-                                                .map(|l| l.trim())
-                                                .filter(|l| !l.is_empty())
-                                                .collect::<Vec<_>>()
-                                                .join(" ");
-                                            result.first_assistant_text =
-                                                truncate(&normalized, 200);
-                                        }
+                                {
+                                    let texts: Vec<&str> = content
+                                        .iter()
+                                        .filter_map(|block| {
+                                            if block.get("type").and_then(|t| t.as_str())
+                                                == Some("text")
+                                            {
+                                                block.get("text").and_then(|t| t.as_str())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect();
+                                    if !texts.is_empty() {
+                                        let joined = texts.join(" ");
+                                        let normalized: String = joined
+                                            .lines()
+                                            .map(|l| l.trim())
+                                            .filter(|l| !l.is_empty())
+                                            .collect::<Vec<_>>()
+                                            .join(" ");
+                                        result.first_assistant_text = truncate(&normalized, 200);
                                     }
                                 }
                                 // Extract last tool_use from latest turn (= most recently running)
@@ -714,10 +712,10 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                                 result.git_branch = b.to_string();
                             }
                             // Extract first user prompt as session title
-                            if result.initial_prompt.is_empty() {
-                                if let Some(msg) = val.get("message") {
-                                    result.initial_prompt = extract_prompt_text(msg);
-                                }
+                            if result.initial_prompt.is_empty()
+                                && let Some(msg) = val.get("message")
+                            {
+                                result.initial_prompt = extract_prompt_text(msg);
                             }
                         }
                         _ => {}

@@ -47,15 +47,11 @@ pub(crate) async fn run(
 
     loop {
         terminal.draw(|frame| draw(frame, &app))?;
-        if event::poll(Duration::from_millis(200))? {
-            match event::read()? {
-                Event::Key(key) => {
-                    if app.handle_key(key).await? {
-                        break;
-                    }
-                }
-                _ => {}
-            }
+        if event::poll(Duration::from_millis(200))?
+            && let Event::Key(key) = event::read()?
+            && app.handle_key(key).await?
+        {
+            break;
         }
     }
 
@@ -733,13 +729,12 @@ impl WizardApp {
                     && self.draft.local_bind_addr.trim().is_empty()
                     && self.draft.local_capnp_tcp_addr.trim().is_empty()
                     && self.draft.local_capnp_unix_socket.trim().is_empty()
+                    && let Some(repo_root) = self.draft.repo_root.as_deref()
                 {
-                    if let Some(repo_root) = self.draft.repo_root.as_deref() {
-                        let defaults = default_local_service_overrides(repo_root);
-                        self.draft.local_bind_addr = defaults.bind_addr;
-                        self.draft.local_capnp_tcp_addr = defaults.capnp_tcp_addr;
-                        self.draft.local_capnp_unix_socket = defaults.capnp_unix_socket;
-                    }
+                    let defaults = default_local_service_overrides(repo_root);
+                    self.draft.local_bind_addr = defaults.bind_addr;
+                    self.draft.local_capnp_tcp_addr = defaults.capnp_tcp_addr;
+                    self.draft.local_capnp_unix_socket = defaults.capnp_unix_socket;
                 }
             }
             FieldKey::RelayDiscoveryEnabled => self.draft.relay_discovery_enabled.toggle(),
@@ -1152,10 +1147,7 @@ fn draw_context(frame: &mut ratatui::Frame<'_>, area: Rect, app: &WizardApp) {
         lines.extend(result.lines.iter().map(|line| Line::from(line.as_str())));
         lines
     } else {
-        let selected_field = app
-            .current_items()
-            .get(app.selected)
-            .map(|item| item.key);
+        let selected_field = app.current_items().get(app.selected).map(|item| item.key);
         review_lines(&app.draft, app.step, &app.status, selected_field)
     };
 
@@ -1641,11 +1633,11 @@ async fn apply_draft(draft: &WizardDraft, dry_run: bool) -> Result<WizardResult>
         }
     }
 
-    if draft.run_doctor.is_yes() {
-        if let Some(repo_root) = &draft.repo_root {
-            let report = run_doctor(None, repo_root, &draft.project, false).await?;
-            lines.extend(format_doctor_report(&report));
-        }
+    if draft.run_doctor.is_yes()
+        && let Some(repo_root) = &draft.repo_root
+    {
+        let report = run_doctor(None, repo_root, &draft.project, false).await?;
+        lines.extend(format_doctor_report(&report));
     }
 
     Ok(WizardResult {
@@ -1716,9 +1708,7 @@ fn render_local_repo_config(repo_root: &Path, draft: &WizardDraft) -> String {
         .map(|value| format!("\"{value}\""))
         .collect::<Vec<_>>()
         .join(", ");
-    let mut content = format!(
-        "# Repo-local overrides for this project.\n# Put shared defaults and secrets in the global config.\n\n"
-    );
+    let mut content = "# Repo-local overrides for this project.\n# Put shared defaults and secrets in the global config.\n\n".to_string();
     if !draft.local_database_url.trim().is_empty() {
         content.push_str(&format!(
             "[database]\nurl = \"{}\"\n\n",
@@ -1877,97 +1867,163 @@ fn ensure_runnable_profile(profile: Profile) -> Result<()> {
 /// actually does, including any non-obvious side effects.
 fn field_description(field: FieldKey) -> &'static str {
     match field {
-        FieldKey::IncludeGlobal => "Whether this run also edits machine-wide settings at \
+        FieldKey::IncludeGlobal => {
+            "Whether this run also edits machine-wide settings at \
             ~/.config/memory-layer/memory-layer.toml (the shared DB URL, LLM endpoints, \
-            backend service). Pick No to only touch the current repo's .mem/ files.",
-        FieldKey::DatabaseUrl => "Postgres URL the service will connect to. Format: \
+            backend service). Pick No to only touch the current repo's .mem/ files."
+        }
+        FieldKey::DatabaseUrl => {
+            "Postgres URL the service will connect to. Format: \
             postgresql://user:password@host:port/dbname. Must be reachable from every host \
-            that runs the service; used by both the installed and dev stacks unless overridden.",
-        FieldKey::ApiToken => "Overrides MEMORY_LAYER__SERVICE__API_TOKEN for HTTP clients. \
+            that runs the service; used by both the installed and dev stacks unless overridden."
+        }
+        FieldKey::ApiToken => {
+            "Overrides MEMORY_LAYER__SERVICE__API_TOKEN for HTTP clients. \
             Leave empty to keep the generated or existing token. Stored in the shared env \
-            file, not the TOML config, so it doesn't land in version control.",
-        FieldKey::LlmModelChoice => "Cycles through known OpenAI-compatible models for \
+            file, not the TOML config, so it doesn't land in version control."
+        }
+        FieldKey::LlmModelChoice => {
+            "Cycles through known OpenAI-compatible models for \
             curation/summary calls. Pick Custom to type any other model name in the next \
-            field. Model names you pick here land in [llm].model in the global config.",
-        FieldKey::LlmCustomModel => "Free-form model identifier used when LLM model is set \
-            to Custom (e.g. a self-hosted deployment name). Ignored when a preset is chosen.",
-        FieldKey::LlmApiKeyEnv => "Name of the environment variable the service reads for \
+            field. Model names you pick here land in [llm].model in the global config."
+        }
+        FieldKey::LlmCustomModel => {
+            "Free-form model identifier used when LLM model is set \
+            to Custom (e.g. a self-hosted deployment name). Ignored when a preset is chosen."
+        }
+        FieldKey::LlmApiKeyEnv => {
+            "Name of the environment variable the service reads for \
             the LLM API key (e.g. OPENAI_API_KEY). The wizard stores the variable *name* \
-            in config and the *value* in a neighbouring env file.",
-        FieldKey::LlmApiKeyValue => "Secret value written to the shared memory-layer.env. \
+            in config and the *value* in a neighbouring env file."
+        }
+        FieldKey::LlmApiKeyValue => {
+            "Secret value written to the shared memory-layer.env. \
             Leave empty to keep whatever's already on disk. Never committed; env files live \
-            outside version control.",
-        FieldKey::Project => "Short slug identifying the project in the memory DB. \
+            outside version control."
+        }
+        FieldKey::Project => {
+            "Short slug identifying the project in the memory DB. \
             Defaults to the repo directory name; change only if you want this repo to share \
-            memory with a differently-named project.",
-        FieldKey::LocalDatabaseUrl => "Per-repo override for the Postgres URL. Empty means \
+            memory with a differently-named project."
+        }
+        FieldKey::LocalDatabaseUrl => {
+            "Per-repo override for the Postgres URL. Empty means \
             inherit the shared value. Set this if the dev stack needs its own database or a \
-            different credential than the installed stack.",
-        FieldKey::LocalLlmApiKeyValue => "Per-repo LLM API key. Written to .mem/memory-layer.env. \
+            different credential than the installed stack."
+        }
+        FieldKey::LocalLlmApiKeyValue => {
+            "Per-repo LLM API key. Written to .mem/memory-layer.env. \
             Empty means inherit the shared key. Useful when a repo should use a different \
-            model provider or account than the machine default.",
-        FieldKey::LocalServiceMode => "Choose how the repo talks to the backend. \
+            model provider or account than the machine default."
+        }
+        FieldKey::LocalServiceMode => {
+            "Choose how the repo talks to the backend. \
             'inherit shared' reuses the installed service bindings. 'parallel dev' runs a \
             second service on repo-local ports so `cargo run` and the installed service can \
-            coexist; if you pick it, fill in the three address fields below.",
-        FieldKey::LocalBindAddr => "HTTP bind address for the repo-local (parallel-dev) \
-            service. Typically 127.0.0.1:<port>. Must not collide with the shared service.",
-        FieldKey::LocalCapnpTcpAddr => "Cap'n Proto TCP address for the repo-local service. \
-            Pair it with a port one above the HTTP port by convention.",
-        FieldKey::LocalCapnpUnixSocket => "Filesystem path for the repo-local Cap'n Proto \
+            coexist; if you pick it, fill in the three address fields below."
+        }
+        FieldKey::LocalBindAddr => {
+            "HTTP bind address for the repo-local (parallel-dev) \
+            service. Typically 127.0.0.1:<port>. Must not collide with the shared service."
+        }
+        FieldKey::LocalCapnpTcpAddr => {
+            "Cap'n Proto TCP address for the repo-local service. \
+            Pair it with a port one above the HTTP port by convention."
+        }
+        FieldKey::LocalCapnpUnixSocket => {
+            "Filesystem path for the repo-local Cap'n Proto \
             Unix socket. Keep it inside the repo (e.g. .mem/runtime/memory-layer.capnp.sock) \
-            so it doesn't clash with other stacks on the host.",
-        FieldKey::RelayDiscoveryEnabled => "When Yes, the service advertises itself to \
+            so it doesn't clash with other stacks on the host."
+        }
+        FieldKey::RelayDiscoveryEnabled => {
+            "When Yes, the service advertises itself to \
             cluster peers and can fall back to a peer's database if its own Postgres is \
-            unreachable. Pick No for a single-host install.",
-        FieldKey::ApplyRepoSetup => "When Yes, the wizard writes .mem/config.toml and \
+            unreachable. Pick No for a single-host install."
+        }
+        FieldKey::ApplyRepoSetup => {
+            "When Yes, the wizard writes .mem/config.toml and \
             .mem/project.toml for this repo. Pick No if you only want to configure the shared \
-            settings and leave the repo untouched.",
-        FieldKey::AutomationEnabled => "Master switch for the watcher's auto-capture loop. \
+            settings and leave the repo untouched."
+        }
+        FieldKey::AutomationEnabled => {
+            "Master switch for the watcher's auto-capture loop. \
             When Yes, file changes in this repo feed raw captures into the memory pipeline. \
-            When No, the watcher never captures on its own.",
-        FieldKey::AutomationMode => "'suggest' asks before capturing (review-gate). 'auto' \
-            captures immediately without a prompt. Only matters if Automation enabled is Yes.",
-        FieldKey::AutomationPollInterval => "How often the watcher checks for changes. \
-            Duration string (e.g. 10s, 1m). Shorter = lower capture latency + more CPU.",
-        FieldKey::AutomationCaptureIdleThreshold => "How long the repo must stay idle before \
+            When No, the watcher never captures on its own."
+        }
+        FieldKey::AutomationMode => {
+            "'suggest' asks before capturing (review-gate). 'auto' \
+            captures immediately without a prompt. Only matters if Automation enabled is Yes."
+        }
+        FieldKey::AutomationPollInterval => {
+            "How often the watcher checks for changes. \
+            Duration string (e.g. 10s, 1m). Shorter = lower capture latency + more CPU."
+        }
+        FieldKey::AutomationCaptureIdleThreshold => {
+            "How long the repo must stay idle before \
             a capture is emitted. Duration string (e.g. 5m). Protects against capturing \
-            half-written work in progress.",
-        FieldKey::AutomationMinChangedFiles => "Minimum number of changed files required \
-            before a capture fires. Integer. Keeps tiny, uninteresting edits out of memory.",
-        FieldKey::AutomationRequirePassingTest => "When Yes, the watcher skips captures \
+            half-written work in progress."
+        }
+        FieldKey::AutomationMinChangedFiles => {
+            "Minimum number of changed files required \
+            before a capture fires. Integer. Keeps tiny, uninteresting edits out of memory."
+        }
+        FieldKey::AutomationRequirePassingTest => {
+            "When Yes, the watcher skips captures \
             whose accompanying `memory remember --tests` invocation reports a failing test. \
-            Useful to keep broken snapshots out of durable memory.",
-        FieldKey::AutomationCurateAfterCaptures => "After this many raw captures accumulate, \
-            the watcher runs curation to promote or replace durable memories. Integer.",
-        FieldKey::AutomationCurateOnExplicitFlush => "When Yes, running `memory flush` also \
+            Useful to keep broken snapshots out of durable memory."
+        }
+        FieldKey::AutomationCurateAfterCaptures => {
+            "After this many raw captures accumulate, \
+            the watcher runs curation to promote or replace durable memories. Integer."
+        }
+        FieldKey::AutomationCurateOnExplicitFlush => {
+            "When Yes, running `memory flush` also \
             triggers an immediate curation pass. When No, flush only closes out pending raw \
-            captures without curating.",
-        FieldKey::AutomationIgnoredPaths => "Comma-separated list of path prefixes the \
+            captures without curating."
+        }
+        FieldKey::AutomationIgnoredPaths => {
+            "Comma-separated list of path prefixes the \
             watcher skips (e.g. .git/, target/, .mem/). Runtime-only metadata directories \
-            belong here; source trees do not.",
-        FieldKey::EnableBackendService => "When Yes, the apply step installs and enables \
+            belong here; source trees do not."
+        }
+        FieldKey::EnableBackendService => {
+            "When Yes, the apply step installs and enables \
             the systemd (or launchd on macOS) unit for the backend service so it starts on \
-            boot. Pick No to manage the service manually.",
-        FieldKey::EnableWatcher => "When Yes, the apply step installs a per-user watcher \
+            boot. Pick No to manage the service manually."
+        }
+        FieldKey::EnableWatcher => {
+            "When Yes, the apply step installs a per-user watcher \
             service for this repo so automation keeps running after you log out. Pick No to \
-            only run the watcher manually.",
-        FieldKey::ScanChoice => "Initial indexing pass after setup. 'Skip' does nothing. \
+            only run the watcher manually."
+        }
+        FieldKey::ScanChoice => {
+            "Initial indexing pass after setup. 'Skip' does nothing. \
             'Dry-run' walks the repo and prints what would be captured. 'Write' actually \
-            writes captures to the memory DB.",
-        FieldKey::RunDoctor => "When Yes, the apply step runs `memory doctor` at the end so \
+            writes captures to the memory DB."
+        }
+        FieldKey::RunDoctor => {
+            "When Yes, the apply step runs `memory doctor` at the end so \
             you see health of the install (service reachable, DB up, paths resolved) before \
-            the wizard exits.",
-        FieldKey::Next => "Advance to the next step. Disabled on the Review step — use \
-            Apply there instead.",
+            the wizard exits."
+        }
+        FieldKey::Next => {
+            "Advance to the next step. Disabled on the Review step — use \
+            Apply there instead."
+        }
         FieldKey::Back => "Return to the previous step without losing entered values.",
-        FieldKey::Apply => "Execute every change listed in Planned changes. Respects the \
+        FieldKey::Apply => {
+            "Execute every change listed in Planned changes. Respects the \
             wizard's dry-run flag: in dry-run mode, Apply prints what it would do without \
-            writing anything.",
-        FieldKey::Finish => "Close the wizard after the Apply step finishes. Leaves you \
-            back at the shell.",
-        FieldKey::Cancel => "Exit the wizard without applying any changes. Already-edited \
-            values are discarded.",
+            writing anything."
+        }
+        FieldKey::Finish => {
+            "Close the wizard after the Apply step finishes. Leaves you \
+            back at the shell."
+        }
+        FieldKey::Cancel => {
+            "Exit the wizard without applying any changes. Already-edited \
+            values are discarded."
+        }
     }
 }
 
@@ -2037,10 +2093,8 @@ fn read_local_database_override(repo_root: &Path) -> Option<String> {
             in_database = trimmed == "[database]";
             continue;
         }
-        if in_database {
-            if let Some(value) = trimmed.strip_prefix("url = ") {
-                return Some(value.trim_matches('"').to_string());
-            }
+        if in_database && let Some(value) = trimmed.strip_prefix("url = ") {
+            return Some(value.trim_matches('"').to_string());
         }
     }
     None
@@ -2072,7 +2126,7 @@ fn toggle_from_bool(value: bool) -> ToggleChoice {
 
 fn duration_to_string(duration: std::time::Duration) -> String {
     let seconds = duration.as_secs();
-    if seconds % 60 == 0 && seconds >= 60 {
+    if seconds.is_multiple_of(60) && seconds >= 60 {
         format!("{}m", seconds / 60)
     } else {
         format!("{seconds}s")

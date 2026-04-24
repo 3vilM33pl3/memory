@@ -616,7 +616,8 @@ mod tests {
             #[test]
             fn smoke() { run(todo!()); }
         "#;
-        let analysis = analyze_source("src/lib.rs", src, AnalyzerLanguage::Rust).unwrap();
+        let analysis = analyze_source("src/lib.rs", src, AnalyzerLanguage::Rust)
+            .expect("analyze Rust fixture");
         assert!(analysis.symbols.iter().any(|s| s.name == "run"));
         assert!(
             analysis
@@ -640,7 +641,8 @@ mod tests {
             export function run() { boot(); }
             test('smoke', () => run());
         "#;
-        let analysis = analyze_source("web/app.ts", src, AnalyzerLanguage::TypeScript).unwrap();
+        let analysis = analyze_source("web/app.ts", src, AnalyzerLanguage::TypeScript)
+            .expect("analyze TypeScript fixture");
         assert!(analysis.symbols.iter().any(|s| s.name == "run"));
         assert!(
             analysis
@@ -672,7 +674,8 @@ def helper():
 def test_smoke():
     helper()
 "#;
-        let analysis = analyze_source("app.py", src, AnalyzerLanguage::Python).unwrap();
+        let analysis = analyze_source("app.py", src, AnalyzerLanguage::Python)
+            .expect("analyze Python fixture");
         assert!(analysis.symbols.iter().any(|s| s.name == "App"));
         assert!(
             analysis

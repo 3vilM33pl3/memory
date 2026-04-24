@@ -202,10 +202,10 @@ fn infer_importance(request: &CaptureTaskRequest) -> i32 {
 fn infer_tags(request: &CaptureTaskRequest) -> Vec<String> {
     let mut tags = Vec::new();
     for file in &request.files_changed {
-        if let Some(prefix) = file.split('/').next() {
-            if !prefix.is_empty() {
-                tags.push(prefix.to_string());
-            }
+        if let Some(prefix) = file.split('/').next()
+            && !prefix.is_empty()
+        {
+            tags.push(prefix.to_string());
         }
     }
     tags.sort();
