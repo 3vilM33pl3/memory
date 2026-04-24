@@ -35,7 +35,7 @@ use mem_platform::preferred_user_state_dir;
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Tabs, Wrap},
@@ -294,6 +294,13 @@ struct App {
     query_selected_detail: Option<MemoryEntryResponse>,
     query_selected_index: usize,
     query_table_state: TableState,
+    query_loading: bool,
+    query_started_at: Option<Instant>,
+    query_pending_question: Option<String>,
+    query_error: Option<String>,
+    query_request_id: u64,
+    query_detail_loading: bool,
+    query_detail_request_id: u64,
     agent_snapshot: Option<AgentSnapshot>,
     agent_loading: bool,
     agent_error: Option<String>,
@@ -439,6 +446,18 @@ enum BackgroundEvent {
         name: String,
         result: Result<mem_api::EmbeddingBackendsResponse, String>,
     },
+    QueryCompleted {
+        request_id: u64,
+        request: QueryRequest,
+        elapsed_ms: u64,
+        response: Box<Result<QueryResponse, String>>,
+        initial_detail: Box<Option<Result<MemoryEntryResponse, String>>>,
+    },
+    QueryDetailLoaded {
+        request_id: u64,
+        memory_id: String,
+        detail: Box<Result<MemoryEntryResponse, String>>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -494,6 +513,13 @@ impl App {
             query_selected_detail: None,
             query_selected_index: 0,
             query_table_state,
+            query_loading: false,
+            query_started_at: None,
+            query_pending_question: None,
+            query_error: None,
+            query_request_id: 0,
+            query_detail_loading: false,
+            query_detail_request_id: 0,
             agent_snapshot: None,
             agent_loading: true,
             agent_error: None,
@@ -680,7 +706,7 @@ impl App {
 
         self.ui_status = if had_error {
             UiStatus::Error
-        } else if self.resume_loading {
+        } else if self.resume_loading || self.query_loading {
             UiStatus::Busy
         } else {
             UiStatus::Ready
@@ -879,6 +905,24 @@ impl App {
                     }
                 }
             }
+            BackgroundEvent::QueryCompleted {
+                request_id,
+                request,
+                elapsed_ms,
+                response,
+                initial_detail,
+            } => self.apply_query_completed(
+                request_id,
+                request,
+                elapsed_ms,
+                *response,
+                *initial_detail,
+            ),
+            BackgroundEvent::QueryDetailLoaded {
+                request_id,
+                memory_id,
+                detail,
+            } => self.apply_query_detail_loaded(request_id, memory_id, *detail),
         }
     }
 
@@ -1029,10 +1073,10 @@ impl App {
                 self.move_agent_selection(-1);
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Query => {
-                self.move_query_selection(1, api).await;
+                self.move_query_selection(1, api);
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Query => {
-                self.move_query_selection(-1, api).await;
+                self.move_query_selection(-1, api);
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Activity => {
                 self.move_activity_selection(1);
@@ -1323,7 +1367,7 @@ impl App {
                 self.input_mode = InputMode::Normal;
                 match kind {
                     TextInputKind::Query => {
-                        self.run_query(api).await;
+                        self.run_query(api);
                     }
                     _ => {
                         self.apply_filters();
@@ -1448,38 +1492,104 @@ impl App {
         }
     }
 
-    async fn run_query(&mut self, api: &ApiClient) {
+    fn run_query(&mut self, api: &ApiClient) {
+        if self.clear_empty_query_if_needed() {
+            return;
+        }
+
         let question = self.query_text.trim();
-        if question.is_empty() {
+        self.query_request_id = self.query_request_id.saturating_add(1);
+        let request_id = self.query_request_id;
+        let question = question.to_string();
+        self.query_loading = true;
+        self.query_started_at = Some(Instant::now());
+        self.query_pending_question = Some(question.clone());
+        self.query_error = None;
+        self.query_selected_detail = None;
+        self.query_detail_loading = false;
+        self.status_message = format!("Searching \"{question}\"...");
+        self.ui_status = UiStatus::Busy;
+        let request = QueryRequest {
+            project: self.project.clone(),
+            query: question.clone(),
+            filters: QueryFilters::default(),
+            top_k: 8,
+            min_confidence: None,
+            history: false,
+        };
+        let api = api.clone();
+        let tx = self.background_tx.clone();
+        tokio::spawn(async move {
+            let started = Instant::now();
+            let response = api.query(&request).await.map_err(|error| error.to_string());
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            let initial_detail = match &response {
+                Ok(response) => {
+                    if let Some(result) = response.results.first() {
+                        Some(
+                            api.memory_detail(&result.memory_id.to_string())
+                                .await
+                                .map_err(|error| error.to_string()),
+                        )
+                    } else {
+                        None
+                    }
+                }
+                Err(_) => None,
+            };
+            let _ = tx.send(BackgroundEvent::QueryCompleted {
+                request_id,
+                request,
+                elapsed_ms,
+                response: Box::new(response),
+                initial_detail: Box::new(initial_detail),
+            });
+        });
+    }
+
+    fn clear_empty_query_if_needed(&mut self) -> bool {
+        if self.query_text.trim().is_empty() {
+            self.query_loading = false;
+            self.query_started_at = None;
+            self.query_pending_question = None;
+            self.query_error = None;
+            self.query_detail_loading = false;
             self.query_response = None;
             self.query_last_duration_ms = None;
             self.query_selected_detail = None;
             self.query_selected_index = 0;
             self.query_table_state.select(None);
             self.status_message = "Enter a query before running search.".to_string();
+            return true;
+        }
+        false
+    }
+
+    fn apply_query_completed(
+        &mut self,
+        request_id: u64,
+        request: QueryRequest,
+        elapsed_ms: u64,
+        response: Result<QueryResponse, String>,
+        initial_detail: Option<Result<MemoryEntryResponse, String>>,
+    ) {
+        if request_id != self.query_request_id {
             return;
         }
-
-        self.status_message = format!("Running query for \"{question}\"...");
-        self.ui_status = UiStatus::Busy;
-        let request = QueryRequest {
-            project: self.project.clone(),
-            query: question.to_string(),
-            filters: QueryFilters::default(),
-            top_k: 8,
-            min_confidence: None,
-            history: false,
-        };
-        let started = Instant::now();
-        match api.query(&request).await {
+        self.query_loading = false;
+        self.query_started_at = None;
+        self.query_pending_question = None;
+        self.query_detail_request_id = self.query_detail_request_id.saturating_add(1);
+        self.query_detail_loading = false;
+        match response {
             Ok(response) => {
-                let elapsed_ms = started.elapsed().as_millis() as u64;
                 self.record_query_activity(
                     request.clone(),
                     elapsed_ms,
                     QueryLogOutcome::Success(Box::new(response.clone())),
                 );
                 self.resume_loaded = false;
+                self.query_error = None;
                 self.query_last_duration_ms = Some(elapsed_ms);
                 self.query_response = Some(response);
                 self.query_selected_index = 0;
@@ -1488,17 +1598,32 @@ impl App {
                     self.query_table_state.select(None);
                 } else {
                     self.query_table_state.select(Some(0));
-                    self.fetch_selected_query_detail(api).await;
+                    match initial_detail {
+                        Some(Ok(detail)) => self.query_selected_detail = Some(detail),
+                        Some(Err(error)) => {
+                            self.query_selected_detail = None;
+                            self.status_message = format!("Query detail unavailable: {error}");
+                        }
+                        None => self.query_selected_detail = None,
+                    }
                 }
-                self.status_message = format!(
-                    "Query returned {} memories in {} ms.",
-                    self.query_results().len(),
-                    elapsed_ms
-                );
+                if self.status_message.starts_with("Query detail unavailable:") {
+                    self.status_message = format!(
+                        "{} Query returned {} memories in {} ms.",
+                        self.status_message,
+                        self.query_results().len(),
+                        elapsed_ms
+                    );
+                } else {
+                    self.status_message = format!(
+                        "Query returned {} memories in {} ms.",
+                        self.query_results().len(),
+                        elapsed_ms
+                    );
+                }
                 self.ui_status = UiStatus::Ready;
             }
             Err(error) => {
-                let elapsed_ms = started.elapsed().as_millis() as u64;
                 self.record_query_activity(
                     request,
                     elapsed_ms,
@@ -1509,13 +1634,14 @@ impl App {
                 self.query_last_duration_ms = Some(elapsed_ms);
                 self.query_selected_detail = None;
                 self.query_table_state.select(None);
-                self.status_message = error.to_string();
+                self.query_error = Some(error.clone());
+                self.status_message = format!("Query failed: {error}");
                 self.ui_status = UiStatus::Error;
             }
         }
     }
 
-    async fn move_query_selection(&mut self, delta: isize, api: &ApiClient) {
+    fn move_query_selection(&mut self, delta: isize, api: &ApiClient) {
         if self.query_results().is_empty() {
             return;
         }
@@ -1526,16 +1652,59 @@ impl App {
             self.query_selected_index = next;
             self.query_table_state
                 .select(Some(self.query_selected_index));
-            self.fetch_selected_query_detail(api).await;
+            self.fetch_selected_query_detail(api);
         }
     }
 
-    async fn fetch_selected_query_detail(&mut self, api: &ApiClient) {
+    fn fetch_selected_query_detail(&mut self, api: &ApiClient) {
         self.query_selected_detail = None;
-        if let Some(result) = self.query_results().get(self.query_selected_index) {
-            match api.memory_detail(&result.memory_id.to_string()).await {
-                Ok(detail) => self.query_selected_detail = Some(detail),
-                Err(error) => self.status_message = error.to_string(),
+        self.query_detail_loading = false;
+        if let Some(memory_id) = self
+            .query_results()
+            .get(self.query_selected_index)
+            .map(|result| result.memory_id.to_string())
+        {
+            self.query_detail_request_id = self.query_detail_request_id.saturating_add(1);
+            let request_id = self.query_detail_request_id;
+            self.query_detail_loading = true;
+            let api = api.clone();
+            let tx = self.background_tx.clone();
+            tokio::spawn(async move {
+                let detail = api
+                    .memory_detail(&memory_id)
+                    .await
+                    .map_err(|error| error.to_string());
+                let _ = tx.send(BackgroundEvent::QueryDetailLoaded {
+                    request_id,
+                    memory_id,
+                    detail: Box::new(detail),
+                });
+            });
+        }
+    }
+
+    fn apply_query_detail_loaded(
+        &mut self,
+        request_id: u64,
+        memory_id: String,
+        detail: Result<MemoryEntryResponse, String>,
+    ) {
+        if request_id != self.query_detail_request_id {
+            return;
+        }
+        let selected_memory_id = self
+            .query_results()
+            .get(self.query_selected_index)
+            .map(|result| result.memory_id.to_string());
+        if selected_memory_id.as_deref() != Some(memory_id.as_str()) {
+            return;
+        }
+        self.query_detail_loading = false;
+        match detail {
+            Ok(detail) => self.query_selected_detail = Some(detail),
+            Err(error) => {
+                self.query_selected_detail = None;
+                self.status_message = format!("Query detail unavailable: {error}");
             }
         }
     }
@@ -1708,7 +1877,7 @@ impl App {
         let response = api.delete_memory(result.memory_id).await?;
         self.status_message = format!("Deleted memory: {}", response.summary);
         self.query_selected_detail = None;
-        self.run_query(api).await;
+        self.run_query(api);
         self.refresh(api, RefreshMode::Full).await;
         Ok(())
     }
@@ -3550,10 +3719,99 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(12), Constraint::Min(12)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(10),
+            Constraint::Min(12),
+        ])
         .split(area);
+    let query_editing = matches!(app.input_mode, InputMode::Query(_));
+    let query_input_area = chunks[0];
+    let query_inner_width = query_input_area.width.saturating_sub(2);
+    let query_input = query_input_display(&current_query_display(app), query_inner_width);
+    let query_title = if app.query_loading {
+        "Question (searching)"
+    } else if query_editing {
+        "Question (editing)"
+    } else {
+        "Question"
+    };
+    let query_style = if query_input.placeholder {
+        Style::default().fg(Theme::MUTED).bg(Theme::PANEL)
+    } else {
+        Style::default().fg(Theme::TEXT).bg(Theme::PANEL)
+    };
+    let query_box = Paragraph::new(Line::from(Span::styled(query_input.text, query_style)))
+        .style(Style::default().bg(Theme::PANEL))
+        .block(themed_focus_block(
+            query_title,
+            query_editing || app.query_loading,
+        ));
+    frame.render_widget(query_box, query_input_area);
+    if query_editing && query_input_area.width > 2 && query_input_area.height > 2 {
+        frame.set_cursor_position(Position::new(
+            query_input_area.x + 1 + query_input.cursor_col,
+            query_input_area.y + 1,
+        ));
+    }
 
-    let answer_text = if let Some(response) = &app.query_response {
+    let answer_text = if app.query_loading {
+        let elapsed = app
+            .query_started_at
+            .map(|started| started.elapsed().as_millis() as u64)
+            .unwrap_or_default();
+        let pending = app
+            .query_pending_question
+            .as_deref()
+            .unwrap_or(app.query_text.as_str());
+        let previous = app
+            .query_response
+            .as_ref()
+            .map(|response| response.results.len())
+            .unwrap_or(0);
+        vec![
+            Line::from(vec![
+                label_span("Searching: "),
+                Span::styled(pending.to_string(), Style::default().fg(Theme::TEXT)),
+            ]),
+            Line::from(vec![
+                Span::styled("Working ", Style::default().fg(Theme::ACCENT_STRONG)),
+                Span::styled(
+                    "querying memory and preparing answer/evidence",
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]),
+            Line::from(vec![
+                label_span("Elapsed: "),
+                Span::styled(format!("{elapsed} ms"), Style::default().fg(Theme::TEXT)),
+                Span::raw("   "),
+                label_span("Previous results: "),
+                Span::styled(previous.to_string(), Style::default().fg(Theme::MUTED)),
+            ]),
+            Line::from(Span::styled(
+                "Previous results remain visible below until the new search finishes.",
+                Style::default().fg(Theme::MUTED),
+            )),
+        ]
+    } else if let Some(error) = &app.query_error {
+        vec![
+            Line::from(vec![
+                label_span("Question: "),
+                Span::styled(
+                    display_filter(&current_query_display(app)),
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]),
+            Line::from(vec![
+                label_span("Error: "),
+                Span::styled(error.clone(), Style::default().fg(Theme::DANGER)),
+            ]),
+            Line::from(Span::styled(
+                "Edit the question with ? and press Enter to try again.",
+                Style::default().fg(Theme::MUTED),
+            )),
+        ]
+    } else if let Some(response) = &app.query_response {
         vec![
             Line::from(vec![
                 label_span("Question: "),
@@ -3690,12 +3948,12 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .style(Style::default().bg(Theme::PANEL))
         .wrap(Wrap { trim: false })
         .block(themed_block("Query Result"));
-    frame.render_widget(answer, chunks[0]);
+    frame.render_widget(answer, chunks[1]);
 
     let lower = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[1]);
+        .split(chunks[2]);
 
     let header = Row::new(["#", "Summary", "Type", "Match", "Score"]).style(
         Style::default()
@@ -3855,6 +4113,12 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                     ]));
                 }
             }
+        } else if app.query_detail_loading {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Loading selected memory detail...",
+                Style::default().fg(Theme::MUTED),
+            )));
         }
 
         if !result.sources.is_empty() {
@@ -3894,6 +4158,53 @@ fn current_query_display(app: &App) -> String {
     match &app.input_mode {
         InputMode::Query(value) => value.clone(),
         _ => app.query_text.clone(),
+    }
+}
+
+struct QueryInputDisplay {
+    text: String,
+    cursor_col: u16,
+    placeholder: bool,
+}
+
+fn query_input_display(value: &str, inner_width: u16) -> QueryInputDisplay {
+    let width = inner_width as usize;
+    if width == 0 {
+        return QueryInputDisplay {
+            text: String::new(),
+            cursor_col: 0,
+            placeholder: value.is_empty(),
+        };
+    }
+    if value.is_empty() {
+        let placeholder = "Ask project memory a question...";
+        let text = placeholder.chars().take(width).collect::<String>();
+        return QueryInputDisplay {
+            text,
+            cursor_col: 0,
+            placeholder: true,
+        };
+    }
+
+    let char_count = value.chars().count();
+    if char_count <= width {
+        return QueryInputDisplay {
+            text: value.to_string(),
+            cursor_col: char_count.min(width.saturating_sub(1)) as u16,
+            placeholder: false,
+        };
+    }
+
+    let tail_width = width.saturating_sub(1);
+    let mut tail = value
+        .chars()
+        .skip(char_count.saturating_sub(tail_width))
+        .collect::<String>();
+    tail.insert(0, '<');
+    QueryInputDisplay {
+        text: tail,
+        cursor_col: width.saturating_sub(1) as u16,
+        placeholder: false,
     }
 }
 
@@ -6598,14 +6909,14 @@ mod tests {
         format_epoch_reset_time, format_query_citation_numbers, format_timestamp,
         format_timestamp_full, format_timestamp_medium, format_timestamp_short,
         format_timestamp_timeline, manager_status_detail, manager_status_label,
-        memory_detail_max_scroll, normalized_percent, remaining_bar_cells, render_markdown_lines,
-        service_status_detail, service_status_label, should_attempt_stream_reconnect,
-        watcher_bar_status_label,
+        memory_detail_max_scroll, normalized_percent, query_input_display, remaining_bar_cells,
+        render_markdown_lines, service_status_detail, service_status_label,
+        should_attempt_stream_reconnect, watcher_bar_status_label,
     };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
-        MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType, Profile,
-        WatcherPresenceSummary,
+        MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType, Profile, QueryFilters,
+        QueryRequest, WatcherPresenceSummary,
     };
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
@@ -6637,6 +6948,92 @@ mod tests {
     fn query_citation_numbers_render_bracketed_result_ids() {
         assert_eq!(format_query_citation_numbers(&[]), "none");
         assert_eq!(format_query_citation_numbers(&[1, 3]), "[1] [3]");
+    }
+
+    #[test]
+    fn query_input_display_renders_placeholder_and_cursor_start() {
+        let display = query_input_display("", 12);
+        assert!(display.placeholder);
+        assert_eq!(display.text, "Ask project ");
+        assert_eq!(display.cursor_col, 0);
+    }
+
+    #[test]
+    fn query_input_display_keeps_short_cursor_after_text() {
+        let display = query_input_display("hello", 12);
+        assert!(!display.placeholder);
+        assert_eq!(display.text, "hello");
+        assert_eq!(display.cursor_col, 5);
+    }
+
+    #[test]
+    fn query_input_display_truncates_long_text_from_left() {
+        let display = query_input_display("long question", 8);
+        assert!(!display.placeholder);
+        assert_eq!(display.text, "<uestion");
+        assert_eq!(display.cursor_col, 7);
+    }
+
+    #[test]
+    fn stale_query_completion_does_not_replace_current_query_state() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.6.2".to_string(),
+                mem_service: "0.6.2".to_string(),
+                watch_manager: "0.6.2".to_string(),
+                memory_watch: "0.6.2".to_string(),
+            },
+            false,
+            Profile::Prod,
+            tx,
+        );
+        app.query_request_id = 2;
+        app.query_loading = true;
+        app.query_pending_question = Some("newer query".to_string());
+        let request = QueryRequest {
+            project: "memory".to_string(),
+            query: "older query".to_string(),
+            filters: QueryFilters::default(),
+            top_k: 8,
+            min_confidence: None,
+            history: false,
+        };
+
+        app.apply_query_completed(1, request, 12, Err("older query failed".to_string()), None);
+
+        assert!(app.query_loading);
+        assert_eq!(app.query_pending_question.as_deref(), Some("newer query"));
+        assert!(app.query_error.is_none());
+    }
+
+    #[test]
+    fn empty_query_submit_clears_results_and_prompts_for_question() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.6.2".to_string(),
+                mem_service: "0.6.2".to_string(),
+                watch_manager: "0.6.2".to_string(),
+                memory_watch: "0.6.2".to_string(),
+            },
+            false,
+            Profile::Prod,
+            tx,
+        );
+        app.query_text = "   ".to_string();
+        app.query_loading = true;
+
+        assert!(app.clear_empty_query_if_needed());
+
+        assert!(!app.query_loading);
+        assert_eq!(app.status_message, "Enter a query before running search.");
+        assert!(app.query_response.is_none());
+        assert!(app.query_error.is_none());
     }
 
     #[test]
