@@ -148,6 +148,7 @@ It does not write directly to database tables. It only orchestrates the existing
 ## Related Docs
 
 - [How Memory Layer Works](how-it-works.md)
+- [Graph And Curation Foundations](graph-and-curation-foundations.md)
 - [Hidden Memory Daemon](hidden-memory-daemon.md)
 - [Developer Documentation](../README.md)
 - [User Documentation](../../user/README.md)

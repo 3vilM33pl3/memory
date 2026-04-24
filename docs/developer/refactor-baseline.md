@@ -44,3 +44,6 @@ complete knowledge graph. Future graph work should add first-class concepts for:
 The first graph-facing work should be additive. Existing memory APIs and CLI
 commands should remain compatible until the replacement path has coverage and a
 documented migration.
+
+The detailed graph and curation direction lives in
+[Graph And Curation Foundations](architecture/graph-and-curation-foundations.md).
