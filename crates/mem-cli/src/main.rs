@@ -1167,7 +1167,7 @@ struct RememberArgs {
     #[arg(long = "note")]
     notes: Vec<String>,
     /// File path to attach as changed during the task.
-    #[arg(long = "file-changed")]
+    #[arg(long = "file-changed", visible_alias = "file")]
     files_changed: Vec<String>,
     /// Test name or command that passed.
     #[arg(long = "test-passed")]
@@ -8442,6 +8442,26 @@ mod tests {
             request.structured_candidates[0].memory_type,
             mem_api::MemoryType::Implementation
         );
+    }
+
+    #[test]
+    fn remember_accepts_file_alias_for_provenance() {
+        let args = Cli::try_parse_from([
+            "memory",
+            "remember",
+            "--project",
+            "memory",
+            "--note",
+            "query match types",
+            "--file",
+            "crates/mem-search/src/lib.rs",
+        ])
+        .unwrap();
+
+        let super::Command::Remember(args) = args.command else {
+            panic!("expected remember command");
+        };
+        assert_eq!(args.files_changed, vec!["crates/mem-search/src/lib.rs"]);
     }
 
     #[test]
