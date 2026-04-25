@@ -48,6 +48,8 @@ use tokio::{
 
 use crate::{ApiClient, SourceKindString, enable_relay_discovery_and_restart_backend, resume};
 
+const STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+
 struct Theme;
 
 impl Theme {
@@ -98,13 +100,9 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
     );
     terminal.draw(|frame| draw(frame, &app))?;
     app.request_refresh(&api, RefreshMode::Startup);
-    let mut stream = StreamSession::connect(&api).await.ok();
+    app.request_stream_connect(&api);
+    let mut stream: Option<StreamSession> = None;
     let mut last_stream_connect_attempt = Instant::now();
-    if let Some(stream_session) = stream.as_mut() {
-        subscribe_stream(stream_session, &app).await?;
-        app.status_message =
-            "Streaming updates enabled. Press r to force resync, q to exit.".to_string();
-    }
 
     let mut last_draw = Instant::now();
     loop {
@@ -119,11 +117,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    app.status_message =
-                        format!("Streaming disconnected: {error}. Falling back to manual refresh.");
-                    app.mark_service_unavailable();
-                    app.ui_status = UiStatus::Error;
-                    app.needs_redraw = true;
+                    app.handle_stream_disconnect(&error.to_string());
                     stream_failed = true;
                 }
             }
@@ -133,27 +127,35 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
             last_stream_connect_attempt = Instant::now();
         }
         while let Ok(event) = background_rx.try_recv() {
-            app.apply_background_event(event);
-        }
-        if should_attempt_stream_reconnect(stream.is_some(), last_stream_connect_attempt) {
-            last_stream_connect_attempt = Instant::now();
-            if let Ok(mut stream_session) = StreamSession::connect(&api).await {
-                match subscribe_stream(&mut stream_session, &app).await {
-                    Ok(()) => {
-                        stream = Some(stream_session);
-                        app.status_message =
-                            "Backend reconnected. Refreshing project data...".to_string();
-                        app.needs_redraw = true;
-                        app.refresh(&api, RefreshMode::Full).await;
-                    }
-                    Err(error) => {
-                        app.status_message =
-                            format!("Backend reachable, but stream subscription failed: {error}");
-                        app.ui_status = UiStatus::Error;
-                        app.needs_redraw = true;
+            match event {
+                BackgroundEvent::StreamConnectCompleted { result } => {
+                    app.stream_connecting = false;
+                    match result {
+                        Ok(new_stream) => {
+                            stream = Some(*new_stream);
+                            app.status_message =
+                                "Streaming updates enabled. Refreshing project data...".to_string();
+                            app.needs_redraw = true;
+                            app.request_refresh(&api, RefreshMode::Full);
+                        }
+                        Err(error) => {
+                            app.status_message = format!(
+                                "Streaming unavailable: {error}. Retrying live updates in the background."
+                            );
+                            app.needs_redraw = true;
+                        }
                     }
                 }
+                other => app.apply_background_event(other),
             }
+        }
+        if should_attempt_stream_reconnect(
+            stream.is_some(),
+            app.stream_connecting,
+            last_stream_connect_attempt,
+        ) {
+            last_stream_connect_attempt = Instant::now();
+            app.request_stream_connect(&api);
         }
         if app.needs_redraw || last_draw.elapsed() >= Duration::from_secs(1) {
             terminal.draw(|frame| draw(frame, &app))?;
@@ -273,6 +275,27 @@ fn start_manager_status_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
     });
 }
 
+fn spawn_stream_connect(
+    api: ApiClient,
+    project: String,
+    memory_id: Option<uuid::Uuid>,
+    tx: mpsc::UnboundedSender<BackgroundEvent>,
+) {
+    tokio::spawn(async move {
+        let result = tokio::time::timeout(STREAM_CONNECT_TIMEOUT, async {
+            let mut stream = StreamSession::connect(&api).await?;
+            subscribe_stream_selection(&mut stream, project, memory_id).await?;
+            Ok::<_, anyhow::Error>(stream)
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("stream connection timed out after 2s"))
+        .and_then(|result| result)
+        .map(Box::new)
+        .map_err(|error| error.to_string());
+        let _ = tx.send(BackgroundEvent::StreamConnectCompleted { result });
+    });
+}
+
 async fn load_project_refresh(
     api: &ApiClient,
     project: String,
@@ -355,6 +378,7 @@ struct App {
     service_health_state: Option<String>,
     service_database_state: Option<String>,
     manager_status: Option<ManagerFooterStatus>,
+    stream_connecting: bool,
     relay_discovery_enabled: bool,
     profile: Profile,
     filters: Filters,
@@ -399,7 +423,7 @@ enum BackendConnectionState {
     Unavailable,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UiStatus {
     Loading,
     Busy,
@@ -467,6 +491,9 @@ struct ProjectRefreshResult {
 
 enum BackgroundEvent {
     ProjectRefreshLoaded(Box<ProjectRefreshResult>),
+    StreamConnectCompleted {
+        result: Result<Box<StreamSession>, String>,
+    },
     ResumeLoaded {
         response: Box<Result<ResumeResponse, String>>,
         checkpoint_present: bool,
@@ -594,6 +621,7 @@ impl App {
             service_health_state: None,
             service_database_state: None,
             manager_status: None,
+            stream_connecting: false,
             relay_discovery_enabled,
             profile,
             filters: Filters::default(),
@@ -688,6 +716,23 @@ impl App {
                 });
             }
         });
+    }
+
+    fn request_stream_connect(&mut self, api: &ApiClient) {
+        if self.stream_connecting {
+            return;
+        }
+        self.stream_connecting = true;
+        let memory_id = self
+            .filtered_memories
+            .get(self.selected_index)
+            .map(|item| item.id);
+        spawn_stream_connect(
+            api.clone(),
+            self.project.clone(),
+            memory_id,
+            self.background_tx.clone(),
+        );
     }
 
     async fn refresh(&mut self, api: &ApiClient, mode: RefreshMode) {
@@ -840,6 +885,18 @@ impl App {
         self.overview.watchers = None;
     }
 
+    fn handle_stream_disconnect(&mut self, error: &str) {
+        self.status_message = format!(
+            "Streaming disconnected: {error}. Retrying live updates; backend health is unchanged."
+        );
+        self.ui_status = if self.health_ok {
+            UiStatus::Ready
+        } else {
+            UiStatus::Loading
+        };
+        self.needs_redraw = true;
+    }
+
     fn request_resume_refresh(&mut self, api: &ApiClient, allow_autoselect: bool) {
         if self.resume_loading {
             return;
@@ -891,6 +948,14 @@ impl App {
         match event {
             BackgroundEvent::ProjectRefreshLoaded(result) => {
                 self.apply_project_refresh(*result);
+            }
+            BackgroundEvent::StreamConnectCompleted { result } => {
+                self.stream_connecting = false;
+                if let Err(error) = result {
+                    self.status_message = format!(
+                        "Streaming unavailable: {error}. Retrying live updates in the background."
+                    );
+                }
             }
             BackgroundEvent::ResumeLoaded {
                 response,
@@ -2238,15 +2303,17 @@ impl StreamSession {
     }
 }
 
-async fn subscribe_stream(stream: &mut StreamSession, app: &App) -> Result<()> {
+async fn subscribe_stream_selection(
+    stream: &mut StreamSession,
+    project: String,
+    memory_id: Option<uuid::Uuid>,
+) -> Result<()> {
     stream
-        .send(StreamRequest::SubscribeProject {
-            project: app.project.clone(),
-        })
+        .send(StreamRequest::SubscribeProject { project })
         .await?;
-    if let Some(item) = app.filtered_memories.get(app.selected_index) {
+    if let Some(memory_id) = memory_id {
         stream
-            .send(StreamRequest::SubscribeMemory { memory_id: item.id })
+            .send(StreamRequest::SubscribeMemory { memory_id })
             .await?;
     }
     Ok(())
@@ -6904,8 +6971,12 @@ fn should_quit(key: KeyEvent, app: &App) -> bool {
     matches!(app.input_mode, InputMode::Normal) && matches!(key.code, KeyCode::Char('q'))
 }
 
-fn should_attempt_stream_reconnect(stream_connected: bool, last_attempt: Instant) -> bool {
-    !stream_connected && last_attempt.elapsed() >= Duration::from_secs(1)
+fn should_attempt_stream_reconnect(
+    stream_connected: bool,
+    stream_connecting: bool,
+    last_attempt: Instant,
+) -> bool {
+    !stream_connected && !stream_connecting && last_attempt.elapsed() >= Duration::from_secs(1)
 }
 
 fn empty_overview(project: String) -> ProjectOverviewResponse {
@@ -7511,11 +7582,38 @@ mod tests {
     #[test]
     fn stream_reconnect_attempts_are_rate_limited() {
         let just_attempted = Instant::now();
-        assert!(!should_attempt_stream_reconnect(false, just_attempted));
+        assert!(!should_attempt_stream_reconnect(
+            false,
+            false,
+            just_attempted
+        ));
 
         let overdue = Instant::now() - Duration::from_secs(2);
-        assert!(should_attempt_stream_reconnect(false, overdue));
-        assert!(!should_attempt_stream_reconnect(true, overdue));
+        assert!(should_attempt_stream_reconnect(false, false, overdue));
+        assert!(!should_attempt_stream_reconnect(true, false, overdue));
+        assert!(!should_attempt_stream_reconnect(false, true, overdue));
+    }
+
+    #[test]
+    fn stream_disconnect_does_not_mark_backend_unavailable() {
+        let mut app = new_test_app();
+        app.health_ok = true;
+        app.backend_connection_state = BackendConnectionState::Connected;
+        app.ui_status = UiStatus::Ready;
+        app.overview.service_status = "ok".to_string();
+        app.overview.database_status = "up".to_string();
+
+        app.handle_stream_disconnect("stream connection closed");
+
+        assert!(app.health_ok);
+        assert_eq!(
+            app.backend_connection_state,
+            BackendConnectionState::Connected
+        );
+        assert_eq!(app.overview.service_status, "ok");
+        assert_eq!(app.overview.database_status, "up");
+        assert_eq!(app.ui_status, UiStatus::Ready);
+        assert!(app.status_message.contains("backend health is unchanged"));
     }
 
     #[test]
