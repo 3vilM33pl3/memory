@@ -24,16 +24,17 @@ use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
 use mem_agenttop::{AgentSession, AgentTop, SessionStatus};
 use mem_api::{
-    AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest,
-    CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest, CurateResponse,
-    DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse, MemoryType, PlanActivityAction,
-    PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse,
-    ProjectMemoryBundlePreview, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
-    ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
-    PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse, ReembedRequest,
-    ReembedResponse, ReindexRequest, ReindexResponse, ReplacementPolicy, ResumeRequest,
-    ResumeResponse, ScanActivityRequest, TestResult, discover_global_config_path,
-    discover_repo_env_path, load_repo_replacement_policy, read_repo_project_slug,
+    ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
+    CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
+    CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse,
+    MemoryType, PlanActivityAction, PlanActivityRequest, ProjectCommitsResponse,
+    ProjectMemoriesResponse, ProjectMemoryBundlePreview, ProjectMemoryExportOptions,
+    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectOverviewResponse,
+    PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse,
+    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, ReplacementPolicy,
+    ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult, UpToSpeedRequest,
+    UpToSpeedResponse, discover_global_config_path, discover_repo_env_path,
+    load_repo_replacement_policy, read_repo_project_slug,
 };
 use mem_platform as platform;
 use mem_service as service_runtime;
@@ -282,6 +283,24 @@ Examples:
 See also:
   docs/user/cli/resume.md";
 
+const ACTIVITIES_AFTER_HELP: &str = "\
+Examples:
+  memory activities --project memory
+  memory activities --project memory --limit 50 --text
+  memory activities --project memory --kind query
+
+See also:
+  docs/user/cli/activities.md";
+
+const UP_TO_SPEED_AFTER_HELP: &str = "\
+Examples:
+  memory up-to-speed --project memory
+  memory up-to-speed --project memory --text
+  memory up-to-speed --project memory --llm
+
+See also:
+  docs/user/cli/up-to-speed.md";
+
 const CHECKPOINT_GROUP_AFTER_HELP: &str = "\
 Examples:
   memory checkpoint save --project memory
@@ -494,6 +513,10 @@ enum Command {
     Checkpoint(CheckpointArgs),
     #[command(about = "Generate a resume briefing for a project.", after_help = RESUME_AFTER_HELP)]
     Resume(ResumeArgs),
+    #[command(about = "List persisted project activity events.", after_help = ACTIVITIES_AFTER_HELP)]
+    Activities(ActivitiesArgs),
+    #[command(about = "Generate a new-agent get-up-to-speed briefing.", after_help = UP_TO_SPEED_AFTER_HELP)]
+    UpToSpeed(UpToSpeedArgs),
     #[command(about = "Ask a project-specific question against curated memory.", after_help = QUERY_AFTER_HELP)]
     Query(QueryArgs),
     #[command(about = "Show the full version history for a memory, including tombstones.")]
@@ -992,6 +1015,46 @@ struct ResumeArgs {
     /// Include the optional LLM summary in the resume output.
     #[arg(long, default_value_t = true)]
     include_llm_summary: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "List persisted project activity events.",
+    after_help = ACTIVITIES_AFTER_HELP
+)]
+struct ActivitiesArgs {
+    /// Project slug; defaults to the current repo when available.
+    #[arg(long)]
+    project: Option<String>,
+    /// Maximum number of activities to return.
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+    /// Filter by activity kind, for example query, plan, curate, or briefing.
+    #[arg(long)]
+    kind: Option<String>,
+    /// Emit a human-readable text view instead of JSON.
+    #[arg(long)]
+    text: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Generate a new-agent get-up-to-speed briefing.",
+    after_help = UP_TO_SPEED_AFTER_HELP
+)]
+struct UpToSpeedArgs {
+    /// Project slug; defaults to the current repo when available.
+    #[arg(long)]
+    project: Option<String>,
+    /// Maximum number of recent activities to use.
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+    /// Ask the configured LLM to synthesize the briefing.
+    #[arg(long)]
+    llm: bool,
+    /// Emit a human-readable text view instead of JSON.
+    #[arg(long)]
+    text: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2114,6 +2177,36 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&payload)?);
             } else {
                 print_resume_response(&payload);
+            }
+        }
+        Command::Activities(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let project = resolve_project_slug(args.project, &cwd)?;
+            let api = ApiClient::new(client, config);
+            let payload = api
+                .project_activities(&project, args.limit.clamp(1, 500), args.kind.as_deref())
+                .await?;
+            if args.text {
+                print_activities_response(&payload);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            }
+        }
+        Command::UpToSpeed(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let project = resolve_project_slug(args.project, &cwd)?;
+            let api = ApiClient::new(client, config);
+            let payload = api
+                .up_to_speed(&UpToSpeedRequest {
+                    project,
+                    include_llm_summary: args.llm,
+                    limit: args.limit.clamp(1, 50),
+                })
+                .await?;
+            if args.text {
+                print_up_to_speed_response(&payload);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&payload)?);
             }
         }
         Command::Scan(args) => {
@@ -6401,6 +6494,43 @@ impl ApiClient {
         .await
     }
 
+    pub(crate) async fn project_activities(
+        &self,
+        project: &str,
+        limit: usize,
+        kind: Option<&str>,
+    ) -> Result<ActivityListResponse> {
+        let mut path = format!("/v1/projects/{project}/activities?limit={limit}");
+        if let Some(kind) = kind {
+            path.push_str("&kind=");
+            path.push_str(kind);
+        }
+        get_json(
+            self.client
+                .get(service_url(&self.config, &path))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn up_to_speed(
+        &self,
+        request: &UpToSpeedRequest,
+    ) -> Result<UpToSpeedResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{}/up-to-speed", request.project),
+                ))
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
     pub(crate) async fn project_commits(
         &self,
         project: &str,
@@ -6981,6 +7111,69 @@ fn format_query_citations(numbers: &[usize]) -> String {
             .map(|number| format!("[{number}]"))
             .collect::<Vec<_>>()
             .join(" ")
+    }
+}
+
+fn print_activities_response(response: &ActivityListResponse) {
+    println!(
+        "Activities for {} ({} returned)\n",
+        response.project, response.total_returned
+    );
+    for event in &response.items {
+        println!(
+            "{} | {:<14} | {:>8} tok | {:>6} ms | {}",
+            event.recorded_at.format("%Y-%m-%d %H:%M:%S UTC"),
+            activity_kind_text(&event.kind),
+            event
+                .token_usage
+                .as_ref()
+                .map(|usage| usage.total_tokens.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            event
+                .duration_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            event.summary
+        );
+    }
+}
+
+fn print_up_to_speed_response(response: &UpToSpeedResponse) {
+    println!("{}", response.briefing);
+    println!();
+    println!(
+        "Support data: {} activities | {} useful memories | {} token-tracked actions",
+        response.recent_activities.len(),
+        response.useful_memories.len(),
+        response.token_usage.action_count
+    );
+    if !response.warnings.is_empty() {
+        println!("\nWarnings:");
+        for warning in &response.warnings {
+            println!("- {warning}");
+        }
+    }
+}
+
+fn activity_kind_text(kind: &mem_api::ActivityKind) -> &'static str {
+    match kind {
+        mem_api::ActivityKind::Checkpoint => "checkpoint",
+        mem_api::ActivityKind::Scan => "scan",
+        mem_api::ActivityKind::Plan => "plan",
+        mem_api::ActivityKind::CommitSync => "commit_sync",
+        mem_api::ActivityKind::BundleExport => "bundle_export",
+        mem_api::ActivityKind::BundleImport => "bundle_import",
+        mem_api::ActivityKind::Query => "query",
+        mem_api::ActivityKind::QueryError => "query_error",
+        mem_api::ActivityKind::WatcherHealth => "watcher_health",
+        mem_api::ActivityKind::MemoryReplacement => "replacement",
+        mem_api::ActivityKind::CaptureTask => "capture",
+        mem_api::ActivityKind::Curate => "curate",
+        mem_api::ActivityKind::Reindex => "reindex",
+        mem_api::ActivityKind::Reembed => "reembed",
+        mem_api::ActivityKind::Archive => "archive",
+        mem_api::ActivityKind::DeleteMemory => "delete",
+        mem_api::ActivityKind::Briefing => "briefing",
     }
 }
 

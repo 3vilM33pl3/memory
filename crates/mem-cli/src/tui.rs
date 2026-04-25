@@ -28,8 +28,9 @@ use mem_api::{
     ProjectOverviewResponse, QueryAnswerMethod, QueryFilters, QueryMatchKind, QueryRequest,
     QueryResponse, QueryResult, ReplacementPolicy, ReplacementProposalListResponse,
     ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest, ResumeResponse, StreamRequest,
-    StreamResponse, WatcherHealth, load_repo_replacement_policy, read_capnp_text_frame,
-    repo_agent_settings_path, write_capnp_text_frame,
+    StreamResponse, UpToSpeedRequest, UpToSpeedResponse, WatcherHealth,
+    load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
+    write_capnp_text_frame,
 };
 use mem_platform::preferred_user_state_dir;
 use ratatui::{
@@ -100,6 +101,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
     );
     terminal.draw(|frame| draw(frame, &app))?;
     app.request_refresh(&api, RefreshMode::Startup);
+    app.request_activities(&api);
     app.request_stream_connect(&api);
     let mut stream: Option<StreamSession> = None;
     let mut last_stream_connect_attempt = Instant::now();
@@ -361,6 +363,12 @@ struct App {
     activity_events: Vec<ActivityEntry>,
     activity_selected_index: usize,
     activity_table_state: TableState,
+    activity_loading: bool,
+    activity_error: Option<String>,
+    activity_detail_scroll: u16,
+    up_to_speed_response: Option<UpToSpeedResponse>,
+    up_to_speed_loading: bool,
+    up_to_speed_error: Option<String>,
     memories_focus: MemoriesFocus,
     memory_detail_scroll: u16,
     project_scroll: u16,
@@ -506,6 +514,12 @@ enum BackgroundEvent {
     ManagerStatusLoaded {
         status: Option<ManagerFooterStatus>,
     },
+    ActivitiesLoaded {
+        response: Box<Result<mem_api::ActivityListResponse, String>>,
+    },
+    UpToSpeedLoaded {
+        response: Box<Result<UpToSpeedResponse, String>>,
+    },
     EmbeddingBackendsLoaded {
         snapshot: Result<mem_api::EmbeddingBackendsResponse, String>,
     },
@@ -604,6 +618,12 @@ impl App {
             activity_events: Vec::new(),
             activity_selected_index: 0,
             activity_table_state,
+            activity_loading: false,
+            activity_error: None,
+            activity_detail_scroll: 0,
+            up_to_speed_response: None,
+            up_to_speed_loading: false,
+            up_to_speed_error: None,
             memories_focus: MemoriesFocus::List,
             memory_detail_scroll: 0,
             project_scroll: 0,
@@ -733,6 +753,54 @@ impl App {
             memory_id,
             self.background_tx.clone(),
         );
+    }
+
+    fn request_activities(&mut self, api: &ApiClient) {
+        if self.activity_loading {
+            return;
+        }
+        self.activity_loading = true;
+        self.activity_error = None;
+        self.needs_redraw = true;
+        let api = api.clone();
+        let project = self.project.clone();
+        let tx = self.background_tx.clone();
+        tokio::spawn(async move {
+            let response = api
+                .project_activities(&project, 100, None)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = tx.send(BackgroundEvent::ActivitiesLoaded {
+                response: Box::new(response),
+            });
+        });
+    }
+
+    fn request_up_to_speed(&mut self, api: &ApiClient, include_llm_summary: bool) {
+        if self.up_to_speed_loading {
+            return;
+        }
+        self.up_to_speed_loading = true;
+        self.up_to_speed_error = None;
+        self.status_message = "Generating get-up-to-speed briefing...".to_string();
+        self.ui_status = UiStatus::Busy;
+        self.needs_redraw = true;
+        let api = api.clone();
+        let request = UpToSpeedRequest {
+            project: self.project.clone(),
+            include_llm_summary,
+            limit: 20,
+        };
+        let tx = self.background_tx.clone();
+        tokio::spawn(async move {
+            let response = api
+                .up_to_speed(&request)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = tx.send(BackgroundEvent::UpToSpeedLoaded {
+                response: Box::new(response),
+            });
+        });
     }
 
     async fn refresh(&mut self, api: &ApiClient, mode: RefreshMode) {
@@ -1035,6 +1103,44 @@ impl App {
             BackgroundEvent::ManagerStatusLoaded { status } => {
                 self.manager_status = status;
             }
+            BackgroundEvent::ActivitiesLoaded { response } => {
+                self.activity_loading = false;
+                match *response {
+                    Ok(response) => {
+                        self.activity_error = None;
+                        self.activity_events = response
+                            .items
+                            .into_iter()
+                            .map(ActivityEntry::Backend)
+                            .collect();
+                        self.finish_activity_insert();
+                        self.status_message = format!(
+                            "Loaded {} persisted activity event(s).",
+                            self.activity_events.len()
+                        );
+                    }
+                    Err(error) => {
+                        self.activity_error = Some(error.clone());
+                        self.status_message = format!("Activities unavailable: {error}");
+                    }
+                }
+            }
+            BackgroundEvent::UpToSpeedLoaded { response } => {
+                self.up_to_speed_loading = false;
+                match *response {
+                    Ok(response) => {
+                        self.up_to_speed_error = None;
+                        self.up_to_speed_response = Some(response);
+                        self.status_message = "Get-up-to-speed briefing generated.".to_string();
+                        self.ui_status = UiStatus::Ready;
+                    }
+                    Err(error) => {
+                        self.up_to_speed_error = Some(error.clone());
+                        self.status_message = format!("Get-up-to-speed failed: {error}");
+                        self.ui_status = UiStatus::Error;
+                    }
+                }
+            }
             BackgroundEvent::EmbeddingBackendsLoaded { snapshot } => match snapshot {
                 Ok(snapshot) => {
                     self.embedding_backends_error = None;
@@ -1197,7 +1303,11 @@ impl App {
                     self.request_resume_refresh(api, false);
                 }
             }
-            KeyCode::Char('r') if key.modifiers.is_empty() => {
+            KeyCode::Char('r')
+                if key.modifiers.is_empty()
+                    && self.active_tab != TabKind::Activity
+                    && self.active_tab != TabKind::Embeddings =>
+            {
                 self.refresh(api, RefreshMode::Full).await
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Resume => {
@@ -1253,6 +1363,26 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Activity => {
                 self.move_activity_selection(-1);
+            }
+            KeyCode::Char('r') if self.active_tab == TabKind::Activity => {
+                self.request_activities(api);
+            }
+            KeyCode::Char('g') if self.active_tab == TabKind::Activity => {
+                self.request_up_to_speed(api, false);
+            }
+            KeyCode::Char('L')
+                if self.active_tab == TabKind::Activity && key.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.request_up_to_speed(api, true);
+            }
+            KeyCode::PageDown if self.active_tab == TabKind::Activity => {
+                self.activity_detail_scroll = self.activity_detail_scroll.saturating_add(8);
+            }
+            KeyCode::PageUp if self.active_tab == TabKind::Activity => {
+                self.activity_detail_scroll = self.activity_detail_scroll.saturating_sub(8);
+            }
+            KeyCode::Home if self.active_tab == TabKind::Activity => {
+                self.activity_detail_scroll = 0;
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Project => {
                 self.scroll_project(1);
@@ -2002,6 +2132,10 @@ impl App {
                 message.as_deref(),
             );
         }
+        self.activity_events.retain(|entry| match entry {
+            ActivityEntry::Backend(existing) => existing.id != event.id,
+            ActivityEntry::Query(_) => true,
+        });
         self.activity_events
             .insert(0, ActivityEntry::Backend(event));
         self.finish_activity_insert();
@@ -2012,7 +2146,12 @@ impl App {
             self.activity_events.truncate(200);
         }
         self.activity_selected_index = 0;
-        self.activity_table_state.select(Some(0));
+        if self.activity_events.is_empty() {
+            self.activity_table_state.select(None);
+        } else {
+            self.activity_table_state.select(Some(0));
+        }
+        self.activity_detail_scroll = 0;
     }
 
     fn move_activity_selection(&mut self, delta: isize) {
@@ -2324,7 +2463,6 @@ enum TabKind {
     Memories,
     Agents,
     Query,
-    #[allow(dead_code)]
     Activity,
     Project,
     Review,
@@ -2333,10 +2471,11 @@ enum TabKind {
     Resume,
 }
 
-const VISIBLE_TABS: [TabKind; 8] = [
+const VISIBLE_TABS: [TabKind; 9] = [
     TabKind::Memories,
     TabKind::Agents,
     TabKind::Query,
+    TabKind::Activity,
     TabKind::Project,
     TabKind::Review,
     TabKind::Watchers,
@@ -2363,7 +2502,7 @@ impl TabKind {
         match self {
             Self::Memories => Self::Agents,
             Self::Agents => Self::Query,
-            Self::Query => Self::Project,
+            Self::Query => Self::Activity,
             Self::Activity => Self::Project,
             Self::Project => Self::Review,
             Self::Review => Self::Watchers,
@@ -2379,7 +2518,7 @@ impl TabKind {
             Self::Agents => Self::Memories,
             Self::Query => Self::Agents,
             Self::Activity => Self::Query,
-            Self::Project => Self::Query,
+            Self::Project => Self::Activity,
             Self::Review => Self::Project,
             Self::Watchers => Self::Review,
             Self::Embeddings => Self::Watchers,
@@ -2392,11 +2531,12 @@ impl TabKind {
             Self::Memories => 0,
             Self::Agents => 1,
             Self::Query => 2,
-            Self::Activity | Self::Project => 3,
-            Self::Review => 4,
-            Self::Watchers => 5,
-            Self::Embeddings => 6,
-            Self::Resume => 7,
+            Self::Activity => 3,
+            Self::Project => 4,
+            Self::Review => 5,
+            Self::Watchers => 6,
+            Self::Embeddings => 7,
+            Self::Resume => 8,
         }
     }
 }
@@ -2677,8 +2817,12 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             ),
         ],
         TabKind::Activity => vec![
-            accent_span("activity "),
-            Span::styled("hidden diagnostic view", Style::default().fg(Theme::MUTED)),
+            accent_span("brief "),
+            Span::styled("g deterministic / L llm  ", Style::default().fg(Theme::TEXT)),
+            accent_span("refresh "),
+            Span::styled("r  ", Style::default().fg(Theme::TEXT)),
+            accent_span("move "),
+            Span::styled("j/k PgUp/PgDn", Style::default().fg(Theme::TEXT)),
         ],
         TabKind::Project => vec![
             accent_span("scroll "),
@@ -4720,12 +4864,26 @@ fn append_resume_briefing_lines(lines: &mut Vec<Line<'static>>, briefing: &str) 
 }
 
 fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(9), Constraint::Min(8)])
+        .split(area);
+
+    let briefing_lines = activity_briefing_lines(app);
+    frame.render_widget(
+        Paragraph::new(briefing_lines)
+            .style(Style::default().bg(Theme::PANEL_ALT))
+            .wrap(Wrap { trim: false })
+            .block(themed_block("Get Up To Speed")),
+        vertical[0],
+    );
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-        .split(area);
+        .split(vertical[1]);
 
-    let header = Row::new(["When", "Kind", "Summary"]).style(
+    let header = Row::new(["When", "Kind", "Tok", "Ms", "Summary"]).style(
         Style::default()
             .fg(Theme::ACCENT_STRONG)
             .bg(Theme::PANEL_ALT)
@@ -4737,6 +4895,8 @@ fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         [
             Constraint::Length(16),
             Constraint::Length(11),
+            Constraint::Length(7),
+            Constraint::Length(6),
             Constraint::Percentage(100),
         ],
     )
@@ -4765,10 +4925,72 @@ fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     };
 
     let detail = Paragraph::new(detail_lines)
+        .scroll((app.activity_detail_scroll, 0))
         .style(Style::default().bg(Theme::PANEL))
         .wrap(Wrap { trim: false })
-        .block(themed_block("Activity Detail"));
+        .block(themed_block(format!(
+            "Activity Detail (scroll {})",
+            app.activity_detail_scroll
+        )));
     frame.render_widget(detail, chunks[1]);
+}
+
+fn activity_briefing_lines(app: &App) -> Vec<Line<'static>> {
+    if app.up_to_speed_loading {
+        return vec![Line::from(Span::styled(
+            "Generating get-up-to-speed briefing...",
+            Style::default().fg(Theme::ACCENT_STRONG),
+        ))];
+    }
+    if let Some(error) = &app.up_to_speed_error {
+        return vec![Line::from(Span::styled(
+            format!("Briefing failed: {error}"),
+            Style::default().fg(Theme::DANGER),
+        ))];
+    }
+    if let Some(response) = &app.up_to_speed_response {
+        let mut lines = vec![Line::from(Span::styled(
+            response
+                .briefing
+                .lines()
+                .next()
+                .unwrap_or("Get-up-to-speed briefing")
+                .to_string(),
+            Style::default().fg(Theme::TEXT),
+        ))];
+        if !response.next_actions.is_empty() {
+            lines.push(Line::from(vec![
+                label_span("Next: "),
+                Span::styled(
+                    response.next_actions[0].title.clone(),
+                    Style::default().fg(Theme::ACCENT_STRONG),
+                ),
+            ]));
+        }
+        lines.push(Line::from(vec![
+            label_span("Support: "),
+            Span::styled(
+                format!(
+                    "{} activities / {} useful memories / {} token-tracked actions",
+                    response.recent_activities.len(),
+                    response.useful_memories.len(),
+                    response.token_usage.action_count
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]));
+        return lines;
+    }
+    vec![
+        Line::from(Span::styled(
+            "Press g for a deterministic briefing, or L for an LLM-assisted briefing.",
+            Style::default().fg(Theme::TEXT),
+        )),
+        Line::from(Span::styled(
+            "The briefing uses persisted activities, recent memory changes, commits, warnings, and token counts.",
+            Style::default().fg(Theme::MUTED),
+        )),
+    ]
 }
 
 fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'static>> {
@@ -5120,6 +5342,14 @@ fn activity_row(item: &ActivityEntry) -> Row<'static> {
             Style::default().fg(Theme::TEXT),
         )),
         Cell::from(activity_entry_kind_span(item)),
+        Cell::from(Span::styled(
+            activity_tokens(item),
+            Style::default().fg(Theme::ACCENT_STRONG),
+        )),
+        Cell::from(Span::styled(
+            activity_duration(item),
+            Style::default().fg(Theme::MUTED),
+        )),
         Cell::from(Span::styled(
             activity_summary(item),
             Style::default().fg(Theme::TEXT),
@@ -5522,6 +5752,18 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                 Style::default().fg(Theme::MUTED),
             ),
         ]),
+        activity_kv_line(
+            "Duration",
+            activity_duration(&ActivityEntry::Backend(event.clone())),
+        ),
+        activity_kv_line(
+            "Tokens",
+            activity_tokens(&ActivityEntry::Backend(event.clone())),
+        ),
+        activity_kv_line(
+            "Source",
+            event.source.clone().unwrap_or_else(|| "n/a".to_string()),
+        ),
         Line::from(""),
         Line::from(vec![section_span("Summary")]),
         Line::from(Span::styled(
@@ -5892,6 +6134,45 @@ fn activity_summary(item: &ActivityEntry) -> String {
                 }
             }
         }
+    }
+}
+
+fn activity_tokens(item: &ActivityEntry) -> String {
+    match item {
+        ActivityEntry::Backend(event) => event
+            .token_usage
+            .as_ref()
+            .map(|usage| format_compact_count(usage.total_tokens))
+            .unwrap_or_else(|| "-".to_string()),
+        ActivityEntry::Query(entry) => match &entry.outcome {
+            QueryLogOutcome::Success(response) => response
+                .answer_generation
+                .token_usage
+                .as_ref()
+                .map(|usage| format_compact_count(usage.total_tokens))
+                .unwrap_or_else(|| "-".to_string()),
+            QueryLogOutcome::Error(_) => "-".to_string(),
+        },
+    }
+}
+
+fn activity_duration(item: &ActivityEntry) -> String {
+    match item {
+        ActivityEntry::Backend(event) => event
+            .duration_ms
+            .map(|value| format_compact_count(value))
+            .unwrap_or_else(|| "-".to_string()),
+        ActivityEntry::Query(entry) => format_compact_count(entry.duration_ms),
+    }
+}
+
+fn format_compact_count(value: u64) -> String {
+    if value >= 1_000_000 {
+        format!("{:.1}m", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        format!("{:.1}k", value as f64 / 1_000.0)
+    } else {
+        value.to_string()
     }
 }
 
@@ -6418,6 +6699,7 @@ fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
         ActivityKind::Reembed => ("reembed", Theme::ACCENT_STRONG),
         ActivityKind::Archive => ("archive", Theme::WARNING),
         ActivityKind::DeleteMemory => ("delete", Theme::DANGER),
+        ActivityKind::Briefing => ("briefing", Theme::SUCCESS),
         ActivityKind::WatcherHealth => ("watcher-health", Theme::WARNING),
     };
     Span::styled(

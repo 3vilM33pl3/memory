@@ -1351,6 +1351,7 @@ fn synthesize_answer(results: &[QueryResult]) -> QueryAnswerSynthesis {
             evidence_count: citations.len(),
             duration_ms: 0,
             fallback_reason: None,
+            token_usage: None,
         },
         answer_citations: citations,
     }

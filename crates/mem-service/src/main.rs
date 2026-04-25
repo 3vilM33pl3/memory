@@ -22,21 +22,22 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use mem_api::{
-    ActivateEmbeddingBackendRequest, ActivityDetails, ActivityEvent, ActivityKind, AppConfig,
-    ArchiveRequest, ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest,
-    CommitDetailResponse, CommitSyncRequest, CommitSyncResponse, CurateRequest,
-    DeleteMemoryRequest, DeleteMemoryResponse, EmbeddingBackendInfo, EmbeddingBackendsResponse,
-    MemoryEntryResponse, MemoryHistoryResponse, MemorySourceRecord, PlanActivityAction,
-    PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
-    ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
-    ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
-    ProjectMemoryImportResponse, ProjectOverviewResponse, PruneEmbeddingsRequest,
-    PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryAnswerCitation,
-    QueryAnswerGeneration, QueryAnswerMethod, QueryRequest, QueryResponse, ReembedRequest,
-    ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
-    ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
-    ResumeRequest, ResumeResponse, ScanActivityRequest, SourceKind, StatsResponse, StreamRequest,
-    StreamResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
+    ActivateEmbeddingBackendRequest, ActivityDetails, ActivityEvent, ActivityKind,
+    ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
+    CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
+    CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, EmbeddingBackendInfo,
+    EmbeddingBackendsResponse, MemoryEntryResponse, MemoryHistoryResponse, MemorySourceRecord,
+    PlanActivityAction, PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse,
+    ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest,
+    ProjectMemoryBundlePreview, ProjectMemoryBundleSource, ProjectMemoryExportOptions,
+    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectMemoryListItem,
+    ProjectOverviewResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse, PruneHistoryRequest,
+    PruneHistoryResponse, QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod,
+    QueryRequest, QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
+    RelatedMemorySummary, ReplacementProposalListResponse, ReplacementProposalResolutionResponse,
+    ResumeAction, ResumeRequest, ResumeResponse, ScanActivityRequest, SourceKind, StatsResponse,
+    StreamRequest, StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest,
+    UpToSpeedResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
     WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
     WatcherUnregisterRequest, read_capnp_text_frame, write_capnp_text_frame,
 };
@@ -95,12 +96,21 @@ struct AppState {
 
 #[derive(Clone, Debug)]
 struct ServiceEvent {
+    id: Uuid,
     project: String,
     memory_id: Option<Uuid>,
     kind: ActivityKind,
     summary: String,
     details: Option<ActivityDetails>,
     recorded_at: chrono::DateTime<chrono::Utc>,
+    actor_id: Option<String>,
+    actor_name: Option<String>,
+    source: Option<String>,
+    operation_id: Option<String>,
+    duration_ms: Option<u64>,
+    provider: Option<String>,
+    model: Option<String>,
+    token_usage: Option<TokenUsage>,
     include_activity: bool,
 }
 
@@ -420,6 +430,8 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/projects/{slug}/memories", get(project_memories))
         .route("/v1/projects/{slug}/overview", get(project_overview))
         .route("/v1/projects/{slug}/resume", post(project_resume))
+        .route("/v1/projects/{slug}/activities", get(project_activities))
+        .route("/v1/projects/{slug}/up-to-speed", post(project_up_to_speed))
         .route("/v1/watchers/heartbeat", post(watcher_heartbeat))
         .route("/v1/watchers/unregister", post(watcher_unregister))
         .route("/v1/watchers/restart-local", post(watcher_restart_local))
@@ -1973,7 +1985,7 @@ async fn query(
     match query_memory(pool, &request, embedders.active()).await {
         Ok(mut response) => {
             enrich_query_answer_with_llm(&state, &request, &mut response).await;
-            notify_project_changed(
+            notify_project_changed_with_metadata(
                 &state,
                 request.project.clone(),
                 None,
@@ -1989,6 +2001,14 @@ async fn query(
                     answer: Some(response.answer.clone()),
                     error: None,
                 }),
+                None,
+                None,
+                Some("query".to_string()),
+                None,
+                Some(response.answer_generation.duration_ms),
+                Some(state.config.llm.provider.clone()),
+                Some(state.config.llm.model.clone()),
+                response.answer_generation.token_usage.clone(),
             );
             Ok(Json(response))
         }
@@ -3451,6 +3471,177 @@ async fn project_resume(
     }))
 }
 
+#[derive(Debug, Deserialize)]
+struct ActivityListQuery {
+    limit: Option<usize>,
+    kind: Option<String>,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    before: Option<chrono::DateTime<chrono::Utc>>,
+    include_details: Option<bool>,
+}
+
+async fn project_activities(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(query): Query<ActivityListQuery>,
+) -> Result<Json<ActivityListResponse>, ApiError> {
+    if !state.is_primary() {
+        let mut path = format!("/v1/projects/{slug}/activities");
+        let mut params = Vec::new();
+        if let Some(limit) = query.limit {
+            params.push(format!("limit={limit}"));
+        }
+        if let Some(kind) = &query.kind {
+            params.push(format!("kind={kind}"));
+        }
+        if let Some(since) = query.since {
+            params.push(format!("since={}", since.to_rfc3339()));
+        }
+        if let Some(before) = query.before {
+            params.push(format!("before={}", before.to_rfc3339()));
+        }
+        if let Some(include_details) = query.include_details {
+            params.push(format!("include_details={include_details}"));
+        }
+        if !params.is_empty() {
+            path.push('?');
+            path.push_str(&params.join("&"));
+        }
+        return Ok(Json(proxy_get_json(&state, &path).await?));
+    }
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let mut items = fetch_project_activities(
+        state.pool()?,
+        &slug,
+        query.since,
+        query.before,
+        query.kind.as_deref(),
+        limit,
+        query.include_details.unwrap_or(true),
+    )
+    .await
+    .map_err(ApiError::sql)?;
+    if !query.include_details.unwrap_or(true) {
+        for item in &mut items {
+            item.details = None;
+        }
+    }
+    Ok(Json(ActivityListResponse {
+        project: slug,
+        total_returned: items.len(),
+        items,
+    }))
+}
+
+async fn project_up_to_speed(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Json(request): Json<UpToSpeedRequest>,
+) -> Result<Json<UpToSpeedResponse>, ApiError> {
+    request.validate().map_err(ApiError::validation)?;
+    if request.project != slug {
+        return Err(ApiError::validation(ValidationError::new(
+            "request project must match path slug",
+        )));
+    }
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(
+                &state,
+                &format!("/v1/projects/{slug}/up-to-speed"),
+                &request,
+                false,
+            )
+            .await?,
+        ));
+    }
+    let response = build_up_to_speed_response(&state, &slug, &request).await?;
+    notify_project_changed(
+        &state,
+        slug,
+        None,
+        ActivityKind::Briefing,
+        "Generated get-up-to-speed briefing.".to_string(),
+        None,
+    );
+    Ok(Json(response))
+}
+
+async fn build_up_to_speed_response(
+    state: &AppState,
+    slug: &str,
+    request: &UpToSpeedRequest,
+) -> Result<UpToSpeedResponse, ApiError> {
+    let pool = state.pool()?;
+    let limit = request.limit.clamp(1, 50);
+    let overview_fut = fetch_project_overview_with_watchers(state, slug);
+    let activities_fut = fetch_project_activities(pool, slug, None, None, None, limit, true);
+    let commits_fut = fetch_project_commits_since(pool, slug, None, 8);
+    let durable_context_fut = fetch_durable_resume_context(pool, slug, 8);
+    let active_plan_fut = fetch_latest_active_plan_memory(pool, slug);
+    let (overview, all_activities, commits, durable_context, active_plan) = tokio::try_join!(
+        overview_fut,
+        activities_fut,
+        commits_fut,
+        durable_context_fut,
+        active_plan_fut,
+    )
+    .map_err(ApiError::sql)?;
+    let recent_activities = all_activities
+        .into_iter()
+        .filter(|event| !matches!(event.kind, ActivityKind::Briefing))
+        .collect::<Vec<_>>();
+    let changed_memories = fetch_recent_project_memories(pool, slug, None, 8)
+        .await
+        .map_err(ApiError::sql)?;
+    let warnings = resume_warnings(&overview);
+    let next_actions = resume_actions(slug, None, &overview, &recent_activities, &changed_memories);
+    let recent_work = build_change_summary(&recent_activities, &commits, &changed_memories);
+    let blockers = build_attention_items(&overview, &recent_activities);
+    let useful_memories =
+        select_resume_context(&changed_memories, &durable_context, active_plan.as_ref());
+    let current_focus = infer_current_thread(
+        None,
+        &overview,
+        &recent_activities,
+        &commits,
+        &changed_memories,
+        active_plan.as_ref(),
+    )
+    .into_iter()
+    .collect::<Vec<_>>();
+    let token_usage = summarize_activity_tokens(&recent_activities);
+    let deterministic = build_up_to_speed_briefing(
+        slug,
+        &current_focus,
+        &recent_work,
+        &blockers,
+        &next_actions,
+        &useful_memories,
+        &token_usage,
+    );
+    let briefing = if request.include_llm_summary {
+        summarize_resume_with_llm(state, slug, &deterministic)
+            .await
+            .unwrap_or(deterministic)
+    } else {
+        deterministic
+    };
+    Ok(UpToSpeedResponse {
+        project: slug.to_string(),
+        generated_at: chrono::Utc::now(),
+        briefing,
+        current_focus,
+        recent_work,
+        blockers,
+        next_actions,
+        useful_memories,
+        recent_activities,
+        token_usage,
+        warnings,
+    })
+}
+
 async fn fetch_project_timeline(
     pool: &PgPool,
     slug: &str,
@@ -3459,7 +3650,9 @@ async fn fetch_project_timeline(
 ) -> Result<Vec<ActivityEvent>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
-        SELECT te.recorded_at, p.slug AS project, te.kind, te.memory_id, te.summary, te.details_json
+        SELECT te.id, te.recorded_at, p.slug AS project, te.kind, te.memory_id, te.summary, te.details_json,
+               te.actor_id, te.actor_name, te.source, te.operation_id, te.duration_ms, te.provider, te.model,
+               te.input_tokens, te.output_tokens, te.cache_read_tokens, te.cache_write_tokens, te.total_tokens
         FROM project_timeline_events te
         JOIN projects p ON p.id = te.project_id
         WHERE p.slug = $1
@@ -3481,15 +3674,127 @@ async fn fetch_project_timeline(
             .try_get::<Option<sqlx::types::Json<ActivityDetails>>, _>("details_json")?
             .map(|payload| payload.0);
         items.push(ActivityEvent {
+            id: row.try_get("id")?,
             recorded_at: row.try_get("recorded_at")?,
             project: row.try_get("project")?,
             kind: parse_activity_kind(&kind),
             memory_id: row.try_get("memory_id")?,
             summary: row.try_get("summary")?,
             details,
+            actor_id: row.try_get("actor_id")?,
+            actor_name: row.try_get("actor_name")?,
+            source: row.try_get("source")?,
+            operation_id: row.try_get("operation_id")?,
+            duration_ms: row
+                .try_get::<Option<i64>, _>("duration_ms")?
+                .map(|value| value as u64),
+            provider: row.try_get("provider")?,
+            model: row.try_get("model")?,
+            token_usage: token_usage_from_row(&row)?,
         });
     }
     Ok(items)
+}
+
+async fn fetch_project_activities(
+    pool: &PgPool,
+    slug: &str,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    before: Option<chrono::DateTime<chrono::Utc>>,
+    kind: Option<&str>,
+    limit: usize,
+    include_details: bool,
+) -> Result<Vec<ActivityEvent>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT te.id, te.recorded_at, p.slug AS project, te.kind, te.memory_id, te.summary,
+               CASE WHEN $6 THEN te.details_json ELSE NULL END AS details_json,
+               te.actor_id, te.actor_name, te.source, te.operation_id, te.duration_ms, te.provider, te.model,
+               te.input_tokens, te.output_tokens, te.cache_read_tokens, te.cache_write_tokens, te.total_tokens
+        FROM project_timeline_events te
+        JOIN projects p ON p.id = te.project_id
+        WHERE p.slug = $1
+          AND ($2::timestamptz IS NULL OR te.recorded_at >= $2)
+          AND ($3::timestamptz IS NULL OR te.recorded_at < $3)
+          AND ($4::text IS NULL OR te.kind = $4)
+        ORDER BY te.recorded_at DESC
+        LIMIT $5
+        "#,
+    )
+    .bind(slug)
+    .bind(since)
+    .bind(before)
+    .bind(kind)
+    .bind(limit as i64)
+    .bind(include_details)
+    .fetch_all(pool)
+    .await?;
+    activity_events_from_rows(rows)
+}
+
+fn activity_events_from_rows(
+    rows: Vec<sqlx::postgres::PgRow>,
+) -> Result<Vec<ActivityEvent>, sqlx::Error> {
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        let kind: String = row.try_get("kind")?;
+        let details = row
+            .try_get::<Option<sqlx::types::Json<ActivityDetails>>, _>("details_json")?
+            .map(|payload| payload.0);
+        items.push(ActivityEvent {
+            id: row.try_get("id")?,
+            recorded_at: row.try_get("recorded_at")?,
+            project: row.try_get("project")?,
+            kind: parse_activity_kind(&kind),
+            memory_id: row.try_get("memory_id")?,
+            summary: row.try_get("summary")?,
+            details,
+            actor_id: row.try_get("actor_id")?,
+            actor_name: row.try_get("actor_name")?,
+            source: row.try_get("source")?,
+            operation_id: row.try_get("operation_id")?,
+            duration_ms: row
+                .try_get::<Option<i64>, _>("duration_ms")?
+                .map(|value| value as u64),
+            provider: row.try_get("provider")?,
+            model: row.try_get("model")?,
+            token_usage: token_usage_from_row(&row)?,
+        });
+    }
+    Ok(items)
+}
+
+fn token_usage_from_row(row: &sqlx::postgres::PgRow) -> Result<Option<TokenUsage>, sqlx::Error> {
+    let input_tokens = row
+        .try_get::<Option<i64>, _>("input_tokens")?
+        .unwrap_or_default() as u64;
+    let output_tokens = row
+        .try_get::<Option<i64>, _>("output_tokens")?
+        .unwrap_or_default() as u64;
+    let cache_read_tokens = row
+        .try_get::<Option<i64>, _>("cache_read_tokens")?
+        .unwrap_or_default() as u64;
+    let cache_write_tokens = row
+        .try_get::<Option<i64>, _>("cache_write_tokens")?
+        .unwrap_or_default() as u64;
+    let total_tokens = row
+        .try_get::<Option<i64>, _>("total_tokens")?
+        .unwrap_or_default() as u64;
+    if input_tokens == 0
+        && output_tokens == 0
+        && cache_read_tokens == 0
+        && cache_write_tokens == 0
+        && total_tokens == 0
+    {
+        return Ok(None);
+    }
+    Ok(Some(TokenUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+        total_tokens,
+    }))
 }
 
 async fn fetch_project_commits_since(
@@ -3865,6 +4170,7 @@ fn infer_current_thread(
             ActivityKind::Archive | ActivityKind::DeleteMemory => {
                 "Recent work changed the active memory set for the project."
             }
+            ActivityKind::Briefing => "Recent work generated a get-up-to-speed briefing.",
             ActivityKind::Checkpoint => "",
         };
         if !thread.is_empty() {
@@ -4013,6 +4319,7 @@ fn format_resume_event_summary(event: &ActivityEvent) -> String {
                     .trim();
                 format!("Query explored: {query}")
             }
+            ActivityKind::Briefing => "Generated a get-up-to-speed briefing".to_string(),
             _ => event.summary.trim().to_string(),
         },
     };
@@ -4204,6 +4511,88 @@ fn build_resume_briefing(
     lines.join("\n")
 }
 
+fn summarize_activity_tokens(events: &[ActivityEvent]) -> TokenUsageSummary {
+    let mut summary = TokenUsageSummary::default();
+    for usage in events.iter().filter_map(|event| event.token_usage.as_ref()) {
+        summary.action_count += 1;
+        summary.total_input_tokens += usage.input_tokens;
+        summary.total_output_tokens += usage.output_tokens;
+        summary.total_cache_read_tokens += usage.cache_read_tokens;
+        summary.total_cache_write_tokens += usage.cache_write_tokens;
+        summary.total_tokens += usage.total_tokens;
+    }
+    summary
+}
+
+fn build_up_to_speed_briefing(
+    project: &str,
+    current_focus: &[String],
+    recent_work: &[String],
+    blockers: &[String],
+    next_actions: &[ResumeAction],
+    useful_memories: &[ProjectMemoryListItem],
+    token_usage: &TokenUsageSummary,
+) -> String {
+    let mut lines = vec![format!("Get up to speed for `{project}`.")];
+    if !current_focus.is_empty() {
+        lines.push(String::new());
+        lines.push("Current focus:".to_string());
+        for item in current_focus {
+            lines.push(format!("- {item}"));
+        }
+    }
+    if !recent_work.is_empty() {
+        lines.push(String::new());
+        lines.push("Recent work:".to_string());
+        for item in recent_work.iter().take(6) {
+            lines.push(format!("- {item}"));
+        }
+    }
+    if !blockers.is_empty() {
+        lines.push(String::new());
+        lines.push("Needs attention:".to_string());
+        for item in blockers.iter().take(6) {
+            lines.push(format!("- {item}"));
+        }
+    }
+    if !useful_memories.is_empty() {
+        lines.push(String::new());
+        lines.push("Useful memories:".to_string());
+        for item in useful_memories.iter().take(6) {
+            lines.push(format!("- [{}] {}", item.memory_type, item.summary));
+        }
+    }
+    if token_usage.action_count > 0 {
+        lines.push(String::new());
+        lines.push(format!(
+            "Token usage across {} recent action(s): {} total ({} input, {} output, {} cache read, {} cache write).",
+            token_usage.action_count,
+            token_usage.total_tokens,
+            token_usage.total_input_tokens,
+            token_usage.total_output_tokens,
+            token_usage.total_cache_read_tokens,
+            token_usage.total_cache_write_tokens,
+        ));
+    }
+    if !next_actions.is_empty() {
+        lines.push(String::new());
+        lines.push("Recommended next actions:".to_string());
+        for action in next_actions.iter().take(3) {
+            lines.push(format!("- {}: {}", action.title, action.rationale));
+            if let Some(command_hint) = &action.command_hint {
+                lines.push(format!("  {command_hint}"));
+            }
+        }
+    }
+    if lines.len() == 1 {
+        lines.push(
+            "No recent activity was found. Start with `memory query` or inspect the TUI."
+                .to_string(),
+        );
+    }
+    lines.join("\n")
+}
+
 async fn summarize_resume_with_llm(
     state: &AppState,
     project: &str,
@@ -4284,6 +4673,7 @@ async fn enrich_query_answer_with_llm(
                 evidence_count: response.answer_citations.len(),
                 duration_ms: started.elapsed().as_millis() as u64,
                 fallback_reason: None,
+                token_usage: answer.token_usage,
             };
         }
         Err(error) => {
@@ -4298,6 +4688,7 @@ async fn enrich_query_answer_with_llm(
                 evidence_count: response.answer_citations.len(),
                 duration_ms: started.elapsed().as_millis() as u64,
                 fallback_reason: Some(error.to_string()),
+                token_usage: None,
             };
         }
     }
@@ -4310,6 +4701,7 @@ struct LlmQueryAnswer {
     insufficient_evidence: bool,
     cited_result_numbers: Vec<usize>,
     citations: Vec<QueryAnswerCitation>,
+    token_usage: Option<TokenUsage>,
 }
 
 #[derive(Debug, SerdeDeserialize)]
@@ -4373,7 +4765,9 @@ async fn synthesize_query_answer_with_llm(
     if !status.is_success() {
         anyhow::bail!("llm query answer failed: {status} {body}");
     }
-    parse_llm_query_answer_body(&body, response)
+    let mut answer = parse_llm_query_answer_body(&body, response)?;
+    answer.token_usage = token_usage_from_chat_body(&body);
+    Ok(answer)
 }
 
 fn build_query_answer_prompt(request: &QueryRequest, response: &QueryResponse) -> String {
@@ -4463,6 +4857,50 @@ fn parse_llm_query_answer_content(
         insufficient_evidence: payload.insufficient_evidence || citations.is_empty(),
         cited_result_numbers,
         citations,
+        token_usage: None,
+    })
+}
+
+fn token_usage_from_chat_body(body: &str) -> Option<TokenUsage> {
+    let payload: serde_json::Value = serde_json::from_str(body).ok()?;
+    let usage = payload.get("usage")?;
+    let input_tokens = usage
+        .get("prompt_tokens")
+        .or_else(|| usage.get("input_tokens"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let output_tokens = usage
+        .get("completion_tokens")
+        .or_else(|| usage.get("output_tokens"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let cache_read_tokens = usage
+        .get("cache_read_input_tokens")
+        .or_else(|| usage.get("cached_input_tokens"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let cache_write_tokens = usage
+        .get("cache_creation_input_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens);
+    if input_tokens == 0
+        && output_tokens == 0
+        && cache_read_tokens == 0
+        && cache_write_tokens == 0
+        && total_tokens == 0
+    {
+        return None;
+    }
+    Some(TokenUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+        total_tokens,
     })
 }
 
@@ -4531,6 +4969,7 @@ fn parse_activity_kind(value: &str) -> ActivityKind {
         "reembed" => ActivityKind::Reembed,
         "archive" => ActivityKind::Archive,
         "delete_memory" => ActivityKind::DeleteMemory,
+        "briefing" => ActivityKind::Briefing,
         _ => ActivityKind::Query,
     }
 }
@@ -4961,10 +5400,38 @@ fn persist_timeline_event(state: &AppState, event: &ServiceEvent) {
     };
     let project = event.project.clone();
     let kind = activity_kind_label(&event.kind).to_string();
+    let id = event.id;
     let summary = event.summary.clone();
     let memory_id = event.memory_id;
     let recorded_at = event.recorded_at;
     let details = event.details.clone().map(sqlx::types::Json);
+    let actor_id = event.actor_id.clone();
+    let actor_name = event.actor_name.clone();
+    let source = event.source.clone();
+    let operation_id = event.operation_id.clone();
+    let duration_ms = event.duration_ms.map(|value| value as i64);
+    let provider = event.provider.clone();
+    let model = event.model.clone();
+    let input_tokens = event
+        .token_usage
+        .as_ref()
+        .map(|usage| usage.input_tokens as i64);
+    let output_tokens = event
+        .token_usage
+        .as_ref()
+        .map(|usage| usage.output_tokens as i64);
+    let cache_read_tokens = event
+        .token_usage
+        .as_ref()
+        .map(|usage| usage.cache_read_tokens as i64);
+    let cache_write_tokens = event
+        .token_usage
+        .as_ref()
+        .map(|usage| usage.cache_write_tokens as i64);
+    let total_tokens = event
+        .token_usage
+        .as_ref()
+        .map(|usage| usage.total_tokens as i64);
     tokio::spawn(async move {
         let project_id = match sqlx::query("SELECT id FROM projects WHERE slug = $1")
             .bind(&project)
@@ -4979,17 +5446,33 @@ fn persist_timeline_event(state: &AppState, event: &ServiceEvent) {
         };
         let _ = sqlx::query(
             r#"
-            INSERT INTO project_timeline_events (id, project_id, recorded_at, kind, memory_id, summary, details_json)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO project_timeline_events (
+                id, project_id, recorded_at, kind, memory_id, summary, details_json,
+                actor_id, actor_name, source, operation_id, duration_ms, provider, model,
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             "#,
         )
-        .bind(Uuid::new_v4())
+        .bind(id)
         .bind(project_id)
         .bind(recorded_at)
         .bind(kind)
         .bind(memory_id)
         .bind(summary)
         .bind(details)
+        .bind(actor_id)
+        .bind(actor_name)
+        .bind(source)
+        .bind(operation_id)
+        .bind(duration_ms)
+        .bind(provider)
+        .bind(model)
+        .bind(input_tokens)
+        .bind(output_tokens)
+        .bind(cache_read_tokens)
+        .bind(cache_write_tokens)
+        .bind(total_tokens)
         .execute(&pool)
         .await;
     });
@@ -5003,13 +5486,45 @@ fn notify_project_changed(
     summary: String,
     details: Option<ActivityDetails>,
 ) {
+    notify_project_changed_with_metadata(
+        state, project, memory_id, kind, summary, details, None, None, None, None, None, None,
+        None, None,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn notify_project_changed_with_metadata(
+    state: &AppState,
+    project: String,
+    memory_id: Option<Uuid>,
+    kind: ActivityKind,
+    summary: String,
+    details: Option<ActivityDetails>,
+    actor_id: Option<String>,
+    actor_name: Option<String>,
+    source: Option<String>,
+    operation_id: Option<String>,
+    duration_ms: Option<u64>,
+    provider: Option<String>,
+    model: Option<String>,
+    token_usage: Option<TokenUsage>,
+) {
     let event = ServiceEvent {
+        id: Uuid::new_v4(),
         project,
         memory_id,
         kind,
         summary,
         details,
         recorded_at: chrono::Utc::now(),
+        actor_id,
+        actor_name,
+        source: source.or_else(|| Some("service".to_string())),
+        operation_id,
+        duration_ms,
+        provider,
+        model,
+        token_usage,
         include_activity: true,
     };
     let _ = state.events.send(event.clone());
@@ -5028,12 +5543,21 @@ fn notify_project_changed(
 
 fn notify_project_refreshed(state: &AppState, project: String) {
     let event = ServiceEvent {
+        id: Uuid::new_v4(),
         project,
         memory_id: None,
         kind: ActivityKind::Query,
         summary: String::new(),
         details: None,
         recorded_at: chrono::Utc::now(),
+        actor_id: None,
+        actor_name: None,
+        source: Some("service".to_string()),
+        operation_id: None,
+        duration_ms: None,
+        provider: None,
+        model: None,
+        token_usage: None,
         include_activity: false,
     };
     let _ = state.events.send(event);
@@ -5068,6 +5592,7 @@ fn activity_kind_label(kind: &ActivityKind) -> &'static str {
         ActivityKind::Reembed => "reembed",
         ActivityKind::Archive => "archive",
         ActivityKind::DeleteMemory => "delete_memory",
+        ActivityKind::Briefing => "briefing",
     }
 }
 
@@ -5487,12 +6012,21 @@ fn local_watcher_restart_service_name(request: &WatcherRestartRequest) -> String
 fn stream_activity_response(event: ServiceEvent) -> StreamResponse {
     StreamResponse::Activity {
         event: ActivityEvent {
+            id: event.id,
             recorded_at: event.recorded_at,
             project: event.project,
             kind: event.kind,
             memory_id: event.memory_id,
             summary: event.summary,
             details: event.details,
+            actor_id: event.actor_id,
+            actor_name: event.actor_name,
+            source: event.source,
+            operation_id: event.operation_id,
+            duration_ms: event.duration_ms,
+            provider: event.provider,
+            model: event.model,
+            token_usage: event.token_usage,
         },
     }
 }

@@ -413,6 +413,22 @@ pub struct QueryAnswerGeneration {
     pub duration_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<TokenUsage>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TokenUsage {
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    #[serde(default)]
+    pub cache_write_tokens: u64,
+    #[serde(default)]
+    pub total_tokens: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -967,6 +983,7 @@ pub enum ActivityKind {
     Reembed,
     Archive,
     DeleteMemory,
+    Briefing,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1096,6 +1113,8 @@ pub enum ActivityDetails {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityEvent {
+    #[serde(default = "Uuid::new_v4")]
+    pub id: Uuid,
     pub recorded_at: DateTime<Utc>,
     pub project: String,
     pub kind: ActivityKind,
@@ -1104,6 +1123,94 @@ pub struct ActivityEvent {
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<ActivityDetails>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<TokenUsage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityListResponse {
+    pub project: String,
+    pub total_returned: usize,
+    #[serde(default)]
+    pub items: Vec<ActivityEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpToSpeedRequest {
+    pub project: String,
+    #[serde(default)]
+    pub include_llm_summary: bool,
+    #[serde(default = "default_up_to_speed_limit")]
+    pub limit: usize,
+}
+
+impl UpToSpeedRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self.limit == 0 {
+            return Err(ValidationError::new("limit must be positive"));
+        }
+        Ok(())
+    }
+}
+
+fn default_up_to_speed_limit() -> usize {
+    20
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TokenUsageSummary {
+    #[serde(default)]
+    pub action_count: usize,
+    #[serde(default)]
+    pub total_input_tokens: u64,
+    #[serde(default)]
+    pub total_output_tokens: u64,
+    #[serde(default)]
+    pub total_cache_read_tokens: u64,
+    #[serde(default)]
+    pub total_cache_write_tokens: u64,
+    #[serde(default)]
+    pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpToSpeedResponse {
+    pub project: String,
+    pub generated_at: DateTime<Utc>,
+    pub briefing: String,
+    #[serde(default)]
+    pub current_focus: Vec<String>,
+    #[serde(default)]
+    pub recent_work: Vec<String>,
+    #[serde(default)]
+    pub blockers: Vec<String>,
+    #[serde(default)]
+    pub next_actions: Vec<ResumeAction>,
+    #[serde(default)]
+    pub useful_memories: Vec<ProjectMemoryListItem>,
+    #[serde(default)]
+    pub recent_activities: Vec<ActivityEvent>,
+    #[serde(default)]
+    pub token_usage: TokenUsageSummary,
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
