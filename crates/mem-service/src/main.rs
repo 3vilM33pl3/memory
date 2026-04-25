@@ -6115,34 +6115,100 @@ mod tests {
         assert!(err.to_string().contains("cited unavailable result 2"));
     }
 
+    #[test]
+    fn token_usage_from_chat_body_reads_openai_compatible_usage() {
+        let usage = token_usage_from_chat_body(
+            r#"{"usage":{"prompt_tokens":1200,"completion_tokens":300,"cached_input_tokens":200,"cache_creation_input_tokens":50,"total_tokens":1750}}"#,
+        )
+        .expect("usage");
+
+        assert_eq!(usage.input_tokens, 1200);
+        assert_eq!(usage.output_tokens, 300);
+        assert_eq!(usage.cache_read_tokens, 200);
+        assert_eq!(usage.cache_write_tokens, 50);
+        assert_eq!(usage.total_tokens, 1750);
+    }
+
+    #[test]
+    fn up_to_speed_briefing_includes_token_summary() {
+        let token_usage = TokenUsageSummary {
+            action_count: 2,
+            total_input_tokens: 100,
+            total_output_tokens: 40,
+            total_cache_read_tokens: 20,
+            total_cache_write_tokens: 5,
+            total_tokens: 165,
+        };
+        let briefing = build_up_to_speed_briefing(
+            "memory",
+            &["Recent work focused on activity history.".to_string()],
+            &["Persisted activity events".to_string()],
+            &[],
+            &[],
+            &[],
+            &token_usage,
+        );
+
+        assert!(briefing.contains("Get up to speed"));
+        assert!(briefing.contains("165 total"));
+        assert!(briefing.contains("2 recent action"));
+    }
+
     #[tokio::test]
     async fn recent_activity_responses_replays_latest_project_events() {
         let recent_activity = Mutex::new(VecDeque::from(vec![
             ServiceEvent {
+                id: Uuid::new_v4(),
                 project: "memory".to_string(),
                 memory_id: None,
                 kind: ActivityKind::Curate,
                 summary: "Curated memory".to_string(),
                 details: None,
                 recorded_at: chrono::Utc::now(),
+                actor_id: None,
+                actor_name: None,
+                source: Some("service".to_string()),
+                operation_id: None,
+                duration_ms: None,
+                provider: None,
+                model: None,
+                token_usage: None,
                 include_activity: true,
             },
             ServiceEvent {
+                id: Uuid::new_v4(),
                 project: "other".to_string(),
                 memory_id: None,
                 kind: ActivityKind::CaptureTask,
                 summary: "Captured task".to_string(),
                 details: None,
                 recorded_at: chrono::Utc::now(),
+                actor_id: None,
+                actor_name: None,
+                source: Some("service".to_string()),
+                operation_id: None,
+                duration_ms: None,
+                provider: None,
+                model: None,
+                token_usage: None,
                 include_activity: true,
             },
             ServiceEvent {
+                id: Uuid::new_v4(),
                 project: "memory".to_string(),
                 memory_id: None,
                 kind: ActivityKind::Reindex,
                 summary: "Reindexed entries".to_string(),
                 details: None,
                 recorded_at: chrono::Utc::now(),
+                actor_id: None,
+                actor_name: None,
+                source: Some("service".to_string()),
+                operation_id: None,
+                duration_ms: None,
+                provider: None,
+                model: None,
+                token_usage: None,
                 include_activity: true,
             },
         ]));

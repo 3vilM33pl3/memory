@@ -7521,10 +7521,10 @@ mod tests {
     use super::{
         AgentSnapshot, App, BackendConnectionState, BackgroundEvent, ManagerState, MemoriesFocus,
         ProjectRefreshResult, RefreshMode, TabKind, Theme, ToolVersions, UiStatus,
-        build_memory_detail_lines, context_gradient_color, current_query_display,
-        derive_manager_state, empty_overview, filled_bar_cells, format_context_percent,
-        format_epoch_reset_time, format_query_citation_numbers, format_timestamp,
-        format_timestamp_full, format_timestamp_medium, format_timestamp_short,
+        activity_duration, activity_tokens, build_memory_detail_lines, context_gradient_color,
+        current_query_display, derive_manager_state, empty_overview, filled_bar_cells,
+        format_context_percent, format_epoch_reset_time, format_query_citation_numbers,
+        format_timestamp, format_timestamp_full, format_timestamp_medium, format_timestamp_short,
         format_timestamp_timeline, manager_status_detail, manager_status_label,
         memory_detail_max_scroll, normalized_percent, query_input_display, remaining_bar_cells,
         render_markdown_lines, service_status_detail, service_status_label,
@@ -7532,9 +7532,9 @@ mod tests {
     };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
-        MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType, Profile,
-        ProjectMemoriesResponse, QueryFilters, QueryRequest, ReplacementProposalListResponse,
-        WatcherPresenceSummary,
+        ActivityEvent, ActivityKind, MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus,
+        MemoryType, Profile, ProjectMemoriesResponse, QueryFilters, QueryRequest,
+        ReplacementProposalListResponse, TokenUsage, WatcherPresenceSummary,
     };
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
@@ -8058,21 +8058,23 @@ mod tests {
     }
 
     #[test]
-    fn tab_order_demotes_activity_and_places_review_between_project_and_watchers() {
+    fn tab_order_restores_activity_after_query() {
         assert_eq!(TabKind::Memories.index(), 0);
         assert_eq!(TabKind::Agents.index(), 1);
         assert_eq!(TabKind::Query.index(), 2);
-        assert_eq!(TabKind::Project.index(), 3);
-        assert_eq!(TabKind::Review.index(), 4);
-        assert_eq!(TabKind::Watchers.index(), 5);
-        assert_eq!(TabKind::Embeddings.index(), 6);
-        assert_eq!(TabKind::Resume.index(), 7);
-        assert_eq!(TabKind::Activity.index(), TabKind::Project.index());
+        assert_eq!(TabKind::Activity.index(), 3);
+        assert_eq!(TabKind::Project.index(), 4);
+        assert_eq!(TabKind::Review.index(), 5);
+        assert_eq!(TabKind::Watchers.index(), 6);
+        assert_eq!(TabKind::Embeddings.index(), 7);
+        assert_eq!(TabKind::Resume.index(), 8);
 
         assert_eq!(TabKind::Memories.prev(), TabKind::Resume);
         assert_eq!(TabKind::Memories.next(), TabKind::Agents);
-        assert_eq!(TabKind::Query.next(), TabKind::Project);
-        assert_eq!(TabKind::Project.prev(), TabKind::Query);
+        assert_eq!(TabKind::Query.next(), TabKind::Activity);
+        assert_eq!(TabKind::Activity.prev(), TabKind::Query);
+        assert_eq!(TabKind::Activity.next(), TabKind::Project);
+        assert_eq!(TabKind::Project.prev(), TabKind::Activity);
         assert_eq!(TabKind::Project.next(), TabKind::Review);
         assert_eq!(TabKind::Review.prev(), TabKind::Project);
         assert_eq!(TabKind::Review.next(), TabKind::Watchers);
@@ -8082,6 +8084,42 @@ mod tests {
         assert_eq!(TabKind::Embeddings.next(), TabKind::Resume);
         assert_eq!(TabKind::Resume.prev(), TabKind::Embeddings);
         assert_eq!(TabKind::Resume.next(), TabKind::Memories);
+    }
+
+    #[test]
+    fn backend_activity_dedupes_by_persisted_event_id_and_formats_tokens() {
+        let mut app = new_test_app();
+        let id = Uuid::new_v4();
+        let event = ActivityEvent {
+            id,
+            recorded_at: Utc::now(),
+            project: "memory".to_string(),
+            kind: ActivityKind::Query,
+            memory_id: None,
+            summary: "Query: activity model".to_string(),
+            details: None,
+            actor_id: None,
+            actor_name: None,
+            source: Some("query".to_string()),
+            operation_id: None,
+            duration_ms: Some(42),
+            provider: Some("openai_compatible".to_string()),
+            model: Some("gpt-test".to_string()),
+            token_usage: Some(TokenUsage {
+                input_tokens: 1000,
+                output_tokens: 250,
+                cache_read_tokens: 100,
+                cache_write_tokens: 0,
+                total_tokens: 1350,
+            }),
+        };
+
+        app.record_backend_activity(event.clone());
+        app.record_backend_activity(event);
+
+        assert_eq!(app.activity_events.len(), 1);
+        assert_eq!(activity_tokens(&app.activity_events[0]), "1.4k");
+        assert_eq!(activity_duration(&app.activity_events[0]), "42");
     }
 
     #[test]
