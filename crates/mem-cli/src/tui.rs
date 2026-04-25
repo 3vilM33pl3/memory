@@ -350,6 +350,7 @@ struct App {
     ui_status: UiStatus,
     status_message: String,
     health_ok: bool,
+    backend_connection_state: BackendConnectionState,
     service_role: Option<String>,
     service_health_state: Option<String>,
     service_database_state: Option<String>,
@@ -389,6 +390,13 @@ struct ToolVersions {
     mem_service: String,
     watch_manager: String,
     memory_watch: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackendConnectionState {
+    Connecting,
+    Connected,
+    Unavailable,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -448,6 +456,7 @@ enum QueryLogOutcome {
     Error(String),
 }
 
+#[derive(Clone)]
 struct ProjectRefreshResult {
     mode: RefreshMode,
     health: Result<serde_json::Value, String>,
@@ -580,6 +589,7 @@ impl App {
             ui_status: UiStatus::Loading,
             status_message: "Loading project data...".to_string(),
             health_ok: false,
+            backend_connection_state: BackendConnectionState::Connecting,
             service_role: None,
             service_health_state: None,
             service_database_state: None,
@@ -704,6 +714,7 @@ impl App {
         match result.health {
             Ok(health) => {
                 self.health_ok = true;
+                self.backend_connection_state = BackendConnectionState::Connected;
                 if let Some(version) = health.get("version").and_then(|value| value.as_str()) {
                     self.versions.mem_service = version.to_string();
                 }
@@ -820,6 +831,7 @@ impl App {
     fn mark_service_unavailable(&mut self) {
         self.needs_redraw = true;
         self.health_ok = false;
+        self.backend_connection_state = BackendConnectionState::Unavailable;
         self.service_role = None;
         self.service_health_state = None;
         self.service_database_state = None;
@@ -2821,6 +2833,11 @@ fn component_status_line<'a>(
 }
 
 fn draw_backend_recovery(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    if app.backend_connection_state == BackendConnectionState::Connecting {
+        draw_backend_connecting(frame, area);
+        return;
+    }
+
     let mut lines = vec![
         Line::from(Span::styled(
             "Memory Layer backend is unavailable.",
@@ -2848,6 +2865,29 @@ fn draw_backend_recovery(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) 
     let widget = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
         .block(themed_block("Backend Recovery"));
+    frame.render_widget(widget, area);
+}
+
+fn draw_backend_connecting(frame: &mut ratatui::Frame<'_>, area: Rect) {
+    let lines = vec![
+        Line::from(Span::styled(
+            "Connecting to Memory Layer backend...",
+            Style::default()
+                .fg(Theme::ACCENT_STRONG)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from("The TUI is waiting for the first backend health check to complete."),
+        Line::from(
+            "This can take a moment while the service starts, runs migrations, or reconnects.",
+        ),
+        Line::from(""),
+        Line::from("Press q to quit."),
+    ];
+
+    let widget = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .block(themed_block("Backend Connection"));
     frame.render_widget(widget, area);
 }
 
@@ -7126,11 +7166,12 @@ mod tests {
 
     #[cfg_attr(target_os = "macos", allow(unused_imports))]
     use super::{
-        AgentSnapshot, App, BackgroundEvent, ManagerState, MemoriesFocus, TabKind, Theme,
-        ToolVersions, UiStatus, build_memory_detail_lines, context_gradient_color,
-        current_query_display, derive_manager_state, empty_overview, filled_bar_cells,
-        format_context_percent, format_epoch_reset_time, format_query_citation_numbers,
-        format_timestamp, format_timestamp_full, format_timestamp_medium, format_timestamp_short,
+        AgentSnapshot, App, BackendConnectionState, BackgroundEvent, ManagerState, MemoriesFocus,
+        ProjectRefreshResult, RefreshMode, TabKind, Theme, ToolVersions, UiStatus,
+        build_memory_detail_lines, context_gradient_color, current_query_display,
+        derive_manager_state, empty_overview, filled_bar_cells, format_context_percent,
+        format_epoch_reset_time, format_query_citation_numbers, format_timestamp,
+        format_timestamp_full, format_timestamp_medium, format_timestamp_short,
         format_timestamp_timeline, manager_status_detail, manager_status_label,
         memory_detail_max_scroll, normalized_percent, query_input_display, remaining_bar_cells,
         render_markdown_lines, service_status_detail, service_status_label,
@@ -7138,8 +7179,9 @@ mod tests {
     };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
-        MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType, Profile, QueryFilters,
-        QueryRequest, WatcherPresenceSummary,
+        MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType, Profile,
+        ProjectMemoriesResponse, QueryFilters, QueryRequest, ReplacementProposalListResponse,
+        WatcherPresenceSummary,
     };
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
@@ -7314,6 +7356,7 @@ mod tests {
         );
         app.ui_status = UiStatus::Error;
         app.health_ok = false;
+        app.backend_connection_state = BackendConnectionState::Unavailable;
         app.overview = empty_overview("memory".to_string());
         app.overview.service_status = "ok".to_string();
         app.overview.database_status = "up".to_string();
@@ -7354,6 +7397,61 @@ mod tests {
 
         assert_eq!(service_status_label(&app), "up");
         assert_eq!(service_status_detail(&app), Some("relay".to_string()));
+    }
+
+    #[test]
+    fn backend_connection_state_starts_connecting_then_tracks_health() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.6.3".to_string(),
+                mem_service: "0.6.3".to_string(),
+                watch_manager: "0.6.3".to_string(),
+                memory_watch: "0.6.3".to_string(),
+            },
+            false,
+            Profile::Prod,
+            tx,
+        );
+
+        assert_eq!(
+            app.backend_connection_state,
+            BackendConnectionState::Connecting
+        );
+
+        let mut result = ProjectRefreshResult {
+            mode: RefreshMode::Startup,
+            health: Ok(serde_json::json!({
+                "status": "ok",
+                "database": "up",
+                "role": "primary",
+                "version": "0.6.3"
+            })),
+            overview: Ok(empty_overview("memory".to_string())),
+            memories: Ok(ProjectMemoriesResponse {
+                project: "memory".to_string(),
+                total: 0,
+                items: Vec::new(),
+            }),
+            proposals: Ok(ReplacementProposalListResponse {
+                project: "memory".to_string(),
+                proposals: Vec::new(),
+            }),
+        };
+        app.apply_project_refresh(result.clone());
+        assert_eq!(
+            app.backend_connection_state,
+            BackendConnectionState::Connected
+        );
+
+        result.health = Err("connection refused".to_string());
+        app.apply_project_refresh(result);
+        assert_eq!(
+            app.backend_connection_state,
+            BackendConnectionState::Unavailable
+        );
     }
 
     #[test]
