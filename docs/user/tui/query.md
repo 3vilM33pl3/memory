@@ -13,14 +13,16 @@ The tab shows both the synthesized answer and the evidence trail used to create 
 - the selected result in more detail, including whether it was cited and why it ranked well
 
 When LLM answering is configured, the backend answers using only the returned memories. If the LLM is unavailable or returns invalid citations, the tab shows the deterministic fallback answer and the fallback reason.
-After you press `Enter`, the query runs in the background and the tab shows a searching state until the new answer arrives. Previous results remain visible during the search so you can keep reading while waiting.
+After you press `Enter` while editing, the query runs in the background and the tab shows a searching state until the new answer arrives. Previous results remain visible during the search so you can keep reading while waiting.
 
 You can jump into query mode from anywhere in the TUI with `?`.
 
 ## Key Controls
 
-- `?` switch to the `Query` tab and start editing a question
+- `Enter` on the `Query` tab starts a new empty question
+- `?` switches to the `Query` tab and starts a new empty question
 - type your question and press `Enter` to run it
+- `Up/Down` while editing walks through previous queries from this TUI session
 - `Esc` cancel query input
 - `j/k` move through returned results
 - `r` refresh project state after backend changes

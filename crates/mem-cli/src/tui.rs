@@ -309,6 +309,8 @@ struct App {
     selected_index: usize,
     table_state: TableState,
     query_text: String,
+    query_history: Vec<String>,
+    query_history_cursor: Option<usize>,
     query_response: Option<QueryResponse>,
     query_last_duration_ms: Option<u64>,
     query_selected_detail: Option<MemoryEntryResponse>,
@@ -537,6 +539,8 @@ impl App {
             selected_index: 0,
             table_state,
             query_text: String::new(),
+            query_history: Vec::new(),
+            query_history_cursor: None,
             query_response: None,
             query_last_duration_ms: None,
             query_selected_detail: None,
@@ -1315,17 +1319,22 @@ impl App {
             }
             KeyCode::Char('?') if key.modifiers.is_empty() => {
                 self.set_active_tab(TabKind::Query);
-                self.input_mode = InputMode::Query(self.query_text.clone());
-                self.status_message = "Type a question, Enter to run, Esc to cancel.".to_string();
+                self.start_query_input();
+            }
+            KeyCode::Enter if self.active_tab == TabKind::Query => {
+                self.start_query_input();
             }
             KeyCode::Char(ch)
                 if self.active_tab == TabKind::Query
                     && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT) =>
             {
-                let mut buffer = self.query_text.clone();
+                let mut buffer = String::new();
                 buffer.push(ch);
                 self.input_mode = InputMode::Query(buffer);
-                self.status_message = "Type a question, Enter to run, Esc to cancel.".to_string();
+                self.query_history_cursor = None;
+                self.status_message =
+                    "Type a question, Enter to run, Up/Down for history, Esc to cancel."
+                        .to_string();
             }
             KeyCode::Char('g') if key.modifiers.is_empty() => {
                 self.input_mode = InputMode::Tag(self.filters.tag.clone());
@@ -1445,6 +1454,9 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.input_mode = InputMode::Normal;
+                if kind == TextInputKind::Query {
+                    self.query_history_cursor = None;
+                }
                 self.status_message = "Cancelled input mode.".to_string();
             }
             KeyCode::Enter => {
@@ -1456,6 +1468,8 @@ impl App {
                 self.input_mode = InputMode::Normal;
                 match kind {
                     TextInputKind::Query => {
+                        self.query_history_cursor = None;
+                        self.remember_query_history_entry();
                         self.run_query(api);
                     }
                     _ => {
@@ -1467,12 +1481,26 @@ impl App {
             }
             KeyCode::Backspace => {
                 buffer.pop();
+                if kind == TextInputKind::Query {
+                    self.query_history_cursor = None;
+                }
+                self.input_mode = kind.wrap(buffer.clone());
+            }
+            KeyCode::Up if kind == TextInputKind::Query => {
+                self.apply_query_history_delta(buffer, -1);
+                self.input_mode = kind.wrap(buffer.clone());
+            }
+            KeyCode::Down if kind == TextInputKind::Query => {
+                self.apply_query_history_delta(buffer, 1);
                 self.input_mode = kind.wrap(buffer.clone());
             }
             KeyCode::Char(ch)
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
             {
                 buffer.push(ch);
+                if kind == TextInputKind::Query {
+                    self.query_history_cursor = None;
+                }
                 self.input_mode = kind.wrap(buffer.clone());
             }
             _ => {
@@ -1480,6 +1508,64 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    fn start_query_input(&mut self) {
+        self.input_mode = InputMode::Query(String::new());
+        self.query_history_cursor = None;
+        self.status_message =
+            "Type a question, Enter to run, Up/Down for history, Esc to cancel.".to_string();
+    }
+
+    fn remember_query_history_entry(&mut self) {
+        let question = self.query_text.trim();
+        if question.is_empty() {
+            return;
+        }
+        if self
+            .query_history
+            .last()
+            .is_some_and(|previous| previous == question)
+        {
+            return;
+        }
+        self.query_history.push(question.to_string());
+        if self.query_history.len() > 50 {
+            self.query_history.remove(0);
+        }
+    }
+
+    fn apply_query_history_delta(&mut self, buffer: &mut String, delta: isize) {
+        if self.query_history.is_empty() {
+            self.status_message = "No previous queries in this TUI session.".to_string();
+            return;
+        }
+
+        let last = self.query_history.len().saturating_sub(1);
+        let next = match (self.query_history_cursor, delta) {
+            (None, value) if value < 0 => Some(last),
+            (None, value) if value > 0 => None,
+            (Some(index), value) if value < 0 => Some(index.saturating_sub(1)),
+            (Some(index), value) if value > 0 && index >= last => None,
+            (Some(index), value) if value > 0 => Some(index + 1),
+            (current, _) => current,
+        };
+
+        self.query_history_cursor = next;
+        match next {
+            Some(index) => {
+                *buffer = self.query_history[index].clone();
+                self.status_message = format!(
+                    "Loaded query history item {}/{}.",
+                    index + 1,
+                    self.query_history.len()
+                );
+            }
+            None => {
+                buffer.clear();
+                self.status_message = "Returned to a new empty query.".to_string();
+            }
+        }
     }
 
     async fn move_selection(
@@ -2282,7 +2368,7 @@ enum InputMode {
     Query(String),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum TextInputKind {
     Search,
     Tag,
@@ -2498,7 +2584,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             ),
         ],
         TabKind::Query => vec![
-            accent_span("query=? "),
+            accent_span("new=Enter/? "),
             Span::styled(
                 display_filter(&current_query_display(app)),
                 Style::default().fg(Theme::TEXT),
@@ -2507,7 +2593,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             Span::styled("j/k move result", Style::default().fg(Theme::MUTED)),
             Span::raw("  "),
             Span::styled(
-                "Enter runs while editing",
+                "Up/Down history while editing",
                 Style::default().fg(Theme::MUTED),
             ),
         ],
@@ -7042,9 +7128,9 @@ mod tests {
     use super::{
         AgentSnapshot, App, BackgroundEvent, ManagerState, MemoriesFocus, TabKind, Theme,
         ToolVersions, UiStatus, build_memory_detail_lines, context_gradient_color,
-        derive_manager_state, empty_overview, filled_bar_cells, format_context_percent,
-        format_epoch_reset_time, format_query_citation_numbers, format_timestamp,
-        format_timestamp_full, format_timestamp_medium, format_timestamp_short,
+        current_query_display, derive_manager_state, empty_overview, filled_bar_cells,
+        format_context_percent, format_epoch_reset_time, format_query_citation_numbers,
+        format_timestamp, format_timestamp_full, format_timestamp_medium, format_timestamp_short,
         format_timestamp_timeline, manager_status_detail, manager_status_label,
         memory_detail_max_scroll, normalized_percent, query_input_display, remaining_bar_cells,
         render_markdown_lines, service_status_detail, service_status_label,
@@ -7171,6 +7257,43 @@ mod tests {
         assert_eq!(app.status_message, "Enter a query before running search.");
         assert!(app.query_response.is_none());
         assert!(app.query_error.is_none());
+    }
+
+    #[test]
+    fn query_input_starts_empty_and_history_navigates_with_arrows() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.6.3".to_string(),
+                mem_service: "0.6.3".to_string(),
+                watch_manager: "0.6.3".to_string(),
+                memory_watch: "0.6.3".to_string(),
+            },
+            false,
+            Profile::Prod,
+            tx,
+        );
+
+        app.query_text = "previous visible query".to_string();
+        app.start_query_input();
+        assert_eq!(current_query_display(&app), "");
+
+        app.query_text = "first query".to_string();
+        app.remember_query_history_entry();
+        app.query_text = "second query".to_string();
+        app.remember_query_history_entry();
+
+        let mut buffer = String::new();
+        app.apply_query_history_delta(&mut buffer, -1);
+        assert_eq!(buffer, "second query");
+        app.apply_query_history_delta(&mut buffer, -1);
+        assert_eq!(buffer, "first query");
+        app.apply_query_history_delta(&mut buffer, 1);
+        assert_eq!(buffer, "second query");
+        app.apply_query_history_delta(&mut buffer, 1);
+        assert_eq!(buffer, "");
     }
 
     #[test]
