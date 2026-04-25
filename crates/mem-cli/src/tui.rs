@@ -470,7 +470,7 @@ struct ManagerStateFile {
 }
 
 enum ActivityEntry {
-    Backend(ActivityEvent),
+    Backend(Box<ActivityEvent>),
     Query(QueryActivityEntry),
 }
 
@@ -1111,7 +1111,7 @@ impl App {
                         self.activity_events = response
                             .items
                             .into_iter()
-                            .map(ActivityEntry::Backend)
+                            .map(|event| ActivityEntry::Backend(Box::new(event)))
                             .collect();
                         self.finish_activity_insert();
                         self.status_message = format!(
@@ -2137,7 +2137,7 @@ impl App {
             ActivityEntry::Query(_) => true,
         });
         self.activity_events
-            .insert(0, ActivityEntry::Backend(event));
+            .insert(0, ActivityEntry::Backend(Box::new(event)));
         self.finish_activity_insert();
     }
 
@@ -5754,11 +5754,11 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
         ]),
         activity_kv_line(
             "Duration",
-            activity_duration(&ActivityEntry::Backend(event.clone())),
+            activity_duration(&ActivityEntry::Backend(Box::new(event.clone()))),
         ),
         activity_kv_line(
             "Tokens",
-            activity_tokens(&ActivityEntry::Backend(event.clone())),
+            activity_tokens(&ActivityEntry::Backend(Box::new(event.clone()))),
         ),
         activity_kv_line(
             "Source",
@@ -6160,7 +6160,7 @@ fn activity_duration(item: &ActivityEntry) -> String {
     match item {
         ActivityEntry::Backend(event) => event
             .duration_ms
-            .map(|value| format_compact_count(value))
+            .map(format_compact_count)
             .unwrap_or_else(|| "-".to_string()),
         ActivityEntry::Query(entry) => format_compact_count(entry.duration_ms),
     }
