@@ -63,6 +63,35 @@ pub enum ReplacementPolicy {
     Aggressive,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplacementPolicyRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
+    pub replacement_policy: ReplacementPolicy,
+}
+
+impl ReplacementPolicyRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self
+            .repo_root
+            .as_ref()
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err(ValidationError::new("repo_root must be non-empty"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplacementPolicyResponse {
+    pub project: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
+    pub replacement_policy: ReplacementPolicy,
+    pub writable: bool,
+}
+
 impl fmt::Display for ReplacementPolicy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
@@ -723,6 +752,8 @@ pub struct ResumeRequest {
     pub project: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<ResumeCheckpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<DateTime<Utc>>,
     #[serde(default = "default_true")]

@@ -3,7 +3,9 @@ import type {
   ArchiveResponse,
   CurateResponse,
   DeleteMemoryResponse,
+  EmbeddingBackendsResponse,
   MemoryEntryResponse,
+  MemoryHistoryResponse,
   ProjectMemoriesResponse,
   ProjectMemoryBundlePreview,
   ProjectMemoryExportOptions,
@@ -14,6 +16,8 @@ import type {
   QueryResponse,
   ReembedResponse,
   ReindexResponse,
+  ReplacementPolicyRequest,
+  ReplacementPolicyResponse,
   ReplacementProposalListResponse,
   ReplacementProposalResolutionResponse,
   ResumeResponse,
@@ -42,6 +46,10 @@ export async function getMemory(memoryId: string): Promise<MemoryEntryResponse> 
   return parseJson(await fetch(`/v1/memory/${encodeURIComponent(memoryId)}`));
 }
 
+export async function getMemoryHistory(memoryId: string): Promise<MemoryHistoryResponse> {
+  return parseJson(await fetch(`/v1/memory/${encodeURIComponent(memoryId)}/history`));
+}
+
 export async function runQuery(request: QueryRequest): Promise<QueryResponse> {
   return parseJson(
     await fetch("/v1/query", {
@@ -62,22 +70,22 @@ export async function curate(project: string): Promise<CurateResponse> {
   );
 }
 
-export async function reindex(project: string): Promise<ReindexResponse> {
+export async function reindex(project: string, backend?: string | null): Promise<ReindexResponse> {
   return parseJson(
     await fetch("/v1/reindex", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project }),
+      body: JSON.stringify({ project, backend: backend ?? null }),
     }),
   );
 }
 
-export async function reembed(project: string): Promise<ReembedResponse> {
+export async function reembed(project: string, backend?: string | null): Promise<ReembedResponse> {
   return parseJson(
     await fetch("/v1/reembed", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project }),
+      body: JSON.stringify({ project, backend: backend ?? null }),
     }),
   );
 }
@@ -160,12 +168,52 @@ export async function getAgentSnapshot(): Promise<AgentSnapshotResponse> {
   return parseJson(await fetch("/v1/agents"));
 }
 
-export async function getResume(project: string): Promise<ResumeResponse> {
+export async function getResume(project: string, repoRoot?: string | null): Promise<ResumeResponse> {
   return parseJson(
     await fetch(`/v1/projects/${encodeURIComponent(project)}/resume`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project, include_llm_summary: true, limit: 20 }),
+      body: JSON.stringify({ project, repo_root: repoRoot || null, include_llm_summary: true, limit: 20 }),
+    }),
+  );
+}
+
+export async function getEmbeddingBackends(project: string): Promise<EmbeddingBackendsResponse> {
+  const params = new URLSearchParams({ project });
+  return parseJson(await fetch(`/v1/embeddings/backends?${params.toString()}`));
+}
+
+export async function activateEmbeddingBackend(name: string): Promise<EmbeddingBackendsResponse> {
+  return parseJson(
+    await fetch("/v1/embeddings/activate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    }),
+  );
+}
+
+export async function getReplacementPolicy(
+  project: string,
+  repoRoot?: string | null,
+): Promise<ReplacementPolicyResponse> {
+  const params = new URLSearchParams();
+  if (repoRoot) params.set("repo_root", repoRoot);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return parseJson(
+    await fetch(`/v1/projects/${encodeURIComponent(project)}/replacement-policy${suffix}`),
+  );
+}
+
+export async function saveReplacementPolicy(
+  project: string,
+  request: ReplacementPolicyRequest,
+): Promise<ReplacementPolicyResponse> {
+  return parseJson(
+    await fetch(`/v1/projects/${encodeURIComponent(project)}/replacement-policy`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
     }),
   );
 }

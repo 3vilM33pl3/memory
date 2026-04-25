@@ -129,13 +129,19 @@ select {
 }
 
 .tabs {
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(9, minmax(0, 1fr));
   margin-bottom: 1rem;
 }
 
-.tabs button {
+.tabs button,
+.more-select {
   padding: 0.9rem 1rem;
   text-transform: capitalize;
+}
+
+.more-select {
+  border-color: var(--line);
+  background: var(--panel-2);
 }
 
 .tab-active {
@@ -364,6 +370,11 @@ pre {
   border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+.version-card {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 0.9rem;
+}
+
 .proposal-card:first-child {
   border-top: 0;
 }
@@ -426,7 +437,7 @@ pre {
   }
 
   .tabs {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .project-form {
