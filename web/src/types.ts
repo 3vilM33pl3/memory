@@ -539,6 +539,19 @@ export interface ResumeAction {
   command_hint: string | null;
 }
 
+export interface CommitRecord {
+  hash: string;
+  short_hash: string;
+  subject: string;
+  body: string;
+  author_name: string | null;
+  author_email: string | null;
+  committed_at: string;
+  parent_hashes: string[];
+  changed_paths: string[];
+  imported_at: string;
+}
+
 export interface ResumeResponse {
   project: string;
   generated_at: string;
@@ -551,6 +564,7 @@ export interface ResumeResponse {
   secondary_next_steps: ResumeAction[];
   context_items: ProjectMemoryListItem[];
   timeline: ActivityEvent[];
+  commits: CommitRecord[];
   changed_memories: ProjectMemoryListItem[];
   durable_context: ProjectMemoryListItem[];
   warnings: string[];

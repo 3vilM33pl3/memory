@@ -153,6 +153,7 @@ export default function App() {
   // Resume state
   const [resumeData, setResumeData] = useState<ResumeResponse | null>(null);
   const [resumeLoading, setResumeLoading] = useState(false);
+  const [resumeAutoloadedFor, setResumeAutoloadedFor] = useState<string | null>(null);
   // Proposals state
   const [proposals, setProposals] = useState<ReplacementProposalRecord[]>([]);
   const [replacementPolicy, setReplacementPolicy] = useState<ReplacementPolicyResponse | null>(null);
@@ -293,6 +294,21 @@ export default function App() {
     const roots = Array.from(new Set((overview.watchers?.watchers ?? []).map((watcher) => watcher.repo_root).filter(Boolean)));
     return roots.length === 1 ? roots[0] : "";
   }, [overview.automation?.repo_root, overview.watchers?.watchers, repoRootInput]);
+
+  useEffect(() => {
+    if (!effectiveRepoRoot) return;
+    const key = `${project}:${effectiveRepoRoot}`;
+    if (resumeAutoloadedFor === key) return;
+    setResumeAutoloadedFor(key);
+    void getResume(project, effectiveRepoRoot, false)
+      .then((data) => {
+        setResumeData(data);
+        if (data.checkpoint && (data.timeline.length || data.commits.length || data.changed_memories.length)) {
+          setTab("resume");
+        }
+      })
+      .catch(() => {});
+  }, [effectiveRepoRoot, project, resumeAutoloadedFor]);
 
   useEffect(() => {
     if (!filteredMemories.length) {

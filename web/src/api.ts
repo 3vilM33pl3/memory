@@ -168,12 +168,16 @@ export async function getAgentSnapshot(): Promise<AgentSnapshotResponse> {
   return parseJson(await fetch("/v1/agents"));
 }
 
-export async function getResume(project: string, repoRoot?: string | null): Promise<ResumeResponse> {
+export async function getResume(
+  project: string,
+  repoRoot?: string | null,
+  includeLlmSummary = true,
+): Promise<ResumeResponse> {
   return parseJson(
     await fetch(`/v1/projects/${encodeURIComponent(project)}/resume`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project, repo_root: repoRoot || null, include_llm_summary: true, limit: 20 }),
+      body: JSON.stringify({ project, repo_root: repoRoot || null, include_llm_summary: includeLlmSummary, limit: 20 }),
     }),
   );
 }

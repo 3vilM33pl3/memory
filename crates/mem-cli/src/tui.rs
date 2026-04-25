@@ -664,6 +664,7 @@ impl App {
                 let request = ResumeRequest {
                     project: project.clone(),
                     checkpoint: checkpoint.clone(),
+                    repo_root: None,
                     since: None,
                     include_llm_summary: false,
                     limit: 12,
@@ -858,6 +859,7 @@ impl App {
         let request = ResumeRequest {
             project: self.project.clone(),
             checkpoint: checkpoint.clone(),
+            repo_root: Some(self.repo_root.display().to_string()),
             since: None,
             include_llm_summary: false,
             limit: 12,
