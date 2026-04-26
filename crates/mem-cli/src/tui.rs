@@ -1607,10 +1607,10 @@ impl App {
                     self.delete_selected_query_memory(api).await?;
                 }
             }
-            KeyCode::Char('H') if key.modifiers == KeyModifiers::SHIFT => {
-                if self.active_tab == TabKind::Memories {
-                    self.toggle_selected_history(api).await;
-                }
+            KeyCode::Char('H')
+                if key.modifiers == KeyModifiers::SHIFT && self.active_tab == TabKind::Memories =>
+            {
+                self.toggle_selected_history(api).await;
             }
             KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => return Ok(true),
             _ => {}
