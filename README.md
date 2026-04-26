@@ -9,6 +9,7 @@ It captures what happened, curates what matters, stores it in PostgreSQL with pg
 ## Why It Is Interesting
 
 - **Answers with evidence:** ask a project question and see both the synthesized answer and the exact memories used to produce it.
+- **Code graph-aware retrieval:** extract parser-backed symbols, references, and graph edges, then let query use that structure to find memories connected to the code you ask about.
 - **Multi-embedding search:** keep OpenAI, Voyage, Cohere, Gemini, or local OpenAI-compatible embedding spaces side by side, then switch the active retrieval backend without recomputing.
 - **Distributed agents:** monitor Codex and Claude sessions across projects, including token pressure, context usage, rate limits, process details, and open ports.
 - **Agent-linked watchers:** background watchers attach to agent sessions, identify the project automatically, heartbeat to the service, and stop when the owning agent exits.
@@ -66,6 +67,7 @@ Key docs after setup:
 
 - [TUI Guide](docs/user/tui/README.md) for the visual workflow.
 - [Embedding Operations](docs/user/cli/embeddings.md) for multi-backend semantic search and model switching.
+- [Code Graph Extraction](docs/user/cli/graph.md) for parser-backed code structure and graph-aware query ranking.
 - [Watcher Health](docs/user/cli/watchers.md) for distributed watcher behavior.
 - [Query Command](docs/user/cli/query.md) for cited answers from memory.
 - [Get Up To Speed](docs/user/cli/up-to-speed.md) for new-agent briefings.
@@ -107,9 +109,24 @@ For the full isolation contract, override flags, troubleshooting, and the verifi
 
 ### Search That Explains Itself
 
-The Query tab and `memory query` combine lexical search, vector search, relation boosts, and memory filters. Results are labelled as `lexical`, `semantic`, or `hybrid`, and answers cite the ranked memories that supported them.
+The Query tab and `memory query` combine lexical search, vector search, relation boosts, graph boosts, and memory filters. Results are labelled as `lexical`, `semantic`, or `hybrid`, and answers cite the ranked memories that supported them.
+
+When a completed code graph exists, query also looks at parser-backed symbols, references, and one-hop graph edges. Those graph hits are mapped back to curated memories through file provenance, so the system can explain why a memory about a function, module, or call path was retrieved without treating raw graph rows as answer citations.
 
 ![Memory Layer query tab](docs/img/tui/query-tab.png)
+
+### Code Graph Memory
+
+`memory graph extract` turns the repository into durable code structure: symbols, references, resolved edges, unresolved references, and evidence spans. This makes Memory Layer more than a vector database: it can connect natural-language project memory to concrete code relationships.
+
+Why this matters:
+
+- questions about a symbol can retrieve memories attached to the files and neighboring symbols around it
+- graph diagnostics show whether retrieval used code structure, how many graph candidates were found, and which connections affected ranking
+- graph extraction itself is persisted as an activity, so new agents can see when the project’s code map was refreshed
+- unresolved and ambiguous references are stored explicitly, giving future analyzers and curation workflows a measurable improvement path
+
+See [Code Graph Extraction](docs/user/cli/graph.md) and [Query Command](docs/user/cli/query.md).
 
 ### Multiple Embedding Backends
 
@@ -161,6 +178,7 @@ Project-local customization now has two layers:
 - [Doctor Diagnostics](docs/user/cli/doctor.md)
 - [Health And Stats](docs/user/cli/health.md)
 - [Query Command](docs/user/cli/query.md)
+- [Code Graph Extraction](docs/user/cli/graph.md)
 - [Checkpoint Workflow](docs/user/cli/checkpoint.md)
 - [Capture Command](docs/user/cli/capture.md)
 - [Remember Command](docs/user/cli/remember.md)

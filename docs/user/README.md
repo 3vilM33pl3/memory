@@ -2,7 +2,7 @@
 
 This section is for people installing, configuring, and using Memory Layer in real projects.
 
-If you are new, start with the TUI. It shows the main product surface: cited memory search, live agent state, activity history, watcher health, embedding coverage, and curated project memory.
+If you are new, start with the TUI. It shows the main product surface: cited memory search, graph-aware retrieval diagnostics, live agent state, activity history, watcher health, embedding coverage, and curated project memory.
 
 ![Memory Layer query answer](../img/tui/query-tab.png)
 
@@ -17,6 +17,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Getting Started](getting-started.md)
 - [TUI Guide](tui/README.md)
 - [Query Tab](tui/query.md)
+- [Code Graph Extraction](cli/graph.md)
 - [Embedding Operations](cli/embeddings.md)
 - [Watcher Health](cli/watchers.md)
 - [Get Up To Speed](cli/up-to-speed.md)

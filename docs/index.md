@@ -9,6 +9,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 ## Highlights
 
 - **Cited answers from project memory:** ask a question, get an answer, and inspect the exact ranked memories behind it.
+- **Code graph-aware retrieval:** extract parser-backed symbols, references, graph edges, and evidence, then use that structure to explain why code-related memories were found.
 - **Multi-embedding retrieval:** configure several embedding backends, keep all spaces populated, and activate a different backend without reindexing.
 - **Distributed agent operations:** watch Codex and Claude sessions, token pressure, rate limits, watcher heartbeats, and process state from one dashboard.
 - **Get-up-to-speed briefings:** persisted activities and recent changes become concise context packs for new or returning agents.
@@ -25,6 +26,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 ## Feature Walkthroughs
 
 - [Query Tab](user/tui/query.md) and [Query Command](user/cli/query.md)
+- [Code Graph Extraction](user/cli/graph.md)
 - [Embeddings Tab](user/tui/embeddings.md) and [Embedding Operations](user/cli/embeddings.md)
 - [Agents Tab](user/tui/agents.md) and [Watcher Health](user/cli/watchers.md)
 - [Activity Tab](user/tui/activity.md) and [Get Up To Speed](user/cli/up-to-speed.md)
@@ -36,6 +38,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 - [Service Commands](user/cli/service.md)
 - [Doctor Diagnostics](user/cli/doctor.md)
 - [Query Command](user/cli/query.md)
+- [Code Graph Extraction](user/cli/graph.md)
 - [Remember Command](user/cli/remember.md)
 - [Checkpoint Workflow](user/cli/checkpoint.md)
 - [Activities Command](user/cli/activities.md)
