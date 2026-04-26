@@ -390,7 +390,7 @@ async fn determine_replacement_decision(
         .into_iter()
         .filter_map(|target| score_replacement_candidate(candidate, target))
         .collect::<Vec<_>>();
-    scored.sort_by(|left, right| right.score.cmp(&left.score));
+    scored.sort_by_key(|item| std::cmp::Reverse(item.score));
     let Some(best) = scored.first() else {
         return Ok(ReplacementDecision::InsertNew);
     };
