@@ -2,6 +2,8 @@
 
 Shows every embedding backend declared under `[[embeddings.backends]]` in your Memory Layer config, their per-project coverage, and lets you switch which backend search uses without leaving the TUI.
 
+![Embeddings tab](../../img/tui/embeddings-tab.png)
+
 ## Table of Contents
 
 - [When To Use](#when-to-use)

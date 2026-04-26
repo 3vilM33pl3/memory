@@ -32,6 +32,17 @@ PADDING_X = 20
 PADDING_Y = 18
 QUERY_TEXT = "What is the main driver for coding agent interaction with Memory Layer?"
 BOX_DRAWING_CHARS = set("│─┌┐└┘├┤┬┴┼")
+TAB_NAMES = [
+    "Memories",
+    "Agents",
+    "Query",
+    "Activity",
+    "Project",
+    "Review",
+    "Watchers",
+    "Embeddings",
+    "Resume",
+]
 
 
 @dataclass(frozen=True)
@@ -139,6 +150,32 @@ def parse_ansi_screen(payload: bytes) -> list[list[tuple[str, CellStyle]]]:
     return lines
 
 
+def active_tab_name(payload: bytes) -> str:
+    for line in parse_ansi_screen(payload)[:4]:
+        chars = "".join(char for char, _style in line)
+        for tab in TAB_NAMES:
+            start = chars.find(tab)
+            if start < 0:
+                continue
+            cells = line[start : start + len(tab)]
+            if any(style.bg != DEFAULT_BG for _char, style in cells):
+                return tab
+    raise RuntimeError("could not determine active TUI tab")
+
+
+def go_to_tab(session: str, target: str) -> bytes:
+    payload = capture_pane(session)
+    current = active_tab_name(payload)
+    current_index = TAB_NAMES.index(current)
+    target_index = TAB_NAMES.index(target)
+    steps = (target_index - current_index) % len(TAB_NAMES)
+    for _ in range(steps):
+        send_keys(session, "Tab")
+        sleep_for(0.4)
+    sleep_for(0.6)
+    return capture_pane(session)
+
+
 def render_screen(payload: bytes, output_path: Path) -> None:
     lines = parse_ansi_screen(payload)
     if not lines:
@@ -233,50 +270,32 @@ def main() -> int:
     screenshots: dict[str, bytes] = {}
 
     try:
+        start_session(watcher_session, WATCH_CMD)
+        sleep_for(2.0)
+
         start_session(tui_session, f"{TUI_BIN} tui --project {PROJECT}")
         sleep_for(4.0)
 
-        screenshots["resume-tab.png"] = capture_pane(tui_session)
-
-        send_keys(tui_session, "Tab")
-        sleep_for(1.0)
-        memories = capture_pane(tui_session)
+        memories = go_to_tab(tui_session, "Memories")
         screenshots["overview.png"] = memories
         screenshots["memories-tab.png"] = memories
 
-        send_keys(tui_session, "Tab")
-        sleep_for(0.6)
-        screenshots["agents-tab.png"] = capture_pane(tui_session)
+        screenshots["agents-tab.png"] = go_to_tab(tui_session, "Agents")
 
+        go_to_tab(tui_session, "Query")
         send_keys(tui_session, "?")
         sleep_for(0.3)
         send_keys(tui_session, QUERY_TEXT, literal=True)
         send_keys(tui_session, "Enter")
-        sleep_for(1.2)
+        sleep_for(8.0)
         screenshots["query-tab.png"] = capture_pane(tui_session)
 
-        send_keys(tui_session, "Tab")
-        sleep_for(0.6)
-        screenshots["activity-tab.png"] = capture_pane(tui_session)
-
-        send_keys(tui_session, "Tab")
-        sleep_for(0.6)
-        screenshots["project-tab.png"] = capture_pane(tui_session)
-
-        kill_session(tui_session)
-
-        start_session(watcher_session, WATCH_CMD)
-        sleep_for(3.0)
-        start_session(tui_session, f"{TUI_BIN} tui --project {PROJECT}")
-        sleep_for(4.0)
-        send_keys(tui_session, "Tab")
-        send_keys(tui_session, "Tab")
-        send_keys(tui_session, "Tab")
-        send_keys(tui_session, "Tab")
-        send_keys(tui_session, "Tab")
-        send_keys(tui_session, "Tab")
-        sleep_for(1.0)
-        screenshots["watchers-tab.png"] = capture_pane(tui_session)
+        screenshots["activity-tab.png"] = go_to_tab(tui_session, "Activity")
+        screenshots["project-tab.png"] = go_to_tab(tui_session, "Project")
+        screenshots["review-tab.png"] = go_to_tab(tui_session, "Review")
+        screenshots["watchers-tab.png"] = go_to_tab(tui_session, "Watchers")
+        screenshots["embeddings-tab.png"] = go_to_tab(tui_session, "Embeddings")
+        screenshots["resume-tab.png"] = go_to_tab(tui_session, "Resume")
 
     finally:
         kill_session(tui_session)
@@ -285,6 +304,10 @@ def main() -> int:
     for name, payload in screenshots.items():
         render_screen(payload, OUTPUT_DIR / name)
         print(f"wrote {OUTPUT_DIR / name}")
+    if "overview.png" in screenshots:
+        legacy_overview = ROOT / "docs" / "img" / "tui-overview.png"
+        render_screen(screenshots["overview.png"], legacy_overview)
+        print(f"wrote {legacy_overview}")
 
     return 0
 

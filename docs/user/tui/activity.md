@@ -4,6 +4,8 @@ Use the `Activity` tab to understand what Memory Layer has been doing and to gen
 
 Activity is persisted in the backend database, so the tab is no longer limited to events seen by the current TUI session.
 
+![Activity tab](../../img/tui/activity-tab.png)
+
 ## What It Shows
 
 - persisted project activity events such as query, scan, capture, curate, plan, checkpoint, watcher-health, reindex, re-embed, archive, delete, bundle, and briefing events
