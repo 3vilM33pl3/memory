@@ -565,10 +565,8 @@ impl WizardApp {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.selected = self.selected.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-                if self.selected + 1 < item_count {
-                    self.selected += 1;
-                }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab if self.selected + 1 < item_count => {
+                self.selected += 1;
             }
             KeyCode::BackTab => {
                 self.selected = self.selected.saturating_sub(1);
