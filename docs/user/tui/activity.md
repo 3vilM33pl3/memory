@@ -13,6 +13,7 @@ Activity is persisted in the backend database, so the tab is no longer limited t
 - linked memory ids when an event created, replaced, deleted, or referenced memory
 - duration and token counts when the operation reports them
 - provider/model/source metadata when available
+- graph retrieval diagnostics and sampled graph connections for query events that used graph-aware retrieval
 
 ## Get Up To Speed
 

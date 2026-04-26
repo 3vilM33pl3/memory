@@ -22,6 +22,7 @@ JSON is the default so agents can consume it directly. Use `--text` for a compac
 - duration in milliseconds when the operation reports it
 - token counts when an LLM provider returned usage metadata
 - source, provider, model, actor, and operation metadata when available
+- query graph retrieval status, candidate counts, timing, and sampled graph connections when a query used graph-aware retrieval
 
 Older events remain readable even if they were recorded before token and metadata columns existed; those fields appear as `null` or `-`.
 

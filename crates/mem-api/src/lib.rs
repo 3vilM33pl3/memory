@@ -1079,6 +1079,20 @@ pub enum ActivityDetails {
         insufficient_evidence: bool,
         total_duration_ms: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        graph_status: Option<String>,
+        #[serde(default)]
+        graph_candidates: usize,
+        #[serde(default)]
+        graph_augmented_candidates: usize,
+        #[serde(default)]
+        graph_duration_ms: u64,
+        #[serde(default)]
+        graph_result_count: usize,
+        #[serde(default)]
+        graph_connection_count: usize,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        graph_connections: Vec<QueryGraphConnection>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         answer: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
@@ -3080,6 +3094,45 @@ mod tests {
         );
         assert!(response.answer_generation.cited_result_numbers.is_empty());
         assert!(response.answer_citations.is_empty());
+    }
+
+    #[test]
+    fn query_activity_details_defaults_graph_metadata_for_older_json() {
+        let payload = serde_json::json!({
+            "type": "query",
+            "query": "How does query activity work?",
+            "top_k": 8,
+            "result_count": 2,
+            "confidence": 0.7,
+            "insufficient_evidence": false,
+            "total_duration_ms": 42,
+            "answer": "Stored answer"
+        });
+
+        let details: ActivityDetails =
+            serde_json::from_value(payload).expect("query activity details should deserialize");
+
+        match details {
+            ActivityDetails::Query {
+                graph_status,
+                graph_candidates,
+                graph_augmented_candidates,
+                graph_duration_ms,
+                graph_result_count,
+                graph_connection_count,
+                graph_connections,
+                ..
+            } => {
+                assert_eq!(graph_status, None);
+                assert_eq!(graph_candidates, 0);
+                assert_eq!(graph_augmented_candidates, 0);
+                assert_eq!(graph_duration_ms, 0);
+                assert_eq!(graph_result_count, 0);
+                assert_eq!(graph_connection_count, 0);
+                assert!(graph_connections.is_empty());
+            }
+            other => panic!("unexpected activity details: {other:?}"),
+        }
     }
 
     #[test]

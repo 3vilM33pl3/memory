@@ -7283,7 +7283,7 @@ fn print_activities_response(response: &ActivityListResponse) {
     );
     for event in &response.items {
         println!(
-            "{} | {:<14} | {:>8} tok | {:>6} ms | {}",
+            "{} | {:<14} | {:>8} tok | {:>6} ms | {}{}",
             event.recorded_at.format("%Y-%m-%d %H:%M:%S UTC"),
             activity_kind_text(&event.kind),
             event
@@ -7295,8 +7295,25 @@ fn print_activities_response(response: &ActivityListResponse) {
                 .duration_ms
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "-".to_string()),
-            event.summary
+            event.summary,
+            activity_graph_suffix(event)
         );
+    }
+}
+
+fn activity_graph_suffix(event: &mem_api::ActivityEvent) -> String {
+    match &event.details {
+        Some(mem_api::ActivityDetails::Query {
+            graph_status: Some(status),
+            graph_candidates,
+            graph_augmented_candidates,
+            graph_duration_ms,
+            graph_connection_count,
+            ..
+        }) => format!(
+            " | graph {status}: {graph_candidates} candidates, {graph_augmented_candidates} augmented, {graph_connection_count} connections, {graph_duration_ms} ms"
+        ),
+        _ => String::new(),
     }
 }
 

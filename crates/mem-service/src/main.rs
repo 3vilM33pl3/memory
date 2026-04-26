@@ -33,13 +33,14 @@ use mem_api::{
     ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectMemoryListItem,
     ProjectOverviewResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse, PruneHistoryRequest,
     PruneHistoryResponse, QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod,
-    QueryRequest, QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
-    RelatedMemorySummary, ReplacementProposalListResponse, ReplacementProposalResolutionResponse,
-    ResumeAction, ResumeRequest, ResumeResponse, ScanActivityRequest, SourceKind, StatsResponse,
-    StreamRequest, StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest,
-    UpToSpeedResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
-    WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
-    WatcherUnregisterRequest, read_capnp_text_frame, write_capnp_text_frame,
+    QueryGraphConnection, QueryRequest, QueryResponse, ReembedRequest, ReembedResponse,
+    ReindexRequest, ReindexResponse, RelatedMemorySummary, ReplacementProposalListResponse,
+    ReplacementProposalResolutionResponse, ResumeAction, ResumeRequest, ResumeResponse,
+    ScanActivityRequest, SourceKind, StatsResponse, StreamRequest, StreamResponse, TokenUsage,
+    TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse, ValidationError, WatcherHealth,
+    WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary, WatcherRestartRequest,
+    WatcherRestartResponse, WatcherUnregisterRequest, read_capnp_text_frame,
+    write_capnp_text_frame,
 };
 use mem_curate::{
     approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
@@ -76,6 +77,8 @@ use tower_http::{
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+const QUERY_ACTIVITY_GRAPH_CONNECTION_LIMIT: usize = 5;
 
 #[derive(Clone)]
 struct AppState {
@@ -1991,16 +1994,7 @@ async fn query(
                 None,
                 ActivityKind::Query,
                 format!("Query: {}", summarize_query(&request.query)),
-                Some(ActivityDetails::Query {
-                    query: request.query.clone(),
-                    top_k: request.top_k,
-                    result_count: response.results.len(),
-                    confidence: response.confidence,
-                    insufficient_evidence: response.insufficient_evidence,
-                    total_duration_ms: response.diagnostics.total_duration_ms,
-                    answer: Some(response.answer.clone()),
-                    error: None,
-                }),
+                Some(query_activity_details(&request, &response)),
                 None,
                 None,
                 Some("query".to_string()),
@@ -2026,6 +2020,13 @@ async fn query(
                     confidence: 0.0,
                     insufficient_evidence: true,
                     total_duration_ms: 0,
+                    graph_status: None,
+                    graph_candidates: 0,
+                    graph_augmented_candidates: 0,
+                    graph_duration_ms: 0,
+                    graph_result_count: 0,
+                    graph_connection_count: 0,
+                    graph_connections: Vec::new(),
                     answer: None,
                     error: Some(error.to_string()),
                 }),
@@ -2033,6 +2034,51 @@ async fn query(
             Err(ApiError::io(error))
         }
     }
+}
+
+fn query_activity_details(request: &QueryRequest, response: &QueryResponse) -> ActivityDetails {
+    let graph_connections = query_activity_graph_connections(response);
+    let graph_connection_count = response
+        .results
+        .iter()
+        .map(|result| result.graph_connections.len())
+        .sum();
+    let graph_result_count = response
+        .results
+        .iter()
+        .filter(|result| !result.graph_connections.is_empty() || result.debug.graph_boost > 0.0)
+        .count();
+
+    ActivityDetails::Query {
+        query: request.query.clone(),
+        top_k: request.top_k,
+        result_count: response.results.len(),
+        confidence: response.confidence,
+        insufficient_evidence: response.insufficient_evidence,
+        total_duration_ms: response.diagnostics.total_duration_ms,
+        graph_status: if response.diagnostics.graph_status.is_empty() {
+            None
+        } else {
+            Some(response.diagnostics.graph_status.clone())
+        },
+        graph_candidates: response.diagnostics.graph_candidates,
+        graph_augmented_candidates: response.diagnostics.graph_augmented_candidates,
+        graph_duration_ms: response.diagnostics.graph_duration_ms,
+        graph_result_count,
+        graph_connection_count,
+        graph_connections,
+        answer: Some(response.answer.clone()),
+        error: None,
+    }
+}
+
+fn query_activity_graph_connections(response: &QueryResponse) -> Vec<QueryGraphConnection> {
+    response
+        .results
+        .iter()
+        .flat_map(|result| result.graph_connections.iter().cloned())
+        .take(QUERY_ACTIVITY_GRAPH_CONNECTION_LIMIT)
+        .collect()
 }
 
 async fn capture_task(
@@ -6168,6 +6214,74 @@ mod tests {
         assert!(prompt.contains("graph: code symbol match | src/lib.rs"));
         assert!(prompt.contains("symbol=GraphTarget"));
         assert!(prompt.contains("edge=calls"));
+    }
+
+    #[test]
+    fn query_activity_details_include_graph_diagnostics() {
+        let mut response = test_query_response();
+        response.diagnostics.graph_status = "active".to_string();
+        response.diagnostics.graph_candidates = 4;
+        response.diagnostics.graph_augmented_candidates = 2;
+        response.diagnostics.graph_duration_ms = 17;
+        response.diagnostics.total_duration_ms = 91;
+        response.results[0].debug.graph_boost = 1.25;
+        response.results[0].graph_connections = vec![
+            mem_api::QueryGraphConnection {
+                file_path: "src/lib.rs".to_string(),
+                symbol: Some("GraphTarget".to_string()),
+                symbol_kind: Some("function".to_string()),
+                edge_kind: Some("calls".to_string()),
+                neighbor_symbol: Some("caller".to_string()),
+                direction: Some("incoming".to_string()),
+                score_boost: 1.25,
+                reason: "code symbol match".to_string(),
+            },
+            mem_api::QueryGraphConnection {
+                file_path: "src/other.rs".to_string(),
+                symbol: Some("OtherTarget".to_string()),
+                symbol_kind: Some("struct".to_string()),
+                edge_kind: None,
+                neighbor_symbol: None,
+                direction: None,
+                score_boost: 1.0,
+                reason: "code reference match".to_string(),
+            },
+        ];
+
+        let details = query_activity_details(
+            &QueryRequest {
+                project: "memory".to_string(),
+                query: "GraphTarget".to_string(),
+                filters: Default::default(),
+                top_k: 8,
+                min_confidence: None,
+                history: false,
+            },
+            &response,
+        );
+
+        match details {
+            ActivityDetails::Query {
+                graph_status,
+                graph_candidates,
+                graph_augmented_candidates,
+                graph_duration_ms,
+                graph_result_count,
+                graph_connection_count,
+                graph_connections,
+                ..
+            } => {
+                assert_eq!(graph_status.as_deref(), Some("active"));
+                assert_eq!(graph_candidates, 4);
+                assert_eq!(graph_augmented_candidates, 2);
+                assert_eq!(graph_duration_ms, 17);
+                assert_eq!(graph_result_count, 1);
+                assert_eq!(graph_connection_count, 2);
+                assert_eq!(graph_connections.len(), 2);
+                assert_eq!(graph_connections[0].file_path, "src/lib.rs");
+            }
+            other => panic!("unexpected activity details: {other:?}"),
+        }
     }
 
     #[test]

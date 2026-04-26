@@ -5960,6 +5960,13 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                 confidence,
                 insufficient_evidence,
                 total_duration_ms,
+                graph_status,
+                graph_candidates,
+                graph_augmented_candidates,
+                graph_duration_ms,
+                graph_result_count,
+                graph_connection_count,
+                graph_connections,
                 answer,
                 error,
             } => {
@@ -5975,6 +5982,52 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                     "Duration",
                     format!("{total_duration_ms} ms"),
                 ));
+                if let Some(graph_status) = graph_status {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(vec![section_span("Graph Retrieval")]));
+                    lines.push(activity_kv_line("Status", graph_status.clone()));
+                    lines.push(activity_kv_line("Candidates", graph_candidates.to_string()));
+                    lines.push(activity_kv_line(
+                        "Augmented results",
+                        graph_augmented_candidates.to_string(),
+                    ));
+                    lines.push(activity_kv_line(
+                        "Duration",
+                        format!("{graph_duration_ms} ms"),
+                    ));
+                    lines.push(activity_kv_line(
+                        "Results with graph",
+                        graph_result_count.to_string(),
+                    ));
+                    lines.push(activity_kv_line(
+                        "Connections",
+                        graph_connection_count.to_string(),
+                    ));
+                    if !graph_connections.is_empty() {
+                        lines.push(Line::from(""));
+                        lines.push(Line::from(vec![section_span("Graph Connections")]));
+                        for connection in graph_connections {
+                            let mut parts = vec![
+                                connection.reason.clone(),
+                                connection.file_path.clone(),
+                                format!("boost={:.2}", connection.score_boost),
+                            ];
+                            if let Some(symbol) = &connection.symbol {
+                                parts.push(format!("symbol={symbol}"));
+                            }
+                            if let Some(edge_kind) = &connection.edge_kind {
+                                parts.push(format!("edge={edge_kind}"));
+                            }
+                            if let Some(neighbor) = &connection.neighbor_symbol {
+                                parts.push(format!("neighbor={neighbor}"));
+                            }
+                            lines.push(Line::from(Span::styled(
+                                format!("- {}", parts.join(" | ")),
+                                Style::default().fg(Theme::TEXT),
+                            )));
+                        }
+                    }
+                }
                 if let Some(answer) = answer {
                     lines.push(Line::from(""));
                     lines.push(Line::from(vec![section_span("Answer")]));
@@ -7582,10 +7635,11 @@ mod tests {
     use super::{
         AgentSnapshot, App, BackendConnectionState, BackgroundEvent, ManagerState, MemoriesFocus,
         ProjectRefreshResult, RefreshMode, TabKind, Theme, ToolVersions, UiStatus,
-        activity_duration, activity_tokens, build_memory_detail_lines, context_gradient_color,
-        current_query_display, derive_manager_state, empty_overview, filled_bar_cells,
-        format_context_percent, format_epoch_reset_time, format_query_citation_numbers,
-        format_timestamp, format_timestamp_full, format_timestamp_medium, format_timestamp_short,
+        activity_duration, activity_tokens, backend_activity_detail_lines,
+        build_memory_detail_lines, context_gradient_color, current_query_display,
+        derive_manager_state, empty_overview, filled_bar_cells, format_context_percent,
+        format_epoch_reset_time, format_query_citation_numbers, format_timestamp,
+        format_timestamp_full, format_timestamp_medium, format_timestamp_short,
         format_timestamp_timeline, manager_status_detail, manager_status_label,
         memory_detail_max_scroll, normalized_percent, query_input_display, remaining_bar_cells,
         render_markdown_lines, service_status_detail, service_status_label,
@@ -7593,8 +7647,8 @@ mod tests {
     };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
-        ActivityEvent, ActivityKind, MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus,
-        MemoryType, Profile, ProjectMemoriesResponse, QueryFilters, QueryRequest,
+        ActivityDetails, ActivityEvent, ActivityKind, MemoryEmbeddingSpace, MemoryEntryResponse,
+        MemoryStatus, MemoryType, Profile, ProjectMemoriesResponse, QueryFilters, QueryRequest,
         ReplacementProposalListResponse, TokenUsage, WatcherPresenceSummary,
     };
     use std::path::PathBuf;
@@ -8181,6 +8235,106 @@ mod tests {
         assert_eq!(app.activity_events.len(), 1);
         assert_eq!(activity_tokens(&app.activity_events[0]), "1.4k");
         assert_eq!(activity_duration(&app.activity_events[0]), "42");
+    }
+
+    #[test]
+    fn backend_query_activity_detail_renders_graph_metadata() {
+        let event = ActivityEvent {
+            id: Uuid::new_v4(),
+            recorded_at: Utc::now(),
+            project: "memory".to_string(),
+            kind: ActivityKind::Query,
+            memory_id: None,
+            summary: "Query: graph retrieval".to_string(),
+            details: Some(ActivityDetails::Query {
+                query: "GraphTarget".to_string(),
+                top_k: 8,
+                result_count: 2,
+                confidence: 0.82,
+                insufficient_evidence: false,
+                total_duration_ms: 91,
+                graph_status: Some("active".to_string()),
+                graph_candidates: 4,
+                graph_augmented_candidates: 2,
+                graph_duration_ms: 17,
+                graph_result_count: 1,
+                graph_connection_count: 2,
+                graph_connections: vec![mem_api::QueryGraphConnection {
+                    file_path: "src/lib.rs".to_string(),
+                    symbol: Some("GraphTarget".to_string()),
+                    symbol_kind: Some("function".to_string()),
+                    edge_kind: Some("calls".to_string()),
+                    neighbor_symbol: Some("caller".to_string()),
+                    direction: Some("incoming".to_string()),
+                    score_boost: 1.25,
+                    reason: "code symbol match".to_string(),
+                }],
+                answer: Some("Use the graph-aware result.".to_string()),
+                error: None,
+            }),
+            actor_id: None,
+            actor_name: None,
+            source: Some("query".to_string()),
+            operation_id: None,
+            duration_ms: Some(91),
+            provider: None,
+            model: None,
+            token_usage: None,
+        };
+
+        let rendered = backend_activity_detail_lines(&event)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Graph Retrieval"));
+        assert!(rendered.contains("Status: active"));
+        assert!(rendered.contains("Candidates: 4"));
+        assert!(rendered.contains("Augmented results: 2"));
+        assert!(rendered.contains("Graph Connections"));
+        assert!(rendered.contains("code symbol match | src/lib.rs"));
+    }
+
+    #[test]
+    fn historical_query_activity_without_graph_metadata_omits_graph_section() {
+        let details: ActivityDetails = serde_json::from_value(serde_json::json!({
+            "type": "query",
+            "query": "old query",
+            "top_k": 8,
+            "result_count": 1,
+            "confidence": 0.7,
+            "insufficient_evidence": false,
+            "total_duration_ms": 42,
+            "answer": "old answer"
+        }))
+        .expect("historical query details should deserialize");
+        let event = ActivityEvent {
+            id: Uuid::new_v4(),
+            recorded_at: Utc::now(),
+            project: "memory".to_string(),
+            kind: ActivityKind::Query,
+            memory_id: None,
+            summary: "Query: old query".to_string(),
+            details: Some(details),
+            actor_id: None,
+            actor_name: None,
+            source: Some("query".to_string()),
+            operation_id: None,
+            duration_ms: Some(42),
+            provider: None,
+            model: None,
+            token_usage: None,
+        };
+
+        let rendered = backend_activity_detail_lines(&event)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Query: old query"));
+        assert!(!rendered.contains("Graph Retrieval"));
     }
 
     #[test]
