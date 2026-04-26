@@ -8,18 +8,24 @@ export type MemoryType =
   | "debugging"
   | "environment"
   | "domain_fact"
-  | "plan";
+  | "plan"
+  | "implementation"
+  | "user"
+  | "feedback"
+  | "project"
+  | "reference";
 
 export type QueryMatchKind = "lexical" | "semantic" | "hybrid";
 
 export type SourceKind =
   | "task_prompt"
-  | "agent_summary"
-  | "user_note"
   | "file"
   | "git_commit"
+  | "command_output"
   | "test"
-  | "task_title";
+  | "note";
+
+export type ReplacementPolicy = "conservative" | "balanced" | "aggressive";
 
 export interface NamedCount {
   name: string;
@@ -39,27 +45,39 @@ export interface SourceKindCount {
 export interface AutomationStatus {
   enabled: boolean;
   mode: string;
-  dirty_file_count: number;
+  repo_root: string;
+  dirty_file_count: number | null;
+  pending_note_count: number | null;
   last_activity_at: string | null;
   last_persisted_at: string | null;
-  last_capture_at: string | null;
-  last_curation_at: string | null;
-  pending_capture_count: number;
   last_decision: string | null;
 }
 
+export type WatcherHealth = "healthy" | "stale" | "restarting" | "failed";
+
 export interface WatcherPresence {
   watcher_id: string;
+  project: string;
   repo_root: string;
   hostname: string;
+  host_service_id: string;
   pid: number;
   mode: string;
+  managed_by_service: boolean;
+  health: WatcherHealth;
   started_at: string;
   last_heartbeat_at: string;
+  agent_cli: string | null;
+  agent_session_id: string | null;
+  agent_pid: number | null;
+  agent_started_at: string | null;
+  last_restart_attempt_at: string | null;
+  restart_attempt_count: number;
 }
 
 export interface WatcherPresenceSummary {
   active_count: number;
+  unhealthy_count: number;
   stale_after_seconds: number;
   last_heartbeat_at: string | null;
   watchers: WatcherPresence[];
@@ -93,6 +111,7 @@ export interface ProjectOverviewResponse {
   embedding_spaces_total: number;
   active_embedding_provider: string | null;
   active_embedding_model: string | null;
+  pending_replacement_proposals: number;
   top_tags: NamedCount[];
   top_files: NamedCount[];
   memory_type_breakdown: MemoryTypeCount[];
@@ -107,9 +126,15 @@ export interface ProjectMemoryListItem {
   preview: string;
   memory_type: MemoryType;
   confidence: number;
+  importance: number;
   status: MemoryStatus;
   updated_at: string;
   tags: string[];
+  tag_count: number;
+  source_count: number;
+  canonical_id: string;
+  version_no: number;
+  is_tombstone: boolean;
 }
 
 export interface ProjectMemoriesResponse {
@@ -135,6 +160,14 @@ export interface RelatedMemorySummary {
   confidence: number;
 }
 
+export interface MemoryEmbeddingSpace {
+  provider: string;
+  model: string;
+  base_url: string;
+  chunk_count: number;
+  last_updated: string | null;
+}
+
 export interface MemoryEntryResponse {
   id: string;
   project: string;
@@ -147,8 +180,18 @@ export interface MemoryEntryResponse {
   tags: string[];
   sources: MemorySourceRecord[];
   related_memories: RelatedMemorySummary[];
+  embedding_spaces: MemoryEmbeddingSpace[];
   created_at: string;
   updated_at: string;
+  canonical_id: string;
+  version_no: number;
+  is_tombstone: boolean;
+}
+
+export interface MemoryHistoryResponse {
+  canonical_id: string;
+  project: string;
+  versions: MemoryEntryResponse[];
 }
 
 export interface QueryDiagnostics {
@@ -164,8 +207,27 @@ export interface QueryDiagnostics {
   semantic_status: string;
 }
 
+export type QueryAnswerMethod = "deterministic" | "llm" | "fallback";
+
+export interface QueryAnswerGeneration {
+  method: QueryAnswerMethod;
+  cited_result_numbers: number[];
+  evidence_count: number;
+  duration_ms: number;
+  fallback_reason: string | null;
+}
+
+export interface QueryAnswerCitation {
+  result_number: number;
+  memory_id: string;
+  memory_type: MemoryType;
+  summary: string;
+  snippet: string;
+}
+
 export interface ReembedResponse {
   reembedded_chunks: number;
+  dry_run: boolean;
 }
 
 export interface QueryResult {
@@ -197,6 +259,8 @@ export interface QueryResponse {
   answer: string;
   confidence: number;
   insufficient_evidence: boolean;
+  answer_generation: QueryAnswerGeneration;
+  answer_citations: QueryAnswerCitation[];
   results: QueryResult[];
   diagnostics: QueryDiagnostics;
 }
@@ -207,19 +271,58 @@ export interface QueryRequest {
   filters: Record<string, never>;
   top_k: number;
   min_confidence: number | null;
+  history?: boolean;
 }
 
 export type ActivityKind =
+  | "checkpoint"
+  | "scan"
+  | "plan"
   | "commit_sync"
+  | "bundle_export"
+  | "bundle_import"
   | "query"
   | "query_error"
+  | "watcher_health"
+  | "memory_replacement"
   | "capture_task"
   | "curate"
   | "reindex"
+  | "reembed"
   | "archive"
   | "delete_memory";
 
 export type ActivityDetails =
+  | {
+      type: "checkpoint";
+      repo_root: string;
+      marked_at: string;
+      note?: string | null;
+      git_branch?: string | null;
+      git_head?: string | null;
+    }
+  | {
+      type: "plan";
+      action: "started" | "synced" | "finish_blocked" | "finish_verified";
+      title: string;
+      thread_key: string;
+      total_items: number;
+      completed_items: number;
+      remaining_items: string[];
+      source_path?: string | null;
+      verified_complete: boolean;
+    }
+  | {
+      type: "scan";
+      dry_run: boolean;
+      candidate_count: number;
+      files_considered: number;
+      commits_considered: number;
+      index_reused: boolean;
+      report_path: string;
+      capture_id?: string | null;
+      curate_run_id?: string | null;
+    }
   | {
       type: "commit_sync";
       imported_count: number;
@@ -227,6 +330,12 @@ export type ActivityDetails =
       total_received: number;
       newest_commit?: string | null;
       oldest_commit?: string | null;
+    }
+  | {
+      type: "bundle_transfer";
+      bundle_id: string;
+      item_count: number;
+      source_project?: string | null;
     }
   | {
       type: "query";
@@ -240,11 +349,35 @@ export type ActivityDetails =
       error?: string | null;
     }
   | {
+      type: "watcher_health";
+      watcher_id: string;
+      hostname: string;
+      health: WatcherHealth;
+      managed_by_service: boolean;
+      restart_attempt_count: number;
+      agent_cli?: string | null;
+      agent_session_id?: string | null;
+      agent_pid?: number | null;
+      previous_health?: WatcherHealth | null;
+      recovered_after_restart_attempts?: number | null;
+      message?: string | null;
+    }
+  | {
+      type: "memory_replacement";
+      old_memory_id: string;
+      old_summary: string;
+      new_memory_id: string;
+      new_summary: string;
+      automatic: boolean;
+      policy: ReplacementPolicy;
+    }
+  | {
       type: "capture_task";
       session_id: string;
       task_id: string;
       raw_capture_id: string;
       idempotency_key: string;
+      task_title?: string | null;
       writer_id: string;
     }
   | {
@@ -252,10 +385,16 @@ export type ActivityDetails =
       run_id: string;
       input_count: number;
       output_count: number;
+      replaced_count: number;
+      proposal_count: number;
     }
   | {
       type: "reindex";
       reindexed_entries: number;
+    }
+  | {
+      type: "reembed";
+      reembedded_chunks: number;
     }
   | {
       type: "archive";
@@ -272,33 +411,49 @@ export type ActivityDetails =
 export interface ActivityEvent {
   project: string;
   kind: ActivityKind;
+  memory_id?: string | null;
   summary: string;
   details: ActivityDetails | null;
   recorded_at: string;
 }
 
 export interface ReindexResponse {
-  project: string;
   reindexed_entries: number;
+  dry_run: boolean;
 }
 
 export interface CurateResponse {
+  project_id: string;
   run_id: string;
   input_count: number;
   output_count: number;
+  replaced_count: number;
+  proposal_count: number;
+  dry_run: boolean;
 }
 
 export interface ArchiveResponse {
-  project: string;
   archived_count: number;
-  max_confidence: number;
-  max_importance: number;
+  dry_run: boolean;
 }
 
 export interface DeleteMemoryResponse {
   memory_id: string;
+  project: string;
   deleted: boolean;
   summary: string;
+}
+
+export interface ReplacementPolicyResponse {
+  project: string;
+  repo_root: string | null;
+  replacement_policy: ReplacementPolicy;
+  writable: boolean;
+}
+
+export interface ReplacementPolicyRequest {
+  repo_root: string;
+  replacement_policy: ReplacementPolicy;
 }
 
 export interface ProjectMemoryExportOptions {
@@ -394,6 +549,15 @@ export interface AgentSessionResponse {
   first_assistant_text: string;
 }
 
+export interface RateLimitResponse {
+  source: string;
+  five_hour_pct: number | null;
+  five_hour_resets_at: number | null;
+  seven_day_pct: number | null;
+  seven_day_resets_at: number | null;
+  updated_at: number | null;
+}
+
 export interface OrphanPortResponse {
   port: number;
   pid: number;
@@ -405,6 +569,23 @@ export interface AgentSnapshotResponse {
   collected_at: string;
   sessions: AgentSessionResponse[];
   orphan_ports: OrphanPortResponse[];
+  rate_limits: RateLimitResponse[];
+}
+
+export interface EmbeddingBackendInfo {
+  name: string;
+  provider: string;
+  base_url: string;
+  model: string;
+  active: boolean;
+  ready: boolean;
+  project_chunk_count: number | null;
+  project_memory_count: number | null;
+}
+
+export interface EmbeddingBackendsResponse {
+  backends: EmbeddingBackendInfo[];
+  active: string | null;
 }
 
 // --- Resume types ---
@@ -424,6 +605,19 @@ export interface ResumeAction {
   command_hint: string | null;
 }
 
+export interface CommitRecord {
+  hash: string;
+  short_hash: string;
+  subject: string;
+  body: string;
+  author_name: string | null;
+  author_email: string | null;
+  committed_at: string;
+  parent_hashes: string[];
+  changed_paths: string[];
+  imported_at: string;
+}
+
 export interface ResumeResponse {
   project: string;
   generated_at: string;
@@ -436,6 +630,7 @@ export interface ResumeResponse {
   secondary_next_steps: ResumeAction[];
   context_items: ProjectMemoryListItem[];
   timeline: ActivityEvent[];
+  commits: CommitRecord[];
   changed_memories: ProjectMemoryListItem[];
   durable_context: ProjectMemoryListItem[];
   warnings: string[];

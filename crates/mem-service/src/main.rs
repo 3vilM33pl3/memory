@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     io::ErrorKind,
     io::Read,
     net::SocketAddr,
@@ -35,12 +35,14 @@ use mem_api::{
     PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryAnswerCitation,
     QueryAnswerGeneration, QueryAnswerMethod, QueryGraphConnection, QueryRequest, QueryResponse,
     ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
+    ReplacementPolicy, ReplacementPolicyRequest, ReplacementPolicyResponse,
     ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
-    ResumeRequest, ResumeResponse, ScanActivityRequest, SourceKind, StatsResponse, StreamRequest,
-    StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse,
-    ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
+    ResumeCheckpoint, ResumeRequest, ResumeResponse, ScanActivityRequest, SourceKind,
+    StatsResponse, StreamRequest, StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest,
+    UpToSpeedResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
     WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
-    WatcherUnregisterRequest, read_capnp_text_frame, write_capnp_text_frame,
+    WatcherUnregisterRequest, load_repo_replacement_policy, read_capnp_text_frame,
+    repo_agent_settings_path, write_capnp_text_frame,
 };
 use mem_curate::{
     approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
@@ -430,6 +432,12 @@ fn build_http_app(state: AppState) -> Router {
         .route(
             "/v1/projects/{slug}/replacement-proposals/{proposal_id}/reject",
             post(project_replacement_proposal_reject),
+        )
+        .route(
+            "/v1/projects/{slug}/replacement-policy",
+            get(project_replacement_policy)
+                .put(project_replacement_policy_update)
+                .post(project_replacement_policy_update),
         )
         .route("/v1/projects/{slug}/memories", get(project_memories))
         .route("/v1/projects/{slug}/overview", get(project_overview))
@@ -1925,11 +1933,26 @@ async fn agents_snapshot() -> Result<Json<serde_json::Value>, ApiError> {
             })
         })
         .collect();
+    let rate_limits: Vec<serde_json::Value> = snapshot
+        .rate_limits
+        .iter()
+        .map(|rate_limit| {
+            serde_json::json!({
+                "source": rate_limit.source,
+                "five_hour_pct": rate_limit.five_hour_pct,
+                "five_hour_resets_at": rate_limit.five_hour_resets_at,
+                "seven_day_pct": rate_limit.seven_day_pct,
+                "seven_day_resets_at": rate_limit.seven_day_resets_at,
+                "updated_at": rate_limit.updated_at,
+            })
+        })
+        .collect();
 
     Ok(Json(serde_json::json!({
         "collected_at": snapshot.collected_at.to_rfc3339(),
         "sessions": sessions,
         "orphan_ports": orphan_ports,
+        "rate_limits": rate_limits,
     })))
 }
 
@@ -3431,6 +3454,125 @@ async fn project_replacement_proposal_reject(
     Ok(Json(response))
 }
 
+#[derive(Debug, Deserialize)]
+struct ReplacementPolicyQuery {
+    repo_root: Option<String>,
+}
+
+async fn project_replacement_policy(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(params): Query<ReplacementPolicyQuery>,
+) -> Result<Json<ReplacementPolicyResponse>, ApiError> {
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_get_json(&state, &format!("/v1/projects/{slug}/replacement-policy")).await?,
+        ));
+    }
+    let repo_root = resolve_project_repo_root(&state, &slug, params.repo_root.as_deref());
+    let replacement_policy = repo_root
+        .as_deref()
+        .and_then(|root| load_repo_replacement_policy(FsPath::new(root)).ok())
+        .unwrap_or_default();
+    Ok(Json(ReplacementPolicyResponse {
+        project: slug,
+        writable: repo_root.is_some(),
+        repo_root,
+        replacement_policy,
+    }))
+}
+
+async fn project_replacement_policy_update(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<ReplacementPolicyRequest>,
+) -> Result<Json<ReplacementPolicyResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(
+                &state,
+                &format!("/v1/projects/{slug}/replacement-policy"),
+                &request,
+                true,
+            )
+            .await?,
+        ));
+    }
+    let repo_root = request
+        .repo_root
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::validation(ValidationError::new("repo_root must be non-empty")))?;
+    write_replacement_policy(FsPath::new(repo_root), request.replacement_policy)
+        .map_err(ApiError::io)?;
+    notify_project_refreshed(&state, slug.clone());
+    Ok(Json(ReplacementPolicyResponse {
+        project: slug,
+        repo_root: Some(repo_root.to_string()),
+        replacement_policy: request.replacement_policy,
+        writable: true,
+    }))
+}
+
+fn resolve_project_repo_root(
+    state: &AppState,
+    project: &str,
+    requested: Option<&str>,
+) -> Option<String> {
+    if let Some(repo_root) = requested.map(str::trim).filter(|value| !value.is_empty()) {
+        return Some(repo_root.to_string());
+    }
+    if let Some(repo_root) = state
+        .config
+        .automation
+        .repo_root
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(repo_root.to_string());
+    }
+
+    let mut repo_roots = state
+        .watchers
+        .lock()
+        .expect("watcher registry mutex poisoned")
+        .values()
+        .filter(|watcher| watcher.project == project)
+        .map(|watcher| watcher.repo_root.clone())
+        .collect::<Vec<_>>();
+    repo_roots.sort();
+    repo_roots.dedup();
+    if repo_roots.len() == 1 {
+        repo_roots.pop()
+    } else {
+        None
+    }
+}
+
+fn write_replacement_policy(repo_root: &FsPath, policy: ReplacementPolicy) -> Result<()> {
+    let path = repo_agent_settings_path(repo_root);
+    let mut document = if path.exists() {
+        std::fs::read_to_string(&path)
+            .with_context(|| format!("read {}", path.display()))?
+            .parse::<toml_edit::DocumentMut>()
+            .with_context(|| format!("parse {}", path.display()))?
+    } else {
+        toml_edit::DocumentMut::new()
+    };
+    document["curation"]["replacement_policy"] = toml_edit::value(policy.to_string());
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    std::fs::write(&path, document.to_string())
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
 async fn project_commits(
     State(state): State<AppState>,
     Path(slug): Path<String>,
@@ -3475,7 +3617,7 @@ async fn project_commit_detail(
 async fn project_resume(
     State(state): State<AppState>,
     Path(slug): Path<String>,
-    Json(request): Json<ResumeRequest>,
+    Json(mut request): Json<ResumeRequest>,
 ) -> Result<Json<ResumeResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
     if request.project != slug {
@@ -3493,6 +3635,14 @@ async fn project_resume(
             )
             .await?,
         ));
+    }
+
+    if request.checkpoint.is_none() {
+        request.checkpoint = request.repo_root.as_deref().and_then(|root| {
+            load_resume_checkpoint(&slug, FsPath::new(root))
+                .ok()
+                .flatten()
+        });
     }
 
     let pool = state.pool()?;
@@ -3747,6 +3897,29 @@ async fn build_up_to_speed_response(
         token_usage,
         warnings,
     })
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct StoredResumeCheckpoints {
+    #[serde(default)]
+    checkpoints: BTreeMap<String, ResumeCheckpoint>,
+}
+
+fn load_resume_checkpoint(project: &str, repo_root: &FsPath) -> Result<Option<ResumeCheckpoint>> {
+    let state_dir = mem_platform::preferred_user_state_dir()
+        .ok_or_else(|| anyhow::anyhow!("could not determine user state directory"))?;
+    let path = state_dir.join("resume-checkpoints.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents =
+        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let store: StoredResumeCheckpoints =
+        serde_json::from_str(&contents).context("parse checkpoint store")?;
+    Ok(store
+        .checkpoints
+        .get(&format!("{}::{}", project, repo_root.display()))
+        .cloned())
 }
 
 async fn fetch_project_timeline(

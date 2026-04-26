@@ -1,15 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  activateEmbeddingBackend,
   approveProposal,
   archiveProject,
   curate,
   deleteMemory,
   exportBundle,
   getAgentSnapshot,
+  getEmbeddingBackends,
   getHealth,
   getMemory,
+  getMemoryHistory,
   getMemories,
   getOverview,
+  getReplacementPolicy,
   getReplacementProposals,
   getResume,
   importBundle,
@@ -19,12 +23,15 @@ import {
   reindex,
   rejectProposal,
   runQuery,
+  saveReplacementPolicy,
 } from "./api";
 import type {
   ActivityDetails,
   ActivityEvent,
   AgentSnapshotResponse,
+  EmbeddingBackendsResponse,
   MemoryEntryResponse,
+  MemoryHistoryResponse,
   MemoryStatus,
   MemoryType,
   ProjectMemoryBundlePreview,
@@ -33,13 +40,17 @@ import type {
   ProjectMemoriesResponse,
   ProjectOverviewResponse,
   QueryResponse,
+  ReplacementPolicy,
+  ReplacementPolicyResponse,
   ReplacementProposalRecord,
   ResumeResponse,
   StreamRequest,
   StreamResponse,
 } from "./types";
 
-const ALL_TABS = ["memories", "agents", "query", "activity", "project", "watchers", "resume", "bundles"] as const;
+const PRIMARY_TABS = ["memories", "agents", "query", "project", "review", "watchers", "embeddings", "resume"] as const;
+const MORE_TABS = ["bundles", "activity"] as const;
+const ALL_TABS = [...PRIMARY_TABS, ...MORE_TABS] as const;
 type Tab = (typeof ALL_TABS)[number];
 
 type MemoryTypeFilter = "all" | MemoryType;
@@ -66,6 +77,7 @@ const EMPTY_OVERVIEW: ProjectOverviewResponse = {
   embedding_spaces_total: 0,
   active_embedding_provider: null,
   active_embedding_model: null,
+  pending_replacement_proposals: 0,
   tasks_total: 0,
   sessions_total: 0,
   curation_runs_total: 0,
@@ -81,19 +93,44 @@ const EMPTY_OVERVIEW: ProjectOverviewResponse = {
   watchers: null,
 };
 
+const MEMORY_TYPES: MemoryType[] = [
+  "architecture",
+  "convention",
+  "decision",
+  "incident",
+  "debugging",
+  "environment",
+  "domain_fact",
+  "plan",
+  "implementation",
+  "user",
+  "feedback",
+  "project",
+  "reference",
+];
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("memories");
   const [project, setProject] = useState(localStorage.getItem("memory-layer.project") ?? "memory");
   const [projectInput, setProjectInput] = useState(project);
+  const [repoRootInput, setRepoRootInput] = useState(localStorage.getItem("memory-layer.repoRoot") ?? "");
   const [health, setHealth] = useState<Record<string, unknown> | null>(null);
   const [overview, setOverview] = useState<ProjectOverviewResponse>({ ...EMPTY_OVERVIEW, project });
   const [memories, setMemories] = useState<ProjectMemoriesResponse>({ project, total: 0, items: [] });
   const [selectedMemoryId, setSelectedMemoryId] = useState<string | null>(null);
   const [selectedMemory, setSelectedMemory] = useState<MemoryEntryResponse | null>(null);
+  const [selectedHistory, setSelectedHistory] = useState<MemoryHistoryResponse | null>(null);
   const [queryText, setQueryText] = useState("");
   const [queryResponse, setQueryResponse] = useState<QueryResponse | null>(null);
   const [selectedQueryMemory, setSelectedQueryMemory] = useState<MemoryEntryResponse | null>(null);
   const [selectedQueryIndex, setSelectedQueryIndex] = useState(0);
+  const [queryLoading, setQueryLoading] = useState(false);
+  const [queryError, setQueryError] = useState<string | null>(null);
+  const [queryRoundtripMs, setQueryRoundtripMs] = useState<number | null>(null);
+  const [queryHistory, setQueryHistory] = useState<string[]>([]);
+  const [queryHistoryCursor, setQueryHistoryCursor] = useState<number | null>(null);
+  const [selectedQueryMemoryLoading, setSelectedQueryMemoryLoading] = useState(false);
+  const [selectedQueryMemoryError, setSelectedQueryMemoryError] = useState<string | null>(null);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [selectedActivityIndex, setSelectedActivityIndex] = useState(0);
   const [statusMessage, setStatusMessage] = useState("Connecting to Memory Layer...");
@@ -116,11 +153,18 @@ export default function App() {
   // Agents state
   const [agentSnapshot, setAgentSnapshot] = useState<AgentSnapshotResponse | null>(null);
   const [selectedAgentIndex, setSelectedAgentIndex] = useState(0);
+  // Embeddings state
+  const [embeddingBackends, setEmbeddingBackends] = useState<EmbeddingBackendsResponse | null>(null);
+  const [selectedEmbeddingIndex, setSelectedEmbeddingIndex] = useState(0);
+  const [embeddingLoading, setEmbeddingLoading] = useState(false);
   // Resume state
   const [resumeData, setResumeData] = useState<ResumeResponse | null>(null);
   const [resumeLoading, setResumeLoading] = useState(false);
+  const [resumeAutoloadedFor, setResumeAutoloadedFor] = useState<string | null>(null);
   // Proposals state
   const [proposals, setProposals] = useState<ReplacementProposalRecord[]>([]);
+  const [selectedProposalIndex, setSelectedProposalIndex] = useState(0);
+  const [replacementPolicy, setReplacementPolicy] = useState<ReplacementPolicyResponse | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const queryRef = useRef<HTMLInputElement>(null);
@@ -128,6 +172,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("memory-layer.project", project);
   }, [project]);
+
+  useEffect(() => {
+    localStorage.setItem("memory-layer.repoRoot", repoRootInput);
+  }, [repoRootInput]);
 
   useEffect(() => {
     void refreshProject(project);
@@ -182,9 +230,11 @@ export default function App() {
   useEffect(() => {
     if (!selectedMemoryId) {
       setSelectedMemory(null);
+      setSelectedHistory(null);
       sendStream({ type: "unsubscribe_memory" });
       return;
     }
+    setSelectedHistory(null);
     void getMemory(selectedMemoryId)
       .then(setSelectedMemory)
       .catch((error: Error) => setStatusMessage(error.message));
@@ -196,11 +246,30 @@ export default function App() {
     const result = queryResponse?.results[selectedQueryIndex];
     if (!result) {
       setSelectedQueryMemory(null);
+      setSelectedQueryMemoryLoading(false);
+      setSelectedQueryMemoryError(null);
       return;
     }
+    let active = true;
+    setSelectedQueryMemory(null);
+    setSelectedQueryMemoryLoading(true);
+    setSelectedQueryMemoryError(null);
     void getMemory(result.memory_id)
-      .then(setSelectedQueryMemory)
-      .catch((error: Error) => setStatusMessage(error.message));
+      .then((detail) => {
+        if (active) setSelectedQueryMemory(detail);
+      })
+      .catch((error: Error) => {
+        if (active) {
+          setSelectedQueryMemoryError(error.message);
+          setStatusMessage(error.message);
+        }
+      })
+      .finally(() => {
+        if (active) setSelectedQueryMemoryLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [queryResponse, selectedQueryIndex]);
 
   // Agent polling (every 2s when on agents tab)
@@ -217,12 +286,16 @@ export default function App() {
     return () => { active = false; clearInterval(id); };
   }, [tab]);
 
-  // Load proposals when project tab is active
+  // Load proposals and replacement policy when review tab is active
   useEffect(() => {
-    if (tab !== "project") return;
-    void getReplacementProposals(project)
-      .then((r) => setProposals(r.proposals))
-      .catch(() => {});
+    if (tab !== "review") return;
+    void refreshReview();
+  }, [tab, project]);
+
+  // Load embeddings when embeddings tab is active
+  useEffect(() => {
+    if (tab !== "embeddings") return;
+    void refreshEmbeddings();
   }, [tab, project]);
 
   const filteredMemories = useMemo(() => {
@@ -239,6 +312,30 @@ export default function App() {
       return true;
     });
   }, [memories.items, statusFilter, tagFilter, textFilter, typeFilter]);
+
+  const effectiveRepoRoot = useMemo(() => {
+    const manual = repoRootInput.trim();
+    if (manual) return manual;
+    const automationRoot = overview.automation?.repo_root?.trim();
+    if (automationRoot) return automationRoot;
+    const roots = Array.from(new Set((overview.watchers?.watchers ?? []).map((watcher) => watcher.repo_root).filter(Boolean)));
+    return roots.length === 1 ? roots[0] : "";
+  }, [overview.automation?.repo_root, overview.watchers?.watchers, repoRootInput]);
+
+  useEffect(() => {
+    if (!effectiveRepoRoot) return;
+    const key = `${project}:${effectiveRepoRoot}`;
+    if (resumeAutoloadedFor === key) return;
+    setResumeAutoloadedFor(key);
+    void getResume(project, effectiveRepoRoot, false)
+      .then((data) => {
+        setResumeData(data);
+        if (data.checkpoint && (data.timeline.length || data.commits.length || data.changed_memories.length)) {
+          setTab("resume");
+        }
+      })
+      .catch(() => {});
+  }, [effectiveRepoRoot, project, resumeAutoloadedFor]);
 
   useEffect(() => {
     if (!filteredMemories.length) {
@@ -259,9 +356,9 @@ export default function App() {
       if (inInput) return;
 
       const tabIndex = parseInt(e.key, 10) - 1;
-      if (tabIndex >= 0 && tabIndex < ALL_TABS.length) {
+      if (tabIndex >= 0 && tabIndex < PRIMARY_TABS.length) {
         e.preventDefault();
-        setTab(ALL_TABS[tabIndex]);
+        setTab(PRIMARY_TABS[tabIndex]);
         return;
       }
 
@@ -306,9 +403,20 @@ export default function App() {
     event.preventDefault();
     const trimmed = queryText.trim();
     if (!trimmed) {
+      setQueryResponse(null);
+      setQueryError(null);
+      setQueryRoundtripMs(null);
       setStatusMessage("Enter a query before running search.");
       return;
     }
+    const started = performance.now();
+    setQueryLoading(true);
+    setQueryError(null);
+    setQueryHistoryCursor(null);
+    setQueryHistory((current) => {
+      const withoutDuplicateTail = current[current.length - 1] === trimmed ? current : [...current, trimmed];
+      return withoutDuplicateTail.slice(-50);
+    });
     try {
       setStatusMessage(`Running query for "${trimmed}"...`);
       const response = await runQuery({
@@ -317,13 +425,43 @@ export default function App() {
         filters: {},
         top_k: 8,
         min_confidence: null,
+        history: false,
       });
       setQueryResponse(response);
       setSelectedQueryIndex(0);
-      setStatusMessage(`Query returned ${response.results.length} memories.`);
+      setQueryRoundtripMs(Math.round(performance.now() - started));
+      setStatusMessage(`Query returned ${response.results.length} memories in ${Math.round(performance.now() - started)} ms.`);
       setTab("query");
     } catch (error) {
-      setStatusMessage((error as Error).message);
+      const message = (error as Error).message;
+      setQueryError(message);
+      setQueryRoundtripMs(Math.round(performance.now() - started));
+      setStatusMessage(message);
+    } finally {
+      setQueryLoading(false);
+    }
+  }
+
+  function applyQueryHistory(delta: number) {
+    if (!queryHistory.length) {
+      setStatusMessage("No previous queries in this browser session.");
+      return;
+    }
+    const last = queryHistory.length - 1;
+    let next: number | null = queryHistoryCursor;
+    if (queryHistoryCursor === null && delta < 0) next = last;
+    else if (queryHistoryCursor === null && delta > 0) next = null;
+    else if (queryHistoryCursor !== null && delta < 0) next = Math.max(0, queryHistoryCursor - 1);
+    else if (queryHistoryCursor !== null && delta > 0 && queryHistoryCursor >= last) next = null;
+    else if (queryHistoryCursor !== null && delta > 0) next = queryHistoryCursor + 1;
+
+    setQueryHistoryCursor(next);
+    if (next === null) {
+      setQueryText("");
+      setStatusMessage("Returned to a new empty query.");
+    } else {
+      setQueryText(queryHistory[next]);
+      setStatusMessage(`Loaded query history item ${next + 1}/${queryHistory.length}.`);
     }
   }
 
@@ -331,7 +469,7 @@ export default function App() {
     try {
       if (action === "curate") {
         const response = await curate(project);
-        setStatusMessage(`Curated ${response.input_count} captures into ${response.output_count} memories.`);
+        setStatusMessage(`Curated ${response.input_count} captures into ${response.output_count} memories with ${response.proposal_count} proposal(s).`);
       } else if (action === "reindex") {
         const response = await reindex(project);
         setStatusMessage(`Reindexed ${response.reindexed_entries} memories.`);
@@ -424,7 +562,7 @@ export default function App() {
   async function handleLoadResume() {
     setResumeLoading(true);
     try {
-      const data = await getResume(project);
+      const data = await getResume(project, effectiveRepoRoot || null);
       setResumeData(data);
       setStatusMessage("Resume briefing loaded.");
     } catch (error) {
@@ -434,12 +572,97 @@ export default function App() {
     }
   }
 
+  async function handleLoadHistory(memoryId: string) {
+    try {
+      if (selectedHistory) {
+        setSelectedHistory(null);
+        setStatusMessage("Hid version history.");
+        return;
+      }
+      const history = await getMemoryHistory(memoryId);
+      setSelectedHistory(history);
+      setStatusMessage(`Loaded ${history.versions.length} versions for ${history.canonical_id}.`);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    }
+  }
+
+  async function refreshReview() {
+    try {
+      const [proposalPayload, policyPayload] = await Promise.all([
+        getReplacementProposals(project),
+        getReplacementPolicy(project, effectiveRepoRoot || null),
+      ]);
+      setProposals(proposalPayload.proposals);
+      setSelectedProposalIndex((current) => Math.min(current, Math.max(proposalPayload.proposals.length - 1, 0)));
+      setReplacementPolicy(policyPayload);
+      if (!repoRootInput.trim() && policyPayload.repo_root) {
+        setRepoRootInput(policyPayload.repo_root);
+      }
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    }
+  }
+
+  async function handleCyclePolicy() {
+    const repoRoot = replacementPolicy?.repo_root || effectiveRepoRoot;
+    if (!repoRoot) {
+      setStatusMessage("Set a repo root before changing the curation replacement policy.");
+      return;
+    }
+    const current = replacementPolicy?.replacement_policy ?? "balanced";
+    const next: ReplacementPolicy =
+      current === "conservative" ? "balanced" : current === "balanced" ? "aggressive" : "conservative";
+    try {
+      const saved = await saveReplacementPolicy(project, {
+        repo_root: repoRoot,
+        replacement_policy: next,
+      });
+      setReplacementPolicy(saved);
+      setRepoRootInput(saved.repo_root ?? repoRoot);
+      setStatusMessage(`Curation replacement policy set to ${saved.replacement_policy}.`);
+      await refreshProject(project);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    }
+  }
+
+  async function refreshEmbeddings() {
+    setEmbeddingLoading(true);
+    try {
+      const payload = await getEmbeddingBackends(project);
+      setEmbeddingBackends(payload);
+      setSelectedEmbeddingIndex((current) => Math.min(current, Math.max(payload.backends.length - 1, 0)));
+      setStatusMessage(`Loaded ${payload.backends.length} embedding backend(s).`);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    } finally {
+      setEmbeddingLoading(false);
+    }
+  }
+
+  async function handleActivateEmbedding(name: string) {
+    setEmbeddingLoading(true);
+    try {
+      const payload = await activateEmbeddingBackend(name);
+      setEmbeddingBackends(payload);
+      setStatusMessage(`Activated embedding backend ${name}.`);
+      await refreshProject(project);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    } finally {
+      setEmbeddingLoading(false);
+    }
+  }
+
   async function handleApproveProposal(proposalId: string) {
     try {
       const res = await approveProposal(project, proposalId);
       setStatusMessage(`Approved: ${res.candidate_summary} replaced ${res.target_summary}`);
       setProposals((prev) => prev.filter((p) => p.id !== proposalId));
+      setSelectedProposalIndex((current) => Math.max(0, current - 1));
       await refreshProject(project);
+      await refreshReview();
     } catch (error) {
       setStatusMessage((error as Error).message);
     }
@@ -450,6 +673,8 @@ export default function App() {
       const res = await rejectProposal(project, proposalId);
       setStatusMessage(`Rejected proposal for ${res.target_summary}`);
       setProposals((prev) => prev.filter((p) => p.id !== proposalId));
+      setSelectedProposalIndex((current) => Math.max(0, current - 1));
+      await refreshReview();
     } catch (error) {
       setStatusMessage((error as Error).message);
     }
@@ -465,12 +690,12 @@ export default function App() {
   const activeQueryResult = queryResponse?.results[selectedQueryIndex] ?? null;
   const serviceVersion = typeof health?.version === "string" ? health.version : "unknown";
   const selectedAgent = agentSnapshot?.sessions[selectedAgentIndex] ?? null;
+  const activeProposal = proposals[selectedProposalIndex] ?? null;
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Built for coding agents</p>
           <h1>Memory Layer Web</h1>
         </div>
         <form
@@ -484,38 +709,31 @@ export default function App() {
             Project
             <input value={projectInput} onChange={(event) => setProjectInput(event.target.value)} />
           </label>
+          <label>
+            Repo root
+            <input
+              placeholder="Auto"
+              value={repoRootInput}
+              onChange={(event) => setRepoRootInput(event.target.value)}
+            />
+          </label>
           <button type="submit">Load</button>
         </form>
       </header>
 
-      <section className="hero-panel">
-        <div className="hero-card">
-          <span className={`status-pill status-${connectionState}`}>{connectionState}</span>
-          <strong>{overview.project}</strong>
-          <span>
-            service {overview.service_status} / database {overview.database_status}
-          </span>
-        </div>
-        <div className="hero-card">
-          <strong>{overview.memory_entries_total}</strong>
-          <span>memories</span>
-        </div>
-        <div className="hero-card">
-          <strong>{overview.raw_captures_total}</strong>
-          <span>raw captures</span>
-        </div>
-        <div className="hero-card">
-          <strong>{overview.watchers?.active_count ?? 0}</strong>
-          <span>watchers</span>
-        </div>
-        <div className="hero-card">
-          <strong>{serviceVersion}</strong>
-          <span>mem-service</span>
-        </div>
+      <section className="status-strip">
+        <span className={`status-pill status-${connectionState}`}>{connectionState}</span>
+        <span><strong>{overview.project}</strong></span>
+        <span>service {overview.service_status}</span>
+        <span>db {overview.database_status}</span>
+        <span>{overview.memory_entries_total} memories</span>
+        <span>{overview.raw_captures_total} captures</span>
+        <span>{overview.watchers?.active_count ?? 0} watchers</span>
+        <span>mem-service {serviceVersion}</span>
       </section>
 
       <nav className="tabs">
-        {ALL_TABS.map((name, i) => (
+        {PRIMARY_TABS.map((name, i) => (
           <button
             key={name}
             className={tab === name ? "tab-active" : ""}
@@ -526,6 +744,12 @@ export default function App() {
             {name}
           </button>
         ))}
+        <select className="more-select" value={MORE_TABS.includes(tab as (typeof MORE_TABS)[number]) ? tab : ""} onChange={(event) => event.target.value && setTab(event.target.value as Tab)}>
+          <option value="">More</option>
+          {MORE_TABS.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
       </nav>
 
       {/* ── Memories ── */}
@@ -542,14 +766,9 @@ export default function App() {
               </select>
               <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as MemoryTypeFilter)}>
                 <option value="all">All types</option>
-                <option value="architecture">Architecture</option>
-                <option value="convention">Convention</option>
-                <option value="decision">Decision</option>
-                <option value="incident">Incident</option>
-                <option value="debugging">Debugging</option>
-                <option value="environment">Environment</option>
-                <option value="domain_fact">Domain fact</option>
-                <option value="plan">Plan</option>
+                {MEMORY_TYPES.map((memoryType) => (
+                  <option key={memoryType} value={memoryType}>{memoryType}</option>
+                ))}
               </select>
             </div>
             <div className="list-view">
@@ -574,18 +793,52 @@ export default function App() {
             </div>
           </div>
           <div className="panel detail-scroll">
-            {selectedMemory ? (
+            {selectedHistory ? (
+              <>
+                <div className="detail-header">
+                  <div>
+                    <h2>Version history</h2>
+                    <p>{selectedHistory.project} · canonical {selectedHistory.canonical_id} · {selectedHistory.versions.length} version(s)</p>
+                  </div>
+                  <button onClick={() => setSelectedHistory(null)} type="button">Hide history</button>
+                </div>
+                {selectedHistory.versions.map((version) => (
+                  <section className="detail-section version-card" key={version.id}>
+                    <h3>v{version.version_no} {version.is_tombstone ? "(tombstone)" : ""}</h3>
+                    <p>{version.memory_type} · {version.status} · {formatDateTime(version.updated_at)}</p>
+                    <strong>{version.summary}</strong>
+                    {version.is_tombstone ? <p>Memory was deleted at this version.</p> : <RichText text={version.canonical_text} />}
+                  </section>
+                ))}
+              </>
+            ) : selectedMemory ? (
               <>
                 <div className="detail-header">
                   <div>
                     <h2>{selectedMemory.summary}</h2>
-                    <p>{selectedMemory.memory_type} · {selectedMemory.status} · confidence {selectedMemory.confidence.toFixed(2)}</p>
+                    <p>{selectedMemory.memory_type} · {selectedMemory.status} · confidence {selectedMemory.confidence.toFixed(2)} · importance {selectedMemory.importance} · v{selectedMemory.version_no}</p>
                   </div>
-                  <button className="danger" onClick={() => void handleDelete(selectedMemory.id)} type="button">Delete</button>
+                  <div className="proposal-actions">
+                    <button onClick={() => void handleLoadHistory(selectedMemory.id)} type="button">History</button>
+                    <button className="danger" onClick={() => void handleDelete(selectedMemory.id)} type="button">Delete</button>
+                  </div>
                 </div>
                 <section className="detail-section">
+                  <h3>Embeddings</h3>
+                  {selectedMemory.embedding_spaces.length ? (
+                    selectedMemory.embedding_spaces.map((space) => (
+                      <div key={`${space.provider}-${space.model}-${space.base_url}`} className="metric-row">
+                        <span>{space.provider} / {space.model}</span>
+                        <strong>{space.chunk_count} chunk(s){space.last_updated ? ` · ${formatDateTime(space.last_updated)}` : ""}</strong>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="muted">No embeddings computed yet.</p>
+                  )}
+                </section>
+                <section className="detail-section">
                   <h3>Canonical text</h3>
-                  <p>{selectedMemory.canonical_text}</p>
+                  <RichText text={selectedMemory.canonical_text} />
                 </section>
                 <section className="detail-section">
                   <h3>Tags</h3>
@@ -657,6 +910,7 @@ export default function App() {
               <>
                 <h2>{selectedAgent.project_name}</h2>
                 <p className={`status-pill status-${selectedAgent.status}`}>{selectedAgent.status}</p>
+                <Metric label="Collected" value={formatDateTime(agentSnapshot?.collected_at)} />
                 <Metric label="Agent" value={`${selectedAgent.agent_cli} ${selectedAgent.version}`} />
                 <Metric label="Session" value={selectedAgent.session_id} />
                 <Metric label="PID" value={String(selectedAgent.pid)} />
@@ -703,6 +957,22 @@ export default function App() {
                     ))}
                   </section>
                 )}
+                {(agentSnapshot?.rate_limits.length ?? 0) > 0 && (
+                  <section className="detail-section">
+                    <h3>Rate limits</h3>
+                    {agentSnapshot!.rate_limits.map((limit) => (
+                      <div key={limit.source} className="metric-row">
+                        <span>{limit.source}</span>
+                        <strong>
+                          5h {formatPercent(limit.five_hour_pct)} / 7d {formatPercent(limit.seven_day_pct)}
+                        </strong>
+                        <span className="muted">
+                          resets {formatEpochSeconds(limit.five_hour_resets_at)} / {formatEpochSeconds(limit.seven_day_resets_at)}
+                        </span>
+                      </div>
+                    ))}
+                  </section>
+                )}
               </>
             ) : (
               <p className="muted">Select an agent session to inspect its details.</p>
@@ -722,20 +992,53 @@ export default function App() {
                 placeholder="Ask what the project knows... (?)"
                 value={queryText}
                 onChange={(event) => setQueryText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    applyQueryHistory(-1);
+                  } else if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    applyQueryHistory(1);
+                  } else {
+                    setQueryHistoryCursor(null);
+                  }
+                }}
               />
-              <button type="submit">Query</button>
+              <button type="submit" disabled={queryLoading}>{queryLoading ? "Searching..." : "Query"}</button>
             </div>
+            {queryLoading ? (
+              <div className="query-summary">
+                <p>Searching "{queryText.trim()}"...</p>
+                <p className="muted">Previous results remain visible until the new search finishes.</p>
+              </div>
+            ) : null}
+            {queryError ? (
+              <div className="query-summary warning-list">
+                <strong>Query failed</strong>
+                <p>{queryError}</p>
+              </div>
+            ) : null}
             {queryResponse ? (
               <div className="query-summary">
                 <p>{queryResponse.answer}</p>
                 <div className="stats-row">
+                  <span>{queryResponse.answer_generation.method}</span>
+                  <span>citations {formatCitationNumbers(queryResponse.answer_generation.cited_result_numbers)}</span>
+                  <span>answer {queryResponse.answer_generation.duration_ms} ms</span>
+                  <span>roundtrip {queryRoundtripMs ?? "n/a"} ms</span>
                   <span>confidence {queryResponse.confidence.toFixed(2)}</span>
                   <span>{queryResponse.insufficient_evidence ? "insufficient evidence" : "sufficient evidence"}</span>
                   <span>lexical {queryResponse.diagnostics.lexical_candidates}</span>
                   <span>semantic {queryResponse.diagnostics.semantic_candidates}</span>
                   <span>merged {queryResponse.diagnostics.merged_candidates}</span>
+                  <span>returned {queryResponse.diagnostics.returned_results}</span>
+                  <span>relation {queryResponse.diagnostics.relation_augmented_candidates}</span>
+                  <span>rerank {queryResponse.diagnostics.rerank_duration_ms} ms</span>
                   <span>total {queryResponse.diagnostics.total_duration_ms} ms</span>
                 </div>
+                {queryResponse.answer_generation.fallback_reason ? (
+                  <p className="muted">Fallback: {queryResponse.answer_generation.fallback_reason}</p>
+                ) : null}
               </div>
             ) : (
               <p className="muted">Run a query to inspect the returned memories and diagnostics.</p>
@@ -756,8 +1059,10 @@ export default function App() {
                       <p>{result.snippet}</p>
                     </div>
                     <div className="meta-stack">
+                      <span className="badge">#{index + 1}</span>
                       <span className="badge">{result.memory_type}</span>
                       <span className="badge">{result.match_kind}</span>
+                      {queryResponse?.answer_generation.cited_result_numbers.includes(index + 1) ? <span className="badge badge-active">cited</span> : null}
                       <span>{result.score.toFixed(2)}</span>
                     </div>
                   </button>
@@ -791,13 +1096,57 @@ export default function App() {
                       <span>semantic {formatNumber(activeQueryResult.debug.semantic_similarity)}</span>
                       <span>relation {formatNumber(activeQueryResult.debug.relation_boost)}</span>
                       <span>overlap {Math.round((activeQueryResult.debug.term_overlap ?? 0) * 100)}%</span>
+                      <span>phrases {activeQueryResult.debug.exact_phrase_matches}</span>
+                      <span>tags {activeQueryResult.debug.tag_match_count}</span>
+                      <span>paths {activeQueryResult.debug.path_match_count}</span>
+                      <span>importance {activeQueryResult.debug.importance}</span>
+                      <span>memory confidence {formatNumber(activeQueryResult.debug.memory_confidence)}</span>
+                      <span>recency {formatNumber(activeQueryResult.debug.recency_boost)}</span>
                     </div>
                   </section>
-                  {selectedQueryMemory ? (
+                  <section className="detail-section">
+                    <h3>Tags</h3>
+                    {activeQueryResult.tags.length ? (
+                      <div className="tag-wrap">{activeQueryResult.tags.map((tag) => <span key={tag} className="tag">{tag}</span>)}</div>
+                    ) : (
+                      <p className="muted">No tags on this result.</p>
+                    )}
+                  </section>
+                  {activeQueryResult.sources.length ? (
                     <section className="detail-section">
-                      <h3>Memory detail</h3>
-                      <p>{selectedQueryMemory.canonical_text}</p>
+                      <h3>Sources</h3>
+                      {activeQueryResult.sources.map((source, index) => (
+                        <div key={`${source.source_kind}-${source.file_path ?? source.git_commit ?? index}`} className="source-card">
+                          <strong>{source.source_kind}</strong>
+                          <p>{source.file_path ?? source.git_commit ?? "<no path>"}</p>
+                          {source.excerpt ? <pre>{source.excerpt}</pre> : null}
+                        </div>
+                      ))}
                     </section>
+                  ) : null}
+                  {selectedQueryMemoryLoading ? <p className="muted">Loading selected memory detail...</p> : null}
+                  {selectedQueryMemoryError ? <p className="warning-list">Detail unavailable: {selectedQueryMemoryError}</p> : null}
+                  {selectedQueryMemory ? (
+                    <>
+                      <section className="detail-section">
+                        <h3>Memory detail</h3>
+                        <RichText text={selectedQueryMemory.canonical_text} />
+                      </section>
+                      <section className="detail-section">
+                        <h3>Related memories</h3>
+                        {selectedQueryMemory.related_memories.length ? (
+                          selectedQueryMemory.related_memories.map((related) => (
+                            <div key={`${related.relation_type}-${related.memory_id}`} className="relation-row">
+                              <span className="badge">{related.relation_type}</span>
+                              <span>{related.summary}</span>
+                              <span className="muted">{related.memory_type} · {related.confidence.toFixed(2)}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="muted">No related memories recorded.</p>
+                        )}
+                      </section>
+                    </>
                   ) : null}
                 </>
               ) : (
@@ -865,6 +1214,7 @@ export default function App() {
               <Metric label="Embeddings" value={`${overview.embedding_chunks_total} chunks / ${overview.fresh_embedding_chunks} active-space / ${overview.stale_embedding_chunks} other-space only / ${overview.missing_embedding_chunks} missing active-space`} />
               <Metric label="Embedding spaces" value={`${overview.embedding_spaces_total} stored space(s)`} />
               <Metric label="Active embedding" value={overview.active_embedding_model ? `${overview.active_embedding_provider} / ${overview.active_embedding_model}` : "disabled"} />
+              <Metric label="Curation policy" value={`${replacementPolicy?.replacement_policy ?? "unknown"} / ${overview.pending_replacement_proposals} pending (Review tab)`} />
               <Metric label="Tasks / Sessions / Runs" value={`${overview.tasks_total} / ${overview.sessions_total} / ${overview.curation_runs_total}`} />
               <Metric label="Last memory" value={formatDateTime(overview.last_memory_at)} />
               <Metric label="Last curation" value={formatDateTime(overview.last_curation_at)} />
@@ -873,11 +1223,11 @@ export default function App() {
                 label="Automation"
                 value={
                   overview.automation
-                    ? `${overview.automation.mode} · dirty ${overview.automation.dirty_file_count} · pending ${overview.automation.pending_capture_count}`
+                    ? `${overview.automation.mode} · dirty ${overview.automation.dirty_file_count ?? 0} · notes ${overview.automation.pending_note_count ?? 0} · ${overview.automation.repo_root}`
                     : "not configured"
                 }
               />
-              <Metric label="Watchers" value={`${overview.watchers?.active_count ?? 0} active`} />
+              <Metric label="Watchers" value={`${overview.watchers?.active_count ?? 0} healthy / ${overview.watchers?.unhealthy_count ?? 0} unhealthy`} />
             </div>
             <div className="panel">
               <h2>Memory types</h2>
@@ -892,6 +1242,28 @@ export default function App() {
             <div className="panel">
               <h2>Top files</h2>
               <KeyValueList items={overview.top_files.map((item) => [item.name, String(item.count)])} empty="No file provenance yet." />
+            </div>
+            <div className="panel">
+              <h2>Recent activity</h2>
+              {activities.length ? (
+                activities.slice(0, 6).map((event, index) => (
+                  <button
+                    key={`${event.recorded_at}-${event.kind}-${index}`}
+                    type="button"
+                    className="activity-row-button"
+                    onClick={() => {
+                      setSelectedActivityIndex(index);
+                      setTab("activity");
+                    }}
+                  >
+                    <span className="muted">{formatDateTime(event.recorded_at)}</span>
+                    <strong>{event.kind}</strong>
+                    <span>{event.summary}</span>
+                  </button>
+                ))
+              ) : (
+                <p className="muted">No recent activity in this browser session.</p>
+              )}
             </div>
           </section>
           {proposals.length > 0 && (
@@ -916,6 +1288,78 @@ export default function App() {
         </section>
       ) : null}
 
+      {/* ── Review ── */}
+      {tab === "review" ? (
+        <section className="panel-grid">
+          <div className="panel detail-scroll">
+            <div className="detail-header">
+              <div>
+                <h2>Curation review</h2>
+                <p>
+                  Policy {replacementPolicy?.replacement_policy ?? "unknown"} · {proposals.length} pending
+                  {proposals.length ? ` · selected ${selectedProposalIndex + 1}/${proposals.length}` : ""}
+                  {effectiveRepoRoot ? ` · ${effectiveRepoRoot}` : ""}
+                </p>
+              </div>
+              <div className="proposal-actions">
+                <button onClick={() => void refreshReview()} type="button">Refresh</button>
+                <button onClick={() => void handleCyclePolicy()} type="button" disabled={!effectiveRepoRoot}>Cycle policy</button>
+              </div>
+            </div>
+            {!effectiveRepoRoot ? (
+              <p className="warning-list">Set a repo root to change policy. Approve/reject still works for queued proposals.</p>
+            ) : null}
+            <div className="list-view">
+              {proposals.length ? proposals.map((proposal) => (
+                <button
+                  key={proposal.id}
+                  type="button"
+                  className={`list-item ${activeProposal?.id === proposal.id ? "selected" : ""}`}
+                  onClick={() => setSelectedProposalIndex(proposals.findIndex((item) => item.id === proposal.id))}
+                >
+                  <div>
+                    <strong>{proposal.target_summary}</strong>
+                    <p>{proposal.candidate_summary}</p>
+                  </div>
+                  <div className="meta-stack">
+                    <span className="badge">{proposal.candidate_memory_type}</span>
+                    <span>{proposal.score}</span>
+                  </div>
+                </button>
+              )) : <p className="muted">No pending replacement proposals.</p>}
+            </div>
+          </div>
+          <div className="panel detail-scroll">
+            {activeProposal ? (
+              <>
+                <h2>Proposal detail</h2>
+                <section className="detail-section">
+                  <h3>Target</h3>
+                  <p>{activeProposal.target_summary}</p>
+                </section>
+                <section className="detail-section">
+                  <h3>Candidate</h3>
+                  <p><strong>{activeProposal.candidate_summary}</strong></p>
+                  <RichText text={activeProposal.candidate_canonical_text} />
+                </section>
+                <div className="stats-row">
+                  <span className="badge">{activeProposal.candidate_memory_type}</span>
+                  <span className="badge">{activeProposal.policy}</span>
+                  <span>score {activeProposal.score}</span>
+                  {activeProposal.reasons.map((reason) => <span key={reason}>{reason}</span>)}
+                </div>
+                <div className="proposal-actions">
+                  <button className="approve-btn" onClick={() => void handleApproveProposal(activeProposal.id)} type="button">Approve</button>
+                  <button className="reject-btn" onClick={() => void handleRejectProposal(activeProposal.id)} type="button">Reject</button>
+                </div>
+              </>
+            ) : (
+              <p className="muted">Queued ambiguous curation candidates will appear here.</p>
+            )}
+          </div>
+        </section>
+      ) : null}
+
       {/* ── Watchers ── */}
       {tab === "watchers" ? (
         <section className="panel-stack">
@@ -924,6 +1368,7 @@ export default function App() {
             {overview.watchers ? (
               <>
                 <Metric label="Active watchers" value={String(overview.watchers.active_count)} />
+                <Metric label="Unhealthy watchers" value={String(overview.watchers.unhealthy_count)} />
                 <Metric label="Stale after" value={`${overview.watchers.stale_after_seconds}s`} />
                 <Metric label="Last heartbeat" value={formatDateTime(overview.watchers.last_heartbeat_at)} />
               </>
@@ -941,9 +1386,20 @@ export default function App() {
                   <div className="stats-row">
                     <span>pid {watcher.pid}</span>
                     <span>{watcher.mode}</span>
+                    <span className={`badge ${watcher.health === "healthy" ? "badge-active" : "badge-archived"}`}>{watcher.health}</span>
+                    <span>{watcher.managed_by_service ? "managed" : "manual"}</span>
+                    <span>started {formatDateTime(watcher.started_at)}</span>
                     <span>{formatDateTime(watcher.last_heartbeat_at)}</span>
+                    <span>restarts {watcher.restart_attempt_count}</span>
                     <span className="muted">{watcher.watcher_id}</span>
                   </div>
+                  <p className="muted">Host service {watcher.host_service_id}</p>
+                  {watcher.agent_session_id ? (
+                    <p className="muted">{watcher.agent_cli} session {watcher.agent_session_id} · agent pid {watcher.agent_pid ?? "n/a"}</p>
+                  ) : null}
+                  {watcher.last_restart_attempt_at ? (
+                    <p className="muted">Last restart attempt {formatDateTime(watcher.last_restart_attempt_at)}</p>
+                  ) : null}
                 </div>
               ))
             ) : (
@@ -954,6 +1410,74 @@ export default function App() {
               </p>
             )}
           </div>
+        </section>
+      ) : null}
+
+      {/* ── Embeddings ── */}
+      {tab === "embeddings" ? (
+        <section className="panel-stack">
+          <div className="panel actions-row">
+            <button onClick={() => void refreshEmbeddings()} type="button" disabled={embeddingLoading}>
+              {embeddingLoading ? "Refreshing..." : "Refresh"}
+            </button>
+            <button onClick={() => void runProjectAction("reindex")} type="button">Reindex all</button>
+            <button onClick={() => void runProjectAction("reembed")} type="button">Re-embed all</button>
+          </div>
+          <section className="panel-grid">
+            <div className="panel">
+              <h2>Embedding backends</h2>
+              <div className="stats-row">
+                <span>active {embeddingBackends?.active ?? "none"}</span>
+                <span>{embeddingBackends?.backends.length ?? 0} configured</span>
+                <span>{embeddingBackends?.backends.filter((backend) => backend.ready).length ?? 0} ready</span>
+              </div>
+              <div className="list-view">
+                {(embeddingBackends?.backends ?? []).map((backend, index) => (
+                  <button
+                    key={backend.name}
+                    type="button"
+                    className={`list-item ${selectedEmbeddingIndex === index ? "selected" : ""}`}
+                    onClick={() => setSelectedEmbeddingIndex(index)}
+                  >
+                    <div>
+                      <strong>{backend.active ? "* " : ""}{backend.name}</strong>
+                      <p>{backend.provider} · {backend.model}{backend.base_url ? ` · ${backend.base_url}` : ""}</p>
+                    </div>
+                    <div className="meta-stack">
+                      <span className={`badge ${backend.ready ? "badge-active" : "badge-archived"}`}>{backend.ready ? "ready" : "not ready"}</span>
+                      <span>{backend.project_chunk_count ?? 0} chunks</span>
+                      <span>{backend.project_memory_count ?? 0} memories</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="panel detail-scroll">
+              {embeddingBackends?.backends[selectedEmbeddingIndex] ? (
+                <>
+                  <h2>{embeddingBackends.backends[selectedEmbeddingIndex].name}</h2>
+                  <Metric label="Provider" value={embeddingBackends.backends[selectedEmbeddingIndex].provider} />
+                  <Metric label="Model" value={embeddingBackends.backends[selectedEmbeddingIndex].model || "n/a"} />
+                  <Metric label="Base URL" value={embeddingBackends.backends[selectedEmbeddingIndex].base_url || "default"} />
+                  <Metric label="Coverage" value={`${embeddingBackends.backends[selectedEmbeddingIndex].project_chunk_count ?? 0} chunks / ${embeddingBackends.backends[selectedEmbeddingIndex].project_memory_count ?? 0} memories`} />
+                  <Metric label="Status" value={embeddingBackends.backends[selectedEmbeddingIndex].ready ? "ready" : "not ready"} />
+                  <div className="proposal-actions">
+                    <button
+                      onClick={() => void handleActivateEmbedding(embeddingBackends.backends[selectedEmbeddingIndex].name)}
+                      type="button"
+                      disabled={embeddingBackends.backends[selectedEmbeddingIndex].active || !embeddingBackends.backends[selectedEmbeddingIndex].ready}
+                    >
+                      Activate
+                    </button>
+                    <button onClick={() => void reindex(project, embeddingBackends.backends[selectedEmbeddingIndex].name).then((response) => setStatusMessage(`Reindexed ${response.reindexed_entries} memories for ${embeddingBackends.backends[selectedEmbeddingIndex].name}.`)).then(() => refreshEmbeddings()).catch((error: Error) => setStatusMessage(error.message))} type="button">Reindex</button>
+                    <button onClick={() => void reembed(project, embeddingBackends.backends[selectedEmbeddingIndex].name).then((response) => setStatusMessage(`Materialized ${response.reembedded_chunks} chunks for ${embeddingBackends.backends[selectedEmbeddingIndex].name}.`)).then(() => refreshEmbeddings()).catch((error: Error) => setStatusMessage(error.message))} type="button">Re-embed</button>
+                  </div>
+                </>
+              ) : (
+                <p className="muted">No embedding backends configured.</p>
+              )}
+            </div>
+          </section>
         </section>
       ) : null}
 
@@ -1030,9 +1554,21 @@ export default function App() {
                   </div>
                 )}
 
-                {resumeData.durable_context.length > 0 && (
+                {resumeData.context_items.length > 0 && (
                   <div className="resume-section">
                     <h3>Keep in mind</h3>
+                    {resumeData.context_items.map((mem) => (
+                      <div key={mem.id} className="metric-row">
+                        <span className="badge">{mem.memory_type}</span>
+                        <span>{mem.summary}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {resumeData.durable_context.length > 0 && (
+                  <div className="resume-section">
+                    <h3>Durable context</h3>
                     {resumeData.durable_context.map((mem) => (
                       <div key={mem.id} className="metric-row">
                         <span className="badge">{mem.memory_type}</span>
@@ -1061,9 +1597,35 @@ export default function App() {
                   </div>
                 )}
 
+                {resumeData.actions.length > 0 && (
+                  <div className="resume-section">
+                    <h3>All suggested next actions</h3>
+                    {resumeData.actions.map((action) => (
+                      <div key={`${action.title}-${action.rationale}`} className="action-card">
+                        <strong>{action.title}</strong>
+                        <p>{action.rationale}</p>
+                        {action.command_hint && <code>{action.command_hint}</code>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {resumeData.commits.length > 0 && (
+                  <div className="resume-section">
+                    <h3>Recent commits</h3>
+                    {resumeData.commits.map((commit) => (
+                      <div key={commit.hash} className="metric-row">
+                        <span className="badge">{commit.short_hash}</span>
+                        <span>{commit.subject}</span>
+                        <span className="muted">{formatDateTime(commit.committed_at)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className="resume-section">
                   <h3>Briefing</h3>
-                  <pre>{resumeData.briefing}</pre>
+                  <RichText text={resumeData.briefing} />
                 </div>
               </>
             ) : (
@@ -1157,12 +1719,144 @@ function KeyValueList({ items, empty }: { items: [string, string][]; empty: stri
 
 function ActivityDetail({ details }: { details: ActivityDetails | null }) {
   if (!details) return <p className="muted">No structured details recorded.</p>;
+  const rows: [string, string][] = [];
+  const sections: ReactNode[] = [];
+
+  switch (details.type) {
+    case "checkpoint":
+      rows.push(["Marked at", formatDateTime(details.marked_at)], ["Repo root", details.repo_root], ["Note", details.note ?? "n/a"], ["Branch", details.git_branch ?? "n/a"], ["HEAD", details.git_head ?? "n/a"]);
+      break;
+    case "plan":
+      rows.push(["Action", details.action], ["Title", details.title], ["Thread", details.thread_key], ["Completed", `${details.completed_items}/${details.total_items}`], ["Verified complete", String(details.verified_complete)], ["Source path", details.source_path ?? "n/a"]);
+      if (details.remaining_items.length) {
+        sections.push(<ActivityList key="remaining" title="Remaining items" items={details.remaining_items} />);
+      }
+      break;
+    case "scan":
+      rows.push(["Dry run", String(details.dry_run)], ["Candidates", String(details.candidate_count)], ["Files", String(details.files_considered)], ["Commits", String(details.commits_considered)], ["Index reused", String(details.index_reused)], ["Report", details.report_path], ["Capture", details.capture_id ?? "n/a"], ["Curate run", details.curate_run_id ?? "n/a"]);
+      break;
+    case "commit_sync":
+      rows.push(["Imported", String(details.imported_count)], ["Updated", String(details.updated_count)], ["Received", String(details.total_received)], ["Newest", details.newest_commit ?? "n/a"], ["Oldest", details.oldest_commit ?? "n/a"]);
+      break;
+    case "bundle_transfer":
+      rows.push(["Bundle", details.bundle_id], ["Items", String(details.item_count)], ["Source project", details.source_project ?? "n/a"]);
+      break;
+    case "query":
+      rows.push(["Query", details.query], ["Top K", String(details.top_k)], ["Results", String(details.result_count)], ["Confidence", details.confidence.toFixed(2)], ["Insufficient evidence", String(details.insufficient_evidence)], ["Duration", `${details.total_duration_ms} ms`]);
+      if (details.answer) sections.push(<ActivityText key="answer" title="Answer" text={details.answer} />);
+      if (details.error) rows.push(["Error", details.error]);
+      break;
+    case "watcher_health":
+      rows.push(["Watcher", details.watcher_id], ["Hostname", details.hostname], ["Health", details.health], ["Previous health", details.previous_health ?? "n/a"], ["Managed by service", String(details.managed_by_service)], ["Restart attempts", String(details.restart_attempt_count)], ["Recovered after attempts", details.recovered_after_restart_attempts?.toString() ?? "n/a"], ["Agent CLI", details.agent_cli ?? "n/a"], ["Agent session", details.agent_session_id ?? "n/a"], ["Agent PID", details.agent_pid?.toString() ?? "n/a"], ["Message", details.message ?? "n/a"]);
+      break;
+    case "memory_replacement":
+      rows.push(["Old memory", details.old_memory_id], ["Old summary", details.old_summary], ["New memory", details.new_memory_id], ["New summary", details.new_summary], ["Automatic", String(details.automatic)], ["Policy", details.policy]);
+      break;
+    case "capture_task":
+      rows.push(["Session", details.session_id], ["Task", details.task_id], ["Raw capture", details.raw_capture_id], ["Idempotency", details.idempotency_key], ["Task title", details.task_title ?? "n/a"], ["Writer", details.writer_id]);
+      break;
+    case "curate":
+      rows.push(["Run", details.run_id], ["Input captures", String(details.input_count)], ["Output memories", String(details.output_count)], ["Replacements", String(details.replaced_count)], ["Queued proposals", String(details.proposal_count)]);
+      break;
+    case "reindex":
+      rows.push(["Reindexed entries", String(details.reindexed_entries)]);
+      break;
+    case "reembed":
+      rows.push(["Re-embedded chunks", String(details.reembedded_chunks)]);
+      break;
+    case "archive":
+      rows.push(["Archived count", String(details.archived_count)], ["Max confidence", details.max_confidence.toFixed(2)], ["Max importance", String(details.max_importance)]);
+      break;
+    case "delete_memory":
+      rows.push(["Deleted", String(details.deleted)], ["Deleted summary", details.summary]);
+      break;
+  }
+
   return (
     <div className="detail-section">
       <h3>Details</h3>
-      <pre>{JSON.stringify(details, null, 2)}</pre>
+      <KeyValueList items={rows} empty="No structured details recorded." />
+      {sections}
     </div>
   );
+}
+
+function ActivityList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <section className="detail-section">
+      <h3>{title}</h3>
+      <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul>
+    </section>
+  );
+}
+
+function ActivityText({ title, text }: { title: string; text: string }) {
+  return (
+    <section className="detail-section">
+      <h3>{title}</h3>
+      <RichText text={text} />
+    </section>
+  );
+}
+
+function RichText({ text }: { text: string }) {
+  const lines = text.split(/\r?\n/);
+  const blocks: ReactNode[] = [];
+  let listItems: string[] = [];
+  let codeLines: string[] = [];
+  let inCode = false;
+
+  const flushList = () => {
+    if (!listItems.length) return;
+    const items = listItems;
+    listItems = [];
+    blocks.push(<ul key={`list-${blocks.length}`} className="rich-list">{items.map((item) => <li key={item}>{item}</li>)}</ul>);
+  };
+  const flushCode = () => {
+    if (!codeLines.length) return;
+    const code = codeLines.join("\n");
+    codeLines = [];
+    blocks.push(<pre key={`code-${blocks.length}`}>{code}</pre>);
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (line.trim().startsWith("```")) {
+      if (inCode) {
+        inCode = false;
+        flushCode();
+      } else {
+        flushList();
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+    if (!line.trim()) {
+      flushList();
+      continue;
+    }
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      flushList();
+      blocks.push(<h4 key={`heading-${blocks.length}`}>{heading[2]}</h4>);
+      continue;
+    }
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    if (bullet) {
+      listItems.push(bullet[1]);
+      continue;
+    }
+    flushList();
+    blocks.push(<p key={`p-${blocks.length}`}>{line}</p>);
+  }
+  flushList();
+  flushCode();
+
+  return <div className="rich-text">{blocks.length ? blocks : <p className="muted">No text.</p>}</div>;
 }
 
 function formatDateTime(value: string | null | undefined): string {
@@ -1170,8 +1864,21 @@ function formatDateTime(value: string | null | undefined): string {
   return new Date(value).toLocaleString();
 }
 
+function formatEpochSeconds(value: number | null | undefined): string {
+  if (!value) return "n/a";
+  return new Date(value * 1000).toLocaleString();
+}
+
 function formatNumber(value: number | null | undefined): string {
   return typeof value === "number" ? value.toFixed(2) : "0.00";
+}
+
+function formatPercent(value: number | null | undefined): string {
+  return typeof value === "number" ? `${value.toFixed(0)}%` : "n/a";
+}
+
+function formatCitationNumbers(values: number[]): string {
+  return values.length ? values.map((value) => `[${value}]`).join(" ") : "none";
 }
 
 function formatTokens(value: number): string {

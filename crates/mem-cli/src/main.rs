@@ -2310,6 +2310,7 @@ async fn main() -> Result<()> {
                 .resume(&ResumeRequest {
                     project: project.clone(),
                     checkpoint,
+                    repo_root: Some(repo_root.display().to_string()),
                     since: None,
                     include_llm_summary: args.include_llm_summary,
                     limit: 12,
