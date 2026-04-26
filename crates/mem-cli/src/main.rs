@@ -26,14 +26,14 @@ use mem_agenttop::{AgentSession, AgentTop, SessionStatus};
 use mem_api::{
     ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
     CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
-    CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse, MemoryEntryResponse,
-    MemoryType, PlanActivityAction, PlanActivityRequest, ProjectCommitsResponse,
-    ProjectMemoriesResponse, ProjectMemoryBundlePreview, ProjectMemoryExportOptions,
-    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectOverviewResponse,
-    PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse,
-    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, ReplacementPolicy,
-    ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult, UpToSpeedRequest,
-    UpToSpeedResponse, discover_global_config_path, discover_repo_env_path,
+    CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse, GraphActivityRequest,
+    MemoryEntryResponse, MemoryType, PlanActivityAction, PlanActivityRequest,
+    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundlePreview,
+    ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
+    ProjectOverviewResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters,
+    QueryRequest, QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
+    ReplacementPolicy, ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult,
+    UpToSpeedRequest, UpToSpeedResponse, discover_global_config_path, discover_repo_env_path,
     load_repo_replacement_policy, read_repo_project_slug,
 };
 use mem_platform as platform;
@@ -1858,6 +1858,16 @@ async fn main() -> Result<()> {
                             .extract(request)
                             .await?
                     };
+                    if !report.dry_run {
+                        let api = ApiClient::new(client.clone(), config.clone());
+                        let activity_request = build_graph_activity_request(&report);
+                        if let Err(error) = api.log_graph_activity(&activity_request).await {
+                            eprintln!(
+                                "warning: failed to log graph extraction activity for `{}`: {error}",
+                                report.project
+                            );
+                        }
+                    }
                     if args.text {
                         print_graph_extract_report(&report, &index.index_path);
                     } else {
@@ -6807,6 +6817,22 @@ impl ApiClient {
         Ok(())
     }
 
+    pub(crate) async fn log_graph_activity(&self, request: &GraphActivityRequest) -> Result<()> {
+        let response = self
+            .client
+            .post(service_url(&self.config, "/v1/graph/activity"))
+            .headers(write_headers(&self.config)?)
+            .json(request)
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            anyhow::bail!("{status} {body}");
+        }
+        Ok(())
+    }
+
     pub(crate) async fn log_checkpoint_activity(
         &self,
         request: &CheckpointActivityRequest,
@@ -7342,6 +7368,7 @@ fn activity_kind_text(kind: &mem_api::ActivityKind) -> &'static str {
         mem_api::ActivityKind::CommitSync => "commit_sync",
         mem_api::ActivityKind::BundleExport => "bundle_export",
         mem_api::ActivityKind::BundleImport => "bundle_import",
+        mem_api::ActivityKind::GraphExtract => "graph_extract",
         mem_api::ActivityKind::Query => "query",
         mem_api::ActivityKind::QueryError => "query_error",
         mem_api::ActivityKind::WatcherHealth => "watcher_health",
@@ -7732,6 +7759,29 @@ fn print_graph_extract_report(report: &mem_graph::GraphExtractionReport, index_p
     }
     if report.dry_run {
         println!("Dry run: no database rows or index files were written.");
+    }
+}
+
+fn build_graph_activity_request(report: &mem_graph::GraphExtractionReport) -> GraphActivityRequest {
+    GraphActivityRequest {
+        project: report.project.clone(),
+        repo_root: report.repo_root.clone(),
+        git_head: report.git_head.clone(),
+        since: report.since.clone(),
+        extraction_run_id: report.extraction_run_id,
+        dry_run: report.dry_run,
+        reused_existing_run: report.reused_existing_run,
+        index_reused: report.index_reused,
+        analyzer_version: report.analyzer_version.clone(),
+        strategy_version: report.strategy_version.clone(),
+        symbol_count: report.symbol_count,
+        reference_count: report.reference_count,
+        resolved_reference_count: report.resolved_reference_count,
+        unresolved_reference_count: report.unresolved_reference_count,
+        ambiguous_reference_count: report.ambiguous_reference_count,
+        graph_node_count: report.graph_node_count,
+        graph_edge_count: report.graph_edge_count,
+        evidence_count: report.evidence_count,
     }
 }
 
@@ -8714,9 +8764,9 @@ mod tests {
     use super::{
         Cli, DEV_API_TOKEN, PlanExecutionFinishReport, RememberArgs, SERVICE_API_TOKEN_KEY,
         ServiceApiTokenAction, WatcherCommand, WatcherManagerArgs, WatcherManagerCommand,
-        build_finish_execution_implementation_request, build_plan_execution_finish_report,
-        build_plan_execution_request, build_remember_request, derive_plan_thread_key,
-        derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
+        build_finish_execution_implementation_request, build_graph_activity_request,
+        build_plan_execution_finish_report, build_plan_execution_request, build_remember_request,
+        derive_plan_thread_key, derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
         ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
         mask_database_url, parse_plan_checkboxes, render_agent_project_config,
         repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
@@ -8973,6 +9023,41 @@ mod tests {
                 .tags
                 .contains(&"plan-thread:resume-redesign".to_string())
         );
+    }
+
+    #[test]
+    fn graph_activity_request_copies_extraction_report_counts() {
+        let run_id = Uuid::new_v4();
+        let report = mem_graph::GraphExtractionReport {
+            project: "memory".to_string(),
+            repo_root: "/repo".to_string(),
+            git_head: Some("abc123".to_string()),
+            since: Some("HEAD~1".to_string()),
+            analyzer_version: "mem-analyze-v2".to_string(),
+            strategy_version: "code-graph-resolution-v1".to_string(),
+            extraction_run_id: Some(run_id),
+            reused_existing_run: true,
+            dry_run: false,
+            index_reused: true,
+            symbol_count: 10,
+            reference_count: 20,
+            resolved_reference_count: 12,
+            unresolved_reference_count: 7,
+            ambiguous_reference_count: 1,
+            graph_node_count: 10,
+            graph_edge_count: 9,
+            evidence_count: 19,
+            sample_unresolved_references: Vec::new(),
+        };
+
+        let request = build_graph_activity_request(&report);
+
+        assert_eq!(request.project, "memory");
+        assert_eq!(request.extraction_run_id, Some(run_id));
+        assert!(request.reused_existing_run);
+        assert_eq!(request.reference_count, 20);
+        assert_eq!(request.graph_edge_count, 9);
+        assert!(request.validate().is_ok());
     }
 
     #[test]

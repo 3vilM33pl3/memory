@@ -2,7 +2,7 @@
 
 `memory activities` lists persisted project activity events from the backend database.
 
-Use it when a human or agent needs to inspect what Memory Layer recently did: queries, scans, captures, curation, plan lifecycle events, watcher transitions, reindexing, re-embedding, archive/delete operations, bundle transfers, and get-up-to-speed briefings.
+Use it when a human or agent needs to inspect what Memory Layer recently did: queries, scans, captures, curation, plan lifecycle events, watcher transitions, graph extraction, reindexing, re-embedding, archive/delete operations, bundle transfers, and get-up-to-speed briefings.
 
 ## Common Usage
 
@@ -23,6 +23,7 @@ JSON is the default so agents can consume it directly. Use `--text` for a compac
 - token counts when an LLM provider returned usage metadata
 - source, provider, model, actor, and operation metadata when available
 - query graph retrieval status, candidate counts, timing, and sampled graph connections when a query used graph-aware retrieval
+- graph extraction run id, analyzer/strategy versions, symbol/reference counts, graph edge counts, and reuse flags
 
 Older events remain readable even if they were recorded before token and metadata columns existed; those fields appear as `null` or `-`.
 

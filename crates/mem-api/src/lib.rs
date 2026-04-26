@@ -1006,6 +1006,7 @@ pub enum ActivityKind {
     CommitSync,
     BundleExport,
     BundleImport,
+    GraphExtract,
     Query,
     QueryError,
     WatcherHealth,
@@ -1055,6 +1056,28 @@ pub enum ActivityDetails {
         capture_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         curate_run_id: Option<String>,
+    },
+    GraphExtract {
+        repo_root: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_head: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extraction_run_id: Option<Uuid>,
+        dry_run: bool,
+        reused_existing_run: bool,
+        index_reused: bool,
+        analyzer_version: String,
+        strategy_version: String,
+        symbol_count: usize,
+        reference_count: usize,
+        resolved_reference_count: usize,
+        unresolved_reference_count: usize,
+        ambiguous_reference_count: usize,
+        graph_node_count: usize,
+        graph_edge_count: usize,
+        evidence_count: usize,
     },
     CommitSync {
         imported_count: usize,
@@ -1342,6 +1365,54 @@ impl ScanActivityRequest {
         }
         if self.report_path.trim().is_empty() {
             return Err(ValidationError::new("report_path must be non-empty"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphActivityRequest {
+    pub project: String,
+    pub repo_root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_head: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_run_id: Option<Uuid>,
+    pub dry_run: bool,
+    pub reused_existing_run: bool,
+    pub index_reused: bool,
+    pub analyzer_version: String,
+    pub strategy_version: String,
+    pub symbol_count: usize,
+    pub reference_count: usize,
+    pub resolved_reference_count: usize,
+    pub unresolved_reference_count: usize,
+    pub ambiguous_reference_count: usize,
+    pub graph_node_count: usize,
+    pub graph_edge_count: usize,
+    pub evidence_count: usize,
+}
+
+impl GraphActivityRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self.repo_root.trim().is_empty() {
+            return Err(ValidationError::new("repo_root must be non-empty"));
+        }
+        if self.analyzer_version.trim().is_empty() {
+            return Err(ValidationError::new("analyzer_version must be non-empty"));
+        }
+        if self.strategy_version.trim().is_empty() {
+            return Err(ValidationError::new("strategy_version must be non-empty"));
+        }
+        if !self.dry_run && self.extraction_run_id.is_none() {
+            return Err(ValidationError::new(
+                "extraction_run_id is required for persisted graph extraction activity",
+            ));
         }
         Ok(())
     }
@@ -3199,6 +3270,74 @@ mod tests {
         };
 
         assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn graph_activity_request_requires_persisted_run_for_non_dry_run() {
+        let request = GraphActivityRequest {
+            project: "memory".to_string(),
+            repo_root: "/repo".to_string(),
+            git_head: Some("abc123".to_string()),
+            since: None,
+            extraction_run_id: None,
+            dry_run: false,
+            reused_existing_run: false,
+            index_reused: true,
+            analyzer_version: "mem-analyze-v2".to_string(),
+            strategy_version: "code-graph-resolution-v1".to_string(),
+            symbol_count: 1,
+            reference_count: 2,
+            resolved_reference_count: 1,
+            unresolved_reference_count: 1,
+            ambiguous_reference_count: 0,
+            graph_node_count: 1,
+            graph_edge_count: 1,
+            evidence_count: 2,
+        };
+
+        assert!(request.validate().is_err());
+    }
+
+    #[test]
+    fn graph_extract_activity_details_roundtrip() {
+        let run_id = Uuid::new_v4();
+        let details = ActivityDetails::GraphExtract {
+            repo_root: "/repo".to_string(),
+            git_head: Some("abc123".to_string()),
+            since: Some("HEAD~1".to_string()),
+            extraction_run_id: Some(run_id),
+            dry_run: false,
+            reused_existing_run: false,
+            index_reused: true,
+            analyzer_version: "mem-analyze-v2".to_string(),
+            strategy_version: "code-graph-resolution-v1".to_string(),
+            symbol_count: 10,
+            reference_count: 20,
+            resolved_reference_count: 12,
+            unresolved_reference_count: 7,
+            ambiguous_reference_count: 1,
+            graph_node_count: 10,
+            graph_edge_count: 9,
+            evidence_count: 19,
+        };
+
+        let encoded = serde_json::to_value(&details).expect("serialize details");
+        let decoded: ActivityDetails =
+            serde_json::from_value(encoded).expect("deserialize details");
+
+        match decoded {
+            ActivityDetails::GraphExtract {
+                extraction_run_id,
+                symbol_count,
+                graph_edge_count,
+                ..
+            } => {
+                assert_eq!(extraction_run_id, Some(run_id));
+                assert_eq!(symbol_count, 10);
+                assert_eq!(graph_edge_count, 9);
+            }
+            other => panic!("unexpected activity details: {other:?}"),
+        }
     }
 
     #[test]

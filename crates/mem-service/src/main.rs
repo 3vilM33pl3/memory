@@ -26,21 +26,21 @@ use mem_api::{
     ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
     CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
     CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, EmbeddingBackendInfo,
-    EmbeddingBackendsResponse, MemoryEntryResponse, MemoryHistoryResponse, MemorySourceRecord,
-    PlanActivityAction, PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse,
-    ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest,
-    ProjectMemoryBundlePreview, ProjectMemoryBundleSource, ProjectMemoryExportOptions,
-    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectMemoryListItem,
-    ProjectOverviewResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse, PruneHistoryRequest,
-    PruneHistoryResponse, QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod,
-    QueryGraphConnection, QueryRequest, QueryResponse, ReembedRequest, ReembedResponse,
-    ReindexRequest, ReindexResponse, RelatedMemorySummary, ReplacementProposalListResponse,
-    ReplacementProposalResolutionResponse, ResumeAction, ResumeRequest, ResumeResponse,
-    ScanActivityRequest, SourceKind, StatsResponse, StreamRequest, StreamResponse, TokenUsage,
-    TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse, ValidationError, WatcherHealth,
-    WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary, WatcherRestartRequest,
-    WatcherRestartResponse, WatcherUnregisterRequest, read_capnp_text_frame,
-    write_capnp_text_frame,
+    EmbeddingBackendsResponse, GraphActivityRequest, MemoryEntryResponse, MemoryHistoryResponse,
+    MemorySourceRecord, PlanActivityAction, PlanActivityRequest, ProjectCommitsResponse,
+    ProjectMemoriesResponse, ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation,
+    ProjectMemoryBundleManifest, ProjectMemoryBundlePreview, ProjectMemoryBundleSource,
+    ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
+    ProjectMemoryListItem, ProjectOverviewResponse, PruneEmbeddingsRequest,
+    PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryAnswerCitation,
+    QueryAnswerGeneration, QueryAnswerMethod, QueryGraphConnection, QueryRequest, QueryResponse,
+    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
+    ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
+    ResumeRequest, ResumeResponse, ScanActivityRequest, SourceKind, StatsResponse, StreamRequest,
+    StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse,
+    ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
+    WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
+    WatcherUnregisterRequest, read_capnp_text_frame, write_capnp_text_frame,
 };
 use mem_curate::{
     approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
@@ -384,6 +384,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/checkpoint/activity", post(checkpoint_activity))
         .route("/v1/plan/activity", post(plan_activity))
         .route("/v1/scan/activity", post(scan_activity))
+        .route("/v1/graph/activity", post(graph_activity))
         .route("/v1/commits/sync", post(sync_commits))
         .route("/v1/capture/task", post(capture_task))
         .route("/v1/curate", post(curate_memory))
@@ -2167,6 +2168,66 @@ async fn scan_activity(
         }),
     );
     Ok(Json(serde_json::json!({ "logged": true })))
+}
+
+async fn graph_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<GraphActivityRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/graph/activity", &request, true).await?,
+        ));
+    }
+
+    notify_project_changed(
+        &state,
+        request.project.clone(),
+        None,
+        ActivityKind::GraphExtract,
+        graph_activity_summary(&request),
+        Some(graph_activity_details(&request)),
+    );
+    Ok(Json(serde_json::json!({ "logged": true })))
+}
+
+fn graph_activity_summary(request: &GraphActivityRequest) -> String {
+    let verb = if request.reused_existing_run {
+        "Reused code graph extraction"
+    } else if request.dry_run {
+        "Previewed code graph extraction"
+    } else {
+        "Extracted code graph"
+    };
+    format!(
+        "{verb}: {} symbols, {} references, {} graph edge(s).",
+        request.symbol_count, request.reference_count, request.graph_edge_count
+    )
+}
+
+fn graph_activity_details(request: &GraphActivityRequest) -> ActivityDetails {
+    ActivityDetails::GraphExtract {
+        repo_root: request.repo_root.clone(),
+        git_head: request.git_head.clone(),
+        since: request.since.clone(),
+        extraction_run_id: request.extraction_run_id,
+        dry_run: request.dry_run,
+        reused_existing_run: request.reused_existing_run,
+        index_reused: request.index_reused,
+        analyzer_version: request.analyzer_version.clone(),
+        strategy_version: request.strategy_version.clone(),
+        symbol_count: request.symbol_count,
+        reference_count: request.reference_count,
+        resolved_reference_count: request.resolved_reference_count,
+        unresolved_reference_count: request.unresolved_reference_count,
+        ambiguous_reference_count: request.ambiguous_reference_count,
+        graph_node_count: request.graph_node_count,
+        graph_edge_count: request.graph_edge_count,
+        evidence_count: request.evidence_count,
+    }
 }
 
 async fn checkpoint_activity(
@@ -4203,6 +4264,9 @@ fn infer_current_thread(
             ActivityKind::Reembed => {
                 "Recent work refreshed the active embedding space for semantic retrieval."
             }
+            ActivityKind::GraphExtract => {
+                "Recent work refreshed the parser-backed code graph for graph-aware retrieval."
+            }
             ActivityKind::CommitSync => "Recent work synced stored commit history for the project.",
             ActivityKind::Query | ActivityKind::QueryError => {
                 "Recent work centered on answering or debugging project questions."
@@ -4425,7 +4489,10 @@ fn build_attention_items(
     let embedding_work_active = timeline.iter().any(|event| {
         matches!(
             event.kind,
-            ActivityKind::Scan | ActivityKind::Reembed | ActivityKind::Reindex
+            ActivityKind::Scan
+                | ActivityKind::GraphExtract
+                | ActivityKind::Reembed
+                | ActivityKind::Reindex
         )
     });
     if overview.missing_embedding_chunks > 0 && (embedding_work_active || items.is_empty()) {
@@ -5028,6 +5095,7 @@ fn parse_activity_kind(value: &str) -> ActivityKind {
         "commit_sync" => ActivityKind::CommitSync,
         "bundle_export" => ActivityKind::BundleExport,
         "bundle_import" => ActivityKind::BundleImport,
+        "graph_extract" => ActivityKind::GraphExtract,
         "query" => ActivityKind::Query,
         "query_error" => ActivityKind::QueryError,
         "watcher_health" => ActivityKind::WatcherHealth,
@@ -5651,6 +5719,7 @@ fn activity_kind_label(kind: &ActivityKind) -> &'static str {
         ActivityKind::CommitSync => "commit_sync",
         ActivityKind::BundleExport => "bundle_export",
         ActivityKind::BundleImport => "bundle_import",
+        ActivityKind::GraphExtract => "graph_extract",
         ActivityKind::Query => "query",
         ActivityKind::QueryError => "query_error",
         ActivityKind::WatcherHealth => "watcher_health",
@@ -6279,6 +6348,52 @@ mod tests {
                 assert_eq!(graph_connection_count, 2);
                 assert_eq!(graph_connections.len(), 2);
                 assert_eq!(graph_connections[0].file_path, "src/lib.rs");
+            }
+            other => panic!("unexpected activity details: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_activity_summary_and_details_capture_extraction_counts() {
+        let run_id = Uuid::new_v4();
+        let request = GraphActivityRequest {
+            project: "memory".to_string(),
+            repo_root: "/repo".to_string(),
+            git_head: Some("abc123".to_string()),
+            since: None,
+            extraction_run_id: Some(run_id),
+            dry_run: false,
+            reused_existing_run: true,
+            index_reused: true,
+            analyzer_version: "mem-analyze-v2".to_string(),
+            strategy_version: "code-graph-resolution-v1".to_string(),
+            symbol_count: 1919,
+            reference_count: 80116,
+            resolved_reference_count: 14621,
+            unresolved_reference_count: 61249,
+            ambiguous_reference_count: 4246,
+            graph_node_count: 1919,
+            graph_edge_count: 13812,
+            evidence_count: 15731,
+        };
+
+        let summary = graph_activity_summary(&request);
+        assert!(summary.contains("Reused code graph extraction"));
+        assert!(summary.contains("1919 symbols"));
+        assert!(summary.contains("13812 graph edge"));
+
+        match graph_activity_details(&request) {
+            ActivityDetails::GraphExtract {
+                extraction_run_id,
+                reference_count,
+                graph_edge_count,
+                reused_existing_run,
+                ..
+            } => {
+                assert_eq!(extraction_run_id, Some(run_id));
+                assert_eq!(reference_count, 80116);
+                assert_eq!(graph_edge_count, 13812);
+                assert!(reused_existing_run);
             }
             other => panic!("unexpected activity details: {other:?}"),
         }

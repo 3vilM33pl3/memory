@@ -8,12 +8,13 @@ Activity is persisted in the backend database, so the tab is no longer limited t
 
 ## What It Shows
 
-- persisted project activity events such as query, scan, capture, curate, plan, checkpoint, watcher-health, reindex, re-embed, archive, delete, bundle, and briefing events
+- persisted project activity events such as query, scan, graph extraction, capture, curate, plan, checkpoint, watcher-health, reindex, re-embed, archive, delete, bundle, and briefing events
 - operation detail from each event's structured metadata
 - linked memory ids when an event created, replaced, deleted, or referenced memory
 - duration and token counts when the operation reports them
 - provider/model/source metadata when available
 - graph retrieval diagnostics and sampled graph connections for query events that used graph-aware retrieval
+- graph extraction run id, analyzer/strategy versions, symbol/reference counts, graph edge counts, and reuse flags
 
 ## Get Up To Speed
 

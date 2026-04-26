@@ -5900,6 +5900,67 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                     lines.push(activity_kv_line("Curate run", curate_run_id.clone()));
                 }
             }
+            ActivityDetails::GraphExtract {
+                repo_root,
+                git_head,
+                since,
+                extraction_run_id,
+                dry_run,
+                reused_existing_run,
+                index_reused,
+                analyzer_version,
+                strategy_version,
+                symbol_count,
+                reference_count,
+                resolved_reference_count,
+                unresolved_reference_count,
+                ambiguous_reference_count,
+                graph_node_count,
+                graph_edge_count,
+                evidence_count,
+            } => {
+                lines.push(activity_kv_line("Repo root", repo_root.clone()));
+                if let Some(run_id) = extraction_run_id {
+                    lines.push(activity_kv_line("Extraction run", run_id.to_string()));
+                }
+                lines.push(activity_kv_line("Dry run", dry_run.to_string()));
+                lines.push(activity_kv_line(
+                    "Reused existing run",
+                    reused_existing_run.to_string(),
+                ));
+                lines.push(activity_kv_line("Index reused", index_reused.to_string()));
+                lines.push(activity_kv_line("Analyzer", analyzer_version.clone()));
+                lines.push(activity_kv_line("Strategy", strategy_version.clone()));
+                lines.push(activity_kv_line("Symbols", symbol_count.to_string()));
+                lines.push(activity_kv_line("References", reference_count.to_string()));
+                lines.push(activity_kv_line(
+                    "Resolved",
+                    resolved_reference_count.to_string(),
+                ));
+                lines.push(activity_kv_line(
+                    "Unresolved",
+                    unresolved_reference_count.to_string(),
+                ));
+                lines.push(activity_kv_line(
+                    "Ambiguous",
+                    ambiguous_reference_count.to_string(),
+                ));
+                lines.push(activity_kv_line(
+                    "Graph nodes",
+                    graph_node_count.to_string(),
+                ));
+                lines.push(activity_kv_line(
+                    "Graph edges",
+                    graph_edge_count.to_string(),
+                ));
+                lines.push(activity_kv_line("Evidence", evidence_count.to_string()));
+                if let Some(head) = git_head {
+                    lines.push(activity_kv_line("HEAD", head.clone()));
+                }
+                if let Some(since) = since {
+                    lines.push(activity_kv_line("Since", since.clone()));
+                }
+            }
             ActivityDetails::Checkpoint {
                 repo_root,
                 marked_at,
@@ -6804,6 +6865,7 @@ fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
         ActivityKind::CommitSync => ("commit-sync", Theme::ACCENT_STRONG),
         ActivityKind::BundleExport => ("bundle-export", Theme::ACCENT_STRONG),
         ActivityKind::BundleImport => ("bundle-import", Theme::ACCENT_STRONG),
+        ActivityKind::GraphExtract => ("graph", Theme::ACCENT_STRONG),
         ActivityKind::Query => ("query", Theme::ACCENT),
         ActivityKind::QueryError => ("query-error", Theme::DANGER),
         ActivityKind::MemoryReplacement => ("replacement", Theme::WARNING),
@@ -8335,6 +8397,59 @@ mod tests {
 
         assert!(rendered.contains("Query: old query"));
         assert!(!rendered.contains("Graph Retrieval"));
+    }
+
+    #[test]
+    fn backend_graph_extract_activity_detail_renders_counts() {
+        let run_id = Uuid::new_v4();
+        let event = ActivityEvent {
+            id: Uuid::new_v4(),
+            recorded_at: Utc::now(),
+            project: "memory".to_string(),
+            kind: ActivityKind::GraphExtract,
+            memory_id: None,
+            summary: "Extracted code graph: 10 symbols, 20 references, 9 graph edge(s)."
+                .to_string(),
+            details: Some(ActivityDetails::GraphExtract {
+                repo_root: "/repo".to_string(),
+                git_head: Some("abc123".to_string()),
+                since: None,
+                extraction_run_id: Some(run_id),
+                dry_run: false,
+                reused_existing_run: false,
+                index_reused: true,
+                analyzer_version: "mem-analyze-v2".to_string(),
+                strategy_version: "code-graph-resolution-v1".to_string(),
+                symbol_count: 10,
+                reference_count: 20,
+                resolved_reference_count: 12,
+                unresolved_reference_count: 7,
+                ambiguous_reference_count: 1,
+                graph_node_count: 10,
+                graph_edge_count: 9,
+                evidence_count: 19,
+            }),
+            actor_id: None,
+            actor_name: None,
+            source: Some("service".to_string()),
+            operation_id: None,
+            duration_ms: None,
+            provider: None,
+            model: None,
+            token_usage: None,
+        };
+
+        let rendered = backend_activity_detail_lines(&event)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Kind: graph"));
+        assert!(rendered.contains("Extraction run:"));
+        assert!(rendered.contains("Symbols: 10"));
+        assert!(rendered.contains("Graph edges: 9"));
+        assert!(rendered.contains("Analyzer: mem-analyze-v2"));
     }
 
     #[test]
