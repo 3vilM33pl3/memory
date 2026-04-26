@@ -7180,11 +7180,14 @@ fn print_query_response(payload: QueryResponse) {
         println!("Fallback: {reason}\n");
     }
     println!(
-        "Diagnostics: lexical {} ({} ms) | semantic {} ({} ms) | merged {} | returned {} | rerank {} ms | total {} ms\n",
+        "Diagnostics: lexical {} ({} ms) | semantic {} ({} ms) | graph {} [{}] ({} ms) | merged {} | returned {} | rerank {} ms | total {} ms\n",
         payload.diagnostics.lexical_candidates,
         payload.diagnostics.lexical_duration_ms,
         payload.diagnostics.semantic_candidates,
         payload.diagnostics.semantic_duration_ms,
+        payload.diagnostics.graph_candidates,
+        payload.diagnostics.graph_status,
+        payload.diagnostics.graph_duration_ms,
         payload.diagnostics.merged_candidates,
         payload.diagnostics.returned_results,
         payload.diagnostics.rerank_duration_ms,
@@ -7211,14 +7214,41 @@ fn print_query_response(payload: QueryResponse) {
         );
         println!("  {}", result.snippet);
         println!(
-            "  debug: chunk {:.2} | entry {:.2} | semantic {:.2} | relation {:.2}",
+            "  debug: chunk {:.2} | entry {:.2} | semantic {:.2} | relation {:.2} | graph {:.2}",
             result.debug.chunk_fts,
             result.debug.entry_fts,
             result.debug.semantic_similarity,
             result.debug.relation_boost,
+            result.debug.graph_boost,
         );
         if !result.score_explanation.is_empty() {
             println!("  why: {}", result.score_explanation.join(" | "));
+        }
+        for connection in &result.graph_connections {
+            let symbol = connection
+                .symbol
+                .as_deref()
+                .map(|value| format!(" symbol={value}"))
+                .unwrap_or_default();
+            let edge = connection
+                .edge_kind
+                .as_deref()
+                .map(|value| format!(" edge={value}"))
+                .unwrap_or_default();
+            let neighbor = connection
+                .neighbor_symbol
+                .as_deref()
+                .map(|value| format!(" neighbor={value}"))
+                .unwrap_or_default();
+            println!(
+                "  graph: {} {}{}{}{} boost={:.2}",
+                connection.reason,
+                connection.file_path,
+                symbol,
+                edge,
+                neighbor,
+                connection.score_boost
+            );
         }
         if !result.tags.is_empty() {
             println!("  tags: {}", result.tags.join(", "));

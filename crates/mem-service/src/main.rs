@@ -4805,6 +4805,29 @@ fn build_query_answer_prompt(request: &QueryRequest, response: &QueryResponse) -
                 .join("; ");
             lines.push(format!("sources: {sources}"));
         }
+        if !result.graph_connections.is_empty() {
+            let graph_connections = result
+                .graph_connections
+                .iter()
+                .take(3)
+                .map(|connection| {
+                    let mut parts = vec![connection.reason.clone(), connection.file_path.clone()];
+                    if let Some(symbol) = &connection.symbol {
+                        parts.push(format!("symbol={symbol}"));
+                    }
+                    if let Some(edge_kind) = &connection.edge_kind {
+                        parts.push(format!("edge={edge_kind}"));
+                    }
+                    if let Some(neighbor) = &connection.neighbor_symbol {
+                        parts.push(format!("neighbor={neighbor}"));
+                    }
+                    parts.push(format!("boost={:.2}", connection.score_boost));
+                    parts.join(" | ")
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            lines.push(format!("graph: {graph_connections}"));
+        }
         lines.push(String::new());
     }
     lines.push(
@@ -6079,6 +6102,7 @@ mod tests {
                 debug: mem_api::QueryResultDebug::default(),
                 tags: Vec::new(),
                 sources: Vec::new(),
+                graph_connections: Vec::new(),
             }],
             insufficient_evidence: false,
             answer_generation: QueryAnswerGeneration::default(),
@@ -6113,6 +6137,37 @@ mod tests {
         .expect_err("invalid citation should fail");
 
         assert!(err.to_string().contains("cited unavailable result 2"));
+    }
+
+    #[test]
+    fn query_answer_prompt_includes_graph_connections() {
+        let mut response = test_query_response();
+        response.results[0].graph_connections = vec![mem_api::QueryGraphConnection {
+            file_path: "src/lib.rs".to_string(),
+            symbol: Some("GraphTarget".to_string()),
+            symbol_kind: Some("function".to_string()),
+            edge_kind: Some("calls".to_string()),
+            neighbor_symbol: Some("caller".to_string()),
+            direction: Some("incoming".to_string()),
+            score_boost: 1.25,
+            reason: "code symbol match".to_string(),
+        }];
+
+        let prompt = build_query_answer_prompt(
+            &QueryRequest {
+                project: "memory".to_string(),
+                query: "GraphTarget".to_string(),
+                filters: Default::default(),
+                top_k: 8,
+                min_confidence: None,
+                history: false,
+            },
+            &response,
+        );
+
+        assert!(prompt.contains("graph: code symbol match | src/lib.rs"));
+        assert!(prompt.contains("symbol=GraphTarget"));
+        assert!(prompt.contains("edge=calls"));
     }
 
     #[test]

@@ -307,6 +307,25 @@ pub struct QueryResult {
     pub tags: Vec<String>,
     #[serde(default)]
     pub sources: Vec<QuerySource>,
+    #[serde(default)]
+    pub graph_connections: Vec<QueryGraphConnection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QueryGraphConnection {
+    pub file_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub neighbor_symbol: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<String>,
+    pub score_boost: f64,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -349,6 +368,12 @@ pub struct QueryResultDebug {
     #[serde(default)]
     pub relation_boost: f64,
     #[serde(default)]
+    pub graph_boost: f64,
+    #[serde(default)]
+    pub graph_match_count: usize,
+    #[serde(default)]
+    pub graph_edge_count: usize,
+    #[serde(default)]
     pub importance: i32,
     #[serde(default)]
     pub memory_confidence: f32,
@@ -369,15 +394,23 @@ pub struct QueryDiagnostics {
     #[serde(default)]
     pub relation_augmented_candidates: usize,
     #[serde(default)]
+    pub graph_candidates: usize,
+    #[serde(default)]
+    pub graph_augmented_candidates: usize,
+    #[serde(default)]
     pub lexical_duration_ms: u64,
     #[serde(default)]
     pub semantic_duration_ms: u64,
     #[serde(default)]
     pub rerank_duration_ms: u64,
     #[serde(default)]
+    pub graph_duration_ms: u64,
+    #[serde(default)]
     pub total_duration_ms: u64,
     #[serde(default)]
     pub semantic_status: String,
+    #[serde(default)]
+    pub graph_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

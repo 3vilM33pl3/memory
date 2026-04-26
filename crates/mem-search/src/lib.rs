@@ -8,8 +8,9 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
     EmbeddingBackendConfig, EmbeddingsConfig, MemoryRelationType, MemoryType, QueryAnswerCitation,
-    QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics, QueryMatchKind, QueryRequest,
-    QueryResponse, QueryResult, QueryResultDebug, QuerySource, SourceKind,
+    QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics, QueryGraphConnection,
+    QueryMatchKind, QueryRequest, QueryResponse, QueryResult, QueryResultDebug, QuerySource,
+    SourceKind,
 };
 use pgvector::Vector;
 use sqlx::{PgPool, Row};
@@ -21,6 +22,11 @@ pub use embedding_backend::EmbeddingPurpose;
 use embedding_backend::{EmbeddingBackend, EmbeddingSpace};
 
 const MAX_CANDIDATES: i64 = 64;
+const GRAPH_DIRECT_BOOST: f64 = 1.25;
+const GRAPH_REFERENCE_BOOST: f64 = 1.0;
+const GRAPH_NEIGHBOR_BOOST: f64 = 0.65;
+const GRAPH_BOOST_CAP: f64 = 2.5;
+const MAX_GRAPH_CONNECTIONS_PER_MEMORY: usize = 5;
 const CHUNK_TARGET_SIZE: usize = 320;
 const CHUNK_OVERLAP: usize = 80;
 
@@ -247,11 +253,25 @@ pub async fn query_memory(
     };
     let semantic_duration_ms = semantic_started.elapsed().as_millis() as u64;
 
+    let graph_started = Instant::now();
+    let (graph_candidates, graph_status) =
+        match fetch_graph_candidates(pool, request, &normalized, candidate_limit).await {
+            Ok(outcome) => (outcome.candidates, outcome.status),
+            Err(_) => (Vec::new(), "error".to_string()),
+        };
+    let graph_duration_ms = graph_started.elapsed().as_millis() as u64;
+
     let rerank_started = Instant::now();
     let lexical_count = lexical_candidates.len();
     let semantic_count = semantic_candidates.len();
-    let mut candidates = merge_candidates(lexical_candidates, semantic_candidates);
+    let graph_count = graph_candidates.len();
+    let mut candidates =
+        merge_candidates(lexical_candidates, semantic_candidates, graph_candidates);
     let merged_candidate_count = candidates.len();
+    let graph_augmented_candidates = candidates
+        .values()
+        .filter(|candidate| candidate.graph_match_count > 0)
+        .count();
     let relation_map = fetch_relation_map(pool, &candidates.keys().copied().collect::<Vec<_>>())
         .await
         .context("fetch relation map")?;
@@ -293,6 +313,7 @@ pub async fn query_memory(
             debug: candidate.debug,
             tags: candidate.tags,
             sources,
+            graph_connections: candidate.graph_connections,
         });
     }
     let returned_results = results.len();
@@ -312,11 +333,15 @@ pub async fn query_memory(
             merged_candidates: merged_candidate_count,
             returned_results,
             relation_augmented_candidates: relation_map.len(),
+            graph_candidates: graph_count,
+            graph_augmented_candidates,
             lexical_duration_ms,
             semantic_duration_ms,
             rerank_duration_ms,
+            graph_duration_ms,
             total_duration_ms: total_started.elapsed().as_millis() as u64,
             semantic_status,
+            graph_status,
         },
     })
 }
@@ -646,6 +671,10 @@ struct CandidateRecord {
     best_chunk_text: String,
     tags: Vec<String>,
     source_paths: Vec<String>,
+    graph_boost: f64,
+    graph_match_count: usize,
+    graph_edge_count: usize,
+    graph_connections: Vec<QueryGraphConnection>,
 }
 
 #[derive(Debug)]
@@ -661,6 +690,7 @@ struct RankedCandidate {
     match_kind: QueryMatchKind,
     debug: QueryResultDebug,
     score_explanation: Vec<String>,
+    graph_connections: Vec<QueryGraphConnection>,
 }
 
 async fn fetch_lexical_candidates(
@@ -826,6 +856,10 @@ fn candidate_from_lexical_row(row: sqlx::postgres::PgRow) -> Result<CandidateRec
         best_chunk_text: row.try_get("best_chunk_text")?,
         tags: row.try_get("tags")?,
         source_paths: row.try_get("source_paths")?,
+        graph_boost: 0.0,
+        graph_match_count: 0,
+        graph_edge_count: 0,
+        graph_connections: Vec::new(),
     })
 }
 
@@ -943,6 +977,10 @@ async fn fetch_semantic_candidates(
                 best_chunk_text: row.try_get("chunk_text").unwrap_or_default(),
                 tags: row.try_get("tags").unwrap_or_default(),
                 source_paths: row.try_get("source_paths").unwrap_or_default(),
+                graph_boost: 0.0,
+                graph_match_count: 0,
+                graph_edge_count: 0,
+                graph_connections: Vec::new(),
             });
 
         if similarity > entry.semantic_similarity {
@@ -1040,29 +1078,336 @@ async fn project_has_active_embedding_space(
     Ok(row.try_get("present")?)
 }
 
+struct GraphCandidateOutcome {
+    status: String,
+    candidates: Vec<CandidateRecord>,
+}
+
+async fn fetch_graph_candidates(
+    pool: &PgPool,
+    request: &QueryRequest,
+    intent: &QueryIntent,
+    candidate_limit: i64,
+) -> Result<GraphCandidateOutcome, sqlx::Error> {
+    let run_row = sqlx::query(
+        r#"
+        SELECT ger.id
+        FROM graph_extraction_runs ger
+        JOIN projects p ON p.id = ger.project_id
+        WHERE p.slug = $1 AND ger.status = 'completed'
+        ORDER BY ger.completed_at DESC NULLS LAST, ger.started_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(&request.project)
+    .fetch_optional(pool)
+    .await?;
+    let Some(run_row) = run_row else {
+        return Ok(GraphCandidateOutcome {
+            status: "no_graph".to_string(),
+            candidates: Vec::new(),
+        });
+    };
+    let run_id: Uuid = run_row.try_get("id")?;
+
+    let graph_like_terms = graph_like_terms(intent);
+    let path_like_terms = intent
+        .path_terms
+        .iter()
+        .map(|term| format!("%{term}%"))
+        .collect::<Vec<_>>();
+    if graph_like_terms.is_empty() && path_like_terms.is_empty() {
+        return Ok(GraphCandidateOutcome {
+            status: "no_terms".to_string(),
+            candidates: Vec::new(),
+        });
+    }
+
+    let memory_type_filters = request
+        .filters
+        .types
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
+
+    let rows = sqlx::query(
+        r#"
+        WITH direct_symbol_hits AS (
+            SELECT
+                cs.graph_node_id,
+                cs.file_path,
+                cs.display_name AS symbol,
+                cs.symbol_kind,
+                NULL::text AS edge_kind,
+                NULL::text AS neighbor_symbol,
+                'direct'::text AS direction,
+                $8::float8 AS boost,
+                'code symbol match'::text AS reason,
+                FALSE AS edge_hit
+            FROM code_symbols cs
+            WHERE cs.extraction_run_id = $2
+              AND (
+                    ($3::text[] IS NOT NULL AND (
+                        cs.name ILIKE ANY($3)
+                        OR COALESCE(cs.qualified_name, '') ILIKE ANY($3)
+                    ))
+                    OR (cardinality($4::text[]) > 0 AND cs.file_path ILIKE ANY($4))
+              )
+        ),
+        direct_reference_hits AS (
+            SELECT
+                cs.graph_node_id,
+                cr.file_path,
+                COALESCE(cs.display_name, cr.target_text) AS symbol,
+                cs.symbol_kind,
+                cr.reference_kind AS edge_kind,
+                NULL::text AS neighbor_symbol,
+                'direct'::text AS direction,
+                $9::float8 AS boost,
+                'code reference match'::text AS reason,
+                FALSE AS edge_hit
+            FROM code_references cr
+            LEFT JOIN code_symbols cs
+              ON cs.extraction_run_id = cr.extraction_run_id
+             AND cs.stable_identity = cr.target_symbol_identity
+            WHERE cr.extraction_run_id = $2
+              AND (
+                    ($3::text[] IS NOT NULL AND (
+                        cr.target_text ILIKE ANY($3)
+                        OR COALESCE(cr.source_text, '') ILIKE ANY($3)
+                    ))
+                    OR (cardinality($4::text[]) > 0 AND cr.file_path ILIKE ANY($4))
+              )
+        ),
+        direct_node_hits AS (
+            SELECT graph_node_id FROM direct_symbol_hits WHERE graph_node_id IS NOT NULL
+            UNION
+            SELECT graph_node_id FROM direct_reference_hits WHERE graph_node_id IS NOT NULL
+        ),
+        neighbor_hits AS (
+            SELECT
+                neighbor.graph_node_id,
+                neighbor.file_path,
+                neighbor.display_name AS symbol,
+                neighbor.symbol_kind,
+                ge.edge_kind,
+                anchor.display_name AS neighbor_symbol,
+                CASE
+                    WHEN ge.source_node_id = direct_node_hits.graph_node_id THEN 'outgoing'
+                    ELSE 'incoming'
+                END AS direction,
+                $10::float8 AS boost,
+                'one-hop graph neighbor'::text AS reason,
+                TRUE AS edge_hit
+            FROM direct_node_hits
+            JOIN graph_edges ge
+              ON ge.extraction_run_id = $2
+             AND (ge.source_node_id = direct_node_hits.graph_node_id OR ge.target_node_id = direct_node_hits.graph_node_id)
+            JOIN code_symbols neighbor
+              ON neighbor.extraction_run_id = ge.extraction_run_id
+             AND neighbor.graph_node_id = CASE
+                    WHEN ge.source_node_id = direct_node_hits.graph_node_id THEN ge.target_node_id
+                    ELSE ge.source_node_id
+                END
+            JOIN code_symbols anchor
+              ON anchor.extraction_run_id = ge.extraction_run_id
+             AND anchor.graph_node_id = direct_node_hits.graph_node_id
+        ),
+        graph_hits AS (
+            SELECT * FROM direct_symbol_hits
+            UNION ALL
+            SELECT * FROM direct_reference_hits
+            UNION ALL
+            SELECT * FROM neighbor_hits
+        )
+        SELECT
+            m.id,
+            m.summary,
+            m.memory_type,
+            m.canonical_text,
+            m.importance,
+            m.confidence,
+            m.updated_at,
+            left(m.canonical_text, 320) AS best_chunk_text,
+            COALESCE((
+                SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
+                FROM memory_tags mt
+                WHERE mt.memory_entry_id = m.id
+            ), ARRAY[]::text[]) AS tags,
+            COALESCE((
+                SELECT ARRAY_AGG(ms2.file_path ORDER BY ms2.file_path)
+                FROM memory_sources ms2
+                WHERE ms2.memory_entry_id = m.id
+                  AND ms2.file_path IS NOT NULL
+            ), ARRAY[]::text[]) AS source_paths,
+            gh.file_path,
+            gh.symbol,
+            gh.symbol_kind,
+            gh.edge_kind,
+            gh.neighbor_symbol,
+            gh.direction,
+            gh.boost,
+            gh.reason,
+            gh.edge_hit
+        FROM graph_hits gh
+        JOIN memory_sources ms
+          ON ms.file_path IS NOT NULL
+         AND (
+                ms.file_path = gh.file_path
+                OR (right(ms.file_path, 1) = '/' AND gh.file_path LIKE ms.file_path || '%')
+             )
+        JOIN memory_entries m ON m.id = ms.memory_entry_id
+        JOIN projects p ON p.id = m.project_id
+        WHERE p.slug = $1
+          AND m.status = 'active'
+          AND (
+                $7::boolean
+                OR (
+                    m.is_tombstone = FALSE
+                    AND m.version_no = (
+                        SELECT MAX(m2.version_no)
+                        FROM memory_entries m2
+                        WHERE m2.canonical_id = m.canonical_id
+                    )
+                )
+          )
+          AND ($5::text[] IS NULL OR m.memory_type = ANY($5))
+          AND (
+                cardinality($6::text[]) = 0
+                OR EXISTS (
+                    SELECT 1
+                    FROM memory_tags mt
+                    WHERE mt.memory_entry_id = m.id
+                      AND mt.tag = ANY($6)
+                )
+          )
+        ORDER BY gh.boost DESC, m.updated_at DESC, m.id
+        LIMIT $11
+        "#,
+    )
+    .bind(&request.project)
+    .bind(run_id)
+    .bind(if graph_like_terms.is_empty() {
+        None::<Vec<String>>
+    } else {
+        Some(graph_like_terms)
+    })
+    .bind(&path_like_terms)
+    .bind(if memory_type_filters.is_empty() {
+        None::<Vec<String>>
+    } else {
+        Some(memory_type_filters)
+    })
+    .bind(&request.filters.tags)
+    .bind(request.history)
+    .bind(GRAPH_DIRECT_BOOST)
+    .bind(GRAPH_REFERENCE_BOOST)
+    .bind(GRAPH_NEIGHBOR_BOOST)
+    .bind(candidate_limit * 6)
+    .fetch_all(pool)
+    .await?;
+
+    let mut candidates = HashMap::<Uuid, CandidateRecord>::new();
+    for row in rows {
+        let memory_id: Uuid = row.try_get("id")?;
+        let boost: f64 = row.try_get("boost")?;
+        let edge_hit: bool = row.try_get("edge_hit")?;
+        let connection = QueryGraphConnection {
+            file_path: row.try_get("file_path")?,
+            symbol: row.try_get("symbol")?,
+            symbol_kind: row.try_get("symbol_kind")?,
+            edge_kind: row.try_get("edge_kind")?,
+            neighbor_symbol: row.try_get("neighbor_symbol")?,
+            direction: row.try_get("direction")?,
+            score_boost: boost,
+            reason: row.try_get("reason")?,
+        };
+        let entry = candidates
+            .entry(memory_id)
+            .or_insert_with(|| CandidateRecord {
+                memory_id,
+                summary: row.try_get("summary").unwrap_or_default(),
+                memory_type: parse_memory_type(
+                    &row.try_get::<String, _>("memory_type")
+                        .unwrap_or_else(|_| "reference".to_string()),
+                ),
+                canonical_text: row.try_get("canonical_text").unwrap_or_default(),
+                importance: row.try_get("importance").unwrap_or_default(),
+                confidence: row.try_get("confidence").unwrap_or(0.0),
+                updated_at: row.try_get("updated_at").unwrap_or_else(|_| Utc::now()),
+                entry_fts: 0.0,
+                chunk_fts: 0.0,
+                semantic_similarity: 0.0,
+                best_chunk_text: row.try_get("best_chunk_text").unwrap_or_default(),
+                tags: row.try_get("tags").unwrap_or_default(),
+                source_paths: row.try_get("source_paths").unwrap_or_default(),
+                graph_boost: 0.0,
+                graph_match_count: 0,
+                graph_edge_count: 0,
+                graph_connections: Vec::new(),
+            });
+        entry.graph_boost = (entry.graph_boost + boost).min(GRAPH_BOOST_CAP);
+        entry.graph_match_count += 1;
+        if edge_hit {
+            entry.graph_edge_count += 1;
+        }
+        if entry.graph_connections.len() < MAX_GRAPH_CONNECTIONS_PER_MEMORY {
+            entry.graph_connections.push(connection);
+        }
+    }
+
+    Ok(GraphCandidateOutcome {
+        status: "active".to_string(),
+        candidates: candidates.into_values().collect(),
+    })
+}
+
+fn graph_like_terms(intent: &QueryIntent) -> Vec<String> {
+    let mut terms = intent
+        .lexical_terms
+        .iter()
+        .chain(intent.exact_phrases.iter())
+        .filter(|term| term.len() >= 3)
+        .map(|term| format!("%{term}%"))
+        .collect::<Vec<_>>();
+    terms.sort();
+    terms.dedup();
+    terms
+}
+
 fn merge_candidates(
     lexical: Vec<CandidateRecord>,
     semantic: Vec<CandidateRecord>,
+    graph: Vec<CandidateRecord>,
 ) -> HashMap<Uuid, CandidateRecord> {
-    let mut merged = HashMap::new();
-    for candidate in lexical.into_iter().chain(semantic) {
-        merged
-            .entry(candidate.memory_id)
-            .and_modify(|existing: &mut CandidateRecord| {
-                existing.entry_fts = existing.entry_fts.max(candidate.entry_fts);
-                existing.chunk_fts = existing.chunk_fts.max(candidate.chunk_fts);
-                if candidate.semantic_similarity > existing.semantic_similarity {
-                    existing.semantic_similarity = candidate.semantic_similarity;
-                    existing.best_chunk_text = candidate.best_chunk_text.clone();
+    let mut merged = HashMap::<Uuid, CandidateRecord>::new();
+    for candidate in lexical.into_iter().chain(semantic).chain(graph) {
+        if let Some(existing) = merged.get_mut(&candidate.memory_id) {
+            existing.entry_fts = existing.entry_fts.max(candidate.entry_fts);
+            existing.chunk_fts = existing.chunk_fts.max(candidate.chunk_fts);
+            if candidate.semantic_similarity > existing.semantic_similarity {
+                existing.semantic_similarity = candidate.semantic_similarity;
+                existing.best_chunk_text = candidate.best_chunk_text.clone();
+            }
+            if existing.tags.is_empty() {
+                existing.tags = candidate.tags.clone();
+            }
+            if existing.source_paths.is_empty() {
+                existing.source_paths = candidate.source_paths.clone();
+            }
+            existing.graph_boost =
+                (existing.graph_boost + candidate.graph_boost).min(GRAPH_BOOST_CAP);
+            existing.graph_match_count += candidate.graph_match_count;
+            existing.graph_edge_count += candidate.graph_edge_count;
+            for connection in candidate.graph_connections {
+                if existing.graph_connections.len() >= MAX_GRAPH_CONNECTIONS_PER_MEMORY {
+                    break;
                 }
-                if existing.tags.is_empty() {
-                    existing.tags = candidate.tags.clone();
-                }
-                if existing.source_paths.is_empty() {
-                    existing.source_paths = candidate.source_paths.clone();
-                }
-            })
-            .or_insert(candidate);
+                existing.graph_connections.push(connection);
+            }
+        } else {
+            merged.insert(candidate.memory_id, candidate);
+        }
     }
     merged
 }
@@ -1158,6 +1503,7 @@ fn rank_candidate(
     let tag_boost = tag_match_count as f64 * 0.9;
     let path_boost = path_match_count as f64 * 1.1;
     let semantic_boost = candidate.semantic_similarity.max(0.0) * 4.2;
+    let graph_boost = candidate.graph_boost.min(GRAPH_BOOST_CAP);
     let importance_boost = candidate.importance as f64 * 0.35;
     let confidence_boost = candidate.confidence as f64 * 1.8;
     let recency_score = recency_boost * 0.6;
@@ -1169,6 +1515,7 @@ fn rank_candidate(
         + tag_boost
         + path_boost
         + semantic_boost
+        + graph_boost
         + importance_boost
         + confidence_boost
         + recency_score
@@ -1179,6 +1526,7 @@ fn rank_candidate(
         && candidate.chunk_fts == 0.0
         && candidate.entry_fts == 0.0
         && candidate.semantic_similarity < 0.25
+        && graph_boost == 0.0
     {
         final_score *= 0.65;
     }
@@ -1212,6 +1560,12 @@ fn rank_candidate(
     }
     if relation_boost > 0.0 {
         score_explanation.push(format!("relation boost {:.2}", relation_boost));
+    }
+    if graph_boost > 0.0 {
+        score_explanation.push(format!(
+            "graph match x{} boost {:.2}",
+            candidate.graph_match_count, graph_boost
+        ));
     }
     score_explanation.push(format!("term overlap {:.0}%", term_overlap * 100.0));
     score_explanation.push(format!("importance {}", candidate.importance));
@@ -1250,11 +1604,15 @@ fn rank_candidate(
             tag_match_count,
             path_match_count,
             relation_boost,
+            graph_boost,
+            graph_match_count: candidate.graph_match_count,
+            graph_edge_count: candidate.graph_edge_count,
             importance: candidate.importance,
             memory_confidence: candidate.confidence,
             recency_boost,
         },
         score_explanation,
+        graph_connections: candidate.graph_connections,
     }
 }
 
@@ -1613,6 +1971,7 @@ mod tests {
                 debug: QueryResultDebug::default(),
                 tags: vec![],
                 sources: vec![],
+                graph_connections: vec![],
             },
             QueryResult {
                 memory_id: Uuid::new_v4(),
@@ -1628,6 +1987,7 @@ mod tests {
                 debug: QueryResultDebug::default(),
                 tags: vec![],
                 sources: vec![],
+                graph_connections: vec![],
             },
         ];
 
@@ -1642,5 +2002,186 @@ mod tests {
         );
         assert_eq!(synthesis.answer_generation.cited_result_numbers, vec![1, 2]);
         assert_eq!(synthesis.answer_citations.len(), 2);
+    }
+
+    #[test]
+    fn rank_candidate_includes_graph_boost_and_explanation() {
+        let memory_id = Uuid::new_v4();
+        let candidate = CandidateRecord {
+            memory_id,
+            summary: "Unrelated summary".to_string(),
+            memory_type: MemoryType::Implementation,
+            canonical_text: "Durable implementation detail.".to_string(),
+            importance: 2,
+            confidence: 0.8,
+            updated_at: Utc::now(),
+            entry_fts: 0.0,
+            chunk_fts: 0.0,
+            semantic_similarity: 0.0,
+            best_chunk_text: "Durable implementation detail.".to_string(),
+            tags: Vec::new(),
+            source_paths: vec!["src/lib.rs".to_string()],
+            graph_boost: 9.0,
+            graph_match_count: 3,
+            graph_edge_count: 1,
+            graph_connections: vec![QueryGraphConnection {
+                file_path: "src/lib.rs".to_string(),
+                symbol: Some("GraphTarget".to_string()),
+                symbol_kind: Some("function".to_string()),
+                edge_kind: Some("calls".to_string()),
+                neighbor_symbol: Some("caller".to_string()),
+                direction: Some("incoming".to_string()),
+                score_boost: GRAPH_DIRECT_BOOST,
+                reason: "code symbol match".to_string(),
+            }],
+        };
+
+        let ranked = rank_candidate(
+            candidate,
+            &QueryIntent::from_query("GraphTarget"),
+            &HashMap::new(),
+        );
+
+        assert_eq!(ranked.memory_id, memory_id);
+        assert_eq!(ranked.debug.graph_boost, GRAPH_BOOST_CAP);
+        assert_eq!(ranked.debug.graph_match_count, 3);
+        assert_eq!(ranked.debug.graph_edge_count, 1);
+        assert!(
+            ranked
+                .score_explanation
+                .iter()
+                .any(|item| item == "graph match x3 boost 2.50")
+        );
+        assert_eq!(ranked.graph_connections.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn graph_candidates_return_memory_by_file_provenance() {
+        let Ok(database_url) = std::env::var("MEMORY_LAYER_TEST_DATABASE_URL") else {
+            return;
+        };
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("connect test database");
+        sqlx::migrate!("../../migrations")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+
+        let slug = format!("graph-query-{}", Uuid::new_v4());
+        let project_id = Uuid::new_v4();
+        let memory_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let node_id = Uuid::new_v4();
+        let symbol_id = Uuid::new_v4();
+
+        sqlx::query("DELETE FROM projects WHERE slug = $1")
+            .bind(&slug)
+            .execute(&pool)
+            .await
+            .expect("cleanup old project");
+        sqlx::query("INSERT INTO projects (id, slug, name, root_path, created_at) VALUES ($1, $2, $2, '/repo', now())")
+            .bind(project_id)
+            .bind(&slug)
+            .execute(&pool)
+            .await
+            .expect("insert project");
+        sqlx::query(
+            r#"
+            INSERT INTO memory_entries
+                (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
+                 summary, memory_type, scope, importance, confidence, status,
+                 created_at, updated_at, archived_at, search_document)
+            VALUES ($1, $2, $1, 1, FALSE, 'Durable implementation detail.',
+                    'Unrelated summary', 'implementation', 'project', 3, 0.9,
+                    'active', now(), now(), NULL,
+                    to_tsvector('english', 'Durable implementation detail. Unrelated summary'))
+            "#,
+        )
+        .bind(memory_id)
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("insert memory");
+        sqlx::query(
+            "INSERT INTO memory_sources (id, memory_entry_id, source_kind, file_path, created_at) VALUES ($1, $2, 'file', 'src/lib.rs', now())",
+        )
+        .bind(Uuid::new_v4())
+        .bind(memory_id)
+        .execute(&pool)
+        .await
+        .expect("insert memory source");
+        sqlx::query(
+            r#"
+            INSERT INTO graph_extraction_runs
+                (id, project_id, repo_root, git_head, analyzer_version, strategy_version,
+                 status, started_at, completed_at, summary_json)
+            VALUES ($1, $2, '/repo', 'abc', 'mem-analyze-v2', 'code-graph-resolution-v1',
+                    'completed', now(), now(), '{}'::jsonb)
+            "#,
+        )
+        .bind(run_id)
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("insert graph run");
+        sqlx::query(
+            r#"
+            INSERT INTO graph_nodes
+                (id, project_id, extraction_run_id, node_kind, stable_identity, display_name, metadata_json, created_at)
+            VALUES ($1, $2, $3, 'code_symbol', 'rust:src/lib.rs:function:GraphTarget:1-1', 'GraphTarget', '{}'::jsonb, now())
+            "#,
+        )
+        .bind(node_id)
+        .bind(project_id)
+        .bind(run_id)
+        .execute(&pool)
+        .await
+        .expect("insert graph node");
+        sqlx::query(
+            r#"
+            INSERT INTO code_symbols
+                (id, project_id, extraction_run_id, graph_node_id, fact_id, stable_identity,
+                 language, file_path, symbol_kind, name, qualified_name, start_byte, end_byte,
+                 start_line, end_line, display_name, created_at)
+            VALUES ($1, $2, $3, $4, 'fact', 'rust:src/lib.rs:function:GraphTarget:1-1',
+                    'rust', 'src/lib.rs', 'function', 'GraphTarget', 'GraphTarget',
+                    0, 10, 1, 1, 'GraphTarget', now())
+            "#,
+        )
+        .bind(symbol_id)
+        .bind(project_id)
+        .bind(run_id)
+        .bind(node_id)
+        .execute(&pool)
+        .await
+        .expect("insert code symbol");
+
+        let response = query_memory(
+            &pool,
+            &QueryRequest {
+                project: slug.clone(),
+                query: "GraphTarget".to_string(),
+                filters: Default::default(),
+                top_k: 5,
+                min_confidence: None,
+                history: false,
+            },
+            None,
+        )
+        .await
+        .expect("query memory");
+
+        assert_eq!(response.diagnostics.graph_status, "active");
+        assert_eq!(response.diagnostics.graph_candidates, 1);
+        assert_eq!(response.results[0].memory_id, memory_id);
+        assert!(response.results[0].debug.graph_boost > 0.0);
+        assert_eq!(response.results[0].graph_connections.len(), 1);
+
+        sqlx::query("DELETE FROM projects WHERE slug = $1")
+            .bind(&slug)
+            .execute(&pool)
+            .await
+            .expect("cleanup project");
     }
 }

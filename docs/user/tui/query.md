@@ -11,9 +11,12 @@ The tab shows both the synthesized answer and the evidence trail used to create 
 - the answer, confidence, generation method, citation numbers, and diagnostics
 - the returned matching memories with citation numbers that map to the answer
 - the selected result in more detail, including whether it was cited and why it ranked well
+- graph diagnostics and graph connections when a completed code graph extraction is available
 
 When LLM answering is configured, the backend answers using only the returned memories. If the LLM is unavailable or returns invalid citations, the tab shows the deterministic fallback answer and the fallback reason.
 After you press `Enter` while editing, the query runs in the background and the tab shows a searching state until the new answer arrives. Previous results remain visible during the search so you can keep reading while waiting.
+
+If graph data exists for the project, the tab shows graph status, graph candidate counts, graph timing, and per-result graph connections in the detail pane. These explain which file or symbol helped retrieve a memory; the answer still cites the returned memories rather than raw graph rows.
 
 You can jump into query mode from anywhere in the TUI with `?`.
 

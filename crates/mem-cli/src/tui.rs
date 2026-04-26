@@ -4361,6 +4361,17 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                     Style::default().fg(Theme::TEXT),
                 ),
                 Span::raw("   "),
+                label_span("Graph: "),
+                Span::styled(
+                    format!(
+                        "{} [{}] in {} ms",
+                        response.diagnostics.graph_candidates,
+                        response.diagnostics.graph_status,
+                        response.diagnostics.graph_duration_ms
+                    ),
+                    Style::default().fg(Theme::TEXT),
+                ),
+                Span::raw("   "),
                 label_span("Rerank: "),
                 Span::styled(
                     format!("{} ms", response.diagnostics.rerank_duration_ms),
@@ -4497,21 +4508,24 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         lines.push(Line::from(vec![section_span("Search Diagnostics")]));
         lines.push(Line::from(Span::styled(
             format!(
-                "chunk={:.2} | entry={:.2} | semantic={:.2} | overlap={:.0}% | relation={:.2}",
+                "chunk={:.2} | entry={:.2} | semantic={:.2} | overlap={:.0}% | relation={:.2} | graph={:.2}",
                 result.debug.chunk_fts,
                 result.debug.entry_fts,
                 result.debug.semantic_similarity,
                 result.debug.term_overlap * 100.0,
-                result.debug.relation_boost
+                result.debug.relation_boost,
+                result.debug.graph_boost
             ),
             Style::default().fg(Theme::TEXT),
         )));
         lines.push(Line::from(Span::styled(
             format!(
-                "phrases={} | tags={} | paths={} | importance={} | confidence={:.2} | recency={:.2}",
+                "phrases={} | tags={} | paths={} | graph matches={} edges={} | importance={} | confidence={:.2} | recency={:.2}",
                 result.debug.exact_phrase_matches,
                 result.debug.tag_match_count,
                 result.debug.path_match_count,
+                result.debug.graph_match_count,
+                result.debug.graph_edge_count,
                 result.debug.importance,
                 result.debug.memory_confidence,
                 result.debug.recency_boost
@@ -4525,6 +4539,28 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             for explanation in &result.score_explanation {
                 lines.push(Line::from(Span::styled(
                     format!("- {explanation}"),
+                    Style::default().fg(Theme::ACCENT),
+                )));
+            }
+        }
+
+        if !result.graph_connections.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Graph Connections")]));
+            for connection in &result.graph_connections {
+                let mut details = vec![connection.reason.clone(), connection.file_path.clone()];
+                if let Some(symbol) = &connection.symbol {
+                    details.push(format!("symbol={symbol}"));
+                }
+                if let Some(edge_kind) = &connection.edge_kind {
+                    details.push(format!("edge={edge_kind}"));
+                }
+                if let Some(neighbor) = &connection.neighbor_symbol {
+                    details.push(format!("neighbor={neighbor}"));
+                }
+                details.push(format!("boost={:.2}", connection.score_boost));
+                lines.push(Line::from(Span::styled(
+                    format!("- {}", details.join(" | ")),
                     Style::default().fg(Theme::ACCENT),
                 )));
             }
@@ -5642,9 +5678,10 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
                         label_span("Server timings: "),
                         Span::styled(
                             format!(
-                                "lexical {} ms | semantic {} ms | rerank {} ms | total {} ms",
+                                "lexical {} ms | semantic {} ms | graph {} ms | rerank {} ms | total {} ms",
                                 response.diagnostics.lexical_duration_ms,
                                 response.diagnostics.semantic_duration_ms,
+                                response.diagnostics.graph_duration_ms,
                                 response.diagnostics.rerank_duration_ms,
                                 response.diagnostics.total_duration_ms
                             ),
@@ -5655,12 +5692,15 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
                         label_span("Candidate counts: "),
                         Span::styled(
                             format!(
-                                "lexical {} | semantic {} | merged {} | returned {} | relation {}",
+                                "lexical {} | semantic {} | graph {} [{}] | merged {} | returned {} | relation {} | graph augmented {}",
                                 response.diagnostics.lexical_candidates,
                                 response.diagnostics.semantic_candidates,
+                                response.diagnostics.graph_candidates,
+                                response.diagnostics.graph_status,
                                 response.diagnostics.merged_candidates,
                                 response.diagnostics.returned_results,
-                                response.diagnostics.relation_augmented_candidates
+                                response.diagnostics.relation_augmented_candidates,
+                                response.diagnostics.graph_augmented_candidates
                             ),
                             Style::default().fg(Theme::TEXT),
                         ),
@@ -5691,17 +5731,38 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
                             )));
                             lines.push(Line::from(Span::styled(
                                 format!(
-                                    "  debug: chunk {:.2} | entry {:.2} | semantic {:.2} | relation {:.2}",
+                                    "  debug: chunk {:.2} | entry {:.2} | semantic {:.2} | relation {:.2} | graph {:.2}",
                                     result.debug.chunk_fts,
                                     result.debug.entry_fts,
                                     result.debug.semantic_similarity,
-                                    result.debug.relation_boost
+                                    result.debug.relation_boost,
+                                    result.debug.graph_boost
                                 ),
                                 Style::default().fg(Theme::MUTED),
                             )));
                             if !result.score_explanation.is_empty() {
                                 lines.push(Line::from(Span::styled(
                                     format!("  why: {}", result.score_explanation.join(" | ")),
+                                    Style::default().fg(Theme::ACCENT),
+                                )));
+                            }
+                            if !result.graph_connections.is_empty() {
+                                let graph = result
+                                    .graph_connections
+                                    .iter()
+                                    .take(2)
+                                    .map(|connection| {
+                                        format!(
+                                            "{} {} boost={:.2}",
+                                            connection.reason,
+                                            connection.file_path,
+                                            connection.score_boost
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(" | ");
+                                lines.push(Line::from(Span::styled(
+                                    format!("  graph: {graph}"),
                                     Style::default().fg(Theme::ACCENT),
                                 )));
                             }

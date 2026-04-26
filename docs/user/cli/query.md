@@ -34,9 +34,23 @@ The default text output shows:
 
 If LLM answering is configured, the backend asks the model to answer using only the returned memories. If the model is unavailable or returns invalid citations, Memory Layer falls back to deterministic summary synthesis and reports the fallback reason.
 
+## Graph-Aware Retrieval
+
+When a project has a completed `memory graph extract` run, `memory query` automatically uses the latest completed code graph as an additional retrieval signal. No extra flag is needed.
+
+Graph retrieval is additive:
+
+- lexical and semantic matches still determine the baseline result set
+- graph matches can add memories whose file provenance points at matching symbols or one-hop related symbols
+- graph boosts are capped so code graph hints cannot overwhelm strong memory matches
+- graph connections are shown as explanations, not as standalone answer citations
+
+The JSON output includes graph diagnostics such as `graph_status`, `graph_candidates`, `graph_augmented_candidates`, and `graph_duration_ms`. Individual results can include `graph_connections` describing the file, symbol, edge, neighbor symbol, reason, and score boost that affected ranking.
+
 ## Related Docs
 
 - [Resume Briefings](resume.md)
 - [Remember Command](remember.md)
+- [Graph Command](graph.md)
 - [TUI Query Tab](../tui/query.md)
 - [Memory Types Reference](../../developer/architecture/memory-types.md)

@@ -1,6 +1,6 @@
 # `memory graph`
 
-`memory graph` extracts parser-backed code structure into graph tables. It is additive: current memory query and TUI behavior do not depend on it unless future graph retrieval is explicitly enabled.
+`memory graph` extracts parser-backed code structure into graph tables. It is additive: Memory Layer still works without graph data, but query and TUI search can use the latest completed graph extraction to improve retrieval explanations and ranking.
 
 ## Extract
 
@@ -31,6 +31,19 @@ memory graph status --project memory --text
 
 Shows the latest completed extraction run, analyzer version, strategy version, symbol counts, reference counts, graph node/edge counts, evidence counts, and unresolved/ambiguous reference counts.
 
+## Use In Query
+
+After a completed extraction exists, `memory query` and the TUI `Query` tab automatically use it. The query pipeline looks for code symbols, references, and one-hop graph neighbors that match the question, then maps those graph hits back to memories through `memory_sources.file_path` provenance.
+
+Graph matches are used as ranking evidence:
+
+- direct symbol and reference matches receive the strongest boost
+- one-hop neighbor matches receive a smaller boost
+- total graph boost per memory is capped
+- graph diagnostics report whether graph retrieval was `active`, `no_graph`, `no_terms`, or `error`
+
+Graph hits do not bypass memory curation. Answers are still generated from returned memories, and graph connections are shown as explainability metadata so a human can see why a memory was retrieved.
+
 ## Resolution Semantics
 
 The resolver only creates graph edges when both source and target symbols are resolved. Unresolved and ambiguous references are still stored in `code_references` so diagnostics can improve over time without inventing graph edges.
@@ -58,4 +71,5 @@ Every graph node and edge is tied to an extraction run and file-span evidence.
 
 - [Repository Index](repo.md)
 - [Scan Command](scan.md)
+- [Query Command](query.md)
 - [Graph And Curation Foundations](../../developer/architecture/graph-and-curation-foundations.md)
