@@ -129,6 +129,17 @@ struct PersistedRepoIndex {
     dossier: ScanDossier,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct GraphIndexSnapshot {
+    pub project: String,
+    pub repo_root: String,
+    pub head: Option<String>,
+    pub since: Option<String>,
+    pub analysis: AnalysisReport,
+    pub index_reused: bool,
+    pub index_path: PathBuf,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_scan(
     api: &ApiClient,
@@ -280,6 +291,33 @@ pub(crate) fn read_index_status(
         test_link_count: index.analysis.test_links.len(),
         index_path: index_path.display().to_string(),
     }))
+}
+
+pub(crate) fn load_graph_index(
+    repo_root: &Path,
+    project: &str,
+    since: Option<&str>,
+    config: &AppConfig,
+    rebuild_index: bool,
+    dry_run: bool,
+) -> Result<GraphIndexSnapshot> {
+    let (index, index_path, index_reused) = resolve_repo_index(
+        repo_root,
+        project,
+        since,
+        config.llm.max_input_bytes,
+        rebuild_index,
+        dry_run,
+    )?;
+    Ok(GraphIndexSnapshot {
+        project: index.project,
+        repo_root: index.repo_root,
+        head: index.head,
+        since: index.since,
+        analysis: index.analysis,
+        index_reused,
+        index_path,
+    })
 }
 
 fn ensure_llm_config(config: &AppConfig) -> Result<()> {

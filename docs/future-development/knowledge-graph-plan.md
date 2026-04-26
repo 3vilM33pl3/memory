@@ -181,12 +181,24 @@ claim extraction can be tested in an optional profile.
 - Do not mix prose memory identity with code symbol identity. Link them through
   evidence and edges.
 
-## First Implementation Slice
+## Implemented First Slice
 
-The first slice should be deliberately small:
+The first slice now provides a code graph baseline:
 
-1. Add graph table migrations.
-2. Add graph repository traits and PostgreSQL implementations.
-3. Add fixtures for a tiny Rust project and a tiny TypeScript project.
-4. Add a read-only code symbol extraction command or test harness.
-5. Keep all existing memory query and TUI behavior unchanged.
+- Graph table migrations exist beside current memory tables.
+- `mem-analyze` emits stable symbol identities and conservative resolved
+  references.
+- `mem-graph` persists extraction runs, code symbols, code references, graph
+  nodes, graph edges, and evidence.
+- `memory graph extract` and `memory graph status` expose the workflow.
+- Current memory query and TUI behavior remain unchanged by default.
+
+## Next Slices
+
+The next knowledge graph work should build on this baseline:
+
+1. Backfill active latest memories as graph nodes.
+2. Mirror selected `memory_relations` rows into graph edges.
+3. Add graph-aware retrieval as an optional reranking signal.
+4. Add graph inspection surfaces in the TUI after storage and retrieval parity
+   tests exist.

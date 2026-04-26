@@ -1455,6 +1455,7 @@ version = "0.6.4"
 dependencies = [
  "anyhow",
  "serde",
+ "sha2",
  "tree-sitter",
  "tree-sitter-javascript",
  "tree-sitter-python",
@@ -1492,6 +1493,7 @@ dependencies = [
  "mem-agenttop",
  "mem-analyze",
  "mem-api",
+ "mem-graph",
  "mem-platform",
  "mem-service",
  "mem-watch",
@@ -1513,6 +1515,19 @@ dependencies = [
  "chrono",
  "mem-api",
  "mem-ingest",
+ "serde_json",
+ "sqlx",
+ "uuid",
+]
+
+[[package]]
+name = "mem-graph"
+version = "0.6.4"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "mem-analyze",
+ "serde",
  "serde_json",
  "sqlx",
  "uuid",

@@ -2,7 +2,11 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tree_sitter::{Node, Parser, TreeCursor};
+
+pub const ANALYZER_VERSION: &str = "mem-analyze-v2";
+pub const RESOLUTION_STRATEGY_VERSION: &str = "code-graph-resolution-v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +42,22 @@ pub enum SymbolKind {
     Variable,
 }
 
+impl SymbolKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Module => "module",
+            Self::Function => "function",
+            Self::Method => "method",
+            Self::Struct => "struct",
+            Self::Enum => "enum",
+            Self::Trait => "trait",
+            Self::Class => "class",
+            Self::Interface => "interface",
+            Self::Variable => "variable",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Span {
     pub start_byte: usize,
@@ -49,6 +69,8 @@ pub struct Span {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SymbolFact {
     pub id: String,
+    #[serde(default)]
+    pub stable_identity: String,
     pub language: AnalyzerLanguage,
     pub file_path: String,
     pub kind: SymbolKind,
@@ -56,6 +78,8 @@ pub struct SymbolFact {
     pub qualified_name: Option<String>,
     pub span: Span,
     pub display: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -114,6 +138,8 @@ pub struct AnalyzerSummary {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AnalysisReport {
+    #[serde(default = "default_analyzer_version")]
+    pub analyzer_version: String,
     pub enabled_analyzers: Vec<String>,
     pub summaries: Vec<AnalyzerSummary>,
     pub symbols: Vec<SymbolFact>,
@@ -123,12 +149,102 @@ pub struct AnalysisReport {
     pub test_links: Vec<TestLinkFact>,
 }
 
+fn default_analyzer_version() -> String {
+    ANALYZER_VERSION.to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceKind {
+    Import,
+    Call,
+    Reference,
+    TestLink,
+}
+
+impl ReferenceKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Import => "import",
+            Self::Call => "call",
+            Self::Reference => "reference",
+            Self::TestLink => "test_link",
+        }
+    }
+
+    pub fn graph_edge_kind(&self) -> &'static str {
+        match self {
+            Self::Import => "imports",
+            Self::Call => "calls",
+            Self::Reference => "references",
+            Self::TestLink => "tested_by",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolutionStatus {
+    Resolved,
+    Unresolved,
+    Ambiguous,
+}
+
+impl ResolutionStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Resolved => "resolved",
+            Self::Unresolved => "unresolved",
+            Self::Ambiguous => "ambiguous",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResolvedCodeSymbol {
+    pub fact_id: String,
+    pub stable_identity: String,
+    pub language: AnalyzerLanguage,
+    pub file_path: String,
+    pub kind: SymbolKind,
+    pub name: String,
+    pub qualified_name: Option<String>,
+    pub span: Span,
+    pub display: String,
+    pub source_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResolvedCodeReference {
+    pub fact_id: String,
+    pub kind: ReferenceKind,
+    pub graph_edge_kind: String,
+    pub language: AnalyzerLanguage,
+    pub file_path: String,
+    pub source_symbol_identity: Option<String>,
+    pub target_symbol_identity: Option<String>,
+    pub source_text: Option<String>,
+    pub target_text: String,
+    pub span: Span,
+    pub resolution_status: ResolutionStatus,
+    pub confidence: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResolvedAnalysisReport {
+    pub analyzer_version: String,
+    pub resolution_strategy_version: String,
+    pub symbols: Vec<ResolvedCodeSymbol>,
+    pub references: Vec<ResolvedCodeReference>,
+}
+
 pub fn analyze_repository(
     repo_root: &Path,
     tracked_paths: &[String],
     enabled_analyzers: &[String],
 ) -> Result<AnalysisReport> {
     let mut report = AnalysisReport {
+        analyzer_version: ANALYZER_VERSION.to_string(),
         enabled_analyzers: enabled_analyzers.to_vec(),
         ..AnalysisReport::default()
     };
@@ -200,6 +316,228 @@ pub fn analyze_repository(
 
     report.summaries = summaries.into_values().collect();
     Ok(report)
+}
+
+pub fn resolve_analysis(report: &AnalysisReport) -> ResolvedAnalysisReport {
+    let mut symbol_index = SymbolIndex::default();
+    for symbol in &report.symbols {
+        symbol_index.insert(symbol);
+    }
+
+    let symbols = report
+        .symbols
+        .iter()
+        .map(|symbol| ResolvedCodeSymbol {
+            fact_id: symbol.id.clone(),
+            stable_identity: stable_symbol_identity(symbol),
+            language: symbol.language.clone(),
+            file_path: symbol.file_path.clone(),
+            kind: symbol.kind.clone(),
+            name: symbol.name.clone(),
+            qualified_name: symbol.qualified_name.clone(),
+            span: symbol.span.clone(),
+            display: symbol.display.clone(),
+            source_hash: symbol.source_hash.clone(),
+        })
+        .collect();
+
+    let mut references = Vec::new();
+    references.extend(report.imports.iter().map(|fact| {
+        let target_text = fact
+            .target
+            .clone()
+            .unwrap_or_else(|| fact.import_text.clone());
+        build_resolved_reference(
+            &symbol_index,
+            &fact.id,
+            ReferenceKind::Import,
+            &fact.language,
+            &fact.file_path,
+            None,
+            None,
+            &target_text,
+            &fact.span,
+        )
+    }));
+    references.extend(report.calls.iter().map(|fact| {
+        build_resolved_reference(
+            &symbol_index,
+            &fact.id,
+            ReferenceKind::Call,
+            &fact.language,
+            &fact.file_path,
+            fact.caller_symbol.as_deref(),
+            fact.caller_symbol.as_deref(),
+            &fact.callee_text,
+            &fact.span,
+        )
+    }));
+    references.extend(report.references.iter().map(|fact| {
+        build_resolved_reference(
+            &symbol_index,
+            &fact.id,
+            ReferenceKind::Reference,
+            &fact.language,
+            &fact.file_path,
+            fact.enclosing_symbol.as_deref(),
+            fact.enclosing_symbol.as_deref(),
+            &fact.reference_text,
+            &fact.span,
+        )
+    }));
+    references.extend(report.test_links.iter().map(|fact| {
+        build_resolved_reference(
+            &symbol_index,
+            &fact.id,
+            ReferenceKind::TestLink,
+            &fact.language,
+            &fact.file_path,
+            Some(&fact.test_name),
+            Some(&fact.test_name),
+            fact.target_symbol.as_deref().unwrap_or(&fact.test_name),
+            &fact.span,
+        )
+    }));
+
+    ResolvedAnalysisReport {
+        analyzer_version: default_analyzer_version(),
+        resolution_strategy_version: RESOLUTION_STRATEGY_VERSION.to_string(),
+        symbols,
+        references,
+    }
+}
+
+#[derive(Default)]
+struct SymbolIndex<'a> {
+    by_name: BTreeMap<String, Vec<&'a SymbolFact>>,
+    by_qualified_name: BTreeMap<String, Vec<&'a SymbolFact>>,
+}
+
+impl<'a> SymbolIndex<'a> {
+    fn insert(&mut self, symbol: &'a SymbolFact) {
+        self.by_name
+            .entry(symbol.name.clone())
+            .or_default()
+            .push(symbol);
+        if let Some(qualified_name) = &symbol.qualified_name {
+            self.by_qualified_name
+                .entry(qualified_name.clone())
+                .or_default()
+                .push(symbol);
+        }
+    }
+
+    fn resolve(&self, language: &AnalyzerLanguage, file_path: &str, text: &str) -> Resolution {
+        let normalized = normalize_target_text(text);
+        if normalized.is_empty() {
+            return Resolution::unresolved();
+        }
+        if let Some(matches) = self.by_qualified_name.get(&normalized) {
+            return choose_symbol(language, file_path, matches, 1.0);
+        }
+        let simple_name = normalized
+            .rsplit([':', '.', '/'])
+            .find(|part| !part.is_empty())
+            .unwrap_or(&normalized);
+        if let Some(matches) = self.by_name.get(simple_name) {
+            return choose_symbol(language, file_path, matches, 0.7);
+        }
+        Resolution::unresolved()
+    }
+}
+
+struct Resolution {
+    status: ResolutionStatus,
+    target_symbol_identity: Option<String>,
+    confidence: f32,
+}
+
+impl Resolution {
+    fn unresolved() -> Self {
+        Self {
+            status: ResolutionStatus::Unresolved,
+            target_symbol_identity: None,
+            confidence: 0.0,
+        }
+    }
+}
+
+fn choose_symbol(
+    language: &AnalyzerLanguage,
+    file_path: &str,
+    matches: &[&SymbolFact],
+    base_confidence: f32,
+) -> Resolution {
+    let language_matches = matches
+        .iter()
+        .copied()
+        .filter(|symbol| &symbol.language == language)
+        .collect::<Vec<_>>();
+    let candidates = if language_matches.is_empty() {
+        matches.to_vec()
+    } else {
+        language_matches
+    };
+    let same_file = candidates
+        .iter()
+        .copied()
+        .filter(|symbol| symbol.file_path == file_path)
+        .collect::<Vec<_>>();
+    let narrowed = if same_file.is_empty() {
+        candidates
+    } else {
+        same_file
+    };
+    if narrowed.len() == 1 {
+        Resolution {
+            status: ResolutionStatus::Resolved,
+            target_symbol_identity: Some(stable_symbol_identity(narrowed[0])),
+            confidence: base_confidence,
+        }
+    } else {
+        Resolution {
+            status: ResolutionStatus::Ambiguous,
+            target_symbol_identity: None,
+            confidence: 0.0,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_resolved_reference(
+    index: &SymbolIndex<'_>,
+    fact_id: &str,
+    kind: ReferenceKind,
+    language: &AnalyzerLanguage,
+    file_path: &str,
+    source_symbol_text: Option<&str>,
+    source_text: Option<&str>,
+    target_text: &str,
+    span: &Span,
+) -> ResolvedCodeReference {
+    let source_symbol_identity = source_symbol_text.and_then(|text| {
+        let resolution = index.resolve(language, file_path, text);
+        if resolution.status == ResolutionStatus::Resolved {
+            resolution.target_symbol_identity
+        } else {
+            None
+        }
+    });
+    let resolution = index.resolve(language, file_path, target_text);
+    ResolvedCodeReference {
+        fact_id: fact_id.to_string(),
+        graph_edge_kind: kind.graph_edge_kind().to_string(),
+        kind,
+        language: language.clone(),
+        file_path: file_path.to_string(),
+        source_symbol_identity,
+        target_symbol_identity: resolution.target_symbol_identity,
+        source_text: source_text.map(ToOwned::to_owned),
+        target_text: target_text.to_string(),
+        span: span.clone(),
+        resolution_status: resolution.status,
+        confidence: resolution.confidence,
+    }
 }
 
 struct FileAnalysis {
@@ -358,7 +696,14 @@ fn extract_symbol(
         Some(format!("{}::{}", symbol_stack.join("::"), name))
     };
     Some(SymbolFact {
-        id: fact_id(path, kind_name(kind.clone()), &name, node),
+        id: fact_id(path, kind.as_str(), &name, node),
+        stable_identity: symbol_identity(
+            path,
+            language,
+            &kind,
+            qualified_name.as_deref().unwrap_or(&name),
+            &span(node),
+        ),
         language: language.clone(),
         file_path: path.to_string(),
         kind: kind.clone(),
@@ -366,6 +711,7 @@ fn extract_symbol(
         qualified_name: qualified_name.clone(),
         span: span(node),
         display: qualified_name.unwrap_or(name),
+        source_hash: node_text(node, source).map(|text| content_hash(&text)),
     })
 }
 
@@ -544,6 +890,54 @@ fn extract_import_target(language: &AnalyzerLanguage, import_text: &str) -> Opti
     }
 }
 
+fn stable_symbol_identity(symbol: &SymbolFact) -> String {
+    if !symbol.stable_identity.trim().is_empty() {
+        return symbol.stable_identity.clone();
+    }
+    symbol_identity(
+        &symbol.file_path,
+        &symbol.language,
+        &symbol.kind,
+        symbol.qualified_name.as_deref().unwrap_or(&symbol.name),
+        &symbol.span,
+    )
+}
+
+fn symbol_identity(
+    path: &str,
+    language: &AnalyzerLanguage,
+    kind: &SymbolKind,
+    qualified_name: &str,
+    span: &Span,
+) -> String {
+    format!(
+        "{}:{}:{}:{}:{}-{}",
+        language.as_str(),
+        path,
+        kind.as_str(),
+        qualified_name,
+        span.start_line,
+        span.end_line
+    )
+}
+
+fn normalize_target_text(text: &str) -> String {
+    text.trim()
+        .trim_matches(';')
+        .trim_matches('\'')
+        .trim_matches('"')
+        .trim_start_matches("crate::")
+        .trim_start_matches("self::")
+        .trim()
+        .to_string()
+}
+
+fn content_hash(text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
 fn fact_id(path: &str, prefix: &str, name: &str, node: Node<'_>) -> String {
     format!(
         "{}:{}:{}:{}-{}",
@@ -560,20 +954,6 @@ fn sanitize(value: &str) -> String {
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect()
-}
-
-fn kind_name(kind: SymbolKind) -> &'static str {
-    match kind {
-        SymbolKind::Module => "module",
-        SymbolKind::Function => "function",
-        SymbolKind::Method => "method",
-        SymbolKind::Struct => "struct",
-        SymbolKind::Enum => "enum",
-        SymbolKind::Trait => "trait",
-        SymbolKind::Class => "class",
-        SymbolKind::Interface => "interface",
-        SymbolKind::Variable => "variable",
-    }
 }
 
 fn span(node: Node<'_>) -> Span {
@@ -632,6 +1012,12 @@ mod tests {
                 .any(|c| c.callee_text.contains("helper"))
         );
         assert!(!analysis.test_links.is_empty());
+        assert!(
+            analysis
+                .symbols
+                .iter()
+                .all(|s| !s.stable_identity.is_empty())
+        );
     }
 
     #[test]
@@ -690,5 +1076,81 @@ def test_smoke():
                 .any(|c| c.callee_text.contains("helper"))
         );
         assert!(!analysis.test_links.is_empty());
+    }
+
+    #[test]
+    fn resolver_marks_local_calls_as_resolved() {
+        let src = r#"
+            fn run() { helper(); }
+            fn helper() {}
+        "#;
+        let analysis = analyze_source("src/lib.rs", src, AnalyzerLanguage::Rust)
+            .expect("analyze Rust fixture");
+        let report = AnalysisReport {
+            analyzer_version: ANALYZER_VERSION.to_string(),
+            symbols: analysis.symbols,
+            calls: analysis.calls,
+            ..AnalysisReport::default()
+        };
+        let resolved = resolve_analysis(&report);
+        assert!(resolved.references.iter().any(|reference| {
+            reference.kind == ReferenceKind::Call
+                && reference.target_text == "helper"
+                && reference.resolution_status == ResolutionStatus::Resolved
+                && reference.target_symbol_identity.is_some()
+        }));
+    }
+
+    #[test]
+    fn resolver_marks_duplicate_names_as_ambiguous() {
+        let span = Span {
+            start_byte: 0,
+            end_byte: 1,
+            start_line: 1,
+            end_line: 1,
+        };
+        let report = AnalysisReport {
+            analyzer_version: ANALYZER_VERSION.to_string(),
+            symbols: vec![
+                SymbolFact {
+                    id: "a".to_string(),
+                    stable_identity: "rust:src/a.rs:function:helper:1-1".to_string(),
+                    language: AnalyzerLanguage::Rust,
+                    file_path: "src/a.rs".to_string(),
+                    kind: SymbolKind::Function,
+                    name: "helper".to_string(),
+                    qualified_name: Some("a::helper".to_string()),
+                    span: span.clone(),
+                    display: "a::helper".to_string(),
+                    source_hash: None,
+                },
+                SymbolFact {
+                    id: "b".to_string(),
+                    stable_identity: "rust:src/b.rs:function:helper:1-1".to_string(),
+                    language: AnalyzerLanguage::Rust,
+                    file_path: "src/b.rs".to_string(),
+                    kind: SymbolKind::Function,
+                    name: "helper".to_string(),
+                    qualified_name: Some("b::helper".to_string()),
+                    span: span.clone(),
+                    display: "b::helper".to_string(),
+                    source_hash: None,
+                },
+            ],
+            calls: vec![CallFact {
+                id: "call".to_string(),
+                language: AnalyzerLanguage::Rust,
+                file_path: "src/c.rs".to_string(),
+                callee_text: "helper".to_string(),
+                caller_symbol: None,
+                span,
+            }],
+            ..AnalysisReport::default()
+        };
+        let resolved = resolve_analysis(&report);
+        assert_eq!(
+            resolved.references[0].resolution_status,
+            ResolutionStatus::Ambiguous
+        );
     }
 }

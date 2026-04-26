@@ -223,12 +223,23 @@ Model-backed evaluations can be a separate optional profile.
 - Do not mix code symbol identity with prose memory identity; link them through
   evidence and edges.
 
-## First Implementation Slice
+## Implemented Code Graph Baseline
 
-The first implementation issue should do only this:
+The first code graph baseline is intentionally deterministic and parser-backed.
+`mem-analyze` remains database-free and emits graph-ready symbols and resolved
+references. `mem-graph` owns PostgreSQL persistence, extraction-run idempotency,
+graph projection, and status reporting.
 
-1. Add graph table migrations.
-2. Add repository traits and PostgreSQL implementations.
-3. Add fixtures for a tiny Rust project and a tiny TypeScript project.
-4. Add a read-only code symbol extraction command or test harness.
-5. Keep all existing memory query and TUI behavior unchanged.
+Current behavior:
+
+- `memory graph extract` reuses the local repository index and persists code
+  graph facts.
+- `memory graph extract --dry-run` previews extraction without writing database
+  rows or index files.
+- `memory graph status` reports the latest completed extraction run.
+- Identical completed runs are reused unless `--force` is supplied.
+- Existing memory query and TUI behavior are unchanged by default.
+
+The baseline stores unresolved and ambiguous references in `code_references`
+but creates graph edges only when both source and target symbols are resolved.
+This keeps the graph explainable and avoids false certainty.

@@ -7,6 +7,7 @@ members = [
   "crates/mem-watch",
   "crates/mem-cli",
   "crates/mem-curate",
+  "crates/mem-graph",
   "crates/mem-ingest",
   "crates/mem-search",
   "crates/mem-service",

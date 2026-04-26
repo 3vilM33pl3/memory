@@ -25,4 +25,5 @@ Shows analyzer coverage, fact counts, and local index status.
 
 ## Related Docs
 
+- [Code Graph Extraction](graph.md)
 - [Scan Command](scan.md)

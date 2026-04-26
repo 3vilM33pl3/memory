@@ -251,6 +251,32 @@ Examples:
 See also:
   docs/user/cli/repo.md";
 
+const GRAPH_GROUP_AFTER_HELP: &str = "\
+Examples:
+  memory graph extract --project memory --dry-run
+  memory graph extract --project memory --force --text
+  memory graph status --project memory
+
+See also:
+  docs/user/cli/graph.md";
+
+const GRAPH_EXTRACT_AFTER_HELP: &str = "\
+Examples:
+  memory graph extract --project memory
+  memory graph extract --project memory --rebuild-index --dry-run
+  memory graph extract --project memory --force --text
+
+See also:
+  docs/user/cli/graph.md";
+
+const GRAPH_STATUS_AFTER_HELP: &str = "\
+Examples:
+  memory graph status --project memory
+  memory graph status --project memory --text
+
+See also:
+  docs/user/cli/graph.md";
+
 const BUNDLE_GROUP_AFTER_HELP: &str = "\
 Examples:
   memory bundle export --project memory --out /tmp/memory.mlbundle.zip
@@ -507,6 +533,8 @@ enum Command {
     Commits(CommitsArgs),
     #[command(about = "Build and inspect the local repository index.", after_help = REPO_GROUP_AFTER_HELP)]
     Repo(RepoArgs),
+    #[command(about = "Extract and inspect the project code graph.", after_help = GRAPH_GROUP_AFTER_HELP)]
+    Graph(GraphArgs),
     #[command(about = "Export and import shareable project memory bundles.", after_help = BUNDLE_GROUP_AFTER_HELP)]
     Bundle(BundleArgs),
     #[command(about = "Save, inspect, and verify execution checkpoints.", after_help = CHECKPOINT_GROUP_AFTER_HELP)]
@@ -940,6 +968,56 @@ struct IndexStatusArgs {
     /// Emit the status report as JSON.
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Extract and inspect the code graph produced from parser-backed repository analysis.",
+    after_help = GRAPH_GROUP_AFTER_HELP
+)]
+struct GraphArgs {
+    #[command(subcommand)]
+    command: GraphCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum GraphCommand {
+    #[command(about = "Extract code graph facts from the local repository index.", after_help = GRAPH_EXTRACT_AFTER_HELP)]
+    Extract(GraphExtractArgs),
+    #[command(about = "Show the latest persisted code graph extraction status.", after_help = GRAPH_STATUS_AFTER_HELP)]
+    Status(GraphStatusArgs),
+}
+
+#[derive(Debug, Args)]
+struct GraphExtractArgs {
+    /// Project slug to extract; defaults to the current repo when available.
+    #[arg(long)]
+    project: Option<String>,
+    /// Limit the repository index context to changes after this timestamp or revision marker.
+    #[arg(long)]
+    since: Option<String>,
+    /// Rebuild the local repository index before extracting graph facts.
+    #[arg(long)]
+    rebuild_index: bool,
+    /// Create a fresh extraction run even when an identical completed run exists.
+    #[arg(long)]
+    force: bool,
+    /// Preview extraction without writing database rows or the local index.
+    #[arg(long)]
+    dry_run: bool,
+    /// Print a human-readable summary instead of the default JSON output.
+    #[arg(long)]
+    text: bool,
+}
+
+#[derive(Debug, Args)]
+struct GraphStatusArgs {
+    /// Project slug to inspect; defaults to the current repo when available.
+    #[arg(long)]
+    project: Option<String>,
+    /// Print a human-readable summary instead of the default JSON output.
+    #[arg(long)]
+    text: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1743,6 +1821,60 @@ async fn main() -> Result<()> {
                         println!("{}", serde_json::to_string_pretty(&status)?);
                     } else {
                         print_index_status(&status, &project);
+                    }
+                }
+            }
+        }
+        Command::Graph(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            match args.command {
+                GraphCommand::Extract(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    let index = scan::load_graph_index(
+                        &repo_root,
+                        &project,
+                        args.since.as_deref(),
+                        &config,
+                        args.rebuild_index,
+                        args.dry_run,
+                    )?;
+                    let request = mem_graph::GraphExtractionRequest {
+                        project: index.project,
+                        repo_root: index.repo_root,
+                        git_head: index.head,
+                        since: index.since,
+                        force: args.force,
+                        dry_run: args.dry_run,
+                        index_reused: index.index_reused,
+                        analysis: index.analysis,
+                    };
+                    let report = if args.dry_run {
+                        mem_graph::build_extraction_preview(&request)
+                    } else {
+                        let pool = connect_graph_database(&config).await?;
+                        mem_graph::run_migrations(&pool).await?;
+                        mem_graph::PostgresGraphRepository::new(pool)
+                            .extract(request)
+                            .await?
+                    };
+                    if args.text {
+                        print_graph_extract_report(&report, &index.index_path);
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    }
+                }
+                GraphCommand::Status(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    let pool = connect_graph_database(&config).await?;
+                    mem_graph::run_migrations(&pool).await?;
+                    let status = mem_graph::PostgresGraphRepository::new(pool)
+                        .latest_status(&project)
+                        .await?;
+                    if args.text {
+                        print_graph_status(&status, &project);
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&status)?);
                     }
                 }
             }
@@ -7493,6 +7625,104 @@ fn print_index_status(status: &Option<scan::RepoIndexStatus>, project: &str) {
     }
     println!("Built: {}", status.built_at);
     println!("Index: {}", status.index_path);
+}
+
+async fn connect_graph_database(config: &AppConfig) -> Result<sqlx::PgPool> {
+    PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&config.database.url)
+        .await
+        .context("connect graph database")
+}
+
+fn print_graph_extract_report(report: &mem_graph::GraphExtractionReport, index_path: &Path) {
+    let mode = if report.dry_run {
+        "Code graph extraction preview"
+    } else if report.reused_existing_run {
+        "Code graph extraction reused"
+    } else {
+        "Code graph extracted"
+    };
+    println!("{mode} for {}\n", report.project);
+    println!(
+        "Symbols: {} | References: {} | Resolved: {} | Unresolved: {} | Ambiguous: {}",
+        report.symbol_count,
+        report.reference_count,
+        report.resolved_reference_count,
+        report.unresolved_reference_count,
+        report.ambiguous_reference_count,
+    );
+    println!(
+        "Graph: nodes {} | edges {} | evidence {}",
+        report.graph_node_count, report.graph_edge_count, report.evidence_count,
+    );
+    println!(
+        "Analyzer: {} | Strategy: {}",
+        report.analyzer_version, report.strategy_version
+    );
+    if let Some(head) = &report.git_head {
+        println!("HEAD: {head}");
+    }
+    if let Some(since) = &report.since {
+        println!("Since: {since}");
+    }
+    if let Some(run_id) = report.extraction_run_id {
+        println!("Extraction run: {run_id}");
+    }
+    println!("Index: {}", index_path.display());
+    if !report.sample_unresolved_references.is_empty() {
+        println!("Sample unresolved/ambiguous references:");
+        for reference in &report.sample_unresolved_references {
+            println!(
+                "- {}:{} {} {} ({})",
+                reference.file_path,
+                reference.start_line,
+                reference.kind,
+                reference.target_text,
+                reference.resolution_status,
+            );
+        }
+    }
+    if report.dry_run {
+        println!("Dry run: no database rows or index files were written.");
+    }
+}
+
+fn print_graph_status(status: &Option<mem_graph::GraphStatusReport>, project: &str) {
+    let Some(status) = status else {
+        println!("No code graph extraction found for {project}.");
+        println!("Build one with: memory graph extract --project {project}");
+        return;
+    };
+    println!("Code graph status for {}\n", status.project);
+    println!("Status: {}", status.status);
+    if let Some(completed_at) = status.completed_at {
+        println!("Completed: {completed_at}");
+    }
+    println!("Extraction run: {}", status.extraction_run_id);
+    println!(
+        "Symbols: {} | References: {} | Resolved: {} | Unresolved: {} | Ambiguous: {}",
+        status.symbol_count,
+        status.reference_count,
+        status.resolved_reference_count,
+        status.unresolved_reference_count,
+        status.ambiguous_reference_count,
+    );
+    println!(
+        "Graph: nodes {} | edges {} | evidence {}",
+        status.graph_node_count, status.graph_edge_count, status.evidence_count,
+    );
+    println!(
+        "Analyzer: {} | Strategy: {}",
+        status.analyzer_version, status.strategy_version
+    );
+    if let Some(head) = &status.git_head {
+        println!("HEAD: {head}");
+    }
+    if let Some(since) = &status.since {
+        println!("Since: {since}");
+    }
+    println!("Repo: {}", status.repo_root);
 }
 
 fn print_commit_sync_response(response: &CommitSyncResponse) {

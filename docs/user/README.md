@@ -46,6 +46,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Remember Command](cli/remember.md)
 - [Curate Command](cli/curate.md)
 - [Embedding Operations](cli/embeddings.md)
+- [Code Graph Extraction](cli/graph.md)
 - [Repository Index](cli/repo.md)
 - [Memory Bundles](cli/bundles.md)
 - [Watcher Health](cli/watchers.md)
