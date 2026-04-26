@@ -696,7 +696,6 @@ export default function App() {
     <div className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Built for coding agents</p>
           <h1>Memory Layer Web</h1>
         </div>
         <form
@@ -722,30 +721,15 @@ export default function App() {
         </form>
       </header>
 
-      <section className="hero-panel">
-        <div className="hero-card">
-          <span className={`status-pill status-${connectionState}`}>{connectionState}</span>
-          <strong>{overview.project}</strong>
-          <span>
-            service {overview.service_status} / database {overview.database_status}
-          </span>
-        </div>
-        <div className="hero-card">
-          <strong>{overview.memory_entries_total}</strong>
-          <span>memories</span>
-        </div>
-        <div className="hero-card">
-          <strong>{overview.raw_captures_total}</strong>
-          <span>raw captures</span>
-        </div>
-        <div className="hero-card">
-          <strong>{overview.watchers?.active_count ?? 0}</strong>
-          <span>watchers</span>
-        </div>
-        <div className="hero-card">
-          <strong>{serviceVersion}</strong>
-          <span>mem-service</span>
-        </div>
+      <section className="status-strip">
+        <span className={`status-pill status-${connectionState}`}>{connectionState}</span>
+        <span><strong>{overview.project}</strong></span>
+        <span>service {overview.service_status}</span>
+        <span>db {overview.database_status}</span>
+        <span>{overview.memory_entries_total} memories</span>
+        <span>{overview.raw_captures_total} captures</span>
+        <span>{overview.watchers?.active_count ?? 0} watchers</span>
+        <span>mem-service {serviceVersion}</span>
       </section>
 
       <nav className="tabs">
