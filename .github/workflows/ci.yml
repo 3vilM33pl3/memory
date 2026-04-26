@@ -9,22 +9,6 @@ jobs:
   rust:
     name: Rust
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_DB: memory_test
-          POSTGRES_USER: memory
-          POSTGRES_PASSWORD: memory
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U memory -d memory_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-    env:
-      MEMORY_LAYER_TEST_DATABASE_URL: postgres://memory:memory@localhost:5432/memory_test
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

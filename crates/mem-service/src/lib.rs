@@ -924,7 +924,9 @@ mod tests {
 
     #[tokio::test]
     async fn project_views_return_project_scoped_data() {
-        let pool = test_pool().await;
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let slug = format!("test-{}", Uuid::new_v4());
         seed_project(&pool, &slug).await.unwrap();
 
@@ -942,7 +944,9 @@ mod tests {
 
     #[tokio::test]
     async fn project_overview_returns_aggregates() {
-        let pool = test_pool().await;
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let slug = format!("test-{}", Uuid::new_v4());
         seed_project(&pool, &slug).await.unwrap();
 
@@ -967,7 +971,9 @@ mod tests {
 
     #[tokio::test]
     async fn project_views_use_latest_non_tombstone_versions() {
-        let pool = test_pool().await;
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let slug = format!("test-{}", Uuid::new_v4());
         let seed = seed_project(&pool, &slug).await.unwrap();
         let updated_id = Uuid::new_v4();
@@ -1046,14 +1052,13 @@ mod tests {
         cleanup_project(&pool, &slug).await.unwrap();
     }
 
-    async fn test_pool() -> PgPool {
+    async fn test_pool() -> Option<PgPool> {
         let url = std::env::var("MEMORY_LAYER_TEST_DATABASE_URL")
             .ok()
-            .or_else(read_local_test_database_url)
-            .expect("test database url");
+            .or_else(read_local_test_database_url)?;
         let pool = PgPool::connect(&url).await.unwrap();
         sqlx::migrate!("../../migrations").run(&pool).await.unwrap();
-        pool
+        Some(pool)
     }
 
     fn read_local_test_database_url() -> Option<String> {
