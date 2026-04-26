@@ -2,6 +2,8 @@
 
 Shows the queue of pending replacement proposals produced by curation and lets you approve or reject them without leaving the TUI.
 
+![Review tab](../../img/tui/review-tab.png)
+
 ## Table of Contents
 
 - [When To Use](#when-to-use)

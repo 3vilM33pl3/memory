@@ -1,8 +1,16 @@
 # TUI Guide
 
-Memory Layer's TUI is the fastest way to browse project memory, get back into flow after an interruption, and inspect what the backend has been doing.
+Memory Layer's TUI is the fastest way to browse project memory, ask cited questions, monitor live agents, switch embedding backends, get back into flow after an interruption, and inspect what the backend has been doing.
 
 ![Memory Layer TUI overview](../../img/tui/overview.png)
+
+## What Makes It Useful
+
+- Query answers show citations, confidence, diagnostics, and the ranked memories behind the answer.
+- Agents and Watchers show live distributed agent state, token pressure, context usage, rate limits, heartbeats, and recovery behavior.
+- Embeddings shows every configured backend and per-project coverage so model switching is visible instead of hidden in config files.
+- Activity and Resume turn persisted operations into get-up-to-speed context for new or returning agents.
+- Memories and Review keep the durable knowledge base readable and maintainable.
 
 ## Layout
 
@@ -48,3 +56,17 @@ Shared navigation:
 - If you want watcher liveness and watchdog status, open [Watchers Tab](watchers.md).
 - If you want to see which embedding backends are configured and switch which one search uses, open [Embeddings Tab](embeddings.md).
 - If you are returning after time away, open [Resume Tab](resume.md) for the re-entry briefing.
+
+## Screenshot Gallery
+
+| Tab | Screenshot |
+|---|---|
+| Memories | ![Memories tab](../../img/tui/memories-tab.png) |
+| Agents | ![Agents tab](../../img/tui/agents-tab.png) |
+| Query | ![Query tab](../../img/tui/query-tab.png) |
+| Activity | ![Activity tab](../../img/tui/activity-tab.png) |
+| Project | ![Project tab](../../img/tui/project-tab.png) |
+| Review | ![Review tab](../../img/tui/review-tab.png) |
+| Watchers | ![Watchers tab](../../img/tui/watchers-tab.png) |
+| Embeddings | ![Embeddings tab](../../img/tui/embeddings-tab.png) |
+| Resume | ![Resume tab](../../img/tui/resume-tab.png) |

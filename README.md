@@ -1,18 +1,27 @@
 # Memory Layer
 
-Memory Layer is a local knowledge base built first for coding agents such as Codex CLI and Claude Code, while still working well for normal developers.
+Memory Layer is a local-first memory system for coding agents and developers. It turns project work into durable, searchable knowledge so the next Codex, Claude, or human session can start with evidence instead of guesswork.
 
-It captures durable project knowledge, stores it in PostgreSQL with pgvector, and makes it searchable in a TUI or browser so important context does not disappear into chat history, terminal scrollback, or old commits.
+It captures what happened, curates what matters, stores it in PostgreSQL with pgvector, and exposes it through a fast TUI, browser UI, and agent-friendly CLI.
 
-It supports multiple developers, multiple projects, and multiple coding agents at the same time through a distributed watcher system and a shared memory backend.
+![Memory Layer query answer and evidence](docs/img/tui/query-tab.png)
 
-![Memory Layer TUI](docs/img/tui/overview.png)
+## Why It Is Interesting
+
+- **Answers with evidence:** ask a project question and see both the synthesized answer and the exact memories used to produce it.
+- **Multi-embedding search:** keep OpenAI, Voyage, Cohere, Gemini, or local OpenAI-compatible embedding spaces side by side, then switch the active retrieval backend without recomputing.
+- **Distributed agents:** monitor Codex and Claude sessions across projects, including token pressure, context usage, rate limits, process details, and open ports.
+- **Agent-linked watchers:** background watchers attach to agent sessions, identify the project automatically, heartbeat to the service, and stop when the owning agent exits.
+- **Get up to speed:** persisted activity events, recent memory changes, commits, warnings, and token summaries become a briefing for new or returning agents.
+- **Human review loop:** curation can queue replacement proposals so important memory changes can be approved before older knowledge is superseded.
+
+![Memory Layer agents dashboard](docs/img/tui/agents-tab.png)
 
 ## Table of Contents
 
 - [Quick Start](#quick-start)
 - [Quick Start (Developers)](#quick-start-developers)
-- [What It Does](#what-it-does)
+- [Feature Tour](#feature-tour)
 - [Documentation](#documentation)
 - [Development](#development)
 - [License](#license)
@@ -53,17 +62,16 @@ memory tui
 
 For the full onboarding flow, prerequisites, upgrade path, and troubleshooting, use [Getting Started](docs/user/getting-started.md).
 
-For semantic-search maintenance and model switching, use [Embedding Operations](docs/user/cli/embeddings.md).
+Key docs after setup:
 
-For shareable backup/restore bundles, use [Memory Bundles](docs/user/cli/bundles.md).
+- [TUI Guide](docs/user/tui/README.md) for the visual workflow.
+- [Embedding Operations](docs/user/cli/embeddings.md) for multi-backend semantic search and model switching.
+- [Watcher Health](docs/user/cli/watchers.md) for distributed watcher behavior.
+- [Query Command](docs/user/cli/query.md) for cited answers from memory.
+- [Get Up To Speed](docs/user/cli/up-to-speed.md) for new-agent briefings.
+- [Memory Bundles](docs/user/cli/bundles.md) for shareable backup and restore.
 
-For watcher health states, recovery behavior, and the TUI watcher views, use [Watcher Health](docs/user/cli/watchers.md).
-
-For bootstrap, diagnostics, and the main write path, use [Wizard And Bootstrap](docs/user/cli/wizard.md), [Service Commands](docs/user/cli/service.md), [Doctor Diagnostics](docs/user/cli/doctor.md), and [Remember Command](docs/user/cli/remember.md).
-
-Most mutating `memory` commands support `--dry-run` so you can preview writes, service actions, and plan/checkpoint flows before applying them.
-
-For a visual walkthrough of the interface, use the [TUI Guide](docs/user/tui/README.md).
+Most mutating `memory` commands support `--dry-run` so agents can preview writes, service actions, and plan/checkpoint flows before applying them.
 
 ## Quick Start (Developers)
 
@@ -95,19 +103,37 @@ cargo run --bin memory -- tui                    # header reads [dev]
 
 For the full isolation contract, override flags, troubleshooting, and the verification recipe, see [Dev Stack vs Installed Stack](docs/developer/dev-stack.md).
 
-## What It Does
+## Feature Tour
 
-- stores project memory in PostgreSQL with pgvector-backed chunk embeddings
-- supports both primary and relay service modes
-- keeps memory scoped per project while supporting multiple developers, writers, and agents
-- captures raw evidence and curates durable memory from it
-- combines lexical search, vector search, and related-memory links
-- supports re-embedding when you switch embedding models without losing older embedding spaces
-- uses distributed watchers to track active projects and feed evidence into the shared memory system
-- provides a TUI and a browser UI
-- can scan a repository for durable project knowledge
-- can import git commit history as searchable evidence
-- can export and import shareable project memory bundles
+### Search That Explains Itself
+
+The Query tab and `memory query` combine lexical search, vector search, relation boosts, and memory filters. Results are labelled as `lexical`, `semantic`, or `hybrid`, and answers cite the ranked memories that supported them.
+
+![Memory Layer query tab](docs/img/tui/query-tab.png)
+
+### Multiple Embedding Backends
+
+Memory Layer can keep several embedding spaces populated at once. That means you can compare OpenAI and Voyage retrieval, migrate models safely, or keep a local OpenAI-compatible backend around without losing existing vectors.
+
+![Memory Layer embeddings tab](docs/img/tui/embeddings-tab.png)
+
+### Distributed Agent Awareness
+
+The Agents and Watchers tabs show what is running now: agent sessions, project ownership, context pressure, rate limits, watcher heartbeats, restart attempts, and stale processes.
+
+![Memory Layer watchers tab](docs/img/tui/watchers-tab.png)
+
+### Activity And Re-Entry
+
+The Activity and Resume views turn persisted interactions into operational history and concise re-entry briefings. This is the "get up to speed" path for a fresh agent joining an active project.
+
+![Memory Layer activity tab](docs/img/tui/activity-tab.png)
+
+### Durable Project Knowledge
+
+Memory is scoped by project, typed by purpose, linked to provenance, and curated into canonical entries. The Memories and Review tabs make it possible to inspect, maintain, and approve changes to that knowledge base.
+
+![Memory Layer memories tab](docs/img/tui/overview.png)
 
 Project-local customization now has two layers:
 
@@ -121,9 +147,13 @@ Project-local customization now has two layers:
 - [User Documentation Index](docs/user/README.md)
 - [Getting Started](docs/user/getting-started.md)
 - [TUI Guide](docs/user/tui/README.md)
+- [TUI Query Tab](docs/user/tui/query.md)
+- [TUI Agents Tab](docs/user/tui/agents.md)
+- [TUI Embeddings Tab](docs/user/tui/embeddings.md)
 - [Embedding Operations](docs/user/cli/embeddings.md)
 - [Memory Bundles](docs/user/cli/bundles.md)
 - [Watcher Health](docs/user/cli/watchers.md)
+- [Activities And Get Up To Speed](docs/user/cli/activities.md)
 - [Resume Briefings](docs/user/cli/resume.md)
 - [Wizard And Bootstrap](docs/user/cli/wizard.md)
 - [Init Bootstrap](docs/user/cli/init.md)

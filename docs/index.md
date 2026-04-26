@@ -1,8 +1,20 @@
 # Memory Layer Docs
 
-Memory Layer is a local-first project memory system for coding agents and developers. These docs cover installation, day-to-day usage, the TUI, and the internal architecture.
+Memory Layer is a local-first project memory system for coding agents and developers. It captures durable project knowledge, stores it in PostgreSQL with pgvector, and makes it available through a TUI, browser UI, and agent-friendly CLI.
 
-![Memory Layer TUI overview](img/tui/overview.png)
+It is designed for the real workflow: several agents, several projects, multiple embedding models, and a human who needs to understand exactly why an answer was produced.
+
+![Memory Layer cited query answer](img/tui/query-tab.png)
+
+## Highlights
+
+- **Cited answers from project memory:** ask a question, get an answer, and inspect the exact ranked memories behind it.
+- **Multi-embedding retrieval:** configure several embedding backends, keep all spaces populated, and activate a different backend without reindexing.
+- **Distributed agent operations:** watch Codex and Claude sessions, token pressure, rate limits, watcher heartbeats, and process state from one dashboard.
+- **Get-up-to-speed briefings:** persisted activities and recent changes become concise context packs for new or returning agents.
+- **Curated knowledge base:** browse canonical memories, inspect provenance, and review proposed replacements before old knowledge is superseded.
+
+![Memory Layer agents dashboard](img/tui/agents-tab.png)
 
 ## Start Here
 
@@ -10,13 +22,25 @@ Memory Layer is a local-first project memory system for coding agents and develo
 - [TUI Guide](user/tui/README.md)
 - [User Documentation Index](user/README.md)
 
+## Feature Walkthroughs
+
+- [Query Tab](user/tui/query.md) and [Query Command](user/cli/query.md)
+- [Embeddings Tab](user/tui/embeddings.md) and [Embedding Operations](user/cli/embeddings.md)
+- [Agents Tab](user/tui/agents.md) and [Watcher Health](user/cli/watchers.md)
+- [Activity Tab](user/tui/activity.md) and [Get Up To Speed](user/cli/up-to-speed.md)
+- [Memories Tab](user/tui/memories.md) and [Review Tab](user/tui/review.md)
+
 ## CLI Reference
 
 - [Wizard And Bootstrap](user/cli/wizard.md)
 - [Service Commands](user/cli/service.md)
 - [Doctor Diagnostics](user/cli/doctor.md)
+- [Query Command](user/cli/query.md)
 - [Remember Command](user/cli/remember.md)
 - [Checkpoint Workflow](user/cli/checkpoint.md)
+- [Activities Command](user/cli/activities.md)
+- [Get Up To Speed](user/cli/up-to-speed.md)
+- [Embedding Operations](user/cli/embeddings.md)
 - [Watcher Health](user/cli/watchers.md)
 
 ## Developer Docs

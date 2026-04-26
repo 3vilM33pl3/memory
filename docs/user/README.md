@@ -2,6 +2,10 @@
 
 This section is for people installing, configuring, and using Memory Layer in real projects.
 
+If you are new, start with the TUI. It shows the main product surface: cited memory search, live agent state, activity history, watcher health, embedding coverage, and curated project memory.
+
+![Memory Layer query answer](../img/tui/query-tab.png)
+
 ## Table of Contents
 
 - [Start Here](#start-here)
@@ -11,6 +15,11 @@ This section is for people installing, configuring, and using Memory Layer in re
 ## Start Here
 
 - [Getting Started](getting-started.md)
+- [TUI Guide](tui/README.md)
+- [Query Tab](tui/query.md)
+- [Embedding Operations](cli/embeddings.md)
+- [Watcher Health](cli/watchers.md)
+- [Get Up To Speed](cli/up-to-speed.md)
 
 ## Reference
 
@@ -20,8 +29,10 @@ This section is for people installing, configuring, and using Memory Layer in re
 - [Agents Tab](tui/agents.md)
 - [Query Tab](tui/query.md)
 - [Project Tab](tui/project.md)
+- [Review Tab](tui/review.md)
 - [Watchers Tab](tui/watchers.md)
-- [Activity Events](tui/activity.md)
+- [Activity Tab](tui/activity.md)
+- [Embeddings Tab](tui/embeddings.md)
 - [Wizard And Bootstrap](cli/wizard.md)
 - [Init Bootstrap](cli/init.md)
 - [Service Commands](cli/service.md)
