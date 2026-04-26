@@ -46,6 +46,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 ## Developer Docs
 
 - [Developer Documentation Index](developer/README.md)
+- [Future Development](future-development/README.md)
 - [Dev Stack vs Installed Stack](developer/dev-stack.md)
 - [How Skills Work](developer/skills/how-skills-work.md)
 - [Architecture Overview](developer/architecture/overview.md)
