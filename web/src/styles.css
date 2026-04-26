@@ -291,6 +291,7 @@ select {
 .source-card,
 .watcher-card,
 .relation-row,
+.activity-row-button,
 .metric-row,
 .kv-row {
   padding: 0.8rem 0;
@@ -300,9 +301,25 @@ select {
 .source-card:first-child,
 .watcher-card:first-child,
 .relation-row:first-child,
+.activity-row-button:first-child,
 .metric-row:first-child,
 .kv-row:first-child {
   border-top: 0;
+}
+
+.activity-row-button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 11rem 9rem 1fr;
+  gap: 0.75rem;
+  text-align: left;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 0;
+  background: transparent;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 pre {
@@ -311,6 +328,27 @@ pre {
   background: rgba(0, 0, 0, 0.22);
   border-radius: 12px;
   padding: 0.85rem;
+  color: var(--muted);
+}
+
+.rich-text {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.rich-text p,
+.rich-text h4,
+.rich-list {
+  margin: 0;
+}
+
+.rich-text h4 {
+  color: var(--accent);
+  font-size: 1rem;
+}
+
+.rich-list {
+  padding-left: 1.1rem;
   color: var(--muted);
 }
 

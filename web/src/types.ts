@@ -293,7 +293,36 @@ export type ActivityKind =
   | "delete_memory";
 
 export type ActivityDetails =
-  | Record<string, unknown>
+  | {
+      type: "checkpoint";
+      repo_root: string;
+      marked_at: string;
+      note?: string | null;
+      git_branch?: string | null;
+      git_head?: string | null;
+    }
+  | {
+      type: "plan";
+      action: "started" | "synced" | "finish_blocked" | "finish_verified";
+      title: string;
+      thread_key: string;
+      total_items: number;
+      completed_items: number;
+      remaining_items: string[];
+      source_path?: string | null;
+      verified_complete: boolean;
+    }
+  | {
+      type: "scan";
+      dry_run: boolean;
+      candidate_count: number;
+      files_considered: number;
+      commits_considered: number;
+      index_reused: boolean;
+      report_path: string;
+      capture_id?: string | null;
+      curate_run_id?: string | null;
+    }
   | {
       type: "commit_sync";
       imported_count: number;
@@ -301,6 +330,12 @@ export type ActivityDetails =
       total_received: number;
       newest_commit?: string | null;
       oldest_commit?: string | null;
+    }
+  | {
+      type: "bundle_transfer";
+      bundle_id: string;
+      item_count: number;
+      source_project?: string | null;
     }
   | {
       type: "query";
@@ -314,11 +349,35 @@ export type ActivityDetails =
       error?: string | null;
     }
   | {
+      type: "watcher_health";
+      watcher_id: string;
+      hostname: string;
+      health: WatcherHealth;
+      managed_by_service: boolean;
+      restart_attempt_count: number;
+      agent_cli?: string | null;
+      agent_session_id?: string | null;
+      agent_pid?: number | null;
+      previous_health?: WatcherHealth | null;
+      recovered_after_restart_attempts?: number | null;
+      message?: string | null;
+    }
+  | {
+      type: "memory_replacement";
+      old_memory_id: string;
+      old_summary: string;
+      new_memory_id: string;
+      new_summary: string;
+      automatic: boolean;
+      policy: ReplacementPolicy;
+    }
+  | {
       type: "capture_task";
       session_id: string;
       task_id: string;
       raw_capture_id: string;
       idempotency_key: string;
+      task_title?: string | null;
       writer_id: string;
     }
   | {
@@ -326,10 +385,16 @@ export type ActivityDetails =
       run_id: string;
       input_count: number;
       output_count: number;
+      replaced_count: number;
+      proposal_count: number;
     }
   | {
       type: "reindex";
       reindexed_entries: number;
+    }
+  | {
+      type: "reembed";
+      reembedded_chunks: number;
     }
   | {
       type: "archive";
@@ -346,6 +411,7 @@ export type ActivityDetails =
 export interface ActivityEvent {
   project: string;
   kind: ActivityKind;
+  memory_id?: string | null;
   summary: string;
   details: ActivityDetails | null;
   recorded_at: string;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   activateEmbeddingBackend,
   approveProposal,
@@ -124,6 +124,13 @@ export default function App() {
   const [queryResponse, setQueryResponse] = useState<QueryResponse | null>(null);
   const [selectedQueryMemory, setSelectedQueryMemory] = useState<MemoryEntryResponse | null>(null);
   const [selectedQueryIndex, setSelectedQueryIndex] = useState(0);
+  const [queryLoading, setQueryLoading] = useState(false);
+  const [queryError, setQueryError] = useState<string | null>(null);
+  const [queryRoundtripMs, setQueryRoundtripMs] = useState<number | null>(null);
+  const [queryHistory, setQueryHistory] = useState<string[]>([]);
+  const [queryHistoryCursor, setQueryHistoryCursor] = useState<number | null>(null);
+  const [selectedQueryMemoryLoading, setSelectedQueryMemoryLoading] = useState(false);
+  const [selectedQueryMemoryError, setSelectedQueryMemoryError] = useState<string | null>(null);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [selectedActivityIndex, setSelectedActivityIndex] = useState(0);
   const [statusMessage, setStatusMessage] = useState("Connecting to Memory Layer...");
@@ -156,6 +163,7 @@ export default function App() {
   const [resumeAutoloadedFor, setResumeAutoloadedFor] = useState<string | null>(null);
   // Proposals state
   const [proposals, setProposals] = useState<ReplacementProposalRecord[]>([]);
+  const [selectedProposalIndex, setSelectedProposalIndex] = useState(0);
   const [replacementPolicy, setReplacementPolicy] = useState<ReplacementPolicyResponse | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -238,11 +246,30 @@ export default function App() {
     const result = queryResponse?.results[selectedQueryIndex];
     if (!result) {
       setSelectedQueryMemory(null);
+      setSelectedQueryMemoryLoading(false);
+      setSelectedQueryMemoryError(null);
       return;
     }
+    let active = true;
+    setSelectedQueryMemory(null);
+    setSelectedQueryMemoryLoading(true);
+    setSelectedQueryMemoryError(null);
     void getMemory(result.memory_id)
-      .then(setSelectedQueryMemory)
-      .catch((error: Error) => setStatusMessage(error.message));
+      .then((detail) => {
+        if (active) setSelectedQueryMemory(detail);
+      })
+      .catch((error: Error) => {
+        if (active) {
+          setSelectedQueryMemoryError(error.message);
+          setStatusMessage(error.message);
+        }
+      })
+      .finally(() => {
+        if (active) setSelectedQueryMemoryLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [queryResponse, selectedQueryIndex]);
 
   // Agent polling (every 2s when on agents tab)
@@ -376,9 +403,20 @@ export default function App() {
     event.preventDefault();
     const trimmed = queryText.trim();
     if (!trimmed) {
+      setQueryResponse(null);
+      setQueryError(null);
+      setQueryRoundtripMs(null);
       setStatusMessage("Enter a query before running search.");
       return;
     }
+    const started = performance.now();
+    setQueryLoading(true);
+    setQueryError(null);
+    setQueryHistoryCursor(null);
+    setQueryHistory((current) => {
+      const withoutDuplicateTail = current[current.length - 1] === trimmed ? current : [...current, trimmed];
+      return withoutDuplicateTail.slice(-50);
+    });
     try {
       setStatusMessage(`Running query for "${trimmed}"...`);
       const response = await runQuery({
@@ -391,10 +429,39 @@ export default function App() {
       });
       setQueryResponse(response);
       setSelectedQueryIndex(0);
-      setStatusMessage(`Query returned ${response.results.length} memories.`);
+      setQueryRoundtripMs(Math.round(performance.now() - started));
+      setStatusMessage(`Query returned ${response.results.length} memories in ${Math.round(performance.now() - started)} ms.`);
       setTab("query");
     } catch (error) {
-      setStatusMessage((error as Error).message);
+      const message = (error as Error).message;
+      setQueryError(message);
+      setQueryRoundtripMs(Math.round(performance.now() - started));
+      setStatusMessage(message);
+    } finally {
+      setQueryLoading(false);
+    }
+  }
+
+  function applyQueryHistory(delta: number) {
+    if (!queryHistory.length) {
+      setStatusMessage("No previous queries in this browser session.");
+      return;
+    }
+    const last = queryHistory.length - 1;
+    let next: number | null = queryHistoryCursor;
+    if (queryHistoryCursor === null && delta < 0) next = last;
+    else if (queryHistoryCursor === null && delta > 0) next = null;
+    else if (queryHistoryCursor !== null && delta < 0) next = Math.max(0, queryHistoryCursor - 1);
+    else if (queryHistoryCursor !== null && delta > 0 && queryHistoryCursor >= last) next = null;
+    else if (queryHistoryCursor !== null && delta > 0) next = queryHistoryCursor + 1;
+
+    setQueryHistoryCursor(next);
+    if (next === null) {
+      setQueryText("");
+      setStatusMessage("Returned to a new empty query.");
+    } else {
+      setQueryText(queryHistory[next]);
+      setStatusMessage(`Loaded query history item ${next + 1}/${queryHistory.length}.`);
     }
   }
 
@@ -527,6 +594,7 @@ export default function App() {
         getReplacementPolicy(project, effectiveRepoRoot || null),
       ]);
       setProposals(proposalPayload.proposals);
+      setSelectedProposalIndex((current) => Math.min(current, Math.max(proposalPayload.proposals.length - 1, 0)));
       setReplacementPolicy(policyPayload);
       if (!repoRootInput.trim() && policyPayload.repo_root) {
         setRepoRootInput(policyPayload.repo_root);
@@ -592,6 +660,7 @@ export default function App() {
       const res = await approveProposal(project, proposalId);
       setStatusMessage(`Approved: ${res.candidate_summary} replaced ${res.target_summary}`);
       setProposals((prev) => prev.filter((p) => p.id !== proposalId));
+      setSelectedProposalIndex((current) => Math.max(0, current - 1));
       await refreshProject(project);
       await refreshReview();
     } catch (error) {
@@ -604,6 +673,7 @@ export default function App() {
       const res = await rejectProposal(project, proposalId);
       setStatusMessage(`Rejected proposal for ${res.target_summary}`);
       setProposals((prev) => prev.filter((p) => p.id !== proposalId));
+      setSelectedProposalIndex((current) => Math.max(0, current - 1));
       await refreshReview();
     } catch (error) {
       setStatusMessage((error as Error).message);
@@ -620,6 +690,7 @@ export default function App() {
   const activeQueryResult = queryResponse?.results[selectedQueryIndex] ?? null;
   const serviceVersion = typeof health?.version === "string" ? health.version : "unknown";
   const selectedAgent = agentSnapshot?.sessions[selectedAgentIndex] ?? null;
+  const activeProposal = proposals[selectedProposalIndex] ?? null;
 
   return (
     <div className="app-shell">
@@ -752,7 +823,7 @@ export default function App() {
                     <h3>v{version.version_no} {version.is_tombstone ? "(tombstone)" : ""}</h3>
                     <p>{version.memory_type} · {version.status} · {formatDateTime(version.updated_at)}</p>
                     <strong>{version.summary}</strong>
-                    <p>{version.is_tombstone ? "Memory was deleted at this version." : version.canonical_text}</p>
+                    {version.is_tombstone ? <p>Memory was deleted at this version.</p> : <RichText text={version.canonical_text} />}
                   </section>
                 ))}
               </>
@@ -783,7 +854,7 @@ export default function App() {
                 </section>
                 <section className="detail-section">
                   <h3>Canonical text</h3>
-                  <p>{selectedMemory.canonical_text}</p>
+                  <RichText text={selectedMemory.canonical_text} />
                 </section>
                 <section className="detail-section">
                   <h3>Tags</h3>
@@ -855,6 +926,7 @@ export default function App() {
               <>
                 <h2>{selectedAgent.project_name}</h2>
                 <p className={`status-pill status-${selectedAgent.status}`}>{selectedAgent.status}</p>
+                <Metric label="Collected" value={formatDateTime(agentSnapshot?.collected_at)} />
                 <Metric label="Agent" value={`${selectedAgent.agent_cli} ${selectedAgent.version}`} />
                 <Metric label="Session" value={selectedAgent.session_id} />
                 <Metric label="PID" value={String(selectedAgent.pid)} />
@@ -910,6 +982,9 @@ export default function App() {
                         <strong>
                           5h {formatPercent(limit.five_hour_pct)} / 7d {formatPercent(limit.seven_day_pct)}
                         </strong>
+                        <span className="muted">
+                          resets {formatEpochSeconds(limit.five_hour_resets_at)} / {formatEpochSeconds(limit.seven_day_resets_at)}
+                        </span>
                       </div>
                     ))}
                   </section>
@@ -933,9 +1008,32 @@ export default function App() {
                 placeholder="Ask what the project knows... (?)"
                 value={queryText}
                 onChange={(event) => setQueryText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    applyQueryHistory(-1);
+                  } else if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    applyQueryHistory(1);
+                  } else {
+                    setQueryHistoryCursor(null);
+                  }
+                }}
               />
-              <button type="submit">Query</button>
+              <button type="submit" disabled={queryLoading}>{queryLoading ? "Searching..." : "Query"}</button>
             </div>
+            {queryLoading ? (
+              <div className="query-summary">
+                <p>Searching "{queryText.trim()}"...</p>
+                <p className="muted">Previous results remain visible until the new search finishes.</p>
+              </div>
+            ) : null}
+            {queryError ? (
+              <div className="query-summary warning-list">
+                <strong>Query failed</strong>
+                <p>{queryError}</p>
+              </div>
+            ) : null}
             {queryResponse ? (
               <div className="query-summary">
                 <p>{queryResponse.answer}</p>
@@ -943,11 +1041,15 @@ export default function App() {
                   <span>{queryResponse.answer_generation.method}</span>
                   <span>citations {formatCitationNumbers(queryResponse.answer_generation.cited_result_numbers)}</span>
                   <span>answer {queryResponse.answer_generation.duration_ms} ms</span>
+                  <span>roundtrip {queryRoundtripMs ?? "n/a"} ms</span>
                   <span>confidence {queryResponse.confidence.toFixed(2)}</span>
                   <span>{queryResponse.insufficient_evidence ? "insufficient evidence" : "sufficient evidence"}</span>
                   <span>lexical {queryResponse.diagnostics.lexical_candidates}</span>
                   <span>semantic {queryResponse.diagnostics.semantic_candidates}</span>
                   <span>merged {queryResponse.diagnostics.merged_candidates}</span>
+                  <span>returned {queryResponse.diagnostics.returned_results}</span>
+                  <span>relation {queryResponse.diagnostics.relation_augmented_candidates}</span>
+                  <span>rerank {queryResponse.diagnostics.rerank_duration_ms} ms</span>
                   <span>total {queryResponse.diagnostics.total_duration_ms} ms</span>
                 </div>
                 {queryResponse.answer_generation.fallback_reason ? (
@@ -1010,13 +1112,57 @@ export default function App() {
                       <span>semantic {formatNumber(activeQueryResult.debug.semantic_similarity)}</span>
                       <span>relation {formatNumber(activeQueryResult.debug.relation_boost)}</span>
                       <span>overlap {Math.round((activeQueryResult.debug.term_overlap ?? 0) * 100)}%</span>
+                      <span>phrases {activeQueryResult.debug.exact_phrase_matches}</span>
+                      <span>tags {activeQueryResult.debug.tag_match_count}</span>
+                      <span>paths {activeQueryResult.debug.path_match_count}</span>
+                      <span>importance {activeQueryResult.debug.importance}</span>
+                      <span>memory confidence {formatNumber(activeQueryResult.debug.memory_confidence)}</span>
+                      <span>recency {formatNumber(activeQueryResult.debug.recency_boost)}</span>
                     </div>
                   </section>
-                  {selectedQueryMemory ? (
+                  <section className="detail-section">
+                    <h3>Tags</h3>
+                    {activeQueryResult.tags.length ? (
+                      <div className="tag-wrap">{activeQueryResult.tags.map((tag) => <span key={tag} className="tag">{tag}</span>)}</div>
+                    ) : (
+                      <p className="muted">No tags on this result.</p>
+                    )}
+                  </section>
+                  {activeQueryResult.sources.length ? (
                     <section className="detail-section">
-                      <h3>Memory detail</h3>
-                      <p>{selectedQueryMemory.canonical_text}</p>
+                      <h3>Sources</h3>
+                      {activeQueryResult.sources.map((source, index) => (
+                        <div key={`${source.source_kind}-${source.file_path ?? source.git_commit ?? index}`} className="source-card">
+                          <strong>{source.source_kind}</strong>
+                          <p>{source.file_path ?? source.git_commit ?? "<no path>"}</p>
+                          {source.excerpt ? <pre>{source.excerpt}</pre> : null}
+                        </div>
+                      ))}
                     </section>
+                  ) : null}
+                  {selectedQueryMemoryLoading ? <p className="muted">Loading selected memory detail...</p> : null}
+                  {selectedQueryMemoryError ? <p className="warning-list">Detail unavailable: {selectedQueryMemoryError}</p> : null}
+                  {selectedQueryMemory ? (
+                    <>
+                      <section className="detail-section">
+                        <h3>Memory detail</h3>
+                        <RichText text={selectedQueryMemory.canonical_text} />
+                      </section>
+                      <section className="detail-section">
+                        <h3>Related memories</h3>
+                        {selectedQueryMemory.related_memories.length ? (
+                          selectedQueryMemory.related_memories.map((related) => (
+                            <div key={`${related.relation_type}-${related.memory_id}`} className="relation-row">
+                              <span className="badge">{related.relation_type}</span>
+                              <span>{related.summary}</span>
+                              <span className="muted">{related.memory_type} · {related.confidence.toFixed(2)}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="muted">No related memories recorded.</p>
+                        )}
+                      </section>
+                    </>
                   ) : null}
                 </>
               ) : (
@@ -1113,6 +1259,28 @@ export default function App() {
               <h2>Top files</h2>
               <KeyValueList items={overview.top_files.map((item) => [item.name, String(item.count)])} empty="No file provenance yet." />
             </div>
+            <div className="panel">
+              <h2>Recent activity</h2>
+              {activities.length ? (
+                activities.slice(0, 6).map((event, index) => (
+                  <button
+                    key={`${event.recorded_at}-${event.kind}-${index}`}
+                    type="button"
+                    className="activity-row-button"
+                    onClick={() => {
+                      setSelectedActivityIndex(index);
+                      setTab("activity");
+                    }}
+                  >
+                    <span className="muted">{formatDateTime(event.recorded_at)}</span>
+                    <strong>{event.kind}</strong>
+                    <span>{event.summary}</span>
+                  </button>
+                ))
+              ) : (
+                <p className="muted">No recent activity in this browser session.</p>
+              )}
+            </div>
           </section>
           {proposals.length > 0 && (
             <div className="panel">
@@ -1145,6 +1313,7 @@ export default function App() {
                 <h2>Curation review</h2>
                 <p>
                   Policy {replacementPolicy?.replacement_policy ?? "unknown"} · {proposals.length} pending
+                  {proposals.length ? ` · selected ${selectedProposalIndex + 1}/${proposals.length}` : ""}
                   {effectiveRepoRoot ? ` · ${effectiveRepoRoot}` : ""}
                 </p>
               </div>
@@ -1161,8 +1330,8 @@ export default function App() {
                 <button
                   key={proposal.id}
                   type="button"
-                  className="list-item"
-                  onClick={() => setProposals((current) => [proposal, ...current.filter((item) => item.id !== proposal.id)])}
+                  className={`list-item ${activeProposal?.id === proposal.id ? "selected" : ""}`}
+                  onClick={() => setSelectedProposalIndex(proposals.findIndex((item) => item.id === proposal.id))}
                 >
                   <div>
                     <strong>{proposal.target_summary}</strong>
@@ -1177,27 +1346,27 @@ export default function App() {
             </div>
           </div>
           <div className="panel detail-scroll">
-            {proposals[0] ? (
+            {activeProposal ? (
               <>
                 <h2>Proposal detail</h2>
                 <section className="detail-section">
                   <h3>Target</h3>
-                  <p>{proposals[0].target_summary}</p>
+                  <p>{activeProposal.target_summary}</p>
                 </section>
                 <section className="detail-section">
                   <h3>Candidate</h3>
-                  <p><strong>{proposals[0].candidate_summary}</strong></p>
-                  <p>{proposals[0].candidate_canonical_text}</p>
+                  <p><strong>{activeProposal.candidate_summary}</strong></p>
+                  <RichText text={activeProposal.candidate_canonical_text} />
                 </section>
                 <div className="stats-row">
-                  <span className="badge">{proposals[0].candidate_memory_type}</span>
-                  <span className="badge">{proposals[0].policy}</span>
-                  <span>score {proposals[0].score}</span>
-                  {proposals[0].reasons.map((reason) => <span key={reason}>{reason}</span>)}
+                  <span className="badge">{activeProposal.candidate_memory_type}</span>
+                  <span className="badge">{activeProposal.policy}</span>
+                  <span>score {activeProposal.score}</span>
+                  {activeProposal.reasons.map((reason) => <span key={reason}>{reason}</span>)}
                 </div>
                 <div className="proposal-actions">
-                  <button className="approve-btn" onClick={() => void handleApproveProposal(proposals[0].id)} type="button">Approve</button>
-                  <button className="reject-btn" onClick={() => void handleRejectProposal(proposals[0].id)} type="button">Reject</button>
+                  <button className="approve-btn" onClick={() => void handleApproveProposal(activeProposal.id)} type="button">Approve</button>
+                  <button className="reject-btn" onClick={() => void handleRejectProposal(activeProposal.id)} type="button">Reject</button>
                 </div>
               </>
             ) : (
@@ -1235,10 +1404,12 @@ export default function App() {
                     <span>{watcher.mode}</span>
                     <span className={`badge ${watcher.health === "healthy" ? "badge-active" : "badge-archived"}`}>{watcher.health}</span>
                     <span>{watcher.managed_by_service ? "managed" : "manual"}</span>
+                    <span>started {formatDateTime(watcher.started_at)}</span>
                     <span>{formatDateTime(watcher.last_heartbeat_at)}</span>
                     <span>restarts {watcher.restart_attempt_count}</span>
                     <span className="muted">{watcher.watcher_id}</span>
                   </div>
+                  <p className="muted">Host service {watcher.host_service_id}</p>
                   {watcher.agent_session_id ? (
                     <p className="muted">{watcher.agent_cli} session {watcher.agent_session_id} · agent pid {watcher.agent_pid ?? "n/a"}</p>
                   ) : null}
@@ -1399,9 +1570,21 @@ export default function App() {
                   </div>
                 )}
 
-                {resumeData.durable_context.length > 0 && (
+                {resumeData.context_items.length > 0 && (
                   <div className="resume-section">
                     <h3>Keep in mind</h3>
+                    {resumeData.context_items.map((mem) => (
+                      <div key={mem.id} className="metric-row">
+                        <span className="badge">{mem.memory_type}</span>
+                        <span>{mem.summary}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {resumeData.durable_context.length > 0 && (
+                  <div className="resume-section">
+                    <h3>Durable context</h3>
                     {resumeData.durable_context.map((mem) => (
                       <div key={mem.id} className="metric-row">
                         <span className="badge">{mem.memory_type}</span>
@@ -1430,9 +1613,35 @@ export default function App() {
                   </div>
                 )}
 
+                {resumeData.actions.length > 0 && (
+                  <div className="resume-section">
+                    <h3>All suggested next actions</h3>
+                    {resumeData.actions.map((action) => (
+                      <div key={`${action.title}-${action.rationale}`} className="action-card">
+                        <strong>{action.title}</strong>
+                        <p>{action.rationale}</p>
+                        {action.command_hint && <code>{action.command_hint}</code>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {resumeData.commits.length > 0 && (
+                  <div className="resume-section">
+                    <h3>Recent commits</h3>
+                    {resumeData.commits.map((commit) => (
+                      <div key={commit.hash} className="metric-row">
+                        <span className="badge">{commit.short_hash}</span>
+                        <span>{commit.subject}</span>
+                        <span className="muted">{formatDateTime(commit.committed_at)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className="resume-section">
                   <h3>Briefing</h3>
-                  <pre>{resumeData.briefing}</pre>
+                  <RichText text={resumeData.briefing} />
                 </div>
               </>
             ) : (
@@ -1526,17 +1735,154 @@ function KeyValueList({ items, empty }: { items: [string, string][]; empty: stri
 
 function ActivityDetail({ details }: { details: ActivityDetails | null }) {
   if (!details) return <p className="muted">No structured details recorded.</p>;
+  const rows: [string, string][] = [];
+  const sections: ReactNode[] = [];
+
+  switch (details.type) {
+    case "checkpoint":
+      rows.push(["Marked at", formatDateTime(details.marked_at)], ["Repo root", details.repo_root], ["Note", details.note ?? "n/a"], ["Branch", details.git_branch ?? "n/a"], ["HEAD", details.git_head ?? "n/a"]);
+      break;
+    case "plan":
+      rows.push(["Action", details.action], ["Title", details.title], ["Thread", details.thread_key], ["Completed", `${details.completed_items}/${details.total_items}`], ["Verified complete", String(details.verified_complete)], ["Source path", details.source_path ?? "n/a"]);
+      if (details.remaining_items.length) {
+        sections.push(<ActivityList key="remaining" title="Remaining items" items={details.remaining_items} />);
+      }
+      break;
+    case "scan":
+      rows.push(["Dry run", String(details.dry_run)], ["Candidates", String(details.candidate_count)], ["Files", String(details.files_considered)], ["Commits", String(details.commits_considered)], ["Index reused", String(details.index_reused)], ["Report", details.report_path], ["Capture", details.capture_id ?? "n/a"], ["Curate run", details.curate_run_id ?? "n/a"]);
+      break;
+    case "commit_sync":
+      rows.push(["Imported", String(details.imported_count)], ["Updated", String(details.updated_count)], ["Received", String(details.total_received)], ["Newest", details.newest_commit ?? "n/a"], ["Oldest", details.oldest_commit ?? "n/a"]);
+      break;
+    case "bundle_transfer":
+      rows.push(["Bundle", details.bundle_id], ["Items", String(details.item_count)], ["Source project", details.source_project ?? "n/a"]);
+      break;
+    case "query":
+      rows.push(["Query", details.query], ["Top K", String(details.top_k)], ["Results", String(details.result_count)], ["Confidence", details.confidence.toFixed(2)], ["Insufficient evidence", String(details.insufficient_evidence)], ["Duration", `${details.total_duration_ms} ms`]);
+      if (details.answer) sections.push(<ActivityText key="answer" title="Answer" text={details.answer} />);
+      if (details.error) rows.push(["Error", details.error]);
+      break;
+    case "watcher_health":
+      rows.push(["Watcher", details.watcher_id], ["Hostname", details.hostname], ["Health", details.health], ["Previous health", details.previous_health ?? "n/a"], ["Managed by service", String(details.managed_by_service)], ["Restart attempts", String(details.restart_attempt_count)], ["Recovered after attempts", details.recovered_after_restart_attempts?.toString() ?? "n/a"], ["Agent CLI", details.agent_cli ?? "n/a"], ["Agent session", details.agent_session_id ?? "n/a"], ["Agent PID", details.agent_pid?.toString() ?? "n/a"], ["Message", details.message ?? "n/a"]);
+      break;
+    case "memory_replacement":
+      rows.push(["Old memory", details.old_memory_id], ["Old summary", details.old_summary], ["New memory", details.new_memory_id], ["New summary", details.new_summary], ["Automatic", String(details.automatic)], ["Policy", details.policy]);
+      break;
+    case "capture_task":
+      rows.push(["Session", details.session_id], ["Task", details.task_id], ["Raw capture", details.raw_capture_id], ["Idempotency", details.idempotency_key], ["Task title", details.task_title ?? "n/a"], ["Writer", details.writer_id]);
+      break;
+    case "curate":
+      rows.push(["Run", details.run_id], ["Input captures", String(details.input_count)], ["Output memories", String(details.output_count)], ["Replacements", String(details.replaced_count)], ["Queued proposals", String(details.proposal_count)]);
+      break;
+    case "reindex":
+      rows.push(["Reindexed entries", String(details.reindexed_entries)]);
+      break;
+    case "reembed":
+      rows.push(["Re-embedded chunks", String(details.reembedded_chunks)]);
+      break;
+    case "archive":
+      rows.push(["Archived count", String(details.archived_count)], ["Max confidence", details.max_confidence.toFixed(2)], ["Max importance", String(details.max_importance)]);
+      break;
+    case "delete_memory":
+      rows.push(["Deleted", String(details.deleted)], ["Deleted summary", details.summary]);
+      break;
+  }
+
   return (
     <div className="detail-section">
       <h3>Details</h3>
-      <pre>{JSON.stringify(details, null, 2)}</pre>
+      <KeyValueList items={rows} empty="No structured details recorded." />
+      {sections}
     </div>
   );
+}
+
+function ActivityList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <section className="detail-section">
+      <h3>{title}</h3>
+      <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul>
+    </section>
+  );
+}
+
+function ActivityText({ title, text }: { title: string; text: string }) {
+  return (
+    <section className="detail-section">
+      <h3>{title}</h3>
+      <RichText text={text} />
+    </section>
+  );
+}
+
+function RichText({ text }: { text: string }) {
+  const lines = text.split(/\r?\n/);
+  const blocks: ReactNode[] = [];
+  let listItems: string[] = [];
+  let codeLines: string[] = [];
+  let inCode = false;
+
+  const flushList = () => {
+    if (!listItems.length) return;
+    const items = listItems;
+    listItems = [];
+    blocks.push(<ul key={`list-${blocks.length}`} className="rich-list">{items.map((item) => <li key={item}>{item}</li>)}</ul>);
+  };
+  const flushCode = () => {
+    if (!codeLines.length) return;
+    const code = codeLines.join("\n");
+    codeLines = [];
+    blocks.push(<pre key={`code-${blocks.length}`}>{code}</pre>);
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (line.trim().startsWith("```")) {
+      if (inCode) {
+        inCode = false;
+        flushCode();
+      } else {
+        flushList();
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+    if (!line.trim()) {
+      flushList();
+      continue;
+    }
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      flushList();
+      blocks.push(<h4 key={`heading-${blocks.length}`}>{heading[2]}</h4>);
+      continue;
+    }
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    if (bullet) {
+      listItems.push(bullet[1]);
+      continue;
+    }
+    flushList();
+    blocks.push(<p key={`p-${blocks.length}`}>{line}</p>);
+  }
+  flushList();
+  flushCode();
+
+  return <div className="rich-text">{blocks.length ? blocks : <p className="muted">No text.</p>}</div>;
 }
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return "n/a";
   return new Date(value).toLocaleString();
+}
+
+function formatEpochSeconds(value: number | null | undefined): string {
+  if (!value) return "n/a";
+  return new Date(value * 1000).toLocaleString();
 }
 
 function formatNumber(value: number | null | undefined): string {
