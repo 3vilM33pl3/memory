@@ -3270,7 +3270,7 @@ fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
         ];
         if detail.embedding_spaces.is_empty() {
             lines.push(Line::from(Span::styled(
-                "No embeddings computed yet.",
+                "No embeddings for this memory yet. Run Re-embed for this project to populate the active embedding space.",
                 Style::default().fg(Theme::MUTED),
             )));
         } else {
@@ -8598,7 +8598,7 @@ mod tests {
             .join("\n");
 
         assert!(rendered.contains("Embeddings"));
-        assert!(rendered.contains("No embeddings computed yet."));
+        assert!(rendered.contains("No embeddings for this memory yet."));
     }
 
     fn embeddings_test_response() -> mem_api::EmbeddingBackendsResponse {

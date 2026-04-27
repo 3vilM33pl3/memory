@@ -13,7 +13,7 @@ use mem_api::{
     ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryListItem,
     ProjectOverviewResponse, SourceKindCount, ValidationError,
 };
-use mem_search::{parse_memory_type, parse_source_kind};
+use mem_search::{effective_embedding_base_url, parse_memory_type, parse_source_kind};
 use mem_watch::{load_state, to_status};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -823,8 +823,8 @@ async fn fetch_embedding_health(
     let active_provider = config.map(|c| c.provider.trim()).unwrap_or("");
     let active_model = config.map(|c| c.model.trim()).unwrap_or("");
     let active_base_url = config
-        .map(|c| c.base_url.trim_end_matches('/'))
-        .unwrap_or("");
+        .and_then(|c| effective_embedding_base_url(active_provider, &c.base_url))
+        .unwrap_or_default();
     let active_space = if active_provider.is_empty() || active_model.is_empty() {
         None
     } else {

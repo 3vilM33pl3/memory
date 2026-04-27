@@ -21,6 +21,7 @@ import type {
   ReplacementProposalListResponse,
   ReplacementProposalResolutionResponse,
   ResumeResponse,
+  ActivityListResponse,
 } from "./types";
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -48,6 +49,18 @@ export async function getMemory(memoryId: string): Promise<MemoryEntryResponse> 
 
 export async function getMemoryHistory(memoryId: string): Promise<MemoryHistoryResponse> {
   return parseJson(await fetch(`/v1/memory/${encodeURIComponent(memoryId)}/history`));
+}
+
+export async function getActivities(
+  project: string,
+  limit = 100,
+  kind?: string | null,
+): Promise<ActivityListResponse> {
+  const params = new URLSearchParams({ limit: String(limit), include_details: "true" });
+  if (kind) params.set("kind", kind);
+  return parseJson(
+    await fetch(`/v1/projects/${encodeURIComponent(project)}/activities?${params.toString()}`),
+  );
 }
 
 export async function runQuery(request: QueryRequest): Promise<QueryResponse> {

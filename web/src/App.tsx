@@ -6,6 +6,7 @@ import {
   curate,
   deleteMemory,
   exportBundle,
+  getActivities,
   getAgentSnapshot,
   getEmbeddingBackends,
   getHealth,
@@ -26,7 +27,6 @@ import {
   saveReplacementPolicy,
 } from "./api";
 import type {
-  ActivityDetails,
   ActivityEvent,
   AgentSnapshotResponse,
   EmbeddingBackendsResponse,
@@ -181,6 +181,11 @@ export default function App() {
     void refreshProject(project);
     setActivities([]);
     setSelectedActivityIndex(0);
+    void getActivities(project, 100)
+      .then((response) =>
+        setActivities((current) => mergeActivityEventLists(response.items, current).slice(0, 200)),
+      )
+      .catch((error: Error) => setStatusMessage(error.message));
   }, [project]);
 
   // WebSocket
@@ -205,7 +210,7 @@ export default function App() {
       } else if (payload.type === "memory_snapshot" || payload.type === "memory_changed") {
         setSelectedMemory(payload.detail);
       } else if (payload.type === "activity") {
-        setActivities((current) => [payload.event, ...current].slice(0, 200));
+        setActivities((current) => mergeActivityEvents(payload.event, current).slice(0, 200));
       } else if (payload.type === "error") {
         setStatusMessage(payload.message);
       }
@@ -833,7 +838,7 @@ export default function App() {
                       </div>
                     ))
                   ) : (
-                    <p className="muted">No embeddings computed yet.</p>
+                    <p className="muted">No embeddings for this memory yet. Run Re-embed for this project to populate the active embedding space.</p>
                   )}
                 </section>
                 <section className="detail-section">
@@ -1172,6 +1177,7 @@ export default function App() {
                   <div>
                     <strong>{event.kind}</strong>
                     <p>{event.summary}</p>
+                    <p className="muted">{activityTokenLabel(event)} · {activityDurationLabel(event)}</p>
                   </div>
                   <span>{formatDateTime(event.recorded_at)}</span>
                 </button>
@@ -1183,8 +1189,10 @@ export default function App() {
               <>
                 <h2>{activeActivity.kind}</h2>
                 <p>{activeActivity.summary}</p>
-                <p className="muted">{formatDateTime(activeActivity.recorded_at)}</p>
-                <ActivityDetail details={activeActivity.details} />
+                <p className="muted">
+                  {formatDateTime(activeActivity.recorded_at)} · {activityTokenLabel(activeActivity)} · {activityDurationLabel(activeActivity)}
+                </p>
+                <ActivityDetail event={activeActivity} />
               </>
             ) : (
               <p className="muted">Keep this page open while queries, captures, curation runs, and deletions happen.</p>
@@ -1717,8 +1725,36 @@ function KeyValueList({ items, empty }: { items: [string, string][]; empty: stri
   );
 }
 
-function ActivityDetail({ details }: { details: ActivityDetails | null }) {
-  if (!details) return <p className="muted">No structured details recorded.</p>;
+function ActivityDetail({ event }: { event: ActivityEvent }) {
+  const details = event.details;
+  const eventRows: [string, string][] = [
+    ["Tokens", activityTokenLabel(event)],
+    ["Duration", activityDurationLabel(event)],
+    ["Provider", event.provider ?? "n/a"],
+    ["Model", event.model ?? "n/a"],
+    ["Source", event.source ?? "n/a"],
+    ["Operation", event.operation_id ?? "n/a"],
+  ];
+  if (event.token_usage) {
+    eventRows.push(
+      ["Input tokens", formatTokens(event.token_usage.input_tokens)],
+      ["Output tokens", formatTokens(event.token_usage.output_tokens)],
+      ["Cache read", formatTokens(event.token_usage.cache_read_tokens)],
+      ["Cache write", formatTokens(event.token_usage.cache_write_tokens)],
+    );
+  }
+
+  if (!details) {
+    return (
+      <>
+        <div className="detail-section">
+          <h3>Execution</h3>
+          <KeyValueList items={eventRows} empty="No execution metadata recorded." />
+        </div>
+        <p className="muted">No structured details recorded.</p>
+      </>
+    );
+  }
   const rows: [string, string][] = [];
   const sections: ReactNode[] = [];
 
@@ -1773,11 +1809,17 @@ function ActivityDetail({ details }: { details: ActivityDetails | null }) {
   }
 
   return (
-    <div className="detail-section">
-      <h3>Details</h3>
-      <KeyValueList items={rows} empty="No structured details recorded." />
-      {sections}
-    </div>
+    <>
+      <div className="detail-section">
+        <h3>Execution</h3>
+        <KeyValueList items={eventRows} empty="No execution metadata recorded." />
+      </div>
+      <div className="detail-section">
+        <h3>Details</h3>
+        <KeyValueList items={rows} empty="No structured details recorded." />
+        {sections}
+      </div>
+    </>
   );
 }
 
@@ -1885,6 +1927,27 @@ function formatTokens(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
   return String(value);
+}
+
+function activityTokenLabel(event: ActivityEvent): string {
+  return event.token_usage ? `${formatTokens(event.token_usage.total_tokens)} tokens` : "tokens not recorded";
+}
+
+function activityDurationLabel(event: ActivityEvent): string {
+  return typeof event.duration_ms === "number" ? `${formatTokens(event.duration_ms)} ms` : "duration n/a";
+}
+
+function mergeActivityEvents(event: ActivityEvent, current: ActivityEvent[]): ActivityEvent[] {
+  return [event, ...current.filter((item) => item.id !== event.id)];
+}
+
+function mergeActivityEventLists(primary: ActivityEvent[], secondary: ActivityEvent[]): ActivityEvent[] {
+  const seen = new Set<string>();
+  return [...primary, ...secondary].filter((event) => {
+    if (seen.has(event.id)) return false;
+    seen.add(event.id);
+    return true;
+  });
 }
 
 function formatElapsed(startedAtMs: number): string {

@@ -52,8 +52,9 @@ use mem_platform::{
     managed_watch_service_name, restart_local_watcher_service_name, watch_service_unit_name,
 };
 use mem_search::{
-    EmbeddingRegistry, parse_memory_type, parse_relation_type, parse_source_kind,
-    prune_project_embeddings, query_memory, rebuild_chunks, reembed_project_chunks,
+    EmbeddingRegistry, effective_embedding_base_url, parse_memory_type, parse_relation_type,
+    parse_source_kind, prune_project_embeddings, query_memory, rebuild_chunks,
+    reembed_project_chunks,
 };
 use mem_service::{
     fetch_project_commit, fetch_project_commits, fetch_project_memories, fetch_project_overview,
@@ -2694,11 +2695,8 @@ async fn build_embedding_backends_response(
         .backends
         .iter()
         .map(|backend| {
-            let base_url = if backend.base_url.trim().is_empty() {
-                String::new()
-            } else {
-                backend.base_url.trim_end_matches('/').to_string()
-            };
+            let base_url = effective_embedding_base_url(&backend.provider, &backend.base_url)
+                .unwrap_or_else(|| backend.base_url.trim_end_matches('/').to_string());
             let (project_chunk_count, project_memory_count) = if project.is_some() {
                 match space_by_name
                     .get(&backend.name)

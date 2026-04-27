@@ -18,8 +18,8 @@ use uuid::Uuid;
 
 mod embedding_backend;
 
-pub use embedding_backend::EmbeddingPurpose;
 use embedding_backend::{EmbeddingBackend, EmbeddingSpace};
+pub use embedding_backend::{EmbeddingPurpose, effective_embedding_base_url};
 
 const MAX_CANDIDATES: i64 = 64;
 const GRAPH_DIRECT_BOOST: f64 = 1.25;

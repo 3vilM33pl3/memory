@@ -215,6 +215,15 @@ export interface QueryAnswerGeneration {
   evidence_count: number;
   duration_ms: number;
   fallback_reason: string | null;
+  token_usage?: TokenUsage | null;
+}
+
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  total_tokens: number;
 }
 
 export interface QueryAnswerCitation {
@@ -409,12 +418,27 @@ export type ActivityDetails =
     };
 
 export interface ActivityEvent {
+  id: string;
   project: string;
   kind: ActivityKind;
   memory_id?: string | null;
   summary: string;
   details: ActivityDetails | null;
+  actor_id?: string | null;
+  actor_name?: string | null;
+  source?: string | null;
+  operation_id?: string | null;
+  duration_ms?: number | null;
+  provider?: string | null;
+  model?: string | null;
+  token_usage?: TokenUsage | null;
   recorded_at: string;
+}
+
+export interface ActivityListResponse {
+  project: string;
+  total_returned: number;
+  items: ActivityEvent[];
 }
 
 export interface ReindexResponse {

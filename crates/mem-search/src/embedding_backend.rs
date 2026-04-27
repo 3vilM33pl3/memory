@@ -76,11 +76,7 @@ pub fn build_backend(config: &EmbeddingBackendConfig) -> Option<Arc<dyn Embeddin
         return None;
     }
     let provider = config.provider.trim();
-    let base_url = if config.base_url.trim().is_empty() {
-        default_base_url(provider)?.to_string()
-    } else {
-        config.base_url.trim_end_matches('/').to_string()
-    };
+    let base_url = effective_embedding_base_url(provider, &config.base_url)?;
     let client = Client::new();
     match provider {
         "openai_compatible" | "openai" => Some(Arc::new(OpenAiBackend::new(
@@ -108,6 +104,14 @@ pub fn build_backend(config: &EmbeddingBackendConfig) -> Option<Arc<dyn Embeddin
             api_key.to_string(),
         ))),
         _ => None,
+    }
+}
+
+pub fn effective_embedding_base_url(provider: &str, configured: &str) -> Option<String> {
+    if configured.trim().is_empty() {
+        default_base_url(provider).map(str::to_string)
+    } else {
+        Some(configured.trim_end_matches('/').to_string())
     }
 }
 
@@ -468,6 +472,19 @@ mod tests {
             batch_size: 16,
             ..EmbeddingBackendConfig::default()
         }
+    }
+
+    #[test]
+    fn effective_embedding_base_url_uses_provider_default_for_empty_config() {
+        assert_eq!(
+            effective_embedding_base_url("voyage", ""),
+            Some("https://api.voyageai.com".to_string())
+        );
+        assert_eq!(
+            effective_embedding_base_url("openai_compatible", "https://example.com/"),
+            Some("https://example.com".to_string())
+        );
+        assert_eq!(effective_embedding_base_url("unknown", ""), None);
     }
 
     #[tokio::test]
