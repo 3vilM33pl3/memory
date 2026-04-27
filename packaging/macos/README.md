@@ -13,6 +13,19 @@ Memory Layer now supports a native macOS service model:
 - LaunchAgents: `~/Library/LaunchAgents/`
 - Logs: `~/Library/Application Support/memory-layer/logs/`
 
+## Native .pkg installer
+
+Build a standalone macOS `.pkg` from the repo root:
+
+```bash
+./packaging/build-pkg.sh                          # unsigned
+./packaging/build-pkg.sh --sign "Developer ID Installer: ..."  # signed
+```
+
+The `.pkg` installs to `/usr/local/` and seeds `~/Library/Application Support/memory-layer/` on first run.
+
+Output: `target/memory-layer-<version>-macos.pkg`
+
 ## Homebrew formula
 
 The canonical Homebrew formula now lives in `../../Formula/memory-layer.rb`.
