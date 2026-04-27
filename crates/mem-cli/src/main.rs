@@ -451,6 +451,11 @@ See also:
   docs/user/cli/repo.md";
 
 const GRAPH_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Extract parser-backed code graph facts so query and the TUI can improve retrieval ranking and explanations.
+  Extract mutates graph tables and may rebuild the local repo index unless --dry-run is passed. Status is read-only.
+  JSON is the default output; use --text only for human-readable summaries.
+
 Examples:
   memory graph extract --project memory --dry-run
   memory graph extract --project memory --force --text
@@ -460,6 +465,11 @@ See also:
   docs/user/cli/graph.md";
 
 const GRAPH_EXTRACT_AFTER_HELP: &str = "\
+Agent notes:
+  Builds code symbols, references, graph nodes, graph edges, and evidence from the local repository index.
+  Use --dry-run before writing. Use --rebuild-index when the repo index may be stale.
+  JSON is the default output; use --text only for human-readable summaries.
+
 Examples:
   memory graph extract --project memory
   memory graph extract --project memory --rebuild-index --dry-run
@@ -469,6 +479,10 @@ See also:
   docs/user/cli/graph.md";
 
 const GRAPH_STATUS_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only status for the latest completed graph extraction, including analyzer versions, graph counts, and unresolved references.
+  JSON is the default output; use --text only for human-readable summaries.
+
 Examples:
   memory graph status --project memory
   memory graph status --project memory --text
@@ -522,6 +536,11 @@ See also:
   docs/user/cli/resume.md";
 
 const ACTIVITIES_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only timeline of persisted project activity events, including query, resume, graph, watcher, and checkpoint activity.
+  JSON is the default output; use --text only for human-readable summaries.
+  Use kind filters when an agent needs specific operational evidence.
+
 Examples:
   memory activities --project memory
   memory activities --project memory --limit 50 --text
@@ -531,6 +550,11 @@ See also:
   docs/user/cli/activities.md";
 
 const UP_TO_SPEED_AFTER_HELP: &str = "\
+Agent notes:
+  Use when a new agent joins an active project and needs a concise operational briefing.
+  JSON is the default output; use --text only for human-readable summaries.
+  Use --llm when configured synthesis is desired; deterministic evidence remains available without it.
+
 Examples:
   memory up-to-speed --project memory
   memory up-to-speed --project memory --text
