@@ -1493,6 +1493,7 @@ dependencies = [
  "mem-agenttop",
  "mem-analyze",
  "mem-api",
+ "mem-eval",
  "mem-graph",
  "mem-platform",
  "mem-service",
@@ -1517,6 +1518,19 @@ dependencies = [
  "mem-ingest",
  "serde_json",
  "sqlx",
+ "uuid",
+]
+
+[[package]]
+name = "mem-eval"
+version = "0.7.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "mem-api",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
  "uuid",
 ]
 

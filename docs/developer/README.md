@@ -32,6 +32,7 @@ For the full isolation contract, default ports, override flags, and troubleshoot
 - [How Memory Layer Works](architecture/how-it-works.md)
 - [Embeddings and Search](architecture/embeddings-and-search.md)
 - [Hidden Memory Daemon](architecture/hidden-memory-daemon.md)
+- [Automated Evaluation](evaluation.md)
 
 ## Implementation Material
 

@@ -204,6 +204,16 @@ Examples:
 See also:
   docs/user/cli/service.md";
 
+const EVAL_GROUP_AFTER_HELP: &str = "\
+Examples:
+  memory eval scaffold --project memory --out evals/suites/memory-smoke
+  memory eval run --suite evals/examples/memory-smoke --condition full-memory --dry-run
+  memory eval compare --baseline target/memory-evals/run-a.json --candidate target/memory-evals/run-b.json --text
+  memory eval report --comparison target/memory-evals/comparison.json --text
+
+See also:
+  docs/user/cli/eval.md";
+
 const DOCTOR_AFTER_HELP: &str = "\
 Agent notes:
   Use as the first diagnostic command when setup, service connectivity, watcher, skill, LLM, or embedding behavior is unclear.
@@ -883,6 +893,8 @@ enum Command {
     Activities(ActivitiesArgs),
     #[command(about = "Generate a new-agent get-up-to-speed briefing.", after_help = UP_TO_SPEED_AFTER_HELP)]
     UpToSpeed(UpToSpeedArgs),
+    #[command(about = "Run automated Memory quality evaluations.", after_help = EVAL_GROUP_AFTER_HELP)]
+    Eval(EvalArgs),
     #[command(about = "Ask a project-specific question against curated memory.", after_help = QUERY_AFTER_HELP)]
     Query(QueryArgs),
     #[command(about = "Show the full version history for a memory, including tombstones.", after_help = HISTORY_AFTER_HELP)]
@@ -1473,6 +1485,89 @@ struct UpToSpeedArgs {
     /// Ask the configured LLM to synthesize the briefing.
     #[arg(long)]
     llm: bool,
+    /// Emit a human-readable text view instead of JSON.
+    #[arg(long)]
+    text: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Run automated Memory quality evaluations.", after_help = EVAL_GROUP_AFTER_HELP)]
+struct EvalArgs {
+    #[command(subcommand)]
+    command: EvalCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum EvalCommand {
+    #[command(about = "Create a starter eval suite from recent project memories.")]
+    Scaffold(EvalScaffoldArgs),
+    #[command(about = "Run one suite under one or more memory conditions.")]
+    Run(EvalRunArgs),
+    #[command(about = "Compare two eval run JSON files.")]
+    Compare(EvalCompareArgs),
+    #[command(about = "Render an eval comparison JSON file.")]
+    Report(EvalReportArgs),
+}
+
+#[derive(Debug, Args)]
+struct EvalScaffoldArgs {
+    /// Project slug; defaults to the current repo when available.
+    #[arg(long)]
+    project: Option<String>,
+    /// Output directory for suite.toml and items.jsonl.
+    #[arg(long)]
+    out: PathBuf,
+    /// Maximum number of starter items to generate.
+    #[arg(long, default_value_t = 12)]
+    limit: usize,
+    /// Preview files without writing them.
+    #[arg(long)]
+    dry_run: bool,
+    /// Emit a human-readable text view instead of JSON.
+    #[arg(long)]
+    text: bool,
+}
+
+#[derive(Debug, Args)]
+struct EvalRunArgs {
+    /// Suite directory or suite.toml path.
+    #[arg(long)]
+    suite: PathBuf,
+    /// Condition to run. Repeat for paired runs.
+    #[arg(long = "condition", default_value = "full-memory")]
+    conditions: Vec<String>,
+    /// Output directory for run JSON files.
+    #[arg(long, default_value = "target/memory-evals")]
+    out: PathBuf,
+    /// Preview work without LLM calls or command execution.
+    #[arg(long)]
+    dry_run: bool,
+    /// Emit a human-readable text view instead of JSON.
+    #[arg(long)]
+    text: bool,
+}
+
+#[derive(Debug, Args)]
+struct EvalCompareArgs {
+    /// Baseline run JSON file.
+    #[arg(long)]
+    baseline: PathBuf,
+    /// Candidate run JSON file.
+    #[arg(long)]
+    candidate: PathBuf,
+    /// Optional path to write comparison JSON.
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// Emit a human-readable text view instead of JSON.
+    #[arg(long)]
+    text: bool,
+}
+
+#[derive(Debug, Args)]
+struct EvalReportArgs {
+    /// Comparison JSON file from memory eval compare.
+    #[arg(long)]
+    comparison: PathBuf,
     /// Emit a human-readable text view instead of JSON.
     #[arg(long)]
     text: bool,
@@ -2694,6 +2789,11 @@ async fn main() -> Result<()> {
             } else {
                 println!("{}", serde_json::to_string_pretty(&payload)?);
             }
+        }
+        Command::Eval(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let api = ApiClient::new(client, config);
+            handle_eval_command(args, &cwd, &api).await?;
         }
         Command::Scan(args) => {
             let cwd = env::current_dir().context("read current directory")?;
@@ -7667,6 +7767,319 @@ fn format_query_citations(numbers: &[usize]) -> String {
             .collect::<Vec<_>>()
             .join(" ")
     }
+}
+
+async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Result<()> {
+    match args.command {
+        EvalCommand::Scaffold(args) => {
+            let project = resolve_project_slug(args.project, cwd)?;
+            let response = api.project_memories(&project).await?;
+            let selected = response
+                .items
+                .into_iter()
+                .take(args.limit.clamp(1, 100))
+                .collect::<Vec<_>>();
+            let manifest = format!(
+                "name = \"{} starter eval\"\nproject = \"{}\"\nitems = \"items.jsonl\"\n",
+                project, project
+            );
+            let mut lines = Vec::new();
+            for item in selected {
+                lines.push(serde_json::json!({
+                    "eval_type": "retrieval_qa",
+                    "id": format!("memory-{}", item.id),
+                    "project": project,
+                    "question": format!("What should an agent know about {}?", item.summary),
+                    "top_k": 8,
+                    "expected_memory_ids": [item.id],
+                    "expected_tags": item.tags,
+                }));
+            }
+            if args.dry_run {
+                let payload = serde_json::json!({
+                    "dry_run": true,
+                    "out": args.out,
+                    "suite_toml": manifest,
+                    "items": lines,
+                });
+                if args.text {
+                    println!(
+                        "Would write starter eval suite with {} item(s) to {}",
+                        lines.len(),
+                        payload["out"].as_str().unwrap_or("<path>")
+                    );
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                }
+                return Ok(());
+            }
+            fs::create_dir_all(&args.out)
+                .with_context(|| format!("create {}", args.out.display()))?;
+            fs::write(args.out.join("suite.toml"), manifest)
+                .with_context(|| format!("write {}", args.out.join("suite.toml").display()))?;
+            let jsonl = lines
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()?
+                .join("\n");
+            fs::write(args.out.join("items.jsonl"), format!("{jsonl}\n"))
+                .with_context(|| format!("write {}", args.out.join("items.jsonl").display()))?;
+            let payload = serde_json::json!({
+                "dry_run": false,
+                "out": args.out,
+                "items": lines.len(),
+            });
+            if args.text {
+                println!(
+                    "Wrote starter eval suite with {} item(s) to {}",
+                    payload["items"].as_u64().unwrap_or_default(),
+                    payload["out"].as_str().unwrap_or("<path>")
+                );
+            } else {
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            }
+        }
+        EvalCommand::Run(args) => {
+            let suite = mem_eval::load_suite(&args.suite)?;
+            let project = match suite.manifest.project.clone() {
+                Some(project) => project,
+                None => resolve_project_slug(None, cwd)?,
+            };
+            let conditions = args
+                .conditions
+                .iter()
+                .map(|value| value.parse::<mem_eval::EvalCondition>())
+                .collect::<Result<Vec<_>>>()?;
+            let mut runs = Vec::new();
+            for condition in conditions {
+                let run = run_eval_suite(&suite, &project, condition, args.dry_run, api).await?;
+                let filename = format!(
+                    "{}-{}-{}.json",
+                    sanitize_filename(&suite.manifest.name),
+                    condition,
+                    Utc::now().format("%Y%m%d%H%M%S")
+                );
+                let path = args.out.join(filename);
+                mem_eval::write_json(&path, &run)?;
+                runs.push(serde_json::json!({
+                    "condition": condition,
+                    "path": path,
+                    "items": run.results.len(),
+                    "successes": run.results.iter().filter(|result| result.success).count(),
+                    "skipped": run.results.iter().filter(|result| result.skipped).count(),
+                }));
+            }
+            let payload = serde_json::json!({ "runs": runs });
+            if args.text {
+                for run in &payload["runs"].as_array().cloned().unwrap_or_default() {
+                    println!(
+                        "{}: {} item(s), {} success, {} skipped -> {}",
+                        run["condition"].as_str().unwrap_or("?"),
+                        run["items"].as_u64().unwrap_or_default(),
+                        run["successes"].as_u64().unwrap_or_default(),
+                        run["skipped"].as_u64().unwrap_or_default(),
+                        run["path"].as_str().unwrap_or("<path>")
+                    );
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            }
+        }
+        EvalCommand::Compare(args) => {
+            let baseline = mem_eval::load_run(&args.baseline)?;
+            let candidate = mem_eval::load_run(&args.candidate)?;
+            let comparison = mem_eval::compare_runs(&baseline, &candidate);
+            if let Some(path) = args.out {
+                mem_eval::write_json(&path, &comparison)?;
+            }
+            if args.text {
+                println!("{}", mem_eval::comparison_text(&comparison));
+            } else {
+                println!("{}", serde_json::to_string_pretty(&comparison)?);
+            }
+        }
+        EvalCommand::Report(args) => {
+            let comparison: mem_eval::EvalComparison = serde_json::from_str(
+                &fs::read_to_string(&args.comparison)
+                    .with_context(|| format!("read {}", args.comparison.display()))?,
+            )
+            .with_context(|| format!("parse {}", args.comparison.display()))?;
+            if args.text {
+                println!("{}", mem_eval::comparison_text(&comparison));
+            } else {
+                println!("{}", serde_json::to_string_pretty(&comparison)?);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_eval_suite(
+    suite: &mem_eval::EvalSuite,
+    default_project: &str,
+    condition: mem_eval::EvalCondition,
+    dry_run: bool,
+    api: &ApiClient,
+) -> Result<mem_eval::EvalRun> {
+    let mut results = Vec::new();
+    for item in &suite.items {
+        if dry_run {
+            results.push(mem_eval::skipped_result(
+                item,
+                condition,
+                "dry-run: execution skipped",
+            ));
+            continue;
+        }
+        let project = item.project(default_project);
+        let mut result = match item {
+            mem_eval::EvalItem::RetrievalQa(item) => {
+                if condition == mem_eval::EvalCondition::NoMemory {
+                    no_memory_retrieval_result(item, condition)
+                } else {
+                    let response = api
+                        .query(&QueryRequest {
+                            project: project.to_string(),
+                            query: item.question.clone(),
+                            filters: QueryFilters::default(),
+                            top_k: item.top_k,
+                            min_confidence: None,
+                            history: false,
+                        })
+                        .await?;
+                    mem_eval::score_retrieval_qa(item, condition, &response)
+                }
+            }
+            mem_eval::EvalItem::GroundedAnswer(item) => {
+                if condition == mem_eval::EvalCondition::NoMemory {
+                    mem_eval::skipped_result(
+                        &mem_eval::EvalItem::GroundedAnswer(item.clone()),
+                        condition,
+                        "no-memory LLM answer generation is not enabled in this first eval harness",
+                    )
+                } else {
+                    let response = api
+                        .query(&QueryRequest {
+                            project: project.to_string(),
+                            query: item.question.clone(),
+                            filters: QueryFilters::default(),
+                            top_k: item.top_k,
+                            min_confidence: None,
+                            history: false,
+                        })
+                        .await?;
+                    mem_eval::score_grounded_answer(item, condition, &response)
+                }
+            }
+            mem_eval::EvalItem::ResumeQuality(item) => {
+                if condition == mem_eval::EvalCondition::NoMemory {
+                    mem_eval::skipped_result(
+                        &mem_eval::EvalItem::ResumeQuality(item.clone()),
+                        condition,
+                        "no-memory resume generation has no project timeline source",
+                    )
+                } else {
+                    let response = api
+                        .up_to_speed(&UpToSpeedRequest {
+                            project: project.to_string(),
+                            include_llm_summary: false,
+                            limit: 20,
+                        })
+                        .await?;
+                    mem_eval::score_up_to_speed_quality(item, condition, &response)
+                }
+            }
+            mem_eval::EvalItem::CommandTask(item) => run_command_eval_item(item, condition)?,
+        };
+        if matches!(
+            condition,
+            mem_eval::EvalCondition::Lexical
+                | mem_eval::EvalCondition::Semantic
+                | mem_eval::EvalCondition::Graph
+        ) {
+            result.notes.push(
+                "condition label recorded; retrieval isolation currently follows service configuration"
+                    .to_string(),
+            );
+        }
+        results.push(result);
+    }
+    Ok(mem_eval::EvalRun {
+        suite: suite.manifest.name.clone(),
+        project: default_project.to_string(),
+        condition,
+        dry_run,
+        created_at: Utc::now(),
+        git_head: git_head(),
+        service_version: None,
+        results,
+    })
+}
+
+fn no_memory_retrieval_result(
+    item: &mem_eval::RetrievalQaItem,
+    condition: mem_eval::EvalCondition,
+) -> mem_eval::EvalItemResult {
+    let mut scores = std::collections::BTreeMap::new();
+    scores.insert("recall_at_k".to_string(), 0.0);
+    scores.insert("mrr".to_string(), 0.0);
+    scores.insert("ndcg".to_string(), 0.0);
+    scores.insert("citation_precision".to_string(), 1.0);
+    mem_eval::EvalItemResult {
+        item_id: item.id.clone(),
+        eval_type: "retrieval_qa".to_string(),
+        condition,
+        success: item.expected_memory_ids.is_empty(),
+        skipped: false,
+        scores,
+        duration_ms: Some(0),
+        token_usage: None,
+        answer: None,
+        notes: vec!["no-memory condition has no memory retrieval channel".to_string()],
+    }
+}
+
+fn run_command_eval_item(
+    item: &mem_eval::CommandTaskItem,
+    condition: mem_eval::EvalCondition,
+) -> Result<mem_eval::EvalItemResult> {
+    let started = std::time::Instant::now();
+    let status = ProcessCommand::new("sh")
+        .arg("-c")
+        .arg(&item.command)
+        .status()
+        .with_context(|| format!("run eval command `{}`", item.command))?;
+    Ok(mem_eval::score_command_task(
+        item,
+        condition,
+        status.code(),
+        Some(started.elapsed().as_millis() as u64),
+        Vec::new(),
+    ))
+}
+
+fn git_head() -> Option<String> {
+    ProcessCommand::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn sanitize_filename(value: &str) -> String {
+    let slug = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    slug.trim_matches('-').to_string()
 }
 
 fn print_activities_response(response: &ActivityListResponse) {

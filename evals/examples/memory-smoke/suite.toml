@@ -1,0 +1,4 @@
+name = "memory smoke"
+description = "Tiny dry-run friendly suite showing the eval file format."
+project = "memory"
+items = "items.jsonl"

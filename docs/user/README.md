@@ -19,6 +19,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Query Tab](tui/query.md)
 - [Code Graph Extraction](cli/graph.md)
 - [Embedding Operations](cli/embeddings.md)
+- [Automated Evaluation](cli/eval.md)
 - [Watcher Health](cli/watchers.md)
 - [Get Up To Speed](cli/up-to-speed.md)
 
@@ -49,6 +50,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Embedding Operations](cli/embeddings.md)
 - [Code Graph Extraction](cli/graph.md)
 - [Repository Index](cli/repo.md)
+- [Automated Evaluation](cli/eval.md)
 - [Memory Bundles](cli/bundles.md)
 - [Watcher Health](cli/watchers.md)
 - [Resume Briefings](cli/resume.md)
