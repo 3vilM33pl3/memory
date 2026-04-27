@@ -63,15 +63,29 @@ use crate::writer_identity::{
 };
 
 const ROOT_AFTER_HELP: &str = "\
+Agent contract:
+  Use this CLI from Codex, Claude, or scripts to read and write durable project memory.
+  Prefer --json for commands that support it when another tool will parse the output.
+  Prefer --dry-run before mutating repository, service, memory, history, or embedding state.
+  Before answering repo-specific questions, run query; after interruptions, run resume.
+  When an approved plan moves into implementation, run checkpoint start-execution.
+  Before claiming plan-backed work is complete, run checkpoint finish-execution.
+  After meaningful completed work, run remember with concrete notes and changed files.
+
 Examples:
   memory wizard --global
-  memory query --project memory --question \"What changed recently?\"
-  memory remember --project memory --note \"Durable fact\"
+  memory query --project memory --question \"What changed recently?\" --json
+  memory resume --project memory --json
+  memory remember --project memory --title \"Task title\" --summary \"What changed\" --note \"Durable fact\"
 
 See also:
   docs/user/README.md";
 
 const WIZARD_AFTER_HELP: &str = "\
+Agent notes:
+  Use for first-time interactive setup. Prefer init or service commands for noninteractive runs.
+  Mutates config/service files unless --dry-run is passed.
+
 Examples:
   memory wizard --global
   memory wizard
@@ -81,6 +95,10 @@ See also:
   docs/user/cli/wizard.md";
 
 const INIT_AFTER_HELP: &str = "\
+Agent notes:
+  Use in a repository before dev init, TUI, web UI, watcher, scan, query, or remember workflows.
+  Mutates repo-local .mem bootstrap files and agent skill files unless --dry-run is passed.
+
 Examples:
   memory init
   memory init --project memory --dry-run
@@ -89,7 +107,38 @@ Examples:
 See also:
   docs/user/cli/init.md";
 
+const DEV_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Use from a cargo checkout to manage the isolated dev profile.
+  Dev binaries use 127.0.0.1:4250 HTTP and 127.0.0.1:4251 Cap'n Proto by default.
+
+Examples:
+  memory dev init --copy-from-global
+  memory dev init --dry-run
+
+See also:
+  docs/developer/dev-stack.md";
+
+const DEV_INIT_AFTER_HELP: &str = "\
+Agent notes:
+  Run after memory init when developing Memory Layer from source.
+  Use --copy-from-global to copy database, LLM, embedding, feature, and writer settings into the dev overlay.
+  Mutates .mem/config.dev.toml and .mem/runtime/dev unless --dry-run is passed.
+
+Examples:
+  memory init
+  memory dev init --copy-from-global
+  memory dev init --dry-run
+
+See also:
+  docs/developer/dev-stack.md";
+
 const SERVICE_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Use service run for foreground backend work and service status for packaged install checks.
+  The backend serves the HTTP API and browser web UI from the same bind address.
+  Dev cargo runs use 127.0.0.1:4250; packaged installs normally use 127.0.0.1:4040.
+
 Examples:
   memory service run
   memory service enable --dry-run
@@ -99,6 +148,10 @@ See also:
   docs/user/cli/service.md";
 
 const SERVICE_RUN_AFTER_HELP: &str = "\
+Agent notes:
+  Starts the backend in the foreground. In dev mode it also serves the web UI at http://127.0.0.1:4250/.
+  This process keeps running until interrupted; use it when a TUI, web UI, or CLI call needs a backend.
+
 Examples:
   memory service run
 
@@ -106,6 +159,10 @@ See also:
   docs/user/cli/service.md";
 
 const SERVICE_ENABLE_AFTER_HELP: &str = "\
+Agent notes:
+  Enables and starts the packaged backend service. Use --dry-run first from an agent.
+  Prefer service run for foreground dev work from a cargo checkout.
+
 Examples:
   memory service enable
   memory service enable --dry-run
@@ -114,6 +171,10 @@ See also:
   docs/user/cli/service.md";
 
 const SERVICE_DISABLE_AFTER_HELP: &str = "\
+Agent notes:
+  Stops and disables the packaged backend service. This can interrupt TUI, web UI, watcher, and CLI clients.
+  Use --dry-run first from an agent.
+
 Examples:
   memory service disable
   memory service disable --dry-run
@@ -122,6 +183,9 @@ See also:
   docs/user/cli/service.md";
 
 const SERVICE_STATUS_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only packaged service inspection. Use doctor for broader config and connectivity checks.
+
 Examples:
   memory service status
 
@@ -129,14 +193,22 @@ See also:
   docs/user/cli/service.md";
 
 const SERVICE_TOKEN_AFTER_HELP: &str = "\
+Agent notes:
+  Provisions or rotates the shared API token used by local clients. Use --dry-run and --json when scripting.
+  Mutates env files unless --dry-run is passed.
+
 Examples:
   memory service ensure-api-token --shared
-  memory service ensure-api-token --rotate-placeholder --dry-run
+  memory service ensure-api-token --rotate-placeholder --dry-run --json
 
 See also:
   docs/user/cli/service.md";
 
 const DOCTOR_AFTER_HELP: &str = "\
+Agent notes:
+  Use as the first diagnostic command when setup, service connectivity, watcher, skill, LLM, or embedding behavior is unclear.
+  Read-only unless --fix is passed. Prefer --json for automated diagnosis.
+
 Examples:
   memory doctor
   memory doctor --project memory
@@ -146,6 +218,11 @@ See also:
   docs/user/cli/doctor.md";
 
 const WATCHER_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  The watcher manager is the preferred local automation path for Codex-linked sessions.
+  Legacy per-project watcher services and manual watcher run remain compatibility paths.
+  Enable/disable commands mutate service state; use --dry-run where supported.
+
 Examples:
   memory watcher manager enable
   memory watcher run --project memory
@@ -156,6 +233,10 @@ See also:
   docs/user/cli/watchers.md";
 
 const WATCHER_RUN_AFTER_HELP: &str = "\
+Agent notes:
+  Runs one watcher in the foreground for a project or repo root.
+  Agent ownership flags are for watcher-manager handoff; avoid inventing them manually unless integrating another agent runtime.
+
 Examples:
   memory watcher run --project memory
   memory watcher run --repo-root /path/to/repo
@@ -164,6 +245,10 @@ See also:
   docs/user/cli/watchers.md";
 
 const WATCHER_ENABLE_AFTER_HELP: &str = "\
+Agent notes:
+  Enables a legacy per-project watcher service. Prefer watcher manager enable for Codex-linked local automation.
+  Mutates service state unless --dry-run is passed.
+
 Examples:
   memory watcher enable --project memory
   memory watcher enable --project memory --dry-run
@@ -172,6 +257,10 @@ See also:
   docs/user/cli/watchers.md";
 
 const WATCHER_DISABLE_AFTER_HELP: &str = "\
+Agent notes:
+  Disables a legacy per-project watcher service. This can stop background capture for the project.
+  Mutates service state unless --dry-run is passed.
+
 Examples:
   memory watcher disable --project memory
   memory watcher disable --project memory --dry-run
@@ -180,22 +269,114 @@ See also:
   docs/user/cli/watchers.md";
 
 const WATCHER_STATUS_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only watcher health check. Use manager status for Codex-linked watcher-manager state.
+
 Examples:
-  memory watcher manager status
   memory watcher status --project memory
 
 See also:
   docs/user/cli/watchers.md";
 
-const QUERY_AFTER_HELP: &str = "\
+const WATCHER_MANAGER_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Preferred automation surface for Codex-linked sessions. The manager detects live sessions and starts one watcher per repo/session.
+  Enable/disable commands mutate the user service. Run/status are foreground/read-only service checks.
+
 Examples:
-  memory query --project memory --question \"How does resume work?\"
-  memory query --project memory --question \"What changed?\" --type plan --tag plan
+  memory watcher manager status
+  memory watcher manager enable --dry-run
+  memory watcher manager run
+
+See also:
+  docs/user/cli/watchers.md";
+
+const WATCHER_MANAGER_RUN_AFTER_HELP: &str = "\
+Agent notes:
+  Runs the Codex-linked watcher manager in the foreground for development or debugging.
+  The process keeps running until interrupted and may start watcher processes for detected sessions.
+
+Examples:
+  memory watcher manager run
+
+See also:
+  docs/user/cli/watchers.md";
+
+const WATCHER_MANAGER_ENABLE_AFTER_HELP: &str = "\
+Agent notes:
+  Enables the persistent user watcher-manager service. Use --dry-run first from an agent.
+  Prefer this over legacy per-project watcher services for normal Codex automation.
+
+Examples:
+  memory watcher manager enable
+  memory watcher manager enable --dry-run
+
+See also:
+  docs/user/cli/watchers.md";
+
+const WATCHER_MANAGER_DISABLE_AFTER_HELP: &str = "\
+Agent notes:
+  Disables the persistent user watcher-manager service. This can stop agent-linked background capture.
+  Use --dry-run first from an agent.
+
+Examples:
+  memory watcher manager disable
+  memory watcher manager disable --dry-run
+
+See also:
+  docs/user/cli/watchers.md";
+
+const WATCHER_MANAGER_STATUS_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only status for the Codex-linked watcher manager and its user service.
+
+Examples:
+  memory watcher manager status
+
+See also:
+  docs/user/cli/watchers.md";
+
+const QUERY_AFTER_HELP: &str = "\
+Agent notes:
+  Use before answering project-specific questions about architecture, workflows, history, or prior decisions.
+  Prefer --json for Codex/Claude tools so citations, confidence, and insufficient_evidence are machine-readable.
+  Do not treat low-confidence or insufficient-evidence answers as facts.
+
+Examples:
+  memory query --project memory --question \"How does resume work?\" --json
+  memory query --project memory --question \"What changed?\" --type plan --tag plan --json
 
 See also:
   docs/user/cli/query.md";
 
+const HISTORY_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only inspection of all versions for one memory chain, including tombstones.
+  Use --json when comparing canonical history programmatically.
+
+Examples:
+  memory history 00000000-0000-0000-0000-000000000000 --json
+
+See also:
+  docs/developer/architecture/embeddings-and-search.md";
+
+const PRUNE_HISTORY_AFTER_HELP: &str = "\
+Agent notes:
+  Permanently prunes tombstoned and superseded memory versions by retention threshold.
+  Always use --dry-run and --json first from an agent. Limit with --project unless a global sweep is intended.
+
+Examples:
+  memory prune-history --project memory --dry-run --json
+  memory prune-history --project memory --tombstone-after 90d --superseded-after 180d --dry-run
+
+See also:
+  docs/developer/architecture/memory-types.md";
+
 const COMMITS_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Use to import or inspect git history as evidence without turning every commit into canonical memory.
+  Sync mutates backend commit history unless --dry-run is passed.
+
 Examples:
   memory commits sync --project memory
   memory commits list --project memory
@@ -205,14 +386,20 @@ See also:
   docs/user/cli/commits.md";
 
 const COMMITS_SYNC_AFTER_HELP: &str = "\
+Agent notes:
+  Imports local git commits into backend evidence. Use --dry-run and --json before a large sync.
+
 Examples:
-  memory commits sync --project memory
-  memory commits sync --project memory --since 2026-04-01 --dry-run
+  memory commits sync --project memory --dry-run --json
+  memory commits sync --project memory --since 2026-04-01 --dry-run --json
 
 See also:
   docs/user/cli/commits.md";
 
 const COMMITS_LIST_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only commit evidence listing. Prefer --json for scripts.
+
 Examples:
   memory commits list --project memory
   memory commits list --project memory --limit 50 --json
@@ -221,13 +408,19 @@ See also:
   docs/user/cli/commits.md";
 
 const COMMITS_SHOW_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only detail for one imported commit. Use --json when extracting evidence.
+
 Examples:
-  memory commits show abc123 --project memory
+  memory commits show abc123 --project memory --json
 
 See also:
   docs/user/cli/commits.md";
 
 const REPO_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  The repository index feeds scan and analysis flows. Status is read-only; index mutates local index state unless --dry-run is passed.
+
 Examples:
   memory repo index --project memory
   memory repo status --project memory
@@ -236,14 +429,20 @@ See also:
   docs/user/cli/repo.md";
 
 const REPO_INDEX_AFTER_HELP: &str = "\
+Agent notes:
+  Builds or refreshes the local repository index. Use --dry-run and --json before broad indexing from an agent.
+
 Examples:
-  memory repo index --project memory
-  memory repo index --project memory --since 2026-04-01 --dry-run
+  memory repo index --project memory --dry-run --json
+  memory repo index --project memory --since 2026-04-01 --dry-run --json
 
 See also:
   docs/user/cli/repo.md";
 
 const REPO_STATUS_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only repository index status and analyzer coverage. Prefer --json for scripts.
+
 Examples:
   memory repo status --project memory
   memory repo status --project memory --json
@@ -278,6 +477,9 @@ See also:
   docs/user/cli/graph.md";
 
 const BUNDLE_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Export/import portable project memory bundles. Import mutates memory state unless --dry-run is passed.
+
 Examples:
   memory bundle export --project memory --out /tmp/memory.mlbundle.zip
   memory bundle import --project memory /tmp/memory.mlbundle.zip --dry-run
@@ -286,6 +488,9 @@ See also:
   docs/user/cli/bundles.md";
 
 const BUNDLE_EXPORT_AFTER_HELP: &str = "\
+Agent notes:
+  Writes a portable bundle file unless --dry-run is passed. Include provenance flags intentionally.
+
 Examples:
   memory bundle export --project memory --out /tmp/memory.mlbundle.zip
   memory bundle export --project memory --out /tmp/memory.mlbundle.zip --dry-run
@@ -294,6 +499,9 @@ See also:
   docs/user/cli/bundles.md";
 
 const BUNDLE_IMPORT_AFTER_HELP: &str = "\
+Agent notes:
+  Imports memories from a bundle. Always run --dry-run --json first from an agent.
+
 Examples:
   memory bundle import --project memory /tmp/memory.mlbundle.zip
   memory bundle import --project memory /tmp/memory.mlbundle.zip --dry-run --json
@@ -302,6 +510,10 @@ See also:
   docs/user/cli/bundles.md";
 
 const RESUME_AFTER_HELP: &str = "\
+Agent notes:
+  Use after interruptions or context compaction to rebuild project state before continuing.
+  Prefer --json for tools; include_llm_summary defaults on and falls back to deterministic output when unavailable.
+
 Examples:
   memory resume --project memory
   memory resume --project memory --json
@@ -328,6 +540,10 @@ See also:
   docs/user/cli/up-to-speed.md";
 
 const CHECKPOINT_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Use for plan-backed execution state. start-execution records the approved plan before implementation.
+  finish-execution verifies plan completion before the final response. Prefer --dry-run for previews.
+
 Examples:
   memory checkpoint save --project memory
   memory checkpoint start-execution --project memory --plan-file /tmp/plan.md
@@ -337,6 +553,9 @@ See also:
   docs/user/cli/checkpoint.md";
 
 const CHECKPOINT_SAVE_AFTER_HELP: &str = "\
+Agent notes:
+  Saves a resumable project checkpoint. Use --dry-run for previews and --json for scripts.
+
 Examples:
   memory checkpoint save --project memory
   memory checkpoint save --project memory --note \"Waiting on review\" --dry-run
@@ -345,6 +564,9 @@ See also:
   docs/user/cli/checkpoint.md";
 
 const CHECKPOINT_SHOW_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only inspection of the current saved checkpoint for resume workflows.
+
 Examples:
   memory checkpoint show --project memory
 
@@ -352,6 +574,10 @@ See also:
   docs/user/cli/checkpoint.md";
 
 const CHECKPOINT_START_AFTER_HELP: &str = "\
+Agent notes:
+  Run when an approved plan moves into implementation. It stores the plan and records a checkpoint.
+  Use --plan-file for saved plans or --plan-stdin when piping generated markdown.
+
 Examples:
   memory checkpoint start-execution --project memory --plan-file /tmp/plan.md
   memory checkpoint start-execution --project memory --plan-stdin --thread-key task-123
@@ -360,14 +586,22 @@ See also:
   docs/user/cli/checkpoint.md";
 
 const CHECKPOINT_FINISH_AFTER_HELP: &str = "\
+Agent notes:
+  Run before claiming plan-backed work is complete. It verifies every approved plan item is done.
+  Use --dry-run --json to inspect failures without recording implementation memory.
+
 Examples:
-  memory checkpoint finish-execution --project memory
+  memory checkpoint finish-execution --project memory --dry-run --json
   memory checkpoint finish-execution --project memory --plan-file /tmp/plan.md --json
 
 See also:
   docs/user/cli/checkpoint.md";
 
 const CAPTURE_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Low-level capture ingestion for structured task payloads. Prefer remember for normal completed-work capture.
+  Mutates raw capture state unless --dry-run is passed on the leaf command.
+
 Examples:
   memory capture task --file /tmp/task.json
 
@@ -375,6 +609,9 @@ See also:
   docs/user/cli/capture.md";
 
 const CAPTURE_TASK_AFTER_HELP: &str = "\
+Agent notes:
+  Sends one JSON task payload to the backend. Use --dry-run to validate without writing.
+
 Examples:
   memory capture task --file /tmp/task.json
   memory capture task --file /tmp/task.json --dry-run
@@ -383,23 +620,34 @@ See also:
   docs/user/cli/capture.md";
 
 const SCAN_AFTER_HELP: &str = "\
+Agent notes:
+  Use when onboarding a repository or refreshing durable-memory candidates from source and git history.
+  Requires LLM configuration for extraction. Use --dry-run and --json before writing candidates.
+
 Examples:
-  memory scan --project memory
-  memory scan --project memory --dry-run
+  memory scan --project memory --dry-run --json
   memory scan --project memory --rebuild-index
 
 See also:
   docs/user/cli/scan.md";
 
 const REMEMBER_AFTER_HELP: &str = "\
+Agent notes:
+  Use after meaningful completed work to preserve durable facts with provenance.
+  Include concrete notes, changed files, tests, and command output where useful.
+  Use --type user, feedback, project, reference, or implementation when classification should be explicit.
+
 Examples:
   memory remember --project memory --note \"Durable fact\"
-  memory remember --project memory --title \"Task title\" --summary \"What changed\"
+  memory remember --project memory --title \"Task title\" --summary \"What changed\" --file-changed crates/mem-cli/src/main.rs
 
 See also:
   docs/user/cli/remember.md";
 
 const CURATE_AFTER_HELP: &str = "\
+Agent notes:
+  Converts raw captures into canonical memory. Use --dry-run before accepting curation decisions.
+
 Examples:
   memory curate --project memory
   memory curate --project memory --batch-size 10 --dry-run
@@ -408,7 +656,13 @@ See also:
   docs/user/cli/curate.md";
 
 const EMBEDDINGS_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Manage semantic retrieval spaces. list/activate are global backend operations; reindex/reembed/prune operate per project.
+  Reindex/reembed/prune mutate embedding rows unless --dry-run is passed.
+
 Examples:
+  memory embeddings list
+  memory embeddings activate voyage-code
   memory embeddings reindex --project memory
   memory embeddings reembed --project memory
   memory embeddings prune --project memory --dry-run
@@ -416,23 +670,60 @@ Examples:
 See also:
   docs/user/cli/embeddings.md";
 
+const EMBEDDINGS_LIST_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only list of configured embedding backends. Active backends are marked with *; unresolved backends are marked with !.
+  Use before activate, reindex, or reembed to avoid guessing backend names.
+
+Examples:
+  memory embeddings list
+
+See also:
+  docs/user/cli/embeddings.md";
+
+const EMBEDDINGS_ACTIVATE_AFTER_HELP: &str = "\
+Agent notes:
+  Switches which configured backend query uses for semantic retrieval. It does not recompute embeddings.
+  Run embeddings list first and backfill the target space with reembed or reindex if needed.
+
+Examples:
+  memory embeddings list
+  memory embeddings activate voyage-code
+
+See also:
+  docs/user/cli/embeddings.md";
+
 const EMBEDDINGS_REINDEX_AFTER_HELP: &str = "\
+Agent notes:
+  Rebuilds chunks and embeddings for a project. By default, covers every configured backend.
+  Use --backend to restrict and --dry-run before writing.
+
 Examples:
   memory embeddings reindex --project memory
   memory embeddings reindex --project memory --dry-run
+  memory embeddings reindex --project memory --backend voyage-code
 
 See also:
   docs/user/cli/embeddings.md";
 
 const EMBEDDINGS_REEMBED_AFTER_HELP: &str = "\
+Agent notes:
+  Regenerates embeddings for eligible chunks without rebuilding chunks.
+  Use after adding a backend or when coverage is partial. Use --dry-run before writing.
+
 Examples:
   memory embeddings reembed --project memory
   memory embeddings reembed --project memory --dry-run
+  memory embeddings reembed --project memory --backend voyage-code
 
 See also:
   docs/user/cli/embeddings.md";
 
 const EMBEDDINGS_PRUNE_AFTER_HELP: &str = "\
+Agent notes:
+  Deletes stale or orphaned embedding rows relative to configured backends.
+  Always run --dry-run first from an agent.
+
 Examples:
   memory embeddings prune --project memory
   memory embeddings prune --project memory --dry-run
@@ -441,6 +732,9 @@ See also:
   docs/user/cli/embeddings.md";
 
 const HEALTH_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only backend health check. Use doctor for full environment diagnosis.
+
 Examples:
   memory health
   memory stats
@@ -449,6 +743,9 @@ See also:
   docs/user/cli/health.md";
 
 const STATS_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only memory and project summary. Use health for service reachability.
+
 Examples:
   memory stats
   memory health
@@ -457,6 +754,9 @@ See also:
   docs/user/cli/health.md";
 
 const ARCHIVE_AFTER_HELP: &str = "\
+Agent notes:
+  Archives low-signal memories by confidence and importance. Always use --dry-run first from an agent.
+
 Examples:
   memory archive --project memory
   memory archive --project memory --max-confidence 0.2 --dry-run
@@ -465,6 +765,9 @@ See also:
   docs/user/cli/archive.md";
 
 const AUTOMATION_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Inspect or flush pending automation capture state. Status is read-only; flush mutates capture state unless --dry-run is passed.
+
 Examples:
   memory automation status --project memory
   memory automation flush --project memory --curate --dry-run
@@ -473,6 +776,9 @@ See also:
   docs/user/cli/automation.md";
 
 const AUTOMATION_STATUS_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only view of pending automation state for a project.
+
 Examples:
   memory automation status --project memory
 
@@ -480,6 +786,10 @@ See also:
   docs/user/cli/automation.md";
 
 const AUTOMATION_FLUSH_AFTER_HELP: &str = "\
+Agent notes:
+  Converts pending automation state into capture records and can optionally curate them.
+  Use --dry-run before writing; add --curate only when canonical memory should be produced immediately.
+
 Examples:
   memory automation flush --project memory
   memory automation flush --project memory --curate --dry-run
@@ -488,6 +798,10 @@ See also:
   docs/user/cli/automation.md";
 
 const TUI_AFTER_HELP: &str = "\
+Agent notes:
+  Opens the terminal UI for interactive browsing, querying, activity, watcher, and embedding views.
+  Use CLI commands with --json for agent automation; use the TUI for human inspection.
+
 Examples:
   memory tui
   memory tui --project memory
@@ -547,9 +861,9 @@ enum Command {
     UpToSpeed(UpToSpeedArgs),
     #[command(about = "Ask a project-specific question against curated memory.", after_help = QUERY_AFTER_HELP)]
     Query(QueryArgs),
-    #[command(about = "Show the full version history for a memory, including tombstones.")]
+    #[command(about = "Show the full version history for a memory, including tombstones.", after_help = HISTORY_AFTER_HELP)]
     History(HistoryArgs),
-    #[command(about = "Prune old memory versions and tombstoned canonicals.")]
+    #[command(about = "Prune old memory versions and tombstoned canonicals.", after_help = PRUNE_HISTORY_AFTER_HELP)]
     PruneHistory(PruneHistoryArgs),
     #[command(about = "Scan a repository for candidate durable memories.", after_help = SCAN_AFTER_HELP)]
     Scan(ScanArgs),
@@ -571,7 +885,7 @@ enum Command {
     Automation(AutomationArgs),
     #[command(about = "Open the terminal UI.", after_help = TUI_AFTER_HELP)]
     Tui(TuiArgs),
-    #[command(about = "Scaffold and inspect the dev-profile overlay.")]
+    #[command(about = "Scaffold and inspect the dev-profile overlay.", after_help = DEV_GROUP_AFTER_HELP)]
     Dev(DevArgs),
 }
 
@@ -584,6 +898,7 @@ struct DevArgs {
 #[derive(Debug, Subcommand)]
 enum DevCommand {
     /// Create `.mem/config.dev.toml` and the dev runtime directory.
+    #[command(after_help = DEV_INIT_AFTER_HELP)]
     Init(DevInitArgs),
 }
 
@@ -729,7 +1044,7 @@ enum WatcherCommand {
     Disable(WatcherManageArgs),
     #[command(about = "Show watcher status for a project.", after_help = WATCHER_STATUS_AFTER_HELP)]
     Status(WatchProjectArgs),
-    #[command(about = "Run or manage the Codex-linked watcher manager.", after_help = WATCHER_STATUS_AFTER_HELP)]
+    #[command(about = "Run or manage the Codex-linked watcher manager.", after_help = WATCHER_MANAGER_GROUP_AFTER_HELP)]
     Manager(WatcherManagerArgs),
 }
 
@@ -780,13 +1095,13 @@ struct WatcherManagerArgs {
 
 #[derive(Debug, Subcommand)]
 enum WatcherManagerCommand {
-    #[command(about = "Run the watcher manager in the foreground.")]
+    #[command(about = "Run the watcher manager in the foreground.", after_help = WATCHER_MANAGER_RUN_AFTER_HELP)]
     Run,
-    #[command(about = "Enable the persistent user watcher manager service.")]
+    #[command(about = "Enable the persistent user watcher manager service.", after_help = WATCHER_MANAGER_ENABLE_AFTER_HELP)]
     Enable(ServiceLifecycleArgs),
-    #[command(about = "Disable the persistent user watcher manager service.")]
+    #[command(about = "Disable the persistent user watcher manager service.", after_help = WATCHER_MANAGER_DISABLE_AFTER_HELP)]
     Disable(ServiceLifecycleArgs),
-    #[command(about = "Show watcher manager status.")]
+    #[command(about = "Show watcher manager status.", after_help = WATCHER_MANAGER_STATUS_AFTER_HELP)]
     Status,
 }
 
@@ -825,7 +1140,10 @@ struct QueryArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(about = "Show the full version history for a memory, including tombstones.")]
+#[command(
+    about = "Show the full version history for a memory, including tombstones.",
+    after_help = HISTORY_AFTER_HELP
+)]
 struct HistoryArgs {
     /// Any version's id (including a tombstone). The chain resolves via
     /// canonical_id so passing any version id returns the same history.
@@ -837,7 +1155,8 @@ struct HistoryArgs {
 
 #[derive(Debug, Args)]
 #[command(
-    about = "Prune tombstoned canonical memories and superseded versions older than the configured thresholds."
+    about = "Prune tombstoned canonical memories and superseded versions older than the configured thresholds.",
+    after_help = PRUNE_HISTORY_AFTER_HELP
 )]
 struct PruneHistoryArgs {
     /// Limit the sweep to one project. Defaults to every project in the DB.
@@ -1356,9 +1675,9 @@ struct EmbeddingsArgs {
 
 #[derive(Debug, Subcommand)]
 enum EmbeddingsCommand {
-    #[command(about = "List configured embedding backends and show which is active.")]
+    #[command(about = "List configured embedding backends and show which is active.", after_help = EMBEDDINGS_LIST_AFTER_HELP)]
     List,
-    #[command(about = "Switch which configured embedding backend is used for search.")]
+    #[command(about = "Switch which configured embedding backend is used for search.", after_help = EMBEDDINGS_ACTIVATE_AFTER_HELP)]
     Activate(EmbeddingsActivateArgs),
     #[command(about = "Build or refresh the active embedding index.", after_help = EMBEDDINGS_REINDEX_AFTER_HELP)]
     Reindex(EmbeddingsProjectArgs),
@@ -8867,6 +9186,17 @@ mod tests {
                     .unwrap_or(false),
                 "command {path} is missing help metadata"
             );
+            let after_help = cmd
+                .get_after_help()
+                .map(|value| value.to_string())
+                .or_else(|| cmd.get_after_long_help().map(|value| value.to_string()));
+            assert!(
+                after_help
+                    .as_deref()
+                    .map(|value| value.contains("Agent notes:") || value.contains("Agent contract:"))
+                    .unwrap_or(false),
+                "command {path} is missing agent-oriented after_help"
+            );
         }
         for subcommand in cmd.get_subcommands() {
             let sub_path = if path.is_empty() {
@@ -8888,6 +9218,10 @@ mod tests {
     fn root_help_includes_examples_and_docs_hint() {
         let output = rendered_help(&["memory", "--help"]);
         assert!(output.contains("Project memory CLI"));
+        assert!(output.contains("Agent contract:"));
+        assert!(output.contains("Prefer --json"));
+        assert!(output.contains("checkpoint start-execution"));
+        assert!(output.contains("checkpoint finish-execution"));
         assert!(output.contains("Examples:"));
         assert!(output.contains("docs/user/README.md"));
         assert!(output.contains("Ask a project-specific question against curated memory"));
@@ -8898,6 +9232,9 @@ mod tests {
         let output = rendered_help(&["memory", "service", "--help"]);
         assert!(output.contains("Manage the Memory Layer backend service"));
         assert!(output.contains("Run the backend service in the foreground"));
+        assert!(output.contains("Agent notes:"));
+        assert!(output.contains("browser web UI"));
+        assert!(output.contains("127.0.0.1:4250"));
         assert!(output.contains("Examples:"));
         assert!(output.contains("docs/user/cli/service.md"));
     }
@@ -8907,6 +9244,8 @@ mod tests {
         let output = rendered_help(&["memory", "checkpoint", "start-execution", "--help"]);
         assert!(output.contains("Save a checkpoint and record the approved execution plan"));
         assert!(output.contains("Read the approved plan markdown from a file"));
+        assert!(output.contains("Agent notes:"));
+        assert!(output.contains("approved plan moves into implementation"));
         assert!(output.contains("Examples:"));
         assert!(output.contains("docs/user/cli/checkpoint.md"));
     }
@@ -8916,7 +9255,40 @@ mod tests {
         let output = rendered_help(&["memory", "query", "--help"]);
         assert!(output.contains("Natural-language question to answer from project memory"));
         assert!(output.contains("Restrict results to one or more memory types"));
+        assert!(output.contains("Use before answering project-specific questions"));
+        assert!(output.contains("insufficient_evidence"));
         assert!(output.contains("docs/user/cli/query.md"));
+    }
+
+    #[test]
+    fn agent_critical_help_mentions_current_surfaces() {
+        let resume = rendered_help(&["memory", "resume", "--help"]);
+        assert!(resume.contains("after interruptions"));
+        assert!(resume.contains("--json"));
+
+        let remember = rendered_help(&["memory", "remember", "--help"]);
+        assert!(remember.contains("after meaningful completed work"));
+        assert!(remember.contains("--file-changed"));
+
+        let dev = rendered_help(&["memory", "dev", "init", "--help"]);
+        assert!(dev.contains("127.0.0.1:4250"));
+        assert!(dev.contains("--copy-from-global"));
+        assert!(dev.contains("docs/developer/dev-stack.md"));
+
+        let watcher_manager = rendered_help(&["memory", "watcher", "manager", "--help"]);
+        assert!(watcher_manager.contains("Preferred automation surface"));
+        assert!(watcher_manager.contains("one watcher per repo/session"));
+
+        let embeddings_list = rendered_help(&["memory", "embeddings", "list", "--help"]);
+        assert!(embeddings_list.contains("Active backends are marked with *"));
+        assert!(embeddings_list.contains("avoid guessing backend names"));
+
+        let embeddings_activate = rendered_help(&["memory", "embeddings", "activate", "--help"]);
+        assert!(embeddings_activate.contains("does not recompute embeddings"));
+        assert!(embeddings_activate.contains("memory embeddings list"));
+
+        let history = rendered_help(&["memory", "prune-history", "--help"]);
+        assert!(history.contains("Always use --dry-run and --json first"));
     }
 
     #[test]
