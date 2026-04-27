@@ -3,7 +3,7 @@
 
 [project]
 slug = "memory"
-repo_root = "/home/olivier/Projects/memory"
+repo_root = "/Users/olivier/Projects/memory"
 
 [capture]
 include_paths = ["README.md", "docs/", "src/", "crates/", "scripts/", "packaging/"]
