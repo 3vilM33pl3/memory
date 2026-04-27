@@ -27,7 +27,7 @@ use mem_api::{
     ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
     CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
     CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse, GraphActivityRequest,
-    MemoryEntryResponse, MemoryType, PlanActivityAction, PlanActivityRequest,
+    MemoryEntryResponse, MemoryType, PlanActivityAction, PlanActivityRequest, Profile,
     ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundlePreview,
     ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
     ProjectOverviewResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters,
@@ -1808,7 +1808,7 @@ async fn main() -> Result<()> {
     {
         println!(
             "memory {}",
-            mem_api::Profile::detect().display_version(env!("CARGO_PKG_VERSION"))
+            Profile::detect().display_version(env!("CARGO_PKG_VERSION"))
         );
         return Ok(());
     }
@@ -1926,13 +1926,13 @@ async fn main() -> Result<()> {
                         let output = if args.dry_run {
                             preview_disable_watch_manager_service()?
                         } else {
-                            disable_watch_manager_service()?
+                            disable_watch_manager_service(Profile::detect())?
                         };
                         println!("{output}");
                         return Ok(());
                     }
                     WatcherManagerCommand::Status => {
-                        println!("{}", watch_manager_service_status()?);
+                        println!("{}", watch_manager_service_status(Profile::detect())?);
                         return Ok(());
                     }
                 },
@@ -5277,6 +5277,25 @@ struct ManagedWatcherSession {
 }
 
 async fn run_watcher_manager(config: AppConfig, config_path: Option<PathBuf>) -> Result<()> {
+    let version = config.profile.display_version(env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "watcher manager v{version} starting (profile={profile}, service={service_addr}, poll={poll}s)",
+        profile = config.profile,
+        service_addr = config.service.bind_addr,
+        poll = WATCH_MANAGER_POLL_INTERVAL_SECONDS,
+    );
+    if let Some(path) = config.resolved_config_path.as_deref() {
+        eprintln!("  config: {}", path.display());
+    }
+    if let Some(path) = config.resolved_dev_overlay_path.as_deref() {
+        eprintln!("  dev overlay: {}", path.display());
+    }
+    eprintln!(
+        "  state: {}",
+        watcher_manager_state_path(config.profile)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "unknown".to_string())
+    );
     reconcile_watcher_manager(&config, config_path.as_deref()).await?;
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
         WATCH_MANAGER_POLL_INTERVAL_SECONDS,
@@ -5289,8 +5308,8 @@ async fn run_watcher_manager(config: AppConfig, config_path: Option<PathBuf>) ->
     }
 }
 
-async fn reconcile_watcher_manager(_config: &AppConfig, config_path: Option<&Path>) -> Result<()> {
-    let mut state = load_watcher_manager_state()?;
+async fn reconcile_watcher_manager(config: &AppConfig, config_path: Option<&Path>) -> Result<()> {
+    let mut state = load_watcher_manager_state(config.profile)?;
     state.updated_at = Some(Utc::now());
     state.warnings.clear();
 
@@ -5377,7 +5396,7 @@ async fn reconcile_watcher_manager(_config: &AppConfig, config_path: Option<&Pat
         }
     }
 
-    save_watcher_manager_state(&state)?;
+    save_watcher_manager_state(config.profile, &state)?;
     Ok(())
 }
 
@@ -5650,8 +5669,8 @@ fn start_managed_agent_watcher(
     )
 }
 
-fn load_watcher_manager_state() -> Result<WatcherManagerState> {
-    let path = watcher_manager_state_path()?;
+fn load_watcher_manager_state(profile: Profile) -> Result<WatcherManagerState> {
+    let path = watcher_manager_state_path(profile)?;
     if !path.is_file() {
         return Ok(WatcherManagerState::default());
     }
@@ -5659,8 +5678,8 @@ fn load_watcher_manager_state() -> Result<WatcherManagerState> {
     serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))
 }
 
-fn save_watcher_manager_state(state: &WatcherManagerState) -> Result<()> {
-    let path = watcher_manager_state_path()?;
+fn save_watcher_manager_state(profile: Profile, state: &WatcherManagerState) -> Result<()> {
+    let path = watcher_manager_state_path(profile)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
@@ -5668,18 +5687,22 @@ fn save_watcher_manager_state(state: &WatcherManagerState) -> Result<()> {
         .with_context(|| format!("write {}", path.display()))
 }
 
-fn clear_watcher_manager_state() -> Result<()> {
-    let path = watcher_manager_state_path()?;
+fn clear_watcher_manager_state(profile: Profile) -> Result<()> {
+    let path = watcher_manager_state_path(profile)?;
     if path.exists() {
         fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
     }
     Ok(())
 }
 
-fn watcher_manager_state_path() -> Result<PathBuf> {
+fn watcher_manager_state_path(profile: Profile) -> Result<PathBuf> {
+    let filename = match profile {
+        Profile::Dev => "watcher-manager-state-dev.json",
+        Profile::Prod => "watcher-manager-state.json",
+    };
     Ok(platform::preferred_user_state_dir()
         .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
-        .join("watcher-manager-state.json"))
+        .join(filename))
 }
 
 fn enable_watch_manager_service(config_path: &Path) -> Result<String> {
@@ -5743,7 +5766,7 @@ fn preview_enable_watch_manager_service() -> Result<String> {
     }
 }
 
-fn disable_watch_manager_service() -> Result<String> {
+fn disable_watch_manager_service(profile: Profile) -> Result<String> {
     #[cfg(target_os = "macos")]
     {
         let plist_path = watch_manager_launch_agent_path()?;
@@ -5753,7 +5776,7 @@ fn disable_watch_manager_service() -> Result<String> {
             fs::remove_file(&plist_path)
                 .with_context(|| format!("remove {}", plist_path.display()))?;
         }
-        if let Ok(state) = load_watcher_manager_state() {
+        if let Ok(state) = load_watcher_manager_state(profile) {
             for session_id in state.sessions.keys() {
                 let _ = stop_managed_watch_service(session_id);
                 if let Ok(path) = managed_watch_launch_agent_path(session_id) {
@@ -5763,7 +5786,7 @@ fn disable_watch_manager_service() -> Result<String> {
                 }
             }
         }
-        clear_watcher_manager_state()?;
+        clear_watcher_manager_state(profile)?;
         return Ok(format!(
             "Disabled watcher manager LaunchAgent {}.\nRemoved plist: {}",
             label,
@@ -5779,12 +5802,12 @@ fn disable_watch_manager_service() -> Result<String> {
             fs::remove_file(&unit_path)
                 .with_context(|| format!("remove {}", unit_path.display()))?;
         }
-        if let Ok(state) = load_watcher_manager_state() {
+        if let Ok(state) = load_watcher_manager_state(profile) {
             for entry in state.sessions.values() {
                 let _ = stop_unit_if_present(&entry.unit_name);
             }
         }
-        clear_watcher_manager_state()?;
+        clear_watcher_manager_state(profile)?;
         run_systemctl_user(["daemon-reload"])?;
         Ok(format!(
             "Disabled user service {}.\nRemoved unit: {}",
@@ -5815,8 +5838,8 @@ fn preview_disable_watch_manager_service() -> Result<String> {
     }
 }
 
-fn watch_manager_service_status() -> Result<String> {
-    let state = load_watcher_manager_state().unwrap_or_default();
+fn watch_manager_service_status(profile: Profile) -> Result<String> {
+    let state = load_watcher_manager_state(profile).unwrap_or_default();
     let warning_lines = if state.warnings.is_empty() {
         "- warnings: none".to_string()
     } else {

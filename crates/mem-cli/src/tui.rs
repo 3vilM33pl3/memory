@@ -89,7 +89,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
             .take()
             .expect("agent_wake_rx present on fresh App"),
     );
-    start_manager_status_worker(app.background_tx.clone());
+    start_manager_status_worker(app.background_tx.clone(), app.profile);
     start_embedding_backends_worker(
         api.clone(),
         app.project.clone(),
@@ -261,12 +261,12 @@ fn start_embedding_backends_worker(
     });
 }
 
-fn start_manager_status_worker(tx: mpsc::UnboundedSender<BackgroundEvent>) {
+fn start_manager_status_worker(tx: mpsc::UnboundedSender<BackgroundEvent>, profile: Profile) {
     std::thread::spawn(move || {
         loop {
             if tx
                 .send(BackgroundEvent::ManagerStatusLoaded {
-                    status: Some(load_manager_footer_status()),
+                    status: Some(load_manager_footer_status(profile)),
                 })
                 .is_err()
             {
@@ -2925,7 +2925,6 @@ fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect)
         area,
     );
 
-    #[cfg(not(target_os = "macos"))]
     let sections = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -2933,16 +2932,6 @@ fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect)
             Constraint::Percentage(25),
             Constraint::Percentage(25),
             Constraint::Percentage(25),
-        ])
-        .split(area);
-
-    #[cfg(target_os = "macos")]
-    let sections = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(33),
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
         ])
         .split(area);
 
@@ -2969,7 +2958,6 @@ fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect)
         sections[1],
     );
 
-    #[cfg(not(target_os = "macos"))]
     frame.render_widget(
         Paragraph::new(component_status_line(
             "Manager",
@@ -2982,7 +2970,6 @@ fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect)
         sections[2],
     );
 
-    #[cfg(not(target_os = "macos"))]
     frame.render_widget(
         Paragraph::new(component_status_line(
             "Watchers",
@@ -2993,19 +2980,6 @@ fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect)
         ))
         .style(Style::default().bg(Theme::PANEL_ALT)),
         sections[3],
-    );
-
-    #[cfg(target_os = "macos")]
-    frame.render_widget(
-        Paragraph::new(component_status_line(
-            "Watchers",
-            &app.versions.memory_watch,
-            watcher_bar_status_label(app),
-            watcher_bar_status_color(app),
-            watcher_bar_status_detail(app),
-        ))
-        .style(Style::default().bg(Theme::PANEL_ALT)),
-        sections[2],
     );
 }
 
@@ -7478,12 +7452,12 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
     }
 }
 
-fn load_manager_footer_status() -> ManagerFooterStatus {
+fn load_manager_footer_status(profile: Profile) -> ManagerFooterStatus {
     let unit_installed = manager_unit_path().is_some_and(|path| path.exists());
     let unit_enabled = manager_service_enabled();
     let unit_active = manager_service_running();
     let foreground_active = foreground_manager_process_running();
-    let state_file = load_manager_state_file();
+    let state_file = load_manager_state_file(profile);
     let tracked_sessions = state_file
         .as_ref()
         .map(|state| state.sessions.len())
@@ -7604,8 +7578,12 @@ fn manager_unit_path() -> Option<PathBuf> {
     }
 }
 
-fn load_manager_state_file() -> Option<ManagerStateFile> {
-    let path = preferred_user_state_dir()?.join("watcher-manager-state.json");
+fn load_manager_state_file(profile: Profile) -> Option<ManagerStateFile> {
+    let filename = match profile {
+        Profile::Dev => "watcher-manager-state-dev.json",
+        Profile::Prod => "watcher-manager-state.json",
+    };
+    let path = preferred_user_state_dir()?.join(filename);
     let content = fs::read_to_string(path).ok()?;
     serde_json::from_str(&content).ok()
 }
