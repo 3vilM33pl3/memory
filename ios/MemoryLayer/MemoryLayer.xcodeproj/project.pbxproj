@@ -60,6 +60,12 @@
 		65E951A4B50FB6B42FD6403A /* MemoryRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65F1F8B426A3FB85313F6719 /* MemoryRowView.swift */; };
 		0DE34892AE669EB763FC0182 /* ConnectionSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3567DB7E6A4E19180E86E9F7 /* ConnectionSetupView.swift */; };
 		33732170ABCE8E8E3BBB8253 /* ProjectPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 931124738C1ED2DFEDBECFEF /* ProjectPickerView.swift */; };
+		A1B2C3D4E5F60001A0000001 /* GraphModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002A0000001 /* GraphModels.swift */; };
+		A1B2C3D4E5F60001A0000002 /* GraphViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002A0000002 /* GraphViewModel.swift */; };
+		A1B2C3D4E5F60001A0000003 /* GraphTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002A0000003 /* GraphTab.swift */; };
+		A1B2C3D4E5F60001A0000004 /* GraphRealityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002A0000004 /* GraphRealityView.swift */; };
+		A1B2C3D4E5F60001A0000005 /* GraphNodeInfoPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002A0000005 /* GraphNodeInfoPanel.swift */; };
+		A1B2C3D4E5F60001A0000006 /* GraphControlsOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002A0000006 /* GraphControlsOverlay.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -117,6 +123,12 @@
 		65F1F8B426A3FB85313F6719 /* MemoryRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryRowView.swift; sourceTree = "<group>"; };
 		3567DB7E6A4E19180E86E9F7 /* ConnectionSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSetupView.swift; sourceTree = "<group>"; };
 		931124738C1ED2DFEDBECFEF /* ProjectPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPickerView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002A0000001 /* GraphModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphModels.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002A0000002 /* GraphViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphViewModel.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002A0000003 /* GraphTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphTab.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002A0000004 /* GraphRealityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphRealityView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002A0000005 /* GraphNodeInfoPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphNodeInfoPanel.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002A0000006 /* GraphControlsOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GraphControlsOverlay.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -193,6 +205,7 @@
 				0B77E7117BF75A8FE9D59E08 /* ActivityEvent.swift */,
 				6E5D92A8C99A019E91D02A84 /* AgentSnapshot.swift */,
 				47E49121D576E6628ED2785E /* Enums.swift */,
+				A1B2C3D4E5F60002A0000001 /* GraphModels.swift */,
 				FD463E787C14DA6BDCB8F89B /* MemoryEntry.swift */,
 				772E67C9650B9A24020607DD /* ProjectOverview.swift */,
 				6E3556FC48CDD6EA0356A94D /* QueryModels.swift */,
@@ -228,11 +241,23 @@
 			children = (
 				2CAB082787218B96F7B20263 /* ActivityViewModel.swift */,
 				55FFCD1CC80106CAF948C204 /* DashboardViewModel.swift */,
+				A1B2C3D4E5F60002A0000002 /* GraphViewModel.swift */,
 				99C2100233894C02B767BF85 /* MemoriesViewModel.swift */,
 				89394CFC9E3D9E135DF1E736 /* QueryViewModel.swift */,
 				374739A6B5CA562100B9A5CA /* ReviewViewModel.swift */,
 			);
 			path = ViewModels;
+			sourceTree = "<group>";
+		};
+			A1B2C3D4E5F60003A0000001 /* Graph */ = {
+			isa = PBXGroup;
+			children = (
+				A1B2C3D4E5F60002A0000006 /* GraphControlsOverlay.swift */,
+				A1B2C3D4E5F60002A0000005 /* GraphNodeInfoPanel.swift */,
+				A1B2C3D4E5F60002A0000004 /* GraphRealityView.swift */,
+				A1B2C3D4E5F60002A0000003 /* GraphTab.swift */,
+			);
+			path = Graph;
 			sourceTree = "<group>";
 		};
 		C454586A1F4E28C340BDC1AD /* Views */ = {
@@ -241,6 +266,7 @@
 				9294C9B29E0B0871A3222A24 /* Activity */,
 				A46DDA1A5DE0FE64C7046A63 /* Agents */,
 				71D88C59162D0066395A9419 /* Dashboard */,
+				A1B2C3D4E5F60003A0000001 /* Graph */,
 				E44BC91828C364B7878C8942 /* Memories */,
 				02B6071172BF914AADD5FDDB /* Onboarding */,
 				0A9B2A3AEC46B597A1C44A2A /* Query */,
@@ -450,6 +476,12 @@
 				65E951A4B50FB6B42FD6403A /* MemoryRowView.swift in Sources */,
 				0DE34892AE669EB763FC0182 /* ConnectionSetupView.swift in Sources */,
 				33732170ABCE8E8E3BBB8253 /* ProjectPickerView.swift in Sources */,
+				A1B2C3D4E5F60001A0000001 /* GraphModels.swift in Sources */,
+				A1B2C3D4E5F60001A0000002 /* GraphViewModel.swift in Sources */,
+				A1B2C3D4E5F60001A0000003 /* GraphTab.swift in Sources */,
+				A1B2C3D4E5F60001A0000004 /* GraphRealityView.swift in Sources */,
+				A1B2C3D4E5F60001A0000005 /* GraphNodeInfoPanel.swift in Sources */,
+				A1B2C3D4E5F60001A0000006 /* GraphControlsOverlay.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

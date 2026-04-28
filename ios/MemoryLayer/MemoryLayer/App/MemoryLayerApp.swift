@@ -11,21 +11,13 @@ struct MemoryLayerApp: App {
         WindowGroup {
             Group {
                 if isConnected, let project {
-                    ContentView(project: project, connection: connection)
-                        .toolbar {
-                            ToolbarItem(placement: .navigationBarTrailing) {
-                                Button(action: { showSettings = true }) {
-                                    Image(systemName: "gearshape")
-                                }
-                            }
-                        }
-                        .sheet(isPresented: $showSettings) {
-                            SettingsView(
-                                connection: connection,
-                                isConnected: $isConnected,
-                                project: $project
-                            )
-                        }
+                    ContentView(
+                        project: project,
+                        connection: connection,
+                        showSettings: $showSettings,
+                        isConnected: $isConnected,
+                        projectBinding: $project
+                    )
                 } else if isConnected && project == nil {
                     ProjectPickerView(
                         selectedProject: $project,
@@ -40,7 +32,6 @@ struct MemoryLayerApp: App {
             }
             .preferredColorScheme(.dark)
             .task {
-                // Auto-connect if credentials are saved
                 if let url = KeychainHelper.serviceURL {
                     await connection.configure(baseURL: url, token: KeychainHelper.apiToken)
                     await connection.connect()

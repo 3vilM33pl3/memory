@@ -1,6 +1,11 @@
 import SwiftUI
+import UIKit
 
 extension MemoryType {
+    var uiColor: UIColor {
+        UIColor(color)
+    }
+
     var color: Color {
         switch self {
         case .architecture: return .blue
