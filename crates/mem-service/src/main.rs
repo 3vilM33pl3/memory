@@ -213,7 +213,11 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
             profile = config.profile,
             role = state.role_name(),
             service_id = config.cluster.service_id,
-            cluster = if config.cluster.enabled { "enabled" } else { "disabled" },
+            cluster = if config.cluster.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            },
         );
         if let Some(path) = config.resolved_config_path.as_deref() {
             eprintln!("  config: {}", path.display());
@@ -221,7 +225,14 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
         if let Some(path) = config.resolved_dev_overlay_path.as_deref() {
             eprintln!("  dev overlay: {}", path.display());
         }
-        eprintln!("  database: {}", if state.pool.is_some() { "connected" } else { "unavailable" });
+        eprintln!(
+            "  database: {}",
+            if state.pool.is_some() {
+                "connected"
+            } else {
+                "unavailable"
+            }
+        );
         eprintln!("  capnp unix: {}", config.service.capnp_unix_socket);
         eprintln!("  capnp tcp: {}", config.service.capnp_tcp_addr);
 

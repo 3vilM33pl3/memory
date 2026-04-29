@@ -205,11 +205,63 @@ See also:
   docs/user/cli/service.md";
 
 const EVAL_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Use eval commands to produce reproducible evidence that memory changes retrieval, grounding, cost, or task success.
+  Prefer --dry-run before runs that would call the backend or execute task commands.
+  JSON is the default output for automation; use --text for human summaries.
+
 Examples:
   memory eval scaffold --project memory --out evals/suites/memory-smoke
   memory eval run --suite evals/examples/memory-smoke --condition full-memory --dry-run
   memory eval compare --baseline target/memory-evals/run-a.json --candidate target/memory-evals/run-b.json --text
   memory eval report --comparison target/memory-evals/comparison.json --text
+
+See also:
+  docs/user/cli/eval.md";
+
+const EVAL_SCAFFOLD_AFTER_HELP: &str = "\
+Agent notes:
+  Creates starter retrieval QA fixtures from current memories. Review generated labels before using the suite for claims.
+  Mutates the output directory unless --dry-run is passed.
+
+Examples:
+  memory eval scaffold --project memory --out evals/suites/memory-smoke
+  memory eval scaffold --project memory --out /tmp/eval --limit 5 --dry-run
+
+See also:
+  docs/user/cli/eval.md";
+
+const EVAL_RUN_AFTER_HELP: &str = "\
+Agent notes:
+  Runs a suite under one or more conditions and writes immutable JSON artifacts under target/memory-evals by default.
+  Use --dry-run to validate suite parsing without LLM calls or shell command execution.
+
+Examples:
+  memory eval run --suite evals/examples/memory-smoke --condition full-memory --dry-run
+  memory eval run --suite evals/examples/memory-smoke --condition no-memory --condition full-memory
+
+See also:
+  docs/user/cli/eval.md";
+
+const EVAL_COMPARE_AFTER_HELP: &str = "\
+Agent notes:
+  Compares two run JSON files pairwise by item id and reports success deltas plus statistical summaries.
+  Use --out to preserve comparison JSON for reports or releases.
+
+Examples:
+  memory eval compare --baseline target/memory-evals/no-memory.json --candidate target/memory-evals/full-memory.json --text
+  memory eval compare --baseline a.json --candidate b.json --out target/memory-evals/comparison.json
+
+See also:
+  docs/user/cli/eval.md";
+
+const EVAL_REPORT_AFTER_HELP: &str = "\
+Agent notes:
+  Renders an existing comparison artifact. This is read-only and suitable for release notes.
+
+Examples:
+  memory eval report --comparison target/memory-evals/comparison.json --text
+  memory eval report --comparison target/memory-evals/comparison.json
 
 See also:
   docs/user/cli/eval.md";
@@ -1499,13 +1551,25 @@ struct EvalArgs {
 
 #[derive(Debug, Subcommand)]
 enum EvalCommand {
-    #[command(about = "Create a starter eval suite from recent project memories.")]
+    #[command(
+        about = "Create a starter eval suite from recent project memories.",
+        after_help = EVAL_SCAFFOLD_AFTER_HELP
+    )]
     Scaffold(EvalScaffoldArgs),
-    #[command(about = "Run one suite under one or more memory conditions.")]
+    #[command(
+        about = "Run one suite under one or more memory conditions.",
+        after_help = EVAL_RUN_AFTER_HELP
+    )]
     Run(EvalRunArgs),
-    #[command(about = "Compare two eval run JSON files.")]
+    #[command(
+        about = "Compare two eval run JSON files.",
+        after_help = EVAL_COMPARE_AFTER_HELP
+    )]
     Compare(EvalCompareArgs),
-    #[command(about = "Render an eval comparison JSON file.")]
+    #[command(
+        about = "Render an eval comparison JSON file.",
+        after_help = EVAL_REPORT_AFTER_HELP
+    )]
     Report(EvalReportArgs),
 }
 
