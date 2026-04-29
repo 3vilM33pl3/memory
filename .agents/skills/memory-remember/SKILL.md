@@ -8,12 +8,14 @@ description: Remember meaningful completed work by capturing task context and cu
 Use this skill when:
 - meaningful repository work is complete
 - the agent has durable facts, conventions, debugging lessons, or decisions to store
+- the agent has just explained code, a module, a file, an architecture path, or the whole codebase and the explanation is durable
 - the user explicitly asks to store completed work as memory
 
 Do not use this skill for:
 - project questions that should use query or resume
 - plan approval or plan-completion verification
 - trivial temporary notes
+- speculative or duplicate code explanations that are not grounded in inspected code or existing memory
 
 ## Script
 
@@ -27,13 +29,26 @@ go run ./.agents/skills/memory-layer/scripts/main.go remember-task \
   --note "<durable fact>"
 ```
 
+Remember a distilled code explanation:
+
+```bash
+go run ./.agents/skills/memory-layer/scripts/main.go remember-task \
+  --type project \
+  --title "Explained <file/module/codebase>" \
+  --prompt "<user explanation request>" \
+  --summary "<short explanation summary>" \
+  --note "<stable explanation fact with file/module/symbol provenance>"
+```
+
 ## Workflow
 
 1. Use the automatic remember workflow after meaningful work is actually complete.
 2. Run it after any required plan-completion verification has already succeeded.
 3. Provide one or more `--note` values for durable facts.
 4. Only store verified outcomes and durable lessons.
-5. If title, prompt, or summary are omitted, let the helper derive them from the repo state when possible.
+5. For explanation memories, store a distilled reusable summary, not the whole chat answer.
+6. Do not use `--file-changed` for explanation-only turns unless files actually changed.
+7. If title, prompt, or summary are omitted, let the helper derive them from the repo state when possible.
 
 ## Model Routing
 

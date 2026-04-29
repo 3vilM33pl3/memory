@@ -37,6 +37,7 @@ The bundle as a whole tells the agent when to:
 - use `resume` to get back into flow after an interruption
 - save the approved plan and checkpoint when a planning phase turns into approved execution
 - remember meaningful completed work automatically
+- remember distilled code and codebase explanations after answering explanation requests
 
 The umbrella skill handles broad or mixed memory turns. The focused skills handle the narrow workflow phases. The shared Go helper under `.agents/skills/memory-layer/scripts/` remains the shared execution path that actually calls `memory`.
 
@@ -47,9 +48,10 @@ The current live bundle workflow is:
 1. `memory-query-resume` handles query-first answers and interruption recovery.
 2. `memory-plan-execution` handles execution start and plan-completion verification.
 3. `memory-remember` handles post-task remembering once work is actually complete.
-4. The umbrella `memory-layer` skill keeps the shared invariants and covers mixed or ambiguous memory turns.
-5. Prefer insufficient evidence over unsupported conclusions.
-6. Never invent provenance.
+4. Code explanation turns query memory first, inspect relevant code or docs, answer, then remember the distilled reusable explanation when it is durable.
+5. The umbrella `memory-layer` skill keeps the shared invariants and covers mixed or ambiguous memory turns.
+6. Prefer insufficient evidence over unsupported conclusions.
+7. Never invent provenance.
 
 The important change is that the bundle is no longer centered on one broad skill or on a manual `memory capture task -> curate-memory` sequence for normal work. The preferred path is now a focused workflow plus `remember-task`, which captures and curates in one step.
 
@@ -93,6 +95,7 @@ The current skill bundle has moved beyond that. It now also covers:
 - plan-to-execution checkpointing with approved-plan capture
 - strict plan-completion verification before the agent may conclude plan-backed work
 - automatic post-task remembering with `remember-task`
+- explanation memory capture for durable code, module, architecture, and codebase explanations
 
 If you are updating other documentation or examples, align them to the live skill instead of treating the older manual capture/curate flow as the default.
 

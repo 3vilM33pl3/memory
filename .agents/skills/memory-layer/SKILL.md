@@ -28,6 +28,7 @@ Prefer the focused skills when the task is clearly one of these:
   - verify all plan checkbox items are complete before claiming the task is finished
 - `memory-remember`
   - remember meaningful completed work after the task is done
+  - remember distilled code or codebase explanations after answering explanation requests
 
 Use this umbrella skill when the turn is mixed, ambiguous, or about the Memory Layer workflow itself.
 
@@ -40,8 +41,9 @@ These rules apply across the whole memory skill bundle:
 3. Save the approved plan before implementation begins when a planning phase turns into execution.
 4. Verify plan-backed work is complete before claiming the task is finished.
 5. Remember meaningful work after it is actually done.
-6. Prefer insufficient evidence over unsupported conclusions.
-7. Never invent provenance.
+6. When you explain code, a file, a module, or the whole codebase, remember the distilled reusable explanation after answering.
+7. Prefer insufficient evidence over unsupported conclusions.
+8. Never invent provenance.
 
 ## Mandatory post-task rule
 
@@ -51,6 +53,19 @@ After any meaningful repository work, run the remember workflow before sending t
 - the user explicitly asked not to store memory
 
 This skill should default to storing durable project knowledge, not waiting for the user to ask again.
+
+## Code explanation memory rule
+
+When the user asks for an explanation of code, a file, a module, an architecture path, or the whole codebase:
+
+1. Query memory before answering, as with any project-specific question.
+2. Inspect the relevant code or docs before making claims.
+3. Answer the user normally.
+4. After answering, run the remember workflow if the explanation produced durable reusable understanding.
+
+Store a distilled memory, not the whole chat answer. Use `--type project`, a title like `Explained <file/module/codebase>`, and notes that capture the stable explanation plus file, module, or symbol provenance. Do not use `--file-changed` unless files actually changed.
+
+Skip remembering when the explanation was trivial, speculative, duplicate, or not grounded in inspected code or existing memory.
 
 ## Shared Script Home
 

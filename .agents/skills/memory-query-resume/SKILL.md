@@ -7,6 +7,7 @@ description: Query curated project memory before answering repo-specific questio
 
 Use this skill when:
 - the user asks how this repository works
+- the user asks to explain code, a file, a module, an architecture path, or the whole codebase
 - the user asks a project-specific question that should be grounded in stored memory
 - the user returns after an interruption and wants to get back into flow
 - the user asks what changed since they were last here
@@ -35,8 +36,10 @@ go run ./.agents/skills/memory-layer/scripts/main.go resume-project [project-slu
 1. Query memory before answering project-specific questions.
 2. For interruption-recovery prompts, use `resume-project` instead of a generic query.
 3. Use the returned evidence or resume pack in your answer.
-4. Prefer insufficient evidence over unsupported conclusions.
-5. Never invent provenance.
+4. For code or codebase explanation requests, inspect the relevant code or docs before making claims.
+5. After answering an explanation request, use `memory-remember` to store the distilled reusable explanation when it produced durable project understanding.
+6. Prefer insufficient evidence over unsupported conclusions.
+7. Never invent provenance.
 
 ## Model Routing
 

@@ -55,8 +55,9 @@ must be on PATH (or use `cargo run --bin memory --` from the repo root).
 3. Save the approved plan before implementation begins when a planning phase turns into execution.
 4. Verify plan-backed work is complete before claiming the task is finished.
 5. Remember meaningful work after it is actually done.
-6. Prefer insufficient evidence over unsupported conclusions.
-7. Never invent provenance.
+6. Remember distilled code and codebase explanations after answering explanation requests.
+7. Prefer insufficient evidence over unsupported conclusions.
+8. Never invent provenance.
 
 ### Query and resume
 Use when: the user asks a project-specific question or returns after an interruption.
@@ -96,3 +97,16 @@ memory remember --project memory \
 ```
 
 This should default to storing durable project knowledge, not waiting for the user to ask.
+
+### Store code explanations
+Use when: you answered a request to explain code, a file, a module, an architecture path, or the whole codebase.
+
+After answering, store a distilled reusable memory when the explanation is durable and grounded in inspected code or existing memory. Do not store the full chat answer, speculative claims, duplicates, or trivial explanations. Do not use `--file-changed` unless files actually changed.
+
+```bash
+memory remember --project memory --type project \
+  --title "Explained <file/module/codebase>" \
+  --prompt "<user explanation request>" \
+  --summary "<short explanation summary>" \
+  --note "<stable explanation fact with file/module/symbol provenance>"
+```

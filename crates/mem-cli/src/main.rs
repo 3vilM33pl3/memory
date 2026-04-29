@@ -6874,8 +6874,9 @@ must be on PATH (or use `cargo run --bin memory --` from the repo root).
 3. Save the approved plan before implementation begins when a planning phase turns into execution.
 4. Verify plan-backed work is complete before claiming the task is finished.
 5. Remember meaningful work after it is actually done.
-6. Prefer insufficient evidence over unsupported conclusions.
-7. Never invent provenance.
+6. Remember distilled code and codebase explanations after answering explanation requests.
+7. Prefer insufficient evidence over unsupported conclusions.
+8. Never invent provenance.
 
 ### Query and resume
 Use when: the user asks a project-specific question or returns after an interruption.
@@ -6915,6 +6916,19 @@ memory remember --project {project} \
 ```
 
 This should default to storing durable project knowledge, not waiting for the user to ask.
+
+### Store code explanations
+Use when: you answered a request to explain code, a file, a module, an architecture path, or the whole codebase.
+
+After answering, store a distilled reusable memory when the explanation is durable and grounded in inspected code or existing memory. Do not store the full chat answer, speculative claims, duplicates, or trivial explanations. Do not use `--file-changed` unless files actually changed.
+
+```bash
+memory remember --project {project} --type project \
+  --title "Explained <file/module/codebase>" \
+  --prompt "<user explanation request>" \
+  --summary "<short explanation summary>" \
+  --note "<stable explanation fact with file/module/symbol provenance>"
+```
 
 ### Store user context
 Use when: you learn about the user's role, preferences, or expertise.
@@ -9613,9 +9627,9 @@ mod tests {
         derive_plan_thread_key, derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
         ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
         mask_database_url, parse_plan_checkboxes, render_agent_project_config,
-        repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
-        root_gitignore_contains_mem, shared_env_lookup, watcher_command_requires_config_load,
-        write_headers,
+        render_claude_md_memory_section, repair_repo_bootstrap, resolve_project_slug,
+        resolve_repo_root, resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
+        watcher_command_requires_config_load, write_headers,
     };
     use mem_api::AppConfig;
 
@@ -10316,6 +10330,43 @@ mod tests {
         assert!(content.contains("[capture]"));
         assert!(content.contains("include_paths"));
         assert!(content.contains("graph_enabled = false"));
+    }
+
+    #[test]
+    fn claude_memory_section_mentions_code_explanation_memory() {
+        let content = render_claude_md_memory_section("memory");
+
+        assert!(content.contains("Remember distilled code and codebase explanations"));
+        assert!(content.contains("### Store code explanations"));
+        assert!(content.contains("memory remember --project memory --type project"));
+        assert!(content.contains("Do not store the full chat answer"));
+        assert!(content.contains("Do not use `--file-changed` unless files actually changed"));
+    }
+
+    #[test]
+    fn init_copies_code_explanation_memory_rule_to_skills() {
+        let repo_root = unique_temp_dir("mem-init-explanation-memory");
+        fs::create_dir_all(&repo_root).unwrap();
+
+        initialize_repo(&repo_root, "memory", false, false).unwrap();
+
+        let umbrella =
+            fs::read_to_string(repo_root.join(".agents/skills/memory-layer/SKILL.md")).unwrap();
+        let query_resume =
+            fs::read_to_string(repo_root.join(".agents/skills/memory-query-resume/SKILL.md"))
+                .unwrap();
+        let remember =
+            fs::read_to_string(repo_root.join(".agents/skills/memory-remember/SKILL.md")).unwrap();
+
+        assert!(umbrella.contains("Code explanation memory rule"));
+        assert!(umbrella.contains("Store a distilled memory, not the whole chat answer"));
+        assert!(query_resume.contains("explain code, a file, a module"));
+        assert!(query_resume.contains("store the distilled reusable explanation"));
+        assert!(remember.contains("Remember a distilled code explanation"));
+        assert!(remember.contains("--type project"));
+        assert!(remember.contains("Do not use `--file-changed`"));
+
+        let _ = fs::remove_dir_all(repo_root);
     }
 
     #[cfg(not(target_os = "macos"))]

@@ -60,6 +60,7 @@ For the `memory-layer` skill, those matches are things like:
 - project-specific questions about this repo
 - asking what changed or what is known already
 - storing durable project knowledge
+- explaining code, a module, a file, an architecture path, or the whole codebase
 - resuming work after an interruption
 - transitioning from planning into approved execution
 

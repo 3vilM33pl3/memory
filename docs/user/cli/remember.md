@@ -22,6 +22,7 @@ Use `remember` for:
 - durable debugging lessons
 - environment facts that will matter later
 - verified task outcomes worth keeping
+- distilled explanations of code, files, modules, architecture paths, or the whole codebase
 
 This is the normal direct write command for users. Agents often use the higher-level repo-local helper through:
 
@@ -87,6 +88,20 @@ memory remember \
   --note "Production deploys are done through a systemd unit restart."
 ```
 
+Store a distilled code explanation after answering an explanation request:
+
+```bash
+memory remember \
+  --project my-project \
+  --type project \
+  --title "Explained crates/mem-cli/src/main.rs" \
+  --prompt "Explain how CLI help is generated." \
+  --summary "Explained the Clap-based help constants and command metadata." \
+  --note "CLI help is generated from Clap command metadata and after_help constants in crates/mem-cli/src/main.rs."
+```
+
+Explanation memories should capture stable reusable understanding, not the full chat answer. Do not use `--file-changed` for explanation-only turns unless files actually changed.
+
 ## What It Writes
 
 `remember` does not write canonical memory rows directly.
@@ -113,6 +128,7 @@ Do not use `remember` for:
 - temporary scratch notes
 - unverified guesses
 - duplicate low-value chatter
+- speculative or trivial explanations that are not grounded in inspected code or existing memory
 - large repo bootstrap work where `scan` is the better tool
 
 For project-wide repository extraction, use [Scan Command](scan.md).
