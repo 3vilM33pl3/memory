@@ -4,6 +4,7 @@ import {
   approveProposal,
   archiveProject,
   curate,
+  deactivateEmbeddingBackend,
   deleteMemory,
   exportBundle,
   getActivities,
@@ -25,10 +26,12 @@ import {
   rejectProposal,
   runQuery,
   saveReplacementPolicy,
+  setEmbeddingCreationEnabled,
 } from "./api";
 import type {
   ActivityEvent,
   AgentSnapshotResponse,
+  EmbeddingBackendInfo,
   EmbeddingBackendsResponse,
   MemoryEntryResponse,
   MemoryHistoryResponse,
@@ -55,6 +58,21 @@ type Tab = (typeof ALL_TABS)[number];
 
 type MemoryTypeFilter = "all" | MemoryType;
 type StatusFilter = "all" | MemoryStatus;
+
+function embeddingBackendSelectionIndex(
+  payload: EmbeddingBackendsResponse,
+  preferredName: string | null,
+  fallbackIndex: number,
+): number {
+  if (!payload.backends.length) return 0;
+  if (preferredName) {
+    const preferredIndex = payload.backends.findIndex((backend) => backend.name === preferredName);
+    if (preferredIndex >= 0) return preferredIndex;
+  }
+  const activeIndex = payload.backends.findIndex((backend) => backend.active);
+  if (activeIndex >= 0) return activeIndex;
+  return Math.min(fallbackIndex, payload.backends.length - 1);
+}
 
 const EMPTY_OVERVIEW: ProjectOverviewResponse = {
   project: "memory",
@@ -157,6 +175,7 @@ export default function App() {
   const [embeddingBackends, setEmbeddingBackends] = useState<EmbeddingBackendsResponse | null>(null);
   const [selectedEmbeddingIndex, setSelectedEmbeddingIndex] = useState(0);
   const [embeddingLoading, setEmbeddingLoading] = useState(false);
+  const [embeddingOperation, setEmbeddingOperation] = useState<string | null>(null);
   // Resume state
   const [resumeData, setResumeData] = useState<ResumeResponse | null>(null);
   const [resumeLoading, setResumeLoading] = useState(false);
@@ -327,6 +346,9 @@ export default function App() {
     return roots.length === 1 ? roots[0] : "";
   }, [overview.automation?.repo_root, overview.watchers?.watchers, repoRootInput]);
 
+  const selectedEmbeddingBackend = embeddingBackends?.backends[selectedEmbeddingIndex] ?? null;
+  const embeddingBusy = embeddingLoading || embeddingOperation !== null;
+
   useEffect(() => {
     if (!effectiveRepoRoot) return;
     const key = `${project}:${effectiveRepoRoot}`;
@@ -377,6 +399,33 @@ export default function App() {
         queryRef.current?.focus();
         return;
       }
+      if (tab === "embeddings") {
+        if (e.key === "r") {
+          e.preventDefault();
+          void refreshEmbeddings();
+          return;
+        }
+        if (e.key === "Enter" && selectedEmbeddingBackend && !embeddingBusy) {
+          e.preventDefault();
+          void handleToggleEmbeddingSearch(selectedEmbeddingBackend);
+          return;
+        }
+        if (e.key === "c" && selectedEmbeddingBackend && !embeddingBusy) {
+          e.preventDefault();
+          void handleToggleEmbeddingCreation(selectedEmbeddingBackend);
+          return;
+        }
+        if (e.key === "e" && selectedEmbeddingBackend && !embeddingBusy) {
+          e.preventDefault();
+          void handleReembedEmbeddingBackend(selectedEmbeddingBackend);
+          return;
+        }
+        if (e.key === "I" && selectedEmbeddingBackend && !embeddingBusy) {
+          e.preventDefault();
+          void handleReindexEmbeddingBackend(selectedEmbeddingBackend);
+          return;
+        }
+      }
       if (e.key === "r") {
         e.preventDefault();
         void refreshProject(project);
@@ -385,7 +434,7 @@ export default function App() {
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [tab, project]);
+  }, [embeddingBusy, project, selectedEmbeddingBackend, tab]);
 
   const refreshProject = useCallback(async (nextProject: string) => {
     try {
@@ -480,12 +529,13 @@ export default function App() {
         setStatusMessage(`Reindexed ${response.reindexed_entries} memories.`);
       } else if (action === "reembed") {
         const response = await reembed(project);
-        setStatusMessage(`Materialized ${response.reembedded_chunks} active-space chunk embeddings.`);
+        setStatusMessage(`Materialized ${response.reembedded_chunks} chunk embeddings across configured spaces.`);
       } else {
         const response = await archiveProject(project);
         setStatusMessage(`Archived ${response.archived_count} low-value memories.`);
       }
       await refreshProject(project);
+      if (tab === "embeddings") await refreshEmbeddings(null, true);
     } catch (error) {
       setStatusMessage((error as Error).message);
     }
@@ -632,13 +682,16 @@ export default function App() {
     }
   }
 
-  async function refreshEmbeddings() {
+  async function refreshEmbeddings(preferredName?: string | null, quiet = false) {
     setEmbeddingLoading(true);
     try {
       const payload = await getEmbeddingBackends(project);
+      const currentName = embeddingBackends?.backends[selectedEmbeddingIndex]?.name ?? null;
       setEmbeddingBackends(payload);
-      setSelectedEmbeddingIndex((current) => Math.min(current, Math.max(payload.backends.length - 1, 0)));
-      setStatusMessage(`Loaded ${payload.backends.length} embedding backend(s).`);
+      setSelectedEmbeddingIndex((current) =>
+        embeddingBackendSelectionIndex(payload, preferredName ?? currentName, current),
+      );
+      if (!quiet) setStatusMessage(`Loaded ${payload.backends.length} embedding backend(s).`);
     } catch (error) {
       setStatusMessage((error as Error).message);
     } finally {
@@ -646,17 +699,68 @@ export default function App() {
     }
   }
 
-  async function handleActivateEmbedding(name: string) {
-    setEmbeddingLoading(true);
+  async function handleToggleEmbeddingSearch(backend: EmbeddingBackendInfo) {
+    if (!backend.ready) {
+      setStatusMessage(`Embedding backend ${backend.name} is not ready.`);
+      return;
+    }
+    setEmbeddingOperation(backend.active ? `turning off ${backend.name}` : `activating ${backend.name}`);
     try {
-      const payload = await activateEmbeddingBackend(name);
+      const payload = backend.active
+        ? await deactivateEmbeddingBackend()
+        : await activateEmbeddingBackend(backend.name);
       setEmbeddingBackends(payload);
-      setStatusMessage(`Activated embedding backend ${name}.`);
+      setSelectedEmbeddingIndex((current) => embeddingBackendSelectionIndex(payload, backend.name, current));
+      setStatusMessage(backend.active ? "Embeddings off." : `Activated embedding backend ${backend.name}.`);
       await refreshProject(project);
     } catch (error) {
       setStatusMessage((error as Error).message);
     } finally {
-      setEmbeddingLoading(false);
+      setEmbeddingOperation(null);
+    }
+  }
+
+  async function handleToggleEmbeddingCreation(backend: EmbeddingBackendInfo) {
+    const enabled = !backend.create_enabled;
+    setEmbeddingOperation(`toggling automatic creation for ${backend.name}`);
+    try {
+      const payload = await setEmbeddingCreationEnabled(backend.name, enabled);
+      setEmbeddingBackends(payload);
+      setSelectedEmbeddingIndex((current) => embeddingBackendSelectionIndex(payload, backend.name, current));
+      setStatusMessage(`Automatic embedding creation ${enabled ? "on" : "off"} for ${backend.name}.`);
+      await refreshProject(project);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    } finally {
+      setEmbeddingOperation(null);
+    }
+  }
+
+  async function handleReembedEmbeddingBackend(backend: EmbeddingBackendInfo) {
+    setEmbeddingOperation(`creating embeddings for ${backend.name}`);
+    try {
+      const response = await reembed(project, backend.name);
+      setStatusMessage(`Created ${response.reembedded_chunks} chunk embedding(s) for ${backend.name}.`);
+      await refreshEmbeddings(backend.name, true);
+      await refreshProject(project);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    } finally {
+      setEmbeddingOperation(null);
+    }
+  }
+
+  async function handleReindexEmbeddingBackend(backend: EmbeddingBackendInfo) {
+    setEmbeddingOperation(`reindexing ${backend.name}`);
+    try {
+      const response = await reindex(project, backend.name);
+      setStatusMessage(`Reindexed ${response.reindexed_entries} memory entries for ${backend.name}.`);
+      await refreshEmbeddings(backend.name, true);
+      await refreshProject(project);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    } finally {
+      setEmbeddingOperation(null);
     }
   }
 
@@ -1425,20 +1529,25 @@ export default function App() {
       {tab === "embeddings" ? (
         <section className="panel-stack">
           <div className="panel actions-row">
-            <button onClick={() => void refreshEmbeddings()} type="button" disabled={embeddingLoading}>
+            <button onClick={() => void refreshEmbeddings()} type="button" disabled={embeddingBusy}>
               {embeddingLoading ? "Refreshing..." : "Refresh"}
             </button>
-            <button onClick={() => void runProjectAction("reindex")} type="button">Reindex all</button>
-            <button onClick={() => void runProjectAction("reembed")} type="button">Re-embed all</button>
+            <button onClick={() => void runProjectAction("reindex")} type="button" disabled={embeddingBusy}>Reindex all</button>
+            <button onClick={() => void runProjectAction("reembed")} type="button" disabled={embeddingBusy}>Re-embed all</button>
           </div>
           <section className="panel-grid">
             <div className="panel">
               <h2>Embedding backends</h2>
               <div className="stats-row">
                 <span>active {embeddingBackends?.active ?? "none"}</span>
+                <span>create {selectedEmbeddingBackend ? `${selectedEmbeddingBackend.create_enabled ? "on" : "off"} for ${selectedEmbeddingBackend.name}` : "unknown"}</span>
                 <span>{embeddingBackends?.backends.length ?? 0} configured</span>
                 <span>{embeddingBackends?.backends.filter((backend) => backend.ready).length ?? 0} ready</span>
+                <span>{embeddingBackends?.backends.filter((backend) => !backend.ready).length ?? 0} not ready</span>
               </div>
+              <p className="muted">
+                Status: {embeddingOperation ? `${embeddingOperation}...` : embeddingLoading ? "refreshing..." : "idle"}
+              </p>
               <div className="list-view">
                 {(embeddingBackends?.backends ?? []).map((backend, index) => (
                   <button
@@ -1453,6 +1562,7 @@ export default function App() {
                     </div>
                     <div className="meta-stack">
                       <span className={`badge ${backend.ready ? "badge-active" : "badge-archived"}`}>{backend.ready ? "ready" : "not ready"}</span>
+                      <span className={`badge ${backend.create_enabled ? "badge-active" : "badge-archived"}`}>create {backend.create_enabled ? "on" : "off"}</span>
                       <span>{backend.project_chunk_count ?? 0} chunks</span>
                       <span>{backend.project_memory_count ?? 0} memories</span>
                     </div>
@@ -1461,25 +1571,47 @@ export default function App() {
               </div>
             </div>
             <div className="panel detail-scroll">
-              {embeddingBackends?.backends[selectedEmbeddingIndex] ? (
+              {selectedEmbeddingBackend ? (
                 <>
-                  <h2>{embeddingBackends.backends[selectedEmbeddingIndex].name}</h2>
-                  <Metric label="Provider" value={embeddingBackends.backends[selectedEmbeddingIndex].provider} />
-                  <Metric label="Model" value={embeddingBackends.backends[selectedEmbeddingIndex].model || "n/a"} />
-                  <Metric label="Base URL" value={embeddingBackends.backends[selectedEmbeddingIndex].base_url || "default"} />
-                  <Metric label="Coverage" value={`${embeddingBackends.backends[selectedEmbeddingIndex].project_chunk_count ?? 0} chunks / ${embeddingBackends.backends[selectedEmbeddingIndex].project_memory_count ?? 0} memories`} />
-                  <Metric label="Status" value={embeddingBackends.backends[selectedEmbeddingIndex].ready ? "ready" : "not ready"} />
+                  <h2>{selectedEmbeddingBackend.name}</h2>
+                  <Metric label="Provider" value={selectedEmbeddingBackend.provider} />
+                  <Metric label="Model" value={selectedEmbeddingBackend.model || "n/a"} />
+                  <Metric label="Base URL" value={selectedEmbeddingBackend.base_url || "default"} />
+                  <Metric label="Coverage" value={`${selectedEmbeddingBackend.project_chunk_count ?? 0} chunks / ${selectedEmbeddingBackend.project_memory_count ?? 0} memories`} />
+                  <Metric label="Status" value={selectedEmbeddingBackend.ready ? "ready" : "not ready"} />
+                  <Metric label="Search" value={selectedEmbeddingBackend.active ? "active" : "inactive"} />
+                  <Metric label="Automatic creation" value={selectedEmbeddingBackend.create_enabled ? "on" : "off"} />
                   <div className="proposal-actions">
                     <button
-                      onClick={() => void handleActivateEmbedding(embeddingBackends.backends[selectedEmbeddingIndex].name)}
+                      onClick={() => void handleToggleEmbeddingSearch(selectedEmbeddingBackend)}
                       type="button"
-                      disabled={embeddingBackends.backends[selectedEmbeddingIndex].active || !embeddingBackends.backends[selectedEmbeddingIndex].ready}
+                      disabled={embeddingBusy || !selectedEmbeddingBackend.ready}
                     >
-                      Activate
+                      {selectedEmbeddingBackend.active ? "Turn off search" : "Activate"}
                     </button>
-                    <button onClick={() => void reindex(project, embeddingBackends.backends[selectedEmbeddingIndex].name).then((response) => setStatusMessage(`Reindexed ${response.reindexed_entries} memories for ${embeddingBackends.backends[selectedEmbeddingIndex].name}.`)).then(() => refreshEmbeddings()).catch((error: Error) => setStatusMessage(error.message))} type="button">Reindex</button>
-                    <button onClick={() => void reembed(project, embeddingBackends.backends[selectedEmbeddingIndex].name).then((response) => setStatusMessage(`Materialized ${response.reembedded_chunks} chunks for ${embeddingBackends.backends[selectedEmbeddingIndex].name}.`)).then(() => refreshEmbeddings()).catch((error: Error) => setStatusMessage(error.message))} type="button">Re-embed</button>
+                    <button
+                      onClick={() => void handleToggleEmbeddingCreation(selectedEmbeddingBackend)}
+                      type="button"
+                      disabled={embeddingBusy}
+                    >
+                      {selectedEmbeddingBackend.create_enabled ? "Disable automatic creation" : "Enable automatic creation"}
+                    </button>
+                    <button
+                      onClick={() => void handleReembedEmbeddingBackend(selectedEmbeddingBackend)}
+                      type="button"
+                      disabled={embeddingBusy || !selectedEmbeddingBackend.ready}
+                    >
+                      Create embeddings
+                    </button>
+                    <button
+                      onClick={() => void handleReindexEmbeddingBackend(selectedEmbeddingBackend)}
+                      type="button"
+                      disabled={embeddingBusy || !selectedEmbeddingBackend.ready}
+                    >
+                      Reindex
+                    </button>
                   </div>
+                  <p className="muted">Shortcuts: Enter toggles search, c toggles automatic creation, e creates embeddings, I reindexes, r refreshes.</p>
                 </>
               ) : (
                 <p className="muted">No embedding backends configured.</p>

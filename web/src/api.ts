@@ -210,6 +210,29 @@ export async function activateEmbeddingBackend(name: string): Promise<EmbeddingB
   );
 }
 
+export async function deactivateEmbeddingBackend(): Promise<EmbeddingBackendsResponse> {
+  return parseJson(
+    await fetch("/v1/embeddings/deactivate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    }),
+  );
+}
+
+export async function setEmbeddingCreationEnabled(
+  name: string,
+  enabled: boolean,
+): Promise<EmbeddingBackendsResponse> {
+  return parseJson(
+    await fetch("/v1/embeddings/create-enabled", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, enabled }),
+    }),
+  );
+}
+
 export async function getReplacementPolicy(
   project: string,
   repoRoot?: string | null,

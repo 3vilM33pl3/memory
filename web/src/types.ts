@@ -603,6 +603,7 @@ export interface EmbeddingBackendInfo {
   model: string;
   active: boolean;
   ready: boolean;
+  create_enabled: boolean;
   project_chunk_count: number | null;
   project_memory_count: number | null;
 }
@@ -610,6 +611,7 @@ export interface EmbeddingBackendInfo {
 export interface EmbeddingBackendsResponse {
   backends: EmbeddingBackendInfo[];
   active: string | null;
+  create_enabled: boolean;
 }
 
 // --- Resume types ---

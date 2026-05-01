@@ -528,6 +528,8 @@ async fn reembed_single_backend(
     project: &str,
     embedder: &EmbeddingService,
 ) -> Result<u64> {
+    ensure_chunks_for_reembedding(pool, project).await?;
+
     let target_space = embedder.embedding_space();
     let rows = sqlx::query(
         r#"
@@ -595,6 +597,61 @@ async fn reembed_single_backend(
     }
 
     Ok(reembedded_chunks)
+}
+
+async fn ensure_chunks_for_reembedding(pool: &PgPool, project: &str) -> Result<u64> {
+    let rows = sqlx::query(
+        r#"
+        SELECT m.id, m.canonical_text, m.summary
+        FROM memory_entries m
+        JOIN projects p ON p.id = m.project_id
+        WHERE p.slug = $1
+          AND m.status = 'active'
+          AND m.is_tombstone = FALSE
+          AND NOT EXISTS (
+              SELECT 1
+              FROM memory_chunks mc
+              WHERE mc.memory_entry_id = m.id
+          )
+        "#,
+    )
+    .bind(project)
+    .fetch_all(pool)
+    .await
+    .context("load memories missing chunks for re-embedding")?;
+
+    let mut inserted = 0u64;
+    for row in rows {
+        let memory_id: Uuid = row.try_get("id")?;
+        let canonical_text: String = row.try_get("canonical_text")?;
+        let summary: String = row.try_get("summary")?;
+        for chunk_text in split_search_chunks(&summary, &canonical_text) {
+            sqlx::query(
+                r#"
+                INSERT INTO memory_chunks
+                    (
+                        id,
+                        memory_entry_id,
+                        chunk_text,
+                        search_text,
+                        tsv
+                    )
+                VALUES
+                    ($1, $2, $3, $4, to_tsvector('english', $4))
+                "#,
+            )
+            .bind(Uuid::new_v4())
+            .bind(memory_id)
+            .bind(&chunk_text)
+            .bind(format!("{summary}\n{chunk_text}"))
+            .execute(pool)
+            .await
+            .context("insert missing chunk for re-embedding")?;
+            inserted += 1;
+        }
+    }
+
+    Ok(inserted)
 }
 
 pub async fn prune_project_embeddings(
