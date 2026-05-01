@@ -81,9 +81,11 @@ pub fn build_backend(config: &EmbeddingBackendConfig) -> Option<Arc<dyn Embeddin
     match provider {
         "openai_compatible" | "openai" => Some(Arc::new(OpenAiBackend::new(
             client,
+            provider.to_string(),
             base_url,
             config.model.trim().to_string(),
             api_key.to_string(),
+            config.dimensions,
         ))),
         "voyage" => Some(Arc::new(VoyageBackend::new(
             client,
@@ -131,14 +133,26 @@ pub struct OpenAiBackend {
     client: Client,
     space: EmbeddingSpace,
     api_key: String,
+    dimensions: Option<u32>,
+    include_openai_options: bool,
 }
 
 impl OpenAiBackend {
-    fn new(client: Client, base_url: String, model: String, api_key: String) -> Self {
+    fn new(
+        client: Client,
+        provider: String,
+        base_url: String,
+        model: String,
+        api_key: String,
+        dimensions: Option<u32>,
+    ) -> Self {
+        let include_openai_options = provider == "openai";
         Self {
             client,
-            space: EmbeddingSpace::new("openai_compatible", &base_url, &model),
+            space: EmbeddingSpace::new(&provider, &base_url, &model),
             api_key,
+            dimensions,
+            include_openai_options,
         }
     }
 }
@@ -147,6 +161,10 @@ impl OpenAiBackend {
 struct OpenAiRequest<'a> {
     model: &'a str,
     input: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encoding_format: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimensions: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -170,6 +188,11 @@ impl EmbeddingBackend for OpenAiBackend {
         let body = OpenAiRequest {
             model: &self.space.model,
             input,
+            encoding_format: self.include_openai_options.then_some("float"),
+            dimensions: self
+                .include_openai_options
+                .then_some(self.dimensions)
+                .flatten(),
         };
         let url = format!("{}/embeddings", self.space.base_url);
         let response = self
@@ -474,6 +497,19 @@ mod tests {
         }
     }
 
+    fn config_with_dimensions(
+        provider: &str,
+        base: &str,
+        model: &str,
+        key_env: &str,
+        dimensions: u32,
+    ) -> EmbeddingBackendConfig {
+        EmbeddingBackendConfig {
+            dimensions: Some(dimensions),
+            ..config(provider, base, model, key_env)
+        }
+    }
+
     #[test]
     fn effective_embedding_base_url_uses_provider_default_for_empty_config() {
         assert_eq!(
@@ -500,6 +536,8 @@ mod tests {
             .and(matchers::body_json(serde_json::json!({
                 "model": "text-embedding-3-small",
                 "input": ["hello", "world"],
+                "encoding_format": "float",
+                "dimensions": 512,
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "data": [
@@ -509,13 +547,15 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let backend = build_backend(&config(
-            "openai_compatible",
+        let backend = build_backend(&config_with_dimensions(
+            "openai",
             &server.uri(),
             "text-embedding-3-small",
             KEY_ENV,
+            512,
         ))
         .expect("backend resolves");
+        assert_eq!(backend.space().provider, "openai");
         let vectors = backend
             .embed(
                 &["hello".to_string(), "world".to_string()],
@@ -524,6 +564,42 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(vectors.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_backend_omits_openai_only_options() {
+        const KEY_ENV: &str = "TEST_EMBED_KEY_OPENAI_COMPAT";
+        unsafe {
+            std::env::set_var(KEY_ENV, "sk-test");
+        }
+        let server = MockServer::start().await;
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/embeddings"))
+            .and(matchers::body_json(serde_json::json!({
+                "model": "nomic-embed-text",
+                "input": ["hello"],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {"index": 0, "embedding": [0.1, 0.2]},
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let backend = build_backend(&config_with_dimensions(
+            "openai_compatible",
+            &server.uri(),
+            "nomic-embed-text",
+            KEY_ENV,
+            512,
+        ))
+        .expect("backend resolves");
+        assert_eq!(backend.space().provider, "openai_compatible");
+        let vectors = backend
+            .embed(&["hello".to_string()], EmbeddingPurpose::Document)
+            .await
+            .unwrap();
+        assert_eq!(vectors.len(), 1);
     }
 
     #[tokio::test]

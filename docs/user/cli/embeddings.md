@@ -45,11 +45,13 @@ active = "voyage-code"
 
 [[embeddings.backends]]
 name = "openai-3-small"
-provider = "openai_compatible"
+provider = "openai"
 base_url = ""
 api_key_env = "OPENAI_API_KEY"
 model = "text-embedding-3-small"
 batch_size = 16
+# Optional for OpenAI text-embedding-3 models:
+# dimensions = 512
 
 [[embeddings.backends]]
 name = "voyage-code"
@@ -65,6 +67,8 @@ The `name` field is your activation handle and must be unique. If you leave `nam
 Set `enabled = false` under `[embeddings]` to keep backend declarations available while turning semantic retrieval off. The TUI Embeddings tab writes that flag when you press `Enter` on the currently active backend row, and writes `enabled = true` again when you activate a backend.
 
 Set `create_enabled = false` inside a specific `[[embeddings.backends]]` block to keep semantic search available for existing vectors while preventing automatic creation of new embeddings for that provider. In the TUI Embeddings tab, highlight a backend and press `c` to toggle this value.
+
+Use `provider = "openai"` for the official OpenAI embeddings API. Use `provider = "openai_compatible"` for local or proxy APIs that mimic OpenAI's `/embeddings` endpoint but may not support OpenAI-specific request options. For OpenAI `text-embedding-3` models, `dimensions = <n>` is optional and asks OpenAI to return a smaller vector.
 
 The **legacy singleton shape** still works:
 
@@ -157,7 +161,7 @@ Your config files live in the locations listed under [Getting Started → File L
 2. Add an `[embeddings]` block to `memory-layer.toml`:
    ```toml
    [embeddings]
-   provider = "openai_compatible"
+   provider = "openai"
    base_url = ""
    api_key_env = "OPENAI_API_KEY"
    model = "text-embedding-3-small"
@@ -189,7 +193,7 @@ Do this if you know up-front you want the option to switch models freely — it 
 
    [[embeddings.backends]]
    name = "openai-3-small"
-   provider = "openai_compatible"
+   provider = "openai"
    base_url = ""
    api_key_env = "OPENAI_API_KEY"
    model = "text-embedding-3-small"

@@ -2007,6 +2007,7 @@ mod tests {
                 api_key_env: "MISSING_ENV_VAR_FOR_TEST".to_string(),
                 model: String::new(),
                 batch_size: 16,
+                dimensions: None,
                 create_enabled: true,
             }],
         };
@@ -2026,6 +2027,7 @@ mod tests {
             api_key_env: "OPENAI_API_KEY".to_string(),
             model: "text-embedding-3-small".to_string(),
             batch_size: 16,
+            dimensions: None,
             create_enabled: true,
         });
         if service.is_none() {

@@ -35,7 +35,7 @@ One row per backend. Columns:
 |---|---|
 | leading marker | `*` for the active backend, `!` for a backend that failed to resolve, blank otherwise |
 | `NAME` | the backend's `name` field (your handle for `memory embeddings activate <name>`) |
-| `PROVIDER` | e.g. `openai_compatible`, `voyage`, `cohere`, `gemini` |
+| `PROVIDER` | e.g. `openai`, `openai_compatible`, `voyage`, `cohere`, `gemini` |
 | `MODEL` | the exact model name as sent to the provider |
 | `CREATE` | `on` when automatic curation/import writes create embeddings for this backend, `off` when they skip it |
 | `BASE URL` | empty when the backend uses the provider's default endpoint; otherwise the configured URL |

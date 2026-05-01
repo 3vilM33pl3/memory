@@ -44,7 +44,7 @@ max_input_bytes = 120000
 max_output_tokens = 3000
 
 [embeddings]
-provider = "openai_compatible"
+provider = "openai"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 model = ""

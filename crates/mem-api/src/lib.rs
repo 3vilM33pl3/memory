@@ -2613,6 +2613,8 @@ pub struct EmbeddingBackendConfig {
     pub model: String,
     #[serde(default = "default_embeddings_batch_size")]
     pub batch_size: usize,
+    #[serde(default, alias = "dimension", skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<u32>,
     #[serde(default = "default_true")]
     pub create_enabled: bool,
 }
@@ -2626,6 +2628,7 @@ impl Default for EmbeddingBackendConfig {
             api_key_env: default_embeddings_api_key_env(),
             model: String::new(),
             batch_size: default_embeddings_batch_size(),
+            dimensions: None,
             create_enabled: true,
         }
     }
@@ -2768,6 +2771,8 @@ impl<'de> Deserialize<'de> for EmbeddingsConfig {
             && !map.contains_key("base_url")
             && !map.contains_key("api_key_env")
             && !map.contains_key("batch_size")
+            && !map.contains_key("dimensions")
+            && !map.contains_key("dimension")
             && !map.contains_key("name")
             && !map.contains_key("enabled")
             && !map.contains_key("create_enabled");
@@ -2780,6 +2785,8 @@ impl<'de> Deserialize<'de> for EmbeddingsConfig {
             && !map.contains_key("base_url")
             && !map.contains_key("api_key_env")
             && !map.contains_key("batch_size")
+            && !map.contains_key("dimensions")
+            && !map.contains_key("dimension")
             && !map.contains_key("name")
         {
             return Ok(Self {
@@ -2967,7 +2974,7 @@ fn default_llm_api_key_env() -> String {
 }
 
 fn default_embeddings_provider() -> String {
-    "openai_compatible".to_string()
+    "openai".to_string()
 }
 
 fn default_embeddings_base_url() -> String {
@@ -3125,9 +3132,10 @@ mod tests {
 
             [[embeddings.backends]]
             name = "openai-3-small"
-            provider = "openai_compatible"
+            provider = "openai"
             model = "text-embedding-3-small"
             api_key_env = "OPENAI_API_KEY"
+            dimensions = 512
 
             [[embeddings.backends]]
             name = "voyage-code"
@@ -3141,10 +3149,8 @@ mod tests {
         assert!(cfg.enabled);
         assert!(cfg.create_enabled);
         assert_eq!(cfg.active.as_deref(), Some("voyage-code"));
-        assert_eq!(
-            cfg.backend("openai-3-small").unwrap().provider,
-            "openai_compatible"
-        );
+        assert_eq!(cfg.backend("openai-3-small").unwrap().provider, "openai");
+        assert_eq!(cfg.backend("openai-3-small").unwrap().dimensions, Some(512));
         assert_eq!(cfg.active_backend().unwrap().model, "voyage-code-3");
     }
 
@@ -3158,7 +3164,7 @@ mod tests {
 
             [[embeddings.backends]]
             name = "openai"
-            provider = "openai_compatible"
+            provider = "openai"
             model = "text-embedding-3-small"
             create_enabled = false
             "#,
@@ -3181,7 +3187,7 @@ mod tests {
 
             [[embeddings.backends]]
             name = "openai"
-            provider = "openai_compatible"
+            provider = "openai"
             model = "text-embedding-3-small"
             "#,
         );
@@ -3221,7 +3227,7 @@ mod tests {
 
             [[embeddings.backends]]
             name = "openai"
-            provider = "openai_compatible"
+            provider = "openai"
             model = "text-embedding-3-small"
             "#,
         );
@@ -3245,7 +3251,7 @@ mod tests {
 
             [[embeddings.backends]]
             name = "a"
-            provider = "openai_compatible"
+            provider = "openai"
             model = "m1"
 
             [[embeddings.backends]]
