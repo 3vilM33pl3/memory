@@ -412,8 +412,10 @@ struct App {
     embeddings_tab_visible: Arc<AtomicBool>,
     embeddings_wake_tx: std_mpsc::Sender<()>,
     embeddings_wake_rx: Option<std_mpsc::Receiver<()>>,
-    embeddings_activation_message: Option<String>,
-    embeddings_activating: Option<String>,
+    embeddings_toggle_message: Option<String>,
+    embeddings_toggling: Option<String>,
+    embeddings_creation_toggling: bool,
+    embeddings_operation: Option<String>,
     needs_redraw: bool,
 }
 
@@ -523,9 +525,22 @@ enum BackgroundEvent {
     EmbeddingBackendsLoaded {
         snapshot: Result<mem_api::EmbeddingBackendsResponse, String>,
     },
-    EmbeddingBackendActivated {
+    EmbeddingBackendToggled {
         name: String,
         result: Result<mem_api::EmbeddingBackendsResponse, String>,
+    },
+    EmbeddingCreationToggled {
+        name: String,
+        enabled: bool,
+        result: Result<mem_api::EmbeddingBackendsResponse, String>,
+    },
+    EmbeddingReembedCompleted {
+        name: String,
+        result: Result<(mem_api::ReembedResponse, mem_api::EmbeddingBackendsResponse), String>,
+    },
+    EmbeddingReindexCompleted {
+        name: String,
+        result: Result<(mem_api::ReindexResponse, mem_api::EmbeddingBackendsResponse), String>,
     },
     QueryCompleted {
         request_id: u64,
@@ -658,8 +673,10 @@ impl App {
             embeddings_tab_visible: Arc::new(AtomicBool::new(false)),
             embeddings_wake_tx,
             embeddings_wake_rx: Some(embeddings_wake_rx),
-            embeddings_activation_message: None,
-            embeddings_activating: None,
+            embeddings_toggle_message: None,
+            embeddings_toggling: None,
+            embeddings_creation_toggling: false,
+            embeddings_operation: None,
             needs_redraw: true,
         }
     }
@@ -1146,40 +1163,153 @@ impl App {
             BackgroundEvent::EmbeddingBackendsLoaded { snapshot } => match snapshot {
                 Ok(snapshot) => {
                     self.embedding_backends_error = None;
-                    let len = snapshot.backends.len();
+                    let selected_index = active_embedding_backend_index(&snapshot).or_else(|| {
+                        clamped_embedding_backend_index(self.embeddings_selected_index, &snapshot)
+                    });
                     self.embedding_backends_snapshot = Some(snapshot);
-                    if len == 0 {
-                        self.embeddings_selected_index = 0;
-                        self.embeddings_table_state.select(None);
-                    } else {
-                        self.embeddings_selected_index =
-                            self.embeddings_selected_index.min(len.saturating_sub(1));
+                    if let Some(index) = selected_index {
+                        self.embeddings_selected_index = index;
                         self.embeddings_table_state
                             .select(Some(self.embeddings_selected_index));
+                    } else {
+                        self.embeddings_selected_index = 0;
+                        self.embeddings_table_state.select(None);
                     }
                 }
                 Err(error) => {
                     self.embedding_backends_error = Some(error);
                 }
             },
-            BackgroundEvent::EmbeddingBackendActivated { name, result } => {
-                self.embeddings_activating = None;
+            BackgroundEvent::EmbeddingBackendToggled { name, result } => {
+                self.embeddings_toggling = None;
                 match result {
                     Ok(snapshot) => {
                         self.embedding_backends_error = None;
-                        self.embeddings_activation_message = Some(format!("Activated {name}"));
-                        let len = snapshot.backends.len();
+                        self.embeddings_toggle_message =
+                            if snapshot.active.as_deref() == Some(name.as_str()) {
+                                Some(format!("Activated {name}"))
+                            } else {
+                                Some("Embeddings off".to_string())
+                            };
+                        let selected_index =
+                            active_embedding_backend_index(&snapshot).or_else(|| {
+                                clamped_embedding_backend_index(
+                                    self.embeddings_selected_index,
+                                    &snapshot,
+                                )
+                            });
                         self.embedding_backends_snapshot = Some(snapshot);
-                        if len > 0 {
-                            self.embeddings_selected_index =
-                                self.embeddings_selected_index.min(len.saturating_sub(1));
+                        if let Some(index) = selected_index {
+                            self.embeddings_selected_index = index;
                             self.embeddings_table_state
                                 .select(Some(self.embeddings_selected_index));
+                        } else {
+                            self.embeddings_selected_index = 0;
+                            self.embeddings_table_state.select(None);
                         }
                     }
                     Err(error) => {
-                        self.embeddings_activation_message =
-                            Some(format!("Activation failed: {error}"));
+                        self.embeddings_toggle_message = Some(format!("Toggle failed: {error}"));
+                    }
+                }
+            }
+            BackgroundEvent::EmbeddingCreationToggled {
+                name,
+                enabled,
+                result,
+            } => {
+                self.embeddings_creation_toggling = false;
+                match result {
+                    Ok(snapshot) => {
+                        self.embedding_backends_error = None;
+                        self.embeddings_toggle_message = Some(format!(
+                            "Automatic embedding creation {} for {name}",
+                            if enabled { "on" } else { "off" },
+                        ));
+                        let selected_index =
+                            active_embedding_backend_index(&snapshot).or_else(|| {
+                                clamped_embedding_backend_index(
+                                    self.embeddings_selected_index,
+                                    &snapshot,
+                                )
+                            });
+                        self.embedding_backends_snapshot = Some(snapshot);
+                        if let Some(index) = selected_index {
+                            self.embeddings_selected_index = index;
+                            self.embeddings_table_state
+                                .select(Some(self.embeddings_selected_index));
+                        } else {
+                            self.embeddings_selected_index = 0;
+                            self.embeddings_table_state.select(None);
+                        }
+                    }
+                    Err(error) => {
+                        self.embeddings_toggle_message =
+                            Some(format!("Creation toggle failed: {error}"));
+                    }
+                }
+            }
+            BackgroundEvent::EmbeddingReembedCompleted { name, result } => {
+                self.embeddings_operation = None;
+                match result {
+                    Ok((response, snapshot)) => {
+                        self.embedding_backends_error = None;
+                        self.embeddings_toggle_message = Some(format!(
+                            "Created {} chunk embedding(s) for {name}",
+                            response.reembedded_chunks
+                        ));
+                        let selected_index = embedding_backend_index_by_name(&snapshot, &name)
+                            .or_else(|| {
+                                clamped_embedding_backend_index(
+                                    self.embeddings_selected_index,
+                                    &snapshot,
+                                )
+                            });
+                        self.embedding_backends_snapshot = Some(snapshot);
+                        if let Some(index) = selected_index {
+                            self.embeddings_selected_index = index;
+                            self.embeddings_table_state
+                                .select(Some(self.embeddings_selected_index));
+                        } else {
+                            self.embeddings_selected_index = 0;
+                            self.embeddings_table_state.select(None);
+                        }
+                    }
+                    Err(error) => {
+                        self.embeddings_toggle_message =
+                            Some(format!("Embedding creation failed for {name}: {error}"));
+                    }
+                }
+            }
+            BackgroundEvent::EmbeddingReindexCompleted { name, result } => {
+                self.embeddings_operation = None;
+                match result {
+                    Ok((response, snapshot)) => {
+                        self.embedding_backends_error = None;
+                        self.embeddings_toggle_message = Some(format!(
+                            "Reindexed {} memory entries for {name}",
+                            response.reindexed_entries
+                        ));
+                        let selected_index = embedding_backend_index_by_name(&snapshot, &name)
+                            .or_else(|| {
+                                clamped_embedding_backend_index(
+                                    self.embeddings_selected_index,
+                                    &snapshot,
+                                )
+                            });
+                        self.embedding_backends_snapshot = Some(snapshot);
+                        if let Some(index) = selected_index {
+                            self.embeddings_selected_index = index;
+                            self.embeddings_table_state
+                                .select(Some(self.embeddings_selected_index));
+                        } else {
+                            self.embeddings_selected_index = 0;
+                            self.embeddings_table_state.select(None);
+                        }
+                    }
+                    Err(error) => {
+                        self.embeddings_toggle_message =
+                            Some(format!("Reindex failed for {name}: {error}"));
                     }
                 }
             }
@@ -1250,6 +1380,20 @@ impl App {
                     .get(self.embeddings_selected_index)
                     .map(|b| b.name.clone())
             })
+    }
+
+    fn selected_embedding_backend_is_active(&self) -> bool {
+        self.embedding_backends_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.backends.get(self.embeddings_selected_index))
+            .is_some_and(|backend| backend.active)
+    }
+
+    fn selected_embedding_backend_create_enabled(&self) -> Option<bool> {
+        self.embedding_backends_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.backends.get(self.embeddings_selected_index))
+            .map(|backend| backend.create_enabled)
     }
 
     fn scroll_agent_detail(&mut self, delta: i16) {
@@ -1406,17 +1550,89 @@ impl App {
             }
             KeyCode::Enter if self.active_tab == TabKind::Embeddings => {
                 if let Some(name) = self.selected_embedding_backend_name() {
-                    self.embeddings_activating = Some(name.clone());
-                    self.embeddings_activation_message = None;
+                    let deactivate = self.selected_embedding_backend_is_active();
+                    self.embeddings_toggling = Some(if deactivate {
+                        format!("turning off {name}")
+                    } else {
+                        name.clone()
+                    });
+                    self.embeddings_toggle_message = None;
+                    let tx = self.background_tx.clone();
+                    let api = api.clone();
+                    tokio::spawn(async move {
+                        let result = if deactivate {
+                            api.deactivate_embedding_backend().await
+                        } else {
+                            api.activate_embedding_backend(&name).await
+                        }
+                        .map_err(|err| err.to_string());
+                        let _ = tx.send(BackgroundEvent::EmbeddingBackendToggled { name, result });
+                    });
+                }
+            }
+            KeyCode::Char('c') if self.active_tab == TabKind::Embeddings => {
+                if let Some(name) = self.selected_embedding_backend_name()
+                    && let Some(current) = self.selected_embedding_backend_create_enabled()
+                {
+                    let enabled = !current;
+                    self.embeddings_creation_toggling = true;
+                    self.embeddings_toggle_message = None;
                     let tx = self.background_tx.clone();
                     let api = api.clone();
                     tokio::spawn(async move {
                         let result = api
-                            .activate_embedding_backend(&name)
+                            .set_embedding_creation_enabled(&name, enabled)
                             .await
                             .map_err(|err| err.to_string());
+                        let _ = tx.send(BackgroundEvent::EmbeddingCreationToggled {
+                            name,
+                            enabled,
+                            result,
+                        });
+                    });
+                }
+            }
+            KeyCode::Char('e') if self.active_tab == TabKind::Embeddings => {
+                if self.embeddings_operation.is_none()
+                    && let Some(name) = self.selected_embedding_backend_name()
+                {
+                    self.embeddings_operation = Some(format!("creating embeddings for {name}"));
+                    self.embeddings_toggle_message = None;
+                    let project = self.project.clone();
+                    let tx = self.background_tx.clone();
+                    let api = api.clone();
+                    tokio::spawn(async move {
+                        let result = async {
+                            let response = api.reembed(&project, false, Some(&name)).await?;
+                            let snapshot = api.list_embedding_backends(Some(&project)).await?;
+                            anyhow::Ok((response, snapshot))
+                        }
+                        .await
+                        .map_err(|err| err.to_string());
                         let _ =
-                            tx.send(BackgroundEvent::EmbeddingBackendActivated { name, result });
+                            tx.send(BackgroundEvent::EmbeddingReembedCompleted { name, result });
+                    });
+                }
+            }
+            KeyCode::Char('I') if self.active_tab == TabKind::Embeddings => {
+                if self.embeddings_operation.is_none()
+                    && let Some(name) = self.selected_embedding_backend_name()
+                {
+                    self.embeddings_operation = Some(format!("reindexing {name}"));
+                    self.embeddings_toggle_message = None;
+                    let project = self.project.clone();
+                    let tx = self.background_tx.clone();
+                    let api = api.clone();
+                    tokio::spawn(async move {
+                        let result = async {
+                            let response = api.reindex(&project, false, Some(&name)).await?;
+                            let snapshot = api.list_embedding_backends(Some(&project)).await?;
+                            anyhow::Ok((response, snapshot))
+                        }
+                        .await
+                        .map_err(|err| err.to_string());
+                        let _ =
+                            tx.send(BackgroundEvent::EmbeddingReindexCompleted { name, result });
                     });
                 }
             }
@@ -1581,13 +1797,13 @@ impl App {
                 self.refresh(api, RefreshMode::Full).await;
             }
             KeyCode::Char('i') if key.modifiers.is_empty() => {
-                let response = api.reindex(&self.project, false).await?;
+                let response = api.reindex(&self.project, false, None).await?;
                 self.status_message =
                     format!("Reindexed {} memory entries.", response.reindexed_entries);
                 self.refresh(api, RefreshMode::Full).await;
             }
             KeyCode::Char('e') if key.modifiers.is_empty() => {
-                let response = api.reembed(&self.project, false).await?;
+                let response = api.reembed(&self.project, false, None).await?;
                 self.status_message = format!(
                     "Materialized {} chunk embeddings for the active space.",
                     response.reembedded_chunks
@@ -2857,8 +3073,14 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         TabKind::Embeddings => vec![
             accent_span("move "),
             Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
-            accent_span("activate "),
+            accent_span("toggle "),
             Span::styled("Enter  ", Style::default().fg(Theme::TEXT)),
+            accent_span("create "),
+            Span::styled("c  ", Style::default().fg(Theme::TEXT)),
+            accent_span("embed "),
+            Span::styled("e  ", Style::default().fg(Theme::TEXT)),
+            accent_span("reindex "),
+            Span::styled("I  ", Style::default().fg(Theme::TEXT)),
             accent_span("refresh "),
             Span::styled("r", Style::default().fg(Theme::TEXT)),
         ],
@@ -3484,6 +3706,10 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             "Project",
             Span::styled(&app.overview.project, Style::default().fg(Theme::TEXT)),
         ),
+        metric_line(
+            "Latest plan",
+            Span::styled(latest_plan_display(app), Style::default().fg(Theme::TEXT)),
+        ),
         Line::from(vec![
             label_span("Service: "),
             service_span(&app.overview.service_status),
@@ -3970,7 +4196,7 @@ fn draw_watchers_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
 fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(5), Constraint::Min(8)])
+        .constraints([Constraint::Length(6), Constraint::Min(8)])
         .split(area);
 
     let snapshot = app.embedding_backends_snapshot.as_ref();
@@ -3981,17 +4207,47 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let active_display = snapshot
         .and_then(|s| s.active.clone())
         .unwrap_or_else(|| "(none)".to_string());
+    let create_display = snapshot
+        .and_then(|snapshot| snapshot.backends.get(app.embeddings_selected_index))
+        .map(|backend| {
+            format!(
+                "{} for {}",
+                if backend.create_enabled { "on" } else { "off" },
+                backend.name
+            )
+        })
+        .unwrap_or_else(|| "unknown".to_string());
 
-    let message_line = if let Some(activating) = &app.embeddings_activating {
+    let message_line = if app.embeddings_creation_toggling {
         Line::from(vec![
             label_span("Status: "),
             Span::styled(
-                format!("activating {activating}..."),
+                "toggling automatic embedding creation...",
                 Style::default().fg(Theme::ACCENT),
             ),
         ])
-    } else if let Some(msg) = &app.embeddings_activation_message {
-        let color = if msg.starts_with("Activation failed") {
+    } else if let Some(operation) = &app.embeddings_operation {
+        Line::from(vec![
+            label_span("Status: "),
+            Span::styled(
+                format!("{operation}..."),
+                Style::default().fg(Theme::ACCENT),
+            ),
+        ])
+    } else if let Some(toggling) = &app.embeddings_toggling {
+        Line::from(vec![
+            label_span("Status: "),
+            Span::styled(
+                format!("toggling {toggling}..."),
+                Style::default().fg(Theme::ACCENT),
+            ),
+        ])
+    } else if let Some(msg) = &app.embeddings_toggle_message {
+        let color = if msg.starts_with("Toggle failed")
+            || msg.starts_with("Creation toggle failed")
+            || msg.starts_with("Embedding creation failed")
+            || msg.starts_with("Reindex failed")
+        {
             Theme::DANGER
         } else {
             Theme::SUCCESS
@@ -4019,6 +4275,11 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         Line::from(vec![
             label_span("Active: "),
             Span::styled(active_display, Style::default().fg(Theme::ACCENT_STRONG)),
+        ]),
+        Line::from(vec![
+            label_span("Create: "),
+            Span::styled(create_display, Style::default().fg(Theme::ACCENT_STRONG)),
+            Span::styled(" automatic embeddings", Style::default().fg(Theme::MUTED)),
         ]),
         Line::from(vec![
             label_span("Backends: "),
@@ -4050,7 +4311,7 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     }
 
     let header = Row::new([
-        " ", "NAME", "PROVIDER", "MODEL", "BASE URL", "CHUNKS", "MEMORIES",
+        " ", "NAME", "PROVIDER", "MODEL", "CREATE", "BASE URL", "CHUNKS", "MEMORIES",
     ])
     .style(
         Style::default()
@@ -4104,6 +4365,14 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 backend.model.clone(),
                 Style::default().fg(Theme::TEXT),
             )),
+            Line::from(Span::styled(
+                if backend.create_enabled { "on" } else { "off" },
+                if backend.create_enabled {
+                    Style::default().fg(Theme::SUCCESS)
+                } else {
+                    Style::default().fg(Theme::MUTED)
+                },
+            )),
             Line::from(Span::styled(base_url, Style::default().fg(Theme::MUTED))),
             Line::from(Span::styled(chunks_cell, Style::default().fg(Theme::TEXT))),
             Line::from(Span::styled(
@@ -4119,6 +4388,7 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             Constraint::Length(24),
             Constraint::Length(20),
             Constraint::Length(28),
+            Constraint::Length(8),
             Constraint::Min(18),
             Constraint::Length(8),
             Constraint::Length(10),
@@ -4138,6 +4408,27 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     )));
     let mut state = app.embeddings_table_state.clone();
     frame.render_stateful_widget(table, chunks[1], &mut state);
+}
+
+fn active_embedding_backend_index(snapshot: &mem_api::EmbeddingBackendsResponse) -> Option<usize> {
+    snapshot.backends.iter().position(|backend| backend.active)
+}
+
+fn embedding_backend_index_by_name(
+    snapshot: &mem_api::EmbeddingBackendsResponse,
+    name: &str,
+) -> Option<usize> {
+    snapshot
+        .backends
+        .iter()
+        .position(|backend| backend.name == name)
+}
+
+fn clamped_embedding_backend_index(
+    current: usize,
+    snapshot: &mem_api::EmbeddingBackendsResponse,
+) -> Option<usize> {
+    (!snapshot.backends.is_empty()).then(|| current.min(snapshot.backends.len().saturating_sub(1)))
 }
 
 fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
@@ -5046,6 +5337,28 @@ fn recent_activity_lines(app: &App) -> Vec<Line<'static>> {
             ])
         })
         .collect()
+}
+
+fn latest_plan_display(app: &App) -> String {
+    app.all_memories
+        .iter()
+        .filter(|item| item.memory_type == MemoryType::Plan)
+        .max_by(|left, right| {
+            left.updated_at
+                .cmp(&right.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        })
+        .map(|item| {
+            let thread = item
+                .tags
+                .iter()
+                .find_map(|tag| tag.strip_prefix("plan-thread:"));
+            match thread {
+                Some(thread) => format!("{} ({thread})", item.summary),
+                None => item.summary.clone(),
+            }
+        })
+        .unwrap_or_else(|| "none".to_string())
 }
 
 fn watcher_summary_text(app: &App) -> String {
@@ -7682,9 +7995,9 @@ mod tests {
         derive_manager_state, empty_overview, filled_bar_cells, format_context_percent,
         format_epoch_reset_time, format_query_citation_numbers, format_timestamp,
         format_timestamp_full, format_timestamp_medium, format_timestamp_short,
-        format_timestamp_timeline, manager_status_detail, manager_status_label,
-        memory_detail_max_scroll, normalized_percent, query_input_display, remaining_bar_cells,
-        render_markdown_lines, service_status_detail, service_status_label,
+        format_timestamp_timeline, latest_plan_display, manager_status_detail,
+        manager_status_label, memory_detail_max_scroll, normalized_percent, query_input_display,
+        remaining_bar_cells, render_markdown_lines, service_status_detail, service_status_label,
         should_attempt_stream_reconnect, watcher_bar_status_label,
     };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
@@ -7723,6 +8036,23 @@ mod tests {
     fn query_citation_numbers_render_bracketed_result_ids() {
         assert_eq!(format_query_citation_numbers(&[]), "none");
         assert_eq!(format_query_citation_numbers(&[1, 3]), "[1] [3]");
+    }
+
+    #[test]
+    fn latest_plan_display_shows_recent_plan_thread() {
+        let mut app = new_test_app();
+        let older = Utc.with_ymd_and_hms(2026, 4, 1, 12, 0, 0).unwrap();
+        let newer = Utc.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap();
+        app.all_memories = vec![
+            test_project_memory_list_item("Implemented work", MemoryType::Implementation, newer),
+            test_project_memory_list_item("Older Plan", MemoryType::Plan, older),
+            test_project_memory_list_item("Latest Plan", MemoryType::Plan, newer),
+        ];
+        app.all_memories[2]
+            .tags
+            .push("plan-thread:latest-plan".to_string());
+
+        assert_eq!(latest_plan_display(&app), "Latest Plan (latest-plan)");
     }
 
     #[test]
@@ -8141,6 +8471,30 @@ mod tests {
             created_at: timestamp,
             updated_at: timestamp,
             canonical_id: Uuid::nil(),
+            version_no: 1,
+            is_tombstone: false,
+        }
+    }
+
+    fn test_project_memory_list_item(
+        summary: &str,
+        memory_type: MemoryType,
+        updated_at: chrono::DateTime<Utc>,
+    ) -> mem_api::ProjectMemoryListItem {
+        let id = Uuid::new_v4();
+        mem_api::ProjectMemoryListItem {
+            id,
+            summary: summary.to_string(),
+            preview: summary.to_string(),
+            memory_type,
+            status: MemoryStatus::Active,
+            confidence: 0.95,
+            importance: 4,
+            updated_at,
+            tags: Vec::new(),
+            tag_count: 0,
+            source_count: 0,
+            canonical_id: id,
             version_no: 1,
             is_tombstone: false,
         }
@@ -8611,6 +8965,7 @@ mod tests {
                     model: "text-embedding-3-small".to_string(),
                     active: false,
                     ready: true,
+                    create_enabled: true,
                     project_chunk_count: Some(12),
                     project_memory_count: Some(4),
                 },
@@ -8621,11 +8976,13 @@ mod tests {
                     model: "voyage-code-3".to_string(),
                     active: true,
                     ready: true,
+                    create_enabled: true,
                     project_chunk_count: Some(12),
                     project_memory_count: Some(4),
                 },
             ],
             active: Some("voyage-code".to_string()),
+            create_enabled: true,
         }
     }
 
@@ -8661,6 +9018,23 @@ mod tests {
     }
 
     #[test]
+    fn embeddings_loaded_event_selects_active_backend() {
+        let mut app = new_test_app();
+        app.embeddings_selected_index = 0;
+
+        app.apply_background_event(BackgroundEvent::EmbeddingBackendsLoaded {
+            snapshot: Ok(embeddings_test_response()),
+        });
+
+        assert_eq!(app.embeddings_selected_index, 1);
+        assert_eq!(app.embeddings_table_state.selected(), Some(1));
+        assert_eq!(
+            app.selected_embedding_backend_name().as_deref(),
+            Some("voyage-code")
+        );
+    }
+
+    #[test]
     fn embeddings_selection_wraps_cyclically() {
         let mut app = new_test_app();
         app.apply_background_event(BackgroundEvent::EmbeddingBackendsLoaded {
@@ -8680,27 +9054,27 @@ mod tests {
     }
 
     #[test]
-    fn embedding_backend_activated_sets_success_message_and_updates_snapshot() {
+    fn embedding_backend_toggle_sets_success_message_and_updates_snapshot() {
         let mut app = new_test_app();
         // First load the initial list so selection is primed.
         app.apply_background_event(BackgroundEvent::EmbeddingBackendsLoaded {
             snapshot: Ok(embeddings_test_response()),
         });
-        app.embeddings_activating = Some("openai-3-small".to_string());
+        app.embeddings_toggling = Some("openai-3-small".to_string());
 
         // Simulate the activate POST returning a response where openai is now active.
         let mut response = embeddings_test_response();
         response.active = Some("openai-3-small".to_string());
         response.backends[0].active = true;
         response.backends[1].active = false;
-        app.apply_background_event(BackgroundEvent::EmbeddingBackendActivated {
+        app.apply_background_event(BackgroundEvent::EmbeddingBackendToggled {
             name: "openai-3-small".to_string(),
             result: Ok(response),
         });
 
-        assert_eq!(app.embeddings_activating, None);
+        assert_eq!(app.embeddings_toggling, None);
         assert_eq!(
-            app.embeddings_activation_message.as_deref(),
+            app.embeddings_toggle_message.as_deref(),
             Some("Activated openai-3-small")
         );
         assert_eq!(
@@ -8712,16 +9086,154 @@ mod tests {
     }
 
     #[test]
-    fn embedding_backend_activation_failure_shows_error_message() {
+    fn embedding_backend_toggle_off_sets_success_message() {
         let mut app = new_test_app();
-        app.embeddings_activating = Some("broken".to_string());
-        app.apply_background_event(BackgroundEvent::EmbeddingBackendActivated {
+        app.embeddings_toggling = Some("turning off voyage-code".to_string());
+        let mut response = embeddings_test_response();
+        response.active = None;
+        response.backends[1].active = false;
+
+        app.apply_background_event(BackgroundEvent::EmbeddingBackendToggled {
+            name: "voyage-code".to_string(),
+            result: Ok(response),
+        });
+
+        assert_eq!(app.embeddings_toggling, None);
+        assert_eq!(
+            app.embeddings_toggle_message.as_deref(),
+            Some("Embeddings off")
+        );
+        assert_eq!(
+            app.embedding_backends_snapshot
+                .as_ref()
+                .and_then(|s| s.active.as_deref()),
+            None
+        );
+    }
+
+    #[test]
+    fn embedding_creation_toggle_updates_snapshot_and_status() {
+        let mut app = new_test_app();
+        app.embeddings_creation_toggling = true;
+        let mut response = embeddings_test_response();
+        response.backends[1].create_enabled = false;
+
+        app.apply_background_event(BackgroundEvent::EmbeddingCreationToggled {
+            name: "voyage-code".to_string(),
+            enabled: false,
+            result: Ok(response),
+        });
+
+        assert!(!app.embeddings_creation_toggling);
+        assert_eq!(
+            app.embeddings_toggle_message.as_deref(),
+            Some("Automatic embedding creation off for voyage-code")
+        );
+        assert_eq!(
+            app.embedding_backends_snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.backends.get(1))
+                .map(|backend| backend.create_enabled),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn embedding_reembed_completion_updates_snapshot_and_status() {
+        let mut app = new_test_app();
+        app.embeddings_selected_index = 0;
+        app.embeddings_operation = Some("creating embeddings for openai-3-small".to_string());
+        let mut snapshot = embeddings_test_response();
+        snapshot.backends[0].project_chunk_count = Some(18);
+
+        app.apply_background_event(BackgroundEvent::EmbeddingReembedCompleted {
+            name: "openai-3-small".to_string(),
+            result: Ok((
+                mem_api::ReembedResponse {
+                    reembedded_chunks: 6,
+                    dry_run: false,
+                },
+                snapshot,
+            )),
+        });
+
+        assert_eq!(app.embeddings_operation, None);
+        assert_eq!(
+            app.embeddings_toggle_message.as_deref(),
+            Some("Created 6 chunk embedding(s) for openai-3-small")
+        );
+        assert_eq!(app.embeddings_selected_index, 0);
+        assert_eq!(
+            app.embedding_backends_snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.backends.first())
+                .and_then(|backend| backend.project_chunk_count),
+            Some(18)
+        );
+    }
+
+    #[test]
+    fn embedding_reindex_completion_updates_snapshot_and_status() {
+        let mut app = new_test_app();
+        app.embeddings_selected_index = 1;
+        app.embeddings_operation = Some("reindexing voyage-code".to_string());
+        let mut snapshot = embeddings_test_response();
+        snapshot.backends[1].project_chunk_count = Some(20);
+
+        app.apply_background_event(BackgroundEvent::EmbeddingReindexCompleted {
+            name: "voyage-code".to_string(),
+            result: Ok((
+                mem_api::ReindexResponse {
+                    reindexed_entries: 4,
+                    dry_run: false,
+                },
+                snapshot,
+            )),
+        });
+
+        assert_eq!(app.embeddings_operation, None);
+        assert_eq!(
+            app.embeddings_toggle_message.as_deref(),
+            Some("Reindexed 4 memory entries for voyage-code")
+        );
+        assert_eq!(app.embeddings_selected_index, 1);
+        assert_eq!(
+            app.embedding_backends_snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.backends.get(1))
+                .and_then(|backend| backend.project_chunk_count),
+            Some(20)
+        );
+    }
+
+    #[test]
+    fn embedding_reembed_failure_shows_error_message() {
+        let mut app = new_test_app();
+        app.embeddings_operation = Some("creating embeddings for broken".to_string());
+
+        app.apply_background_event(BackgroundEvent::EmbeddingReembedCompleted {
+            name: "broken".to_string(),
+            result: Err("provider unavailable".to_string()),
+        });
+
+        assert_eq!(app.embeddings_operation, None);
+        assert_eq!(
+            app.embeddings_toggle_message.as_deref(),
+            Some("Embedding creation failed for broken: provider unavailable")
+        );
+    }
+
+    #[test]
+    fn embedding_backend_toggle_failure_shows_error_message() {
+        let mut app = new_test_app();
+        app.embeddings_toggling = Some("broken".to_string());
+        app.apply_background_event(BackgroundEvent::EmbeddingBackendToggled {
             name: "broken".to_string(),
             result: Err("400 unknown backend".to_string()),
         });
-        assert_eq!(app.embeddings_activating, None);
-        let msg = app.embeddings_activation_message.as_deref().unwrap_or("");
-        assert!(msg.starts_with("Activation failed:"));
+        assert_eq!(app.embeddings_toggling, None);
+        let msg = app.embeddings_toggle_message.as_deref().unwrap_or("");
+        assert!(msg.starts_with("Toggle failed:"));
         assert!(msg.contains("400 unknown backend"));
     }
 

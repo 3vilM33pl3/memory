@@ -1,3 +1,3 @@
 {"eval_type":"retrieval_qa","id":"query-match-types","project":"memory","question":"What match types can query search return?","top_k":8,"expected_memory_ids":[],"expected_tags":["query"]}
 {"eval_type":"grounded_answer","id":"activity-token-usage","project":"memory","question":"How does activity token usage show up?","top_k":8,"required_assertions":["token"],"forbidden_assertions":["direct database access"]}
-{"eval_type":"resume_quality","id":"get-up-to-speed","project":"memory","required_topics":["memory"],"forbidden_topics":["unrelated project"]}
+{"eval_type":"resume_quality","id":"get-up-to-speed","project":"memory","prompt":"Get me up to speed on the Memory Layer project.","required_topics":["memory"],"forbidden_topics":["unrelated project"]}

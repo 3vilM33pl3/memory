@@ -99,8 +99,15 @@ impl EmbeddingService {
 /// configured spaces stay populated.
 #[derive(Clone, Default)]
 pub struct EmbeddingRegistry {
-    entries: Vec<(String, EmbeddingService)>,
+    entries: Vec<EmbeddingRegistryEntry>,
     active: Option<String>,
+}
+
+#[derive(Clone)]
+struct EmbeddingRegistryEntry {
+    name: String,
+    service: EmbeddingService,
+    create_enabled: bool,
 }
 
 impl EmbeddingRegistry {
@@ -112,11 +119,15 @@ impl EmbeddingRegistry {
         let mut entries = Vec::new();
         for backend in &config.backends {
             if let Some(service) = EmbeddingService::from_backend_config(backend) {
-                entries.push((backend.name.clone(), service));
+                entries.push(EmbeddingRegistryEntry {
+                    name: backend.name.clone(),
+                    service,
+                    create_enabled: backend.create_enabled,
+                });
             }
         }
         let active = config.active_backend().map(|backend| backend.name.clone());
-        let active = active.filter(|name| entries.iter().any(|(n, _)| n == name));
+        let active = active.filter(|name| entries.iter().any(|entry| &entry.name == name));
         Self { entries, active }
     }
 
@@ -127,7 +138,7 @@ impl EmbeddingRegistry {
         let name = self.active.as_deref()?;
         self.entries
             .iter()
-            .find_map(|(n, service)| (n == name).then_some(service))
+            .find_map(|entry| (entry.name == name).then_some(&entry.service))
     }
 
     /// Name of the currently-active backend.
@@ -139,19 +150,46 @@ impl EmbeddingRegistry {
     pub fn get(&self, name: &str) -> Option<&EmbeddingService> {
         self.entries
             .iter()
-            .find_map(|(n, service)| (n == name).then_some(service))
+            .find_map(|entry| (entry.name == name).then_some(&entry.service))
+    }
+
+    pub fn create_enabled(&self, name: &str) -> bool {
+        self.entries
+            .iter()
+            .find_map(|entry| (entry.name == name).then_some(entry.create_enabled))
+            .unwrap_or(true)
+    }
+
+    pub fn set_create_enabled(&mut self, name: &str, enabled: bool) -> Result<(), ActivateError> {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.name == name) {
+            entry.create_enabled = enabled;
+            Ok(())
+        } else {
+            Err(ActivateError::UnknownBackend(name.to_string()))
+        }
     }
 
     /// Every (name, backend) pair, in config order.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &EmbeddingService)> {
         self.entries
             .iter()
-            .map(|(name, service)| (name.as_str(), service))
+            .map(|entry| (entry.name.as_str(), &entry.service))
+    }
+
+    /// Backends that automatic curation/import writes should embed into.
+    pub fn iter_create_enabled(&self) -> impl Iterator<Item = (&str, &EmbeddingService)> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.create_enabled)
+            .map(|entry| (entry.name.as_str(), &entry.service))
     }
 
     /// Names of all configured backends.
     pub fn names(&self) -> Vec<String> {
-        self.entries.iter().map(|(n, _)| n.clone()).collect()
+        self.entries
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect()
     }
 
     /// Whether any backends are configured (even if none are active).
@@ -163,12 +201,17 @@ impl EmbeddingRegistry {
     /// requested name is not configured; persistence (config-file
     /// rewrite) is a caller responsibility.
     pub fn set_active(&mut self, name: &str) -> Result<(), ActivateError> {
-        if self.entries.iter().any(|(n, _)| n == name) {
+        if self.entries.iter().any(|entry| entry.name == name) {
             self.active = Some(name.to_string());
             Ok(())
         } else {
             Err(ActivateError::UnknownBackend(name.to_string()))
         }
+    }
+
+    /// Disable semantic search without removing configured backends.
+    pub fn clear_active(&mut self) {
+        self.active = None;
     }
 }
 
@@ -352,6 +395,37 @@ pub async fn rebuild_chunks(
     registry: &EmbeddingRegistry,
     target_backend: Option<&str>,
 ) -> Result<u64> {
+    let selected: Vec<(&str, &EmbeddingService)> = match target_backend {
+        Some(name) => registry
+            .get(name)
+            .map(|service| vec![(name, service)])
+            .ok_or_else(|| anyhow::anyhow!("unknown embedding backend: {name}"))?,
+        None => registry.iter().collect(),
+    };
+
+    rebuild_chunks_selected(pool, project, selected).await
+}
+
+pub async fn rebuild_chunks_for_automatic_creation(
+    pool: &PgPool,
+    project: &str,
+    registry: &EmbeddingRegistry,
+    global_create_enabled: bool,
+) -> Result<u64> {
+    let selected: Vec<(&str, &EmbeddingService)> = if global_create_enabled {
+        registry.iter_create_enabled().collect()
+    } else {
+        Vec::new()
+    };
+
+    rebuild_chunks_selected(pool, project, selected).await
+}
+
+async fn rebuild_chunks_selected(
+    pool: &PgPool,
+    project: &str,
+    selected: Vec<(&str, &EmbeddingService)>,
+) -> Result<u64> {
     let rows = sqlx::query(
         r#"
         SELECT m.id, m.canonical_text, m.summary
@@ -364,14 +438,6 @@ pub async fn rebuild_chunks(
     .fetch_all(pool)
     .await
     .context("load memories for chunk rebuild")?;
-
-    let selected: Vec<(&str, &EmbeddingService)> = match target_backend {
-        Some(name) => registry
-            .get(name)
-            .map(|service| vec![(name, service)])
-            .ok_or_else(|| anyhow::anyhow!("unknown embedding backend: {name}"))?,
-        None => registry.iter().collect(),
-    };
 
     let mut count = 0_u64;
     for row in rows {
@@ -1874,6 +1940,8 @@ mod tests {
         // An EmbeddingBackendConfig without a model never resolves to a
         // concrete backend; the registry should be empty.
         let mut cfg = EmbeddingsConfig {
+            enabled: true,
+            create_enabled: true,
             active: None,
             backends: vec![EmbeddingBackendConfig {
                 name: "openai".to_string(),
@@ -1882,6 +1950,7 @@ mod tests {
                 api_key_env: "MISSING_ENV_VAR_FOR_TEST".to_string(),
                 model: String::new(),
                 batch_size: 16,
+                create_enabled: true,
             }],
         };
         cfg.normalize_backend_names();
@@ -1889,6 +1958,36 @@ mod tests {
         assert!(registry.is_empty());
         assert!(registry.active().is_none());
         assert!(registry.active_name().is_none());
+    }
+
+    #[test]
+    fn embedding_registry_clear_active_disables_search() {
+        let service = EmbeddingService::from_backend_config(&EmbeddingBackendConfig {
+            name: "openai".to_string(),
+            provider: "openai_compatible".to_string(),
+            base_url: String::new(),
+            api_key_env: "OPENAI_API_KEY".to_string(),
+            model: "text-embedding-3-small".to_string(),
+            batch_size: 16,
+            create_enabled: true,
+        });
+        if service.is_none() {
+            return;
+        }
+        let mut registry = EmbeddingRegistry {
+            entries: vec![EmbeddingRegistryEntry {
+                name: "openai".to_string(),
+                service: service.unwrap(),
+                create_enabled: true,
+            }],
+            active: Some("openai".to_string()),
+        };
+
+        registry.clear_active();
+
+        assert!(registry.active().is_none());
+        assert!(registry.active_name().is_none());
+        assert!(registry.get("openai").is_some());
     }
 
     #[test]

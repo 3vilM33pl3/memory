@@ -32,7 +32,7 @@ use mem_api::{
     ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
     ProjectOverviewResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters,
     QueryRequest, QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
-    ReplacementPolicy, ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult,
+    ReplacementPolicy, ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult, TokenUsage,
     UpToSpeedRequest, UpToSpeedResponse, discover_global_config_path, discover_repo_env_path,
     load_repo_replacement_policy, read_repo_project_slug,
 };
@@ -7456,6 +7456,47 @@ impl ApiClient {
         .await
     }
 
+    pub(crate) async fn deactivate_embedding_backend(
+        &self,
+    ) -> Result<mem_api::EmbeddingBackendsResponse> {
+        let response = self
+            .client
+            .post(service_url(&self.config, "/v1/embeddings/deactivate"))
+            .headers(write_headers(&self.config)?)
+            .json(&mem_api::DeactivateEmbeddingBackendRequest::default())
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            anyhow::bail!(
+                "service does not support turning embeddings off yet; restart or upgrade memory-service so /v1/embeddings/deactivate is available"
+            );
+        }
+        get_json(response).await
+    }
+
+    pub(crate) async fn set_embedding_creation_enabled(
+        &self,
+        name: &str,
+        enabled: bool,
+    ) -> Result<mem_api::EmbeddingBackendsResponse> {
+        let response = self
+            .client
+            .post(service_url(&self.config, "/v1/embeddings/create-enabled"))
+            .headers(write_headers(&self.config)?)
+            .json(&mem_api::SetEmbeddingCreationRequest {
+                name: name.to_string(),
+                enabled,
+            })
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            anyhow::bail!(
+                "service does not support toggling automatic embedding creation yet; restart or upgrade memory-service so /v1/embeddings/create-enabled is available"
+            );
+        }
+        get_json(response).await
+    }
+
     pub(crate) async fn memory_history(
         &self,
         memory_id: &str,
@@ -7524,7 +7565,12 @@ impl ApiClient {
         .await
     }
 
-    pub(crate) async fn reindex(&self, project: &str, dry_run: bool) -> Result<ReindexResponse> {
+    pub(crate) async fn reindex(
+        &self,
+        project: &str,
+        dry_run: bool,
+        backend: Option<&str>,
+    ) -> Result<ReindexResponse> {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/reindex"))
@@ -7532,7 +7578,7 @@ impl ApiClient {
                 .json(&ReindexRequest {
                     project: project.to_string(),
                     dry_run,
-                    backend: None,
+                    backend: backend.map(str::to_string),
                 })
                 .send()
                 .await?,
@@ -7540,7 +7586,12 @@ impl ApiClient {
         .await
     }
 
-    pub(crate) async fn reembed(&self, project: &str, dry_run: bool) -> Result<ReembedResponse> {
+    pub(crate) async fn reembed(
+        &self,
+        project: &str,
+        dry_run: bool,
+        backend: Option<&str>,
+    ) -> Result<ReembedResponse> {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/reembed"))
@@ -7548,7 +7599,7 @@ impl ApiClient {
                 .json(&ReembedRequest {
                     project: project.to_string(),
                     dry_run,
-                    backend: None,
+                    backend: backend.map(str::to_string),
                 })
                 .send()
                 .await?,
@@ -7649,7 +7700,7 @@ fn print_embedding_backends(payload: &mem_api::EmbeddingBackendsResponse) {
         .unwrap_or(8)
         .max(8);
     println!(
-        "  {:name_width$}  {:provider_width$}  MODEL",
+        "  {:name_width$}  {:provider_width$}  CREATE  MODEL",
         "NAME",
         "PROVIDER",
         name_width = name_width,
@@ -7664,9 +7715,10 @@ fn print_embedding_backends(payload: &mem_api::EmbeddingBackendsResponse) {
             " "
         };
         println!(
-            "{marker} {:name_width$}  {:provider_width$}  {}",
+            "{marker} {:name_width$}  {:provider_width$}  {:7} {}",
             backend.name,
             backend.provider,
+            if backend.create_enabled { "on" } else { "off" },
             backend.model,
             name_width = name_width,
             provider_width = provider_width
@@ -8030,11 +8082,7 @@ async fn run_eval_suite(
             }
             mem_eval::EvalItem::GroundedAnswer(item) => {
                 if condition == mem_eval::EvalCondition::NoMemory {
-                    mem_eval::skipped_result(
-                        &mem_eval::EvalItem::GroundedAnswer(item.clone()),
-                        condition,
-                        "no-memory LLM answer generation is not enabled in this first eval harness",
-                    )
+                    run_no_memory_grounded_answer_eval_item(api, item, condition).await?
                 } else {
                     let response = api
                         .query(&QueryRequest {
@@ -8051,11 +8099,7 @@ async fn run_eval_suite(
             }
             mem_eval::EvalItem::ResumeQuality(item) => {
                 if condition == mem_eval::EvalCondition::NoMemory {
-                    mem_eval::skipped_result(
-                        &mem_eval::EvalItem::ResumeQuality(item.clone()),
-                        condition,
-                        "no-memory resume generation has no project timeline source",
-                    )
+                    run_no_memory_resume_quality_eval_item(api, item, condition).await?
                 } else {
                     let response = api
                         .up_to_speed(&UpToSpeedRequest {
@@ -8115,6 +8159,215 @@ fn no_memory_retrieval_result(
         answer: None,
         notes: vec!["no-memory condition has no memory retrieval channel".to_string()],
     }
+}
+
+#[derive(Debug)]
+struct DirectLlmEvalResponse {
+    content: String,
+    duration_ms: u64,
+    token_usage: Option<TokenUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NoMemoryGroundedAnswerPayload {
+    answer: String,
+    #[serde(default)]
+    confidence: Option<f32>,
+}
+
+async fn run_no_memory_grounded_answer_eval_item(
+    api: &ApiClient,
+    item: &mem_eval::GroundedAnswerItem,
+    condition: mem_eval::EvalCondition,
+) -> Result<mem_eval::EvalItemResult> {
+    let response = run_direct_llm_eval(
+        api,
+        "You answer evaluation questions without Memory Layer context. Return strict JSON with keys: answer (string), confidence (0..1). If you do not know, say so in the answer and use low confidence.",
+        &format!("Question: {}", item.question),
+        api.config.llm.max_output_tokens.min(800),
+    )
+    .await?;
+    let (answer, confidence, mut notes) = parse_no_memory_grounded_answer(&response.content);
+    notes.push("answer_source: direct no-memory LLM call".to_string());
+    Ok(mem_eval::score_plain_llm_grounded_answer(
+        item,
+        condition,
+        answer,
+        confidence,
+        Some(response.duration_ms),
+        response.token_usage,
+        notes,
+    ))
+}
+
+async fn run_no_memory_resume_quality_eval_item(
+    api: &ApiClient,
+    item: &mem_eval::ResumeQualityItem,
+    condition: mem_eval::EvalCondition,
+) -> Result<mem_eval::EvalItemResult> {
+    let prompt = if item.prompt.trim().is_empty() {
+        "Get me up to speed on this project. You do not have access to Memory Layer context, repository history, or persisted project timeline data.".to_string()
+    } else {
+        item.prompt.clone()
+    };
+    let response = run_direct_llm_eval(
+        api,
+        "You write concise project resume briefings without Memory Layer context. Be explicit when the prompt lacks enough project evidence.",
+        &prompt,
+        api.config.llm.max_output_tokens.min(800),
+    )
+    .await?;
+    Ok(mem_eval::score_resume_text_quality(
+        item,
+        condition,
+        response.content,
+        Some(response.duration_ms),
+        response.token_usage,
+        vec!["answer_source: direct no-memory LLM call".to_string()],
+    ))
+}
+
+async fn run_direct_llm_eval(
+    api: &ApiClient,
+    system_prompt: &str,
+    user_prompt: &str,
+    max_output_tokens: u32,
+) -> Result<DirectLlmEvalResponse> {
+    ensure_direct_llm_eval_config(&api.config)?;
+    let api_key = env::var(&api.config.llm.api_key_env)
+        .with_context(|| format!("read {} for no-memory eval", api.config.llm.api_key_env))?;
+    let url = format!(
+        "{}/chat/completions",
+        api.config.llm.base_url.trim_end_matches('/')
+    );
+    let request = serde_json::json!({
+        "model": api.config.llm.model,
+        "temperature": 0.0,
+        "max_completion_tokens": max_output_tokens,
+        "messages": [
+            { "role": "system", "content": system_prompt },
+            { "role": "user", "content": user_prompt }
+        ]
+    });
+    let started = std::time::Instant::now();
+    let http_response = api
+        .client
+        .post(url)
+        .bearer_auth(api_key)
+        .json(&request)
+        .send()
+        .await
+        .context("send no-memory eval llm request")?;
+    let status = http_response.status();
+    let body = http_response
+        .text()
+        .await
+        .context("read no-memory eval llm body")?;
+    if !status.is_success() {
+        anyhow::bail!("no-memory eval llm request failed: {status} {body}");
+    }
+    let content = chat_completion_content(&body)?;
+    Ok(DirectLlmEvalResponse {
+        content,
+        duration_ms: started.elapsed().as_millis() as u64,
+        token_usage: token_usage_from_chat_body(&body),
+    })
+}
+
+fn ensure_direct_llm_eval_config(config: &AppConfig) -> Result<()> {
+    if config.llm.provider.trim() != "openai_compatible" {
+        anyhow::bail!(
+            "no-memory eval requires [llm].provider = openai_compatible; got `{}`",
+            config.llm.provider
+        );
+    }
+    if config.llm.model.trim().is_empty() {
+        anyhow::bail!("no-memory eval requires [llm].model to be configured");
+    }
+    Ok(())
+}
+
+fn chat_completion_content(body: &str) -> Result<String> {
+    let payload: serde_json::Value = serde_json::from_str(body).context("parse llm response")?;
+    payload
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(|content| content.as_str())
+        .map(str::trim)
+        .filter(|content| !content.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("llm response missing content"))
+}
+
+fn parse_no_memory_grounded_answer(content: &str) -> (String, Option<f32>, Vec<String>) {
+    let trimmed = content.trim();
+    let json = trimmed
+        .strip_prefix("```json")
+        .and_then(|value| value.strip_suffix("```"))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("```")
+                .and_then(|value| value.strip_suffix("```"))
+        })
+        .map(str::trim)
+        .unwrap_or(trimmed);
+    match serde_json::from_str::<NoMemoryGroundedAnswerPayload>(json) {
+        Ok(payload) if !payload.answer.trim().is_empty() => (
+            payload.answer.trim().to_string(),
+            payload.confidence.map(|value| value.clamp(0.0, 1.0)),
+            Vec::new(),
+        ),
+        _ => (
+            trimmed.to_string(),
+            None,
+            vec!["plain_llm response was not strict answer/confidence JSON".to_string()],
+        ),
+    }
+}
+
+fn token_usage_from_chat_body(body: &str) -> Option<TokenUsage> {
+    let payload: serde_json::Value = serde_json::from_str(body).ok()?;
+    let usage = payload.get("usage")?;
+    let input_tokens = usage
+        .get("prompt_tokens")
+        .or_else(|| usage.get("input_tokens"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let output_tokens = usage
+        .get("completion_tokens")
+        .or_else(|| usage.get("output_tokens"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let cache_read_tokens = usage
+        .get("cache_read_input_tokens")
+        .or_else(|| usage.get("cached_input_tokens"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let cache_write_tokens = usage
+        .get("cache_creation_input_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default();
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens);
+    if input_tokens == 0
+        && output_tokens == 0
+        && cache_read_tokens == 0
+        && cache_write_tokens == 0
+        && total_tokens == 0
+    {
+        return None;
+    }
+    Some(TokenUsage {
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+        total_tokens,
+    })
 }
 
 fn run_command_eval_item(
@@ -9624,12 +9877,13 @@ mod tests {
         ServiceApiTokenAction, WatcherCommand, WatcherManagerArgs, WatcherManagerCommand,
         build_finish_execution_implementation_request, build_graph_activity_request,
         build_plan_execution_finish_report, build_plan_execution_request, build_remember_request,
-        derive_plan_thread_key, derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
-        ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
-        mask_database_url, parse_plan_checkboxes, render_agent_project_config,
+        chat_completion_content, derive_plan_thread_key, derive_plan_title,
+        durable_plan_source_path, ensure_checkbox_plan, ensure_shared_service_api_token,
+        initialize_repo, is_placeholder_database_url, mask_database_url,
+        parse_no_memory_grounded_answer, parse_plan_checkboxes, render_agent_project_config,
         render_claude_md_memory_section, repair_repo_bootstrap, resolve_project_slug,
         resolve_repo_root, resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
-        watcher_command_requires_config_load, write_headers,
+        token_usage_from_chat_body, watcher_command_requires_config_load, write_headers,
     };
     use mem_api::AppConfig;
 
@@ -10041,6 +10295,59 @@ mod tests {
         assert!(items[1].checked);
         assert_eq!(items[2].text, "third task");
         assert!(items[2].checked);
+    }
+
+    #[test]
+    fn no_memory_grounded_answer_parser_accepts_strict_json() {
+        let (answer, confidence, notes) = parse_no_memory_grounded_answer(
+            "```json\n{\"answer\":\"Token usage is reported.\",\"confidence\":1.4}\n```",
+        );
+
+        assert_eq!(answer, "Token usage is reported.");
+        assert_eq!(confidence, Some(1.0));
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn no_memory_grounded_answer_parser_falls_back_to_text() {
+        let (answer, confidence, notes) = parse_no_memory_grounded_answer("I do not know.");
+
+        assert_eq!(answer, "I do not know.");
+        assert_eq!(confidence, None);
+        assert_eq!(
+            notes,
+            vec!["plain_llm response was not strict answer/confidence JSON".to_string()]
+        );
+    }
+
+    #[test]
+    fn token_usage_from_chat_body_supports_openai_and_cache_fields() {
+        let usage = token_usage_from_chat_body(
+            r#"{
+                "choices":[{"message":{"content":"ok"}}],
+                "usage":{
+                    "prompt_tokens":10,
+                    "completion_tokens":5,
+                    "cached_input_tokens":2,
+                    "cache_creation_input_tokens":3
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(usage.cache_read_tokens, 2);
+        assert_eq!(usage.cache_write_tokens, 3);
+        assert_eq!(usage.total_tokens, 20);
+    }
+
+    #[test]
+    fn chat_completion_content_rejects_missing_content() {
+        let error = chat_completion_content(r#"{"choices":[{"message":{}}]}"#)
+            .expect_err("missing content should fail");
+
+        assert!(error.to_string().contains("missing content"));
     }
 
     #[test]

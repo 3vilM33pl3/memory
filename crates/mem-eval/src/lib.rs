@@ -303,22 +303,13 @@ pub fn score_grounded_answer(
     response: &QueryResponse,
 ) -> EvalItemResult {
     let mut scores = retrieval_scores(&item.expected_memory_ids, response);
-    let answer_lower = response.answer.to_lowercase();
-    let required_hits = item
-        .required_assertions
-        .iter()
-        .filter(|value| answer_lower.contains(&value.to_lowercase()))
-        .count();
-    let forbidden_hits = item
-        .forbidden_assertions
-        .iter()
-        .filter(|value| answer_lower.contains(&value.to_lowercase()))
-        .count();
-    let assertion_score = if item.required_assertions.is_empty() {
-        1.0
-    } else {
-        required_hits as f64 / item.required_assertions.len() as f64
-    };
+    let assertion_scores = assertion_scores(
+        &response.answer,
+        &item.required_assertions,
+        &item.forbidden_assertions,
+    );
+    let assertion_score = assertion_scores.assertion_recall;
+    let forbidden_hits = assertion_scores.forbidden_hits;
     scores.insert("assertion_recall".to_string(), assertion_score);
     scores.insert("forbidden_hits".to_string(), forbidden_hits as f64);
     scores.insert("confidence".to_string(), response.confidence as f64);
@@ -336,6 +327,47 @@ pub fn score_grounded_answer(
         token_usage: response.answer_generation.token_usage.clone(),
         answer: Some(response.answer.clone()),
         notes: Vec::new(),
+    }
+}
+
+pub fn score_plain_llm_grounded_answer(
+    item: &GroundedAnswerItem,
+    condition: EvalCondition,
+    answer: String,
+    confidence: Option<f32>,
+    duration_ms: Option<u64>,
+    token_usage: Option<TokenUsage>,
+    mut notes: Vec<String>,
+) -> EvalItemResult {
+    let assertion_scores = assertion_scores(
+        &answer,
+        &item.required_assertions,
+        &item.forbidden_assertions,
+    );
+    let mut scores = BTreeMap::new();
+    scores.insert(
+        "assertion_recall".to_string(),
+        assertion_scores.assertion_recall,
+    );
+    scores.insert(
+        "forbidden_hits".to_string(),
+        assertion_scores.forbidden_hits as f64,
+    );
+    if let Some(confidence) = confidence {
+        scores.insert("confidence".to_string(), confidence as f64);
+    }
+    notes.push("plain_llm: no Memory retrieval context supplied".to_string());
+    EvalItemResult {
+        item_id: item.id.clone(),
+        eval_type: "grounded_answer".to_string(),
+        condition,
+        success: assertion_scores.assertion_recall >= 1.0 && assertion_scores.forbidden_hits == 0,
+        skipped: false,
+        scores,
+        duration_ms,
+        token_usage,
+        answer: Some(answer),
+        notes,
     }
 }
 
@@ -411,6 +443,61 @@ fn score_briefing(
         }),
         answer: Some(briefing.to_string()),
         notes: Vec::new(),
+    }
+}
+
+pub fn score_resume_text_quality(
+    item: &ResumeQualityItem,
+    condition: EvalCondition,
+    briefing: String,
+    duration_ms: Option<u64>,
+    token_usage: Option<TokenUsage>,
+    mut notes: Vec<String>,
+) -> EvalItemResult {
+    let mut result = score_briefing(
+        &item.id,
+        "resume_quality",
+        condition,
+        &briefing,
+        &item.required_topics,
+        &item.forbidden_topics,
+        None,
+    );
+    result.duration_ms = duration_ms;
+    result.token_usage = token_usage;
+    result.answer = Some(briefing);
+    notes.push("plain_llm: no Memory timeline or retrieval context supplied".to_string());
+    result.notes = notes;
+    result
+}
+
+struct AssertionScores {
+    assertion_recall: f64,
+    forbidden_hits: usize,
+}
+
+fn assertion_scores(
+    answer: &str,
+    required_assertions: &[String],
+    forbidden_assertions: &[String],
+) -> AssertionScores {
+    let answer_lower = answer.to_lowercase();
+    let required_hits = required_assertions
+        .iter()
+        .filter(|value| answer_lower.contains(&value.to_lowercase()))
+        .count();
+    let forbidden_hits = forbidden_assertions
+        .iter()
+        .filter(|value| answer_lower.contains(&value.to_lowercase()))
+        .count();
+    let assertion_recall = if required_assertions.is_empty() {
+        1.0
+    } else {
+        required_hits as f64 / required_assertions.len() as f64
+    };
+    AssertionScores {
+        assertion_recall,
+        forbidden_hits,
     }
 }
 
@@ -712,6 +799,77 @@ mod tests {
         assert_eq!(comparison.mcnemar_c, 0);
         assert_eq!(comparison.success_rate_delta, 0.5);
         assert!(comparison.metric_deltas.contains_key("recall_at_k"));
+    }
+
+    #[test]
+    fn plain_llm_grounded_answer_scores_assertions_and_tokens() {
+        let item = GroundedAnswerItem {
+            id: "plain-answer".to_string(),
+            project: None,
+            question: "How are tokens reported?".to_string(),
+            top_k: 8,
+            expected_memory_ids: Vec::new(),
+            required_assertions: vec!["token".to_string()],
+            forbidden_assertions: vec!["database password".to_string()],
+        };
+
+        let result = score_plain_llm_grounded_answer(
+            &item,
+            EvalCondition::NoMemory,
+            "The report includes token usage.".to_string(),
+            Some(0.8),
+            Some(42),
+            Some(TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                total_tokens: 15,
+                ..TokenUsage::default()
+            }),
+            Vec::new(),
+        );
+
+        assert!(result.success);
+        assert_eq!(result.duration_ms, Some(42));
+        assert_eq!(result.token_usage.unwrap().total_tokens, 15);
+        assert!(
+            result
+                .notes
+                .iter()
+                .any(|note| note.contains("no Memory retrieval"))
+        );
+    }
+
+    #[test]
+    fn resume_text_quality_preserves_full_token_usage() {
+        let item = ResumeQualityItem {
+            id: "resume".to_string(),
+            project: None,
+            prompt: String::new(),
+            required_topics: vec!["memory".to_string()],
+            forbidden_topics: Vec::new(),
+        };
+
+        let result = score_resume_text_quality(
+            &item,
+            EvalCondition::NoMemory,
+            "Memory context is unavailable.".to_string(),
+            Some(12),
+            Some(TokenUsage {
+                input_tokens: 7,
+                output_tokens: 8,
+                cache_read_tokens: 1,
+                total_tokens: 16,
+                ..TokenUsage::default()
+            }),
+            Vec::new(),
+        );
+
+        assert!(result.success);
+        assert_eq!(result.duration_ms, Some(12));
+        let usage = result.token_usage.unwrap();
+        assert_eq!(usage.input_tokens, 7);
+        assert_eq!(usage.cache_read_tokens, 1);
+        assert_eq!(usage.total_tokens, 16);
     }
 
     fn result(id: &str, success: bool, recall: f64) -> EvalItemResult {

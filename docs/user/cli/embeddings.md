@@ -27,9 +27,11 @@ Memory Layer stores chunk embeddings in PostgreSQL with `pgvector`.
 
 Every embedding row is keyed by a **space key** of the form `provider|base_url|model`, so vectors from different providers and models coexist without collision. A single chunk can have vectors in several spaces at once.
 
-At any time, exactly one configured backend is **active**: that's the one `memory query` uses for semantic retrieval. Swapping activation is a constant-time metadata flip — no recomputation — as long as the target space is already populated.
+At any time, one configured backend can be **active**: that's the one `memory query` uses for semantic retrieval. You can disable semantic retrieval with `enabled = false`, which leaves configured backends and stored vectors in place while semantic retrieval is off. Swapping activation is a constant-time metadata flip — no recomputation — as long as the target space is already populated.
 
-**Every new memory is embedded into every configured backend automatically.** The curate step that runs after `memory remember` (and after the watcher's idle captures) writes chunks into every space declared under `[[embeddings.backends]]`, not just the active one. So configuring two backends from the start means you never have to run `reembed` later just to switch. `reembed` and `reindex` are only for *backfilling* existing memories when you add a backend after the fact.
+When a backend has `create_enabled = true`, every new memory is embedded into that backend automatically. The curate step that runs after `memory remember` (and after the watcher's idle captures) writes chunks into every enabled space declared under `[[embeddings.backends]]`, not just the active one. So configuring two enabled backends from the start means you never have to run `reembed` later just to switch.
+
+Set `create_enabled = false` on a backend to stop automatic provider embedding calls for that backend after curation or bundle import. Explicit `reembed` and `reindex` commands still work so you can backfill manually when you are ready.
 
 Heads up on cost: with two backends configured, each new memory hits both providers' embedding APIs. That's usually negligible for text-embedding-3-small and voyage-code-3 (both in the low cents per thousand writes), but worth keeping in mind if you add a premium model.
 
@@ -59,6 +61,10 @@ batch_size = 16
 ```
 
 The `name` field is your activation handle and must be unique. If you leave `name` empty, Memory Layer derives one from `{provider}-{model}` at load time.
+
+Set `enabled = false` under `[embeddings]` to keep backend declarations available while turning semantic retrieval off. The TUI Embeddings tab writes that flag when you press `Enter` on the currently active backend row, and writes `enabled = true` again when you activate a backend.
+
+Set `create_enabled = false` inside a specific `[[embeddings.backends]]` block to keep semantic search available for existing vectors while preventing automatic creation of new embeddings for that provider. In the TUI Embeddings tab, highlight a backend and press `c` to toggle this value.
 
 The **legacy singleton shape** still works:
 
@@ -92,6 +98,10 @@ memory embeddings activate voyage-code
 ```
 
 The service rewrites `[embeddings].active` in the config file and updates its in-memory state without restarting. Existing embeddings for the new space are used immediately; nothing is recomputed.
+
+To turn embeddings off interactively, open `memory tui`, go to the Embeddings tab, highlight the active row, and press `Enter`. The service rewrites `[embeddings].enabled = false`; pressing `Enter` on any ready backend turns it back on.
+
+To stop only automatic creation of new embeddings for one provider, highlight that backend in the Embeddings tab and press `c`. Manual `reembed` and `reindex` still create embeddings.
 
 Build chunks and embeddings for a project:
 

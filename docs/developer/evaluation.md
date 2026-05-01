@@ -21,8 +21,17 @@ retrieval path; stricter condition isolation can be added later by extending the
 query API with explicit retrieval-mode controls.
 
 The `no-memory` condition has no retrieval channel, so retrieval items receive
-zero retrieval scores rather than being skipped. Generative no-memory answer and
-resume runs are skipped until a direct no-memory LLM client is added.
+zero retrieval scores rather than being skipped. For `grounded_answer` and
+`resume_quality` items, `memory eval run` calls the configured
+OpenAI-compatible `[llm]` client directly and scores the resulting text without
+Memory retrieval, project timeline, or resume context. This keeps provider I/O
+in `mem-cli`; `mem-eval` remains responsible for file formats, scoring, and
+statistics.
+
+Memory-backed `resume_quality` conditions currently use the deterministic
+`up-to-speed` briefing (`include_llm_summary = false`) so the default comparison
+isolates Memory evidence and timeline value before adding another LLM summary
+step.
 
 ## Statistics
 
@@ -35,6 +44,11 @@ resume runs are skipped until a direct no-memory LLM client is added.
 
 This is enough to support claims such as “full memory improved Recall@k by 0.18
 with a 95% CI of 0.09..0.26” once the suite has enough held-out items.
+
+Eval results also preserve `duration_ms` and provider `TokenUsage` when the
+called path reports it. Those fields support cost and latency comparisons across
+plain LLM and Memory-backed conditions without changing the paired statistics
+format.
 
 ## Benchmark Quality
 

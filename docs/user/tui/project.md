@@ -7,6 +7,7 @@ The `Project` tab is the high-level health and maintenance dashboard for the cur
 ## What It Shows
 
 - project-wide counts for memories, captures, sessions, and curation runs
+- the latest approved plan memory, including its `plan-thread` key when present
 - recent-memory timing and confidence breakdowns
 - embedding and automation status
 - top tags and top files

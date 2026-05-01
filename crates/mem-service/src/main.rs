@@ -4,7 +4,10 @@ use std::{
     io::Read,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration as StdDuration, SystemTime},
 };
 
@@ -37,12 +40,13 @@ use mem_api::{
     ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
     ReplacementPolicy, ReplacementPolicyRequest, ReplacementPolicyResponse,
     ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
-    ResumeCheckpoint, ResumeRequest, ResumeResponse, ScanActivityRequest, SourceKind,
-    StatsResponse, StreamRequest, StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest,
-    UpToSpeedResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
-    WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
-    WatcherUnregisterRequest, load_repo_replacement_policy, read_capnp_text_frame,
-    repo_agent_settings_path, write_capnp_text_frame,
+    ResumeCheckpoint, ResumeRequest, ResumeResponse, ScanActivityRequest,
+    SetEmbeddingCreationRequest, SourceKind, StatsResponse, StreamRequest, StreamResponse,
+    TokenUsage, TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse, ValidationError,
+    WatcherHealth, WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary,
+    WatcherRestartRequest, WatcherRestartResponse, WatcherUnregisterRequest,
+    load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
+    write_capnp_text_frame,
 };
 use mem_curate::{
     approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
@@ -54,7 +58,7 @@ use mem_platform::{
 use mem_search::{
     EmbeddingRegistry, effective_embedding_base_url, parse_memory_type, parse_relation_type,
     parse_source_kind, prune_project_embeddings, query_memory, rebuild_chunks,
-    reembed_project_chunks,
+    rebuild_chunks_for_automatic_creation, reembed_project_chunks,
 };
 use mem_service::{
     fetch_project_commit, fetch_project_commits, fetch_project_memories, fetch_project_overview,
@@ -93,6 +97,7 @@ struct AppState {
     web_root: Option<PathBuf>,
     http_client: reqwest::Client,
     embedders: Arc<tokio::sync::RwLock<EmbeddingRegistry>>,
+    automated_embedding_creation_enabled: Arc<AtomicBool>,
     events: broadcast::Sender<ServiceEvent>,
     recent_activity: Arc<Mutex<VecDeque<ServiceEvent>>>,
     watchers: Arc<Mutex<HashMap<String, WatcherPresence>>>,
@@ -337,6 +342,8 @@ async fn build_state(
     let embedders = Arc::new(tokio::sync::RwLock::new(EmbeddingRegistry::from_config(
         &config.embeddings,
     )));
+    let automated_embedding_creation_enabled =
+        Arc::new(AtomicBool::new(config.embeddings.create_enabled));
 
     Ok(AppState {
         role,
@@ -346,6 +353,7 @@ async fn build_state(
         web_root: discover_web_root(&config),
         http_client,
         embedders,
+        automated_embedding_creation_enabled,
         config,
         events,
         recent_activity: Arc::new(Mutex::new(VecDeque::with_capacity(20))),
@@ -425,6 +433,14 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/prune-embeddings", post(prune_embeddings))
         .route("/v1/embeddings/backends", get(list_embedding_backends))
         .route("/v1/embeddings/activate", post(activate_embedding_backend))
+        .route(
+            "/v1/embeddings/deactivate",
+            post(deactivate_embedding_backend),
+        )
+        .route(
+            "/v1/embeddings/create-enabled",
+            post(set_embedding_creation_enabled),
+        )
         .route("/v1/memory/{id}", get(get_memory))
         .route("/v1/memory/{id}/history", get(get_memory_history))
         .route("/v1/memory", delete(delete_memory))
@@ -2393,13 +2409,18 @@ async fn curate_memory(
     if request.dry_run {
         return Ok(Json(response));
     }
-    {
-        let embedders = state.embedders.read().await;
-        if !embedders.is_empty() {
-            rebuild_chunks(state.pool()?, &request.project, &embedders, None)
-                .await
-                .map_err(ApiError::io)?;
-        }
+    let embedders = state.embedders.read().await;
+    if !embedders.is_empty() {
+        rebuild_chunks_for_automatic_creation(
+            state.pool()?,
+            &request.project,
+            &embedders,
+            state
+                .automated_embedding_creation_enabled
+                .load(Ordering::Relaxed),
+        )
+        .await
+        .map_err(ApiError::io)?;
     }
     notify_project_changed(
         &state,
@@ -2726,6 +2747,11 @@ async fn build_embedding_backends_response(
                 model: backend.model.clone(),
                 active: active_name.as_deref() == Some(backend.name.as_str()),
                 ready: ready.contains(&backend.name),
+                create_enabled: if ready.contains(&backend.name) {
+                    embedders.create_enabled(&backend.name)
+                } else {
+                    backend.create_enabled
+                },
                 project_chunk_count,
                 project_memory_count,
             }
@@ -2734,6 +2760,9 @@ async fn build_embedding_backends_response(
     Ok(Json(EmbeddingBackendsResponse {
         backends,
         active: active_name,
+        create_enabled: state
+            .automated_embedding_creation_enabled
+            .load(Ordering::Relaxed),
     }))
 }
 
@@ -2796,7 +2825,7 @@ async fn activate_embedding_backend(
         previous
     };
 
-    if let Err(err) = persist_active_embedding_backend(&state, &request.name).await {
+    if let Err(err) = persist_active_embedding_backend(&state, Some(&request.name)).await {
         // Revert in-memory state so config and registry stay in sync.
         let mut embedders = state.embedders.write().await;
         if let Some(name) = previous_active {
@@ -2808,32 +2837,118 @@ async fn activate_embedding_backend(
     build_embedding_backends_response(&state, None).await
 }
 
-async fn persist_active_embedding_backend(state: &AppState, name: &str) -> Result<(), ApiError> {
+async fn deactivate_embedding_backend(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(_request): Json<mem_api::DeactivateEmbeddingBackendRequest>,
+) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(
+                &state,
+                "/v1/embeddings/deactivate",
+                &mem_api::DeactivateEmbeddingBackendRequest::default(),
+                true,
+            )
+            .await?,
+        ));
+    }
+
+    let previous_active = {
+        let mut embedders = state.embedders.write().await;
+        let previous = embedders.active_name().map(|s| s.to_string());
+        embedders.clear_active();
+        previous
+    };
+
+    if let Err(err) = persist_active_embedding_backend(&state, None).await {
+        if let Some(name) = previous_active {
+            let mut embedders = state.embedders.write().await;
+            let _ = embedders.set_active(&name);
+        }
+        return Err(err);
+    }
+
+    build_embedding_backends_response(&state, None).await
+}
+
+async fn set_embedding_creation_enabled(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SetEmbeddingCreationRequest>,
+) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/embeddings/create-enabled", &request, true).await?,
+        ));
+    }
+
+    let name = request.name.trim();
+    if name.is_empty() {
+        return Err(ApiError::validation(ValidationError::new(
+            "name must be non-empty",
+        )));
+    }
+    if !state
+        .config
+        .embeddings
+        .backends
+        .iter()
+        .any(|backend| backend.name == name)
+    {
+        return Err(ApiError::validation(ValidationError::new(format!(
+            "unknown embedding backend: {name}"
+        ))));
+    }
+
+    let previous = {
+        let mut embedders = state.embedders.write().await;
+        let previous = embedders.create_enabled(name);
+        if embedders.get(name).is_some() {
+            embedders
+                .set_create_enabled(name, request.enabled)
+                .map_err(|err| ApiError::validation(ValidationError::new(err.to_string())))?;
+        }
+        previous
+    };
+    let previous_global = state
+        .automated_embedding_creation_enabled
+        .swap(true, Ordering::Relaxed);
+    if let Err(err) = persist_embedding_creation_enabled(&state, name, request.enabled).await {
+        let mut embedders = state.embedders.write().await;
+        if embedders.get(name).is_some() {
+            let _ = embedders.set_create_enabled(name, previous);
+        }
+        state
+            .automated_embedding_creation_enabled
+            .store(previous_global, Ordering::Relaxed);
+        return Err(err);
+    }
+
+    build_embedding_backends_response(&state, None).await
+}
+
+async fn persist_active_embedding_backend(
+    state: &AppState,
+    active_name: Option<&str>,
+) -> Result<(), ApiError> {
     let Some(config_path) = state.config.resolved_config_path.clone() else {
         // Ephemeral (env-var only) config — no file to rewrite. The
         // in-memory activation is still applied, but it will not survive
         // a restart. Surface this to the caller as a soft warning via
         // tracing rather than an error.
         tracing::warn!(
-            "activated embedding backend {name} without persistence: no TOML config file is resolved"
+            "changed active embedding backend without persistence: no TOML config file is resolved"
         );
         return Ok(());
     };
     let existing = tokio::fs::read_to_string(&config_path)
         .await
         .map_err(|err| ApiError::io(anyhow::anyhow!("read {}: {err}", config_path.display())))?;
-    let mut doc = existing
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|err| ApiError::io(anyhow::anyhow!("parse {}: {err}", config_path.display())))?;
-    // Ensure [embeddings] table exists.
-    if !doc.contains_key("embeddings") {
-        doc["embeddings"] = toml_edit::Item::Table(toml_edit::Table::new());
-    }
-    let embeddings = doc["embeddings"]
-        .as_table_mut()
-        .ok_or_else(|| ApiError::io(anyhow::anyhow!("[embeddings] is not a table in config")))?;
-    embeddings["active"] = toml_edit::value(name);
-    let rendered = doc.to_string();
+    let rendered = set_active_embedding_backend_in_toml(&existing, active_name)
+        .map_err(|err| ApiError::io(anyhow::anyhow!("update {}: {err}", config_path.display())))?;
     let tmp_path = config_path.with_extension("toml.tmp");
     tokio::fs::write(&tmp_path, rendered.as_bytes())
         .await
@@ -2848,6 +2963,99 @@ async fn persist_active_embedding_backend(state: &AppState, name: &str) -> Resul
             ))
         })?;
     Ok(())
+}
+
+async fn persist_embedding_creation_enabled(
+    state: &AppState,
+    name: &str,
+    enabled: bool,
+) -> Result<(), ApiError> {
+    let Some(config_path) = state.config.resolved_config_path.clone() else {
+        tracing::warn!(
+            "changed automatic embedding creation without persistence: no TOML config file is resolved"
+        );
+        return Ok(());
+    };
+    let existing = tokio::fs::read_to_string(&config_path)
+        .await
+        .map_err(|err| ApiError::io(anyhow::anyhow!("read {}: {err}", config_path.display())))?;
+    let rendered = set_embedding_creation_enabled_in_toml(&existing, name, enabled)
+        .map_err(|err| ApiError::io(anyhow::anyhow!("update {}: {err}", config_path.display())))?;
+    let tmp_path = config_path.with_extension("toml.tmp");
+    tokio::fs::write(&tmp_path, rendered.as_bytes())
+        .await
+        .map_err(|err| ApiError::io(anyhow::anyhow!("write {}: {err}", tmp_path.display())))?;
+    tokio::fs::rename(&tmp_path, &config_path)
+        .await
+        .map_err(|err| {
+            ApiError::io(anyhow::anyhow!(
+                "rename {} -> {}: {err}",
+                tmp_path.display(),
+                config_path.display()
+            ))
+        })?;
+    Ok(())
+}
+
+fn set_active_embedding_backend_in_toml(
+    existing: &str,
+    active_name: Option<&str>,
+) -> anyhow::Result<String> {
+    let mut doc = existing.parse::<toml_edit::DocumentMut>()?;
+    // Ensure [embeddings] table exists.
+    if !doc.contains_key("embeddings") {
+        doc["embeddings"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let embeddings = doc["embeddings"]
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("[embeddings] is not a table in config"))?;
+    match active_name {
+        Some(name) => {
+            embeddings["enabled"] = toml_edit::value(true);
+            embeddings["active"] = toml_edit::value(name);
+        }
+        None => {
+            embeddings["enabled"] = toml_edit::value(false);
+        }
+    }
+    Ok(doc.to_string())
+}
+
+fn set_embedding_creation_enabled_in_toml(
+    existing: &str,
+    name: &str,
+    enabled: bool,
+) -> anyhow::Result<String> {
+    let mut doc = existing.parse::<toml_edit::DocumentMut>()?;
+    if !doc.contains_key("embeddings") {
+        doc["embeddings"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let embeddings = doc["embeddings"]
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("[embeddings] is not a table in config"))?;
+    embeddings["create_enabled"] = toml_edit::value(true);
+    if let Some(backends) = embeddings
+        .get_mut("backends")
+        .and_then(|item| item.as_array_of_tables_mut())
+    {
+        let mut updated = false;
+        for backend in backends.iter_mut() {
+            if backend
+                .get("name")
+                .and_then(|value| value.as_str())
+                .is_some_and(|value| value == name)
+            {
+                backend["create_enabled"] = toml_edit::value(enabled);
+                updated = true;
+                break;
+            }
+        }
+        if updated {
+            return Ok(doc.to_string());
+        }
+    }
+    embeddings["create_enabled"] = toml_edit::value(enabled);
+    Ok(doc.to_string())
 }
 
 async fn get_memory(
@@ -3353,12 +3561,17 @@ async fn project_bundle_import(
         }
     }
 
-    {
-        let embedders = state.embedders.read().await;
-        rebuild_chunks(pool, &slug, &embedders, None)
-            .await
-            .map_err(ApiError::io)?;
-    }
+    let embedders = state.embedders.read().await;
+    rebuild_chunks_for_automatic_creation(
+        pool,
+        &slug,
+        &embedders,
+        state
+            .automated_embedding_creation_enabled
+            .load(Ordering::Relaxed),
+    )
+    .await
+    .map_err(ApiError::io)?;
 
     notify_project_changed(
         &state,
@@ -6424,6 +6637,57 @@ mod tests {
             answer_citations: Vec::new(),
             diagnostics: mem_api::QueryDiagnostics::default(),
         }
+    }
+
+    #[test]
+    fn embedding_backend_toml_update_can_activate_and_deactivate() {
+        let activated = set_active_embedding_backend_in_toml(
+            r#"
+            [embeddings]
+            enabled = false
+            active = "voyage"
+            "#,
+            Some("openai"),
+        )
+        .expect("activate toml");
+
+        assert!(activated.contains("enabled = true"));
+        assert!(activated.contains("active = \"openai\""));
+
+        let deactivated =
+            set_active_embedding_backend_in_toml(&activated, None).expect("deactivate toml");
+
+        assert!(deactivated.contains("enabled = false"));
+        assert!(deactivated.contains("active = \"openai\""));
+    }
+
+    #[test]
+    fn embedding_creation_toml_update_sets_create_enabled() {
+        let disabled = set_embedding_creation_enabled_in_toml(
+            r#"
+            [embeddings]
+            enabled = true
+            active = "voyage"
+
+            [[embeddings.backends]]
+            name = "voyage"
+            provider = "voyage"
+            model = "voyage-code-3"
+            "#,
+            "voyage",
+            false,
+        )
+        .expect("disable creation toml");
+
+        assert!(disabled.contains("enabled = true"));
+        assert!(disabled.contains("active = \"voyage\""));
+        assert!(disabled.contains("create_enabled = true"));
+        assert!(disabled.contains("create_enabled = false"));
+
+        let enabled = set_embedding_creation_enabled_in_toml(&disabled, "voyage", true)
+            .expect("enable creation toml");
+
+        assert!(enabled.contains("create_enabled = true"));
     }
 
     #[test]

@@ -47,6 +47,12 @@ memory eval run \
   --condition full-memory
 ```
 
+The `no-memory` condition uses the configured OpenAI-compatible `[llm]` client
+directly for `grounded_answer` and `resume_quality` items. It does not call
+Memory retrieval, project timeline, or resume endpoints for those item types.
+`retrieval_qa` items still receive zero retrieval scores under `no-memory`
+because there is intentionally no retrieval channel.
+
 Compare two run artifacts:
 
 ```bash
@@ -64,8 +70,15 @@ report assertion/topic recall and forbidden-hit counts. Comparisons are paired
 by item id and include success-rate deltas, McNemar p-values, and bootstrap
 confidence intervals for numeric metric deltas.
 
+Run artifacts include `duration_ms` and provider token usage when the underlying
+LLM response reports it. This lets paired runs compare quality, latency, and
+token volume for plain LLM behavior versus Memory-backed behavior.
+
 ## Notes
 
 The first version automates objective and deterministic evaluation. Subjective
 human scoring and calibrated LLM-as-judge scoring should be added as separate
-suite fields once there is a reviewed benchmark set.
+suite fields once there is a reviewed benchmark set. Condition isolation for
+`lexical`, `semantic`, and `graph` currently follows the service configuration;
+artifacts include a note when those labels are recorded without stricter service
+retrieval-mode controls.

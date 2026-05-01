@@ -1609,6 +1609,10 @@ pub struct EmbeddingBackendInfo {
     /// the backend is declared in config but the API key or model is
     /// missing, so it won't embed until fixed.
     pub ready: bool,
+    /// Whether automatic curation/import writes should create embeddings
+    /// for this backend. Manual reembed/reindex operations ignore this.
+    #[serde(default = "default_true")]
+    pub create_enabled: bool,
     /// Chunks in the requested project that currently have an
     /// embedding in this backend's space. Present only when the
     /// request scoped the listing to a project.
@@ -1625,11 +1629,22 @@ pub struct EmbeddingBackendsResponse {
     pub backends: Vec<EmbeddingBackendInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<String>,
+    #[serde(default = "default_true")]
+    pub create_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivateEmbeddingBackendRequest {
     pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DeactivateEmbeddingBackendRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetEmbeddingCreationRequest {
+    pub name: String,
+    pub enabled: bool,
 }
 
 impl ActivateEmbeddingBackendRequest {
@@ -2206,7 +2221,7 @@ impl EmbeddingsConfig {
         {
             self.active = None;
         }
-        if self.active.is_none() && self.backends.len() == 1 {
+        if self.enabled && self.active.is_none() && self.backends.len() == 1 {
             self.active = Some(self.backends[0].name.clone());
         }
     }
@@ -2598,6 +2613,8 @@ pub struct EmbeddingBackendConfig {
     pub model: String,
     #[serde(default = "default_embeddings_batch_size")]
     pub batch_size: usize,
+    #[serde(default = "default_true")]
+    pub create_enabled: bool,
 }
 
 impl Default for EmbeddingBackendConfig {
@@ -2609,6 +2626,7 @@ impl Default for EmbeddingBackendConfig {
             api_key_env: default_embeddings_api_key_env(),
             model: String::new(),
             batch_size: default_embeddings_batch_size(),
+            create_enabled: true,
         }
     }
 }
@@ -2621,12 +2639,25 @@ impl Default for EmbeddingBackendConfig {
 ///    `{provider}-{model}` and marked active.
 /// 2. Multi-backend — `[embeddings] active = "<name>"` plus one or
 ///    more `[[embeddings.backends]]` array-of-tables.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EmbeddingsConfig {
+    pub enabled: bool,
+    pub create_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<String>,
     #[serde(default)]
     pub backends: Vec<EmbeddingBackendConfig>,
+}
+
+impl Default for EmbeddingsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            create_enabled: true,
+            active: None,
+            backends: Vec::new(),
+        }
+    }
 }
 
 impl EmbeddingsConfig {
@@ -2635,6 +2666,9 @@ impl EmbeddingsConfig {
     /// explicit `active` was given. Returns `None` when no backends are
     /// configured at all.
     pub fn active_backend(&self) -> Option<&EmbeddingBackendConfig> {
+        if !self.enabled {
+            return None;
+        }
         if let Some(name) = self.active.as_deref() {
             return self.backends.iter().find(|b| b.name == name);
         }
@@ -2670,6 +2704,24 @@ impl<'de> Deserialize<'de> for EmbeddingsConfig {
 
         // New-form: presence of `backends` array wins.
         if map.contains_key("backends") {
+            let enabled = match map.get("enabled") {
+                Some(serde_json::Value::Bool(value)) => *value,
+                Some(serde_json::Value::Null) | None => true,
+                Some(other) => {
+                    return Err(D::Error::custom(format!(
+                        "embeddings.enabled must be a boolean, got {other}"
+                    )));
+                }
+            };
+            let create_enabled = match map.get("create_enabled") {
+                Some(serde_json::Value::Bool(value)) => *value,
+                Some(serde_json::Value::Null) | None => true,
+                Some(other) => {
+                    return Err(D::Error::custom(format!(
+                        "embeddings.create_enabled must be a boolean, got {other}"
+                    )));
+                }
+            };
             let active = match map.get("active") {
                 Some(serde_json::Value::String(s)) => Some(s.clone()),
                 Some(serde_json::Value::Null) | None => None,
@@ -2682,8 +2734,32 @@ impl<'de> Deserialize<'de> for EmbeddingsConfig {
             let backends_value = map.get("backends").cloned().unwrap_or_default();
             let backends: Vec<EmbeddingBackendConfig> =
                 serde_json::from_value(backends_value).map_err(D::Error::custom)?;
-            return Ok(Self { active, backends });
+            return Ok(Self {
+                enabled,
+                create_enabled,
+                active,
+                backends,
+            });
         }
+
+        let enabled = match map.get("enabled") {
+            Some(serde_json::Value::Bool(value)) => *value,
+            Some(serde_json::Value::Null) | None => true,
+            Some(other) => {
+                return Err(D::Error::custom(format!(
+                    "embeddings.enabled must be a boolean, got {other}"
+                )));
+            }
+        };
+        let create_enabled = match map.get("create_enabled") {
+            Some(serde_json::Value::Bool(value)) => *value,
+            Some(serde_json::Value::Null) | None => true,
+            Some(other) => {
+                return Err(D::Error::custom(format!(
+                    "embeddings.create_enabled must be a boolean, got {other}"
+                )));
+            }
+        };
 
         // Legacy singleton: if nothing relevant is set, return a wholly
         // empty config so other code paths still see "no backends".
@@ -2692,14 +2768,33 @@ impl<'de> Deserialize<'de> for EmbeddingsConfig {
             && !map.contains_key("base_url")
             && !map.contains_key("api_key_env")
             && !map.contains_key("batch_size")
-            && !map.contains_key("name");
+            && !map.contains_key("name")
+            && !map.contains_key("enabled")
+            && !map.contains_key("create_enabled");
         if is_empty {
             return Ok(Self::default());
+        }
+
+        if !map.contains_key("provider")
+            && !map.contains_key("model")
+            && !map.contains_key("base_url")
+            && !map.contains_key("api_key_env")
+            && !map.contains_key("batch_size")
+            && !map.contains_key("name")
+        {
+            return Ok(Self {
+                enabled,
+                create_enabled,
+                active: None,
+                backends: Vec::new(),
+            });
         }
 
         let backend: EmbeddingBackendConfig =
             serde_json::from_value(serde_json::Value::Object(map)).map_err(D::Error::custom)?;
         Ok(Self {
+            enabled,
+            create_enabled,
             active: if backend.name.is_empty() {
                 None
             } else {
@@ -3043,12 +3138,58 @@ mod tests {
         );
         cfg.normalize_backend_names();
         assert_eq!(cfg.backends.len(), 2);
+        assert!(cfg.enabled);
+        assert!(cfg.create_enabled);
         assert_eq!(cfg.active.as_deref(), Some("voyage-code"));
         assert_eq!(
             cfg.backend("openai-3-small").unwrap().provider,
             "openai_compatible"
         );
         assert_eq!(cfg.active_backend().unwrap().model, "voyage-code-3");
+    }
+
+    #[test]
+    fn embeddings_config_create_enabled_false_keeps_search_enabled() {
+        let mut cfg = parse_embeddings(
+            r#"
+            [embeddings]
+            create_enabled = false
+            active = "openai"
+
+            [[embeddings.backends]]
+            name = "openai"
+            provider = "openai_compatible"
+            model = "text-embedding-3-small"
+            create_enabled = false
+            "#,
+        );
+        cfg.normalize_backend_names();
+
+        assert!(cfg.enabled);
+        assert!(!cfg.create_enabled);
+        assert!(!cfg.backend("openai").unwrap().create_enabled);
+        assert_eq!(cfg.active_backend().unwrap().name, "openai");
+    }
+
+    #[test]
+    fn embeddings_config_enabled_false_disables_active_backend() {
+        let mut cfg = parse_embeddings(
+            r#"
+            [embeddings]
+            enabled = false
+            active = "openai"
+
+            [[embeddings.backends]]
+            name = "openai"
+            provider = "openai_compatible"
+            model = "text-embedding-3-small"
+            "#,
+        );
+        cfg.normalize_backend_names();
+
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.active.as_deref(), Some("openai"));
+        assert!(cfg.active_backend().is_none());
     }
 
     #[test]
