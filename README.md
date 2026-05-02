@@ -6,6 +6,23 @@ It captures what happened, curates what matters, stores it in PostgreSQL with pg
 
 ![Memory Layer query answer and evidence](docs/img/tui/query-tab.png)
 
+## Measured Impact
+
+Memory Layer is built to be evaluated, not just demoed. Its eval harness runs
+paired ablations such as `no-memory` vs `full-memory`, writes immutable
+artifacts, compares item-by-item results, applies gates, and reports token and
+latency cost.
+
+In the latest development `research-v1` run, full Memory retrieval moved
+Recall@K, MRR, and nDCG from `0.000` to `1.000`, and improved resume topic
+recall from `0.500` to `0.750`. The same run also exposed the engineering
+tradeoffs: higher token use, higher latency, lower citation precision, and
+lower confidence.
+
+Read the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md), the
+[`memory eval` CLI reference](docs/user/cli/eval.md), and the recorded
+[research-v1 dev run](docs/developer/evaluation-runs/2026-05-02-research-v1-dev.md).
+
 ## Why It Is Interesting
 
 - **Answers with evidence:** ask a project question and see both the synthesized answer and the exact memories used to produce it.
