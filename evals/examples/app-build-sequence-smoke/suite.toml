@@ -1,0 +1,9 @@
+name = "app build sequence smoke"
+project = "memory"
+items = "items.jsonl"
+suite_version = "1"
+label_status = "draft"
+fixture = "static-site-sequence"
+default_profile = "offline"
+default_repeats = 1
+min_items = 1

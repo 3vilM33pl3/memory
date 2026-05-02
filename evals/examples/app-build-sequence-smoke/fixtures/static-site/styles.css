@@ -1,0 +1,11 @@
+body {
+  margin: 0;
+  font-family: Georgia, serif;
+  background: linear-gradient(135deg, #f8f2df, #d4ece0);
+}
+
+main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 3rem;
+}

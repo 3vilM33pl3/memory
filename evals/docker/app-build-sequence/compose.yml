@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: memory
+      POSTGRES_PASSWORD: memory
+      POSTGRES_DB: memory_eval
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memory -d memory_eval"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  memory-service:
+    build:
+      context: ../../..
+      dockerfile: evals/docker/app-build-sequence/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MEMORY_LAYER_PROFILE: docker
+      MEMORY_LAYER_CONFIG: /workspace/evals/docker/app-build-sequence/config.service.toml
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+    command: ["cargo", "run", "--bin", "memory", "--", "service", "run", "--config", "/workspace/evals/docker/app-build-sequence/config.service.toml"]
+    ports:
+      - "4250"
+
+  eval:
+    build:
+      context: ../../..
+      dockerfile: evals/docker/app-build-sequence/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      memory-service:
+        condition: service_started
+    environment:
+      CODEX_HOME: /codex-home
+      MEMORY_LAYER_PROFILE: docker
+      MEMORY_LAYER_CONFIG: /workspace/evals/docker/app-build-sequence/config.eval.toml
+      MEMORY_EVAL_CODEX_MODEL: ${MEMORY_EVAL_CODEX_MODEL:-gpt-5.4-mini}
+      MEMORY_EVAL_CODEX_WATCHDOG_SECONDS: ${MEMORY_EVAL_CODEX_WATCHDOG_SECONDS:-300}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+    volumes:
+      - ${CODEX_HOME:-${HOME}/.codex}:/codex-home:ro
+      - ../../../target/memory-evals-docker:/workspace/target/memory-evals
+    command: ["sh", "/workspace/evals/docker/app-build-sequence/run-eval.sh"]
+
+volumes:
+  pgdata:

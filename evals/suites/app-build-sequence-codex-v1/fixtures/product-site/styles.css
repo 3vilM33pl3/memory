@@ -1,0 +1,20 @@
+:root {
+  color-scheme: light;
+  --ink: #172019;
+  --paper: #f6f1e3;
+  --accent: #2d6d54;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background: linear-gradient(135deg, #f6f1e3 0%, #d8e8db 55%, #b6cfc6 100%);
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+main {
+  width: min(1100px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 48px 0;
+}

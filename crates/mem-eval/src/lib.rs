@@ -53,6 +53,7 @@ pub enum EvalItem {
     ResumeQuality(ResumeQualityItem),
     CommandTask(CommandTaskItem),
     AgentBuildTask(AgentBuildTaskItem),
+    AgentBuildSequence(AgentBuildSequenceItem),
 }
 
 impl EvalItem {
@@ -63,6 +64,7 @@ impl EvalItem {
             Self::ResumeQuality(item) => &item.id,
             Self::CommandTask(item) => &item.id,
             Self::AgentBuildTask(item) => &item.id,
+            Self::AgentBuildSequence(item) => &item.id,
         }
     }
 
@@ -73,6 +75,7 @@ impl EvalItem {
             Self::ResumeQuality(item) => item.project.as_deref().unwrap_or(default_project),
             Self::CommandTask(item) => item.project.as_deref().unwrap_or(default_project),
             Self::AgentBuildTask(item) => item.project.as_deref().unwrap_or(default_project),
+            Self::AgentBuildSequence(item) => item.project.as_deref().unwrap_or(default_project),
         }
     }
 }
@@ -155,6 +158,38 @@ pub struct AgentBuildTaskItem {
     pub forbidden_files: Vec<String>,
     #[serde(default)]
     pub required_content: Vec<AgentBuildContentAssertion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentBuildSequenceItem {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub fixture: String,
+    pub agent_command: String,
+    #[serde(default)]
+    pub setup_commands: Vec<String>,
+    #[serde(default = "default_agent_build_timeout_seconds")]
+    pub timeout_seconds: u64,
+    pub steps: Vec<AgentBuildSequenceStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentBuildSequenceStep {
+    pub id: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub memory_questions: Vec<String>,
+    #[serde(default)]
+    pub score_commands: Vec<String>,
+    #[serde(default)]
+    pub required_files: Vec<String>,
+    #[serde(default)]
+    pub forbidden_files: Vec<String>,
+    #[serde(default)]
+    pub required_content: Vec<AgentBuildContentAssertion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -681,6 +716,9 @@ pub struct AgentBuildScoreInput {
     pub memory_queries_verified: usize,
     pub memory_evidence_required: bool,
     pub memory_evidence_ok: bool,
+    pub token_usage_required: bool,
+    pub token_usage_ok: bool,
+    pub token_usage: Option<TokenUsage>,
     pub duration_ms: Option<u64>,
     pub notes: Vec<String>,
     pub skipped: bool,
@@ -752,6 +790,10 @@ pub fn score_agent_build_task(
         "memory_evidence_ok".to_string(),
         if input.memory_evidence_ok { 1.0 } else { 0.0 },
     );
+    scores.insert(
+        "token_usage_ok".to_string(),
+        if input.token_usage_ok { 1.0 } else { 0.0 },
+    );
 
     let setup_ok = setup_passed == input.setup_exit_codes.len();
     let score_ok = score_passed == input.score_exit_codes.len();
@@ -759,9 +801,16 @@ pub fn score_agent_build_task(
         && input.forbidden_files_absent == input.forbidden_files_total;
     let content_ok = input.content_assertions_passed == input.content_assertions_total;
     let memory_ok = !input.memory_evidence_required || input.memory_evidence_ok;
+    let token_ok = !input.token_usage_required || input.token_usage_ok;
     let agent_ok = input.agent_exit_code == Some(0);
-    let success =
-        !input.skipped && agent_ok && setup_ok && score_ok && files_ok && content_ok && memory_ok;
+    let success = !input.skipped
+        && agent_ok
+        && setup_ok
+        && score_ok
+        && files_ok
+        && content_ok
+        && memory_ok
+        && token_ok;
     scores.insert("total_score".to_string(), if success { 1.0 } else { 0.0 });
 
     EvalItemResult {
@@ -772,10 +821,37 @@ pub fn score_agent_build_task(
         skipped: input.skipped,
         scores,
         duration_ms: input.duration_ms,
-        token_usage: None,
+        token_usage: input.token_usage,
         answer: None,
         notes: input.notes,
     }
+}
+
+pub fn score_agent_build_sequence(
+    item: &AgentBuildSequenceItem,
+    condition: EvalCondition,
+    input: AgentBuildScoreInput,
+) -> EvalItemResult {
+    let mut result = score_agent_build_task(
+        &AgentBuildTaskItem {
+            id: item.id.clone(),
+            project: item.project.clone(),
+            prompt: String::new(),
+            fixture: item.fixture.clone(),
+            agent_command: item.agent_command.clone(),
+            memory_questions: Vec::new(),
+            setup_commands: item.setup_commands.clone(),
+            score_commands: Vec::new(),
+            timeout_seconds: item.timeout_seconds,
+            required_files: Vec::new(),
+            forbidden_files: Vec::new(),
+            required_content: Vec::new(),
+        },
+        condition,
+        input,
+    );
+    result.eval_type = "agent_build_sequence".to_string();
+    result
 }
 
 pub fn skipped_result(
@@ -791,6 +867,7 @@ pub fn skipped_result(
             EvalItem::ResumeQuality(_) => "resume_quality",
             EvalItem::CommandTask(_) => "command_task",
             EvalItem::AgentBuildTask(_) => "agent_build_task",
+            EvalItem::AgentBuildSequence(_) => "agent_build_sequence",
         }
         .to_string(),
         condition,
@@ -1286,6 +1363,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_agent_build_sequence_items() {
+        let line = r#"{"eval_type":"agent_build_sequence","id":"app-sequence","project":"memory","fixture":"fixtures/app","agent_command":"sh agent.sh","steps":[{"id":"hero","prompt":"Build hero","memory_questions":["What matters?"],"score_commands":["sh scripts/check.sh"],"required_files":["index.html"],"required_content":[{"file":"index.html","contains":"Hero"}]}]}"#;
+
+        let item: EvalItem = serde_json::from_str(line).expect("parse sequence");
+
+        let EvalItem::AgentBuildSequence(item) = item else {
+            panic!("expected agent build sequence");
+        };
+        assert_eq!(item.id, "app-sequence");
+        assert_eq!(item.steps.len(), 1);
+        assert_eq!(item.steps[0].id, "hero");
+        assert_eq!(item.steps[0].memory_questions, vec!["What matters?"]);
+        assert_eq!(item.steps[0].timeout_seconds, None);
+    }
+
+    #[test]
     fn agent_build_task_scores_deterministic_checks() {
         let item = AgentBuildTaskItem {
             id: "app".to_string(),
@@ -1322,6 +1415,9 @@ mod tests {
                 memory_queries_verified: 1,
                 memory_evidence_required: true,
                 memory_evidence_ok: true,
+                token_usage_required: false,
+                token_usage_ok: true,
+                token_usage: None,
                 duration_ms: Some(10),
                 notes: Vec::new(),
                 skipped: false,

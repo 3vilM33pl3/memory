@@ -63,6 +63,51 @@ The harness also fails `no-memory` items if `memory-evidence.md`,
 such as separate services or databases per condition, can be added later if the
 benchmark needs adversarial guarantees.
 
+## Agent Build Sequences
+
+`agent_build_sequence` extends build simulations from isolated tasks to a
+stateful product build. The suite supplies one fixture and an ordered `steps`
+array. The runner copies the fixture once, keeps the same workspace for the
+whole sequence, and gives every step its own prompt file, run directory,
+Memory-query helper, score commands, and deterministic assertions.
+
+The score is aggregated through the same `AgentBuildScoreInput` schema used by
+`agent_build_task`, but the result `eval_type` is `agent_build_sequence`.
+Sequence artifacts are laid out as:
+
+- `summary.json`: aggregate sequence status, Memory evidence totals, token
+  totals, and step summaries
+- `workspace/`: the final accumulated application state
+- `steps/<NN-step-id>/prompt.md`: the exact prompt for a step
+- `steps/<NN-step-id>/agent.*`: stdout, stderr, status, and timeout artifacts
+- `steps/<NN-step-id>/memory-eval/`: verified Memory helper query artifacts
+- `steps/<NN-step-id>/codex-events.jsonl`: raw Codex JSON events when using the
+  Codex wrapper
+- `steps/<NN-step-id>/codex-token-usage.json`: normalized token totals when
+  parseable
+
+The checked-in `evals/examples/app-build-sequence-smoke` suite uses a fake
+agent and three steps so CI can exercise the sequence path without provider
+cost. The checked-in `evals/suites/app-build-sequence-codex-v1` suite uses real
+Codex agents and around 20 ordered steps to build a Memory product site.
+Codex-backed sequence runs require parseable token usage; missing
+`codex-events.jsonl`/`codex-token-usage.json` data makes the item fail so cost
+evidence cannot silently disappear.
+
+The Docker stack under `evals/docker/app-build-sequence/` runs the long suite
+against PostgreSQL with pgvector, a Memory service container, deterministic
+seed memories, and a separate eval runner container:
+
+```bash
+docker compose -f evals/docker/app-build-sequence/compose.yml run --rm eval
+```
+
+Artifacts are bind-mounted to `target/memory-evals-docker/` on the host. Use
+`docker compose -f evals/docker/app-build-sequence/compose.yml down -v` for a
+clean database before rerunning. The eval container mounts the host Codex home
+read-only so the Codex CLI can use the same local credentials without baking
+secrets into the image.
+
 ## Conditions
 
 Supported condition labels are `no-memory`, `lexical`, `semantic`, `graph`, and

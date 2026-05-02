@@ -50,6 +50,8 @@ The main item types are:
 - `command_task`: checks whether a command succeeds
 - `agent_build_task`: copies a fixture app or website, lets an agent modify it,
   then scores the finished workspace
+- `agent_build_sequence`: runs many ordered agent-building steps against the
+  same copied workspace and scores the accumulated app
 
 Start with the checked-in smoke suite:
 
@@ -127,6 +129,19 @@ verifies the helper's raw query JSON before accepting the item. The `no-memory`
 condition is forbidden from using Memory and fails if Memory evidence artifacts
 appear.
 
+For a longer software-building test, use the Dockerized sequence suite:
+
+```bash
+docker compose -f evals/docker/app-build-sequence/compose.yml run --rm eval
+```
+
+This starts PostgreSQL with pgvector, starts the Memory service, seeds
+deterministic project memories, and runs the 20-step Codex app-build sequence
+under `no-memory` and `full-memory`. Each step keeps the previous workspace
+state, so the run tests continuity across a realistic product build rather than
+isolated prompt answers. Use `docker compose -f evals/docker/app-build-sequence/compose.yml down -v`
+before a clean rerun if you want to reset the database volume.
+
 ## Step 4: Run A Paired Evaluation
 
 For useful evidence, compare a baseline against a Memory-backed condition:
@@ -160,6 +175,12 @@ common Memory environment variables cleared; the full-memory run is told to use
 Memory where useful. This makes the result easier to explain than a pure Q&A
 test: Memory is valuable if the agent ships more of the requested app, passes
 more checks, or needs fewer interventions under the same budget.
+
+Use `agent_build_sequence` when the claim is about long-running development.
+The sequence runner preserves one workspace across ordered steps, verifies
+Memory helper calls step by step, and aggregates Codex token usage from
+`codex-events.jsonl`. That lets you inspect whether Memory changed quality,
+continuity, latency, and token cost across the whole build.
 
 Run artifacts are written under `target/memory-evals/`. Keep the generated JSON
 files for release notes, research notes, or regression tracking.

@@ -43,6 +43,7 @@ Each JSONL row is one eval item. Supported `eval_type` values are:
 - `resume_quality`: scores a get-up-to-speed briefing against required/forbidden topics.
 - `command_task`: runs a shell command and scores the exit code.
 - `agent_build_task`: copies a fixture project, runs a noninteractive agent command, then scores the resulting workspace with deterministic checks.
+- `agent_build_sequence`: copies one fixture project, runs a sequence of agent prompts against the same workspace, then scores every step and the final accumulated result.
 
 `agent_build_task` rows are for app/website build simulations. They use a
 workspace copy under `target/memory-evals/build-runs/`, so the source fixture is
@@ -82,6 +83,42 @@ writes raw query JSON and status files under `.memory-eval/`, and the harness
 fails the item unless every required question has a successful query response
 with at least one returned memory. Hand-written `memory-evidence.md` is useful
 for humans, but it is not accepted as proof of Memory access by itself.
+
+`agent_build_sequence` rows are for longer product-build simulations where
+continuity matters. The fixture is copied once, then every step receives its own
+prompt, run directory, Memory helper, score commands, and file/content checks.
+The workspace is preserved between steps, so the result measures whether the
+agent can keep improving one app instead of solving isolated tasks.
+
+```json
+{
+  "eval_type": "agent_build_sequence",
+  "id": "product-site-sequence",
+  "project": "memory",
+  "fixture": "fixtures/product-site",
+  "agent_command": "sh {suite_dir}/scripts/run-codex.sh {workspace} {prompt_file} {run_dir}",
+  "timeout_seconds": 420,
+  "steps": [
+    {
+      "id": "hero",
+      "prompt": "Add the hero section.",
+      "memory_questions": ["What should this product page emphasize?"],
+      "score_commands": ["sh scripts/check.sh"],
+      "required_files": ["index.html", "styles.css"],
+      "forbidden_files": ["debug.log"],
+      "required_content": [
+        { "file": "index.html", "contains": "SEQ-01-HERO" }
+      ]
+    }
+  ]
+}
+```
+
+Codex-backed build suites run the wrapper with `codex exec --json`. The harness
+stores raw events in `codex-events.jsonl`, normalizes token totals into
+`codex-token-usage.json` when available, and includes aggregated token usage in
+the item result. Official Codex sequence runs fail if no parseable token usage
+is captured, because cost is part of the benchmark evidence.
 
 ## Commands
 
@@ -148,6 +185,25 @@ the real app-build suite defaults to `danger-full-access` because the evaluated
 Codex process must reach the local Memory service on localhost. In that default
 mode the wrapper uses Codex's explicit sandbox-bypass flag; only run this suite
 against disposable fixtures.
+
+Run the longer Dockerized sequence suite when you want an isolated full-stack
+evaluation with PostgreSQL, pgvector, Memory service, seeded memories, and real
+Codex agents:
+
+```bash
+docker compose -f evals/docker/app-build-sequence/compose.yml run --rm eval
+```
+
+Use this form for clean reruns:
+
+```bash
+docker compose -f evals/docker/app-build-sequence/compose.yml down -v
+docker compose -f evals/docker/app-build-sequence/compose.yml run --rm eval
+```
+
+The Docker run writes artifacts to `target/memory-evals-docker/` on the host.
+The sequence suite has around 20 ordered steps and runs both `no-memory` and
+`full-memory`, so expect materially higher model cost than the smoke suites.
 
 Run paired conditions:
 
@@ -217,6 +273,11 @@ Agent build tasks report agent exit code, setup command pass count, score
 command pass count, required/forbidden file checks, required content checks,
 `total_score`, and duration. Raw command output and the copied workspace are
 stored beside the run artifacts so failed builds can be inspected.
+
+Agent build sequences report the same fields aggregated across steps, plus a
+`steps/` artifact directory with each step's prompt, command output,
+Memory-query evidence, Codex JSONL events, normalized token usage, and
+step-level summary.
 
 Run artifacts include `run_group_id`, `repeat_index`, `suite_checksum`,
 `fixture_checksum`, `duration_ms`, and provider token usage when the underlying

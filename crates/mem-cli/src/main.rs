@@ -8007,13 +8007,24 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
                 }));
             }
             for item in &suite.items {
-                if let mem_eval::EvalItem::AgentBuildTask(item) = item {
-                    let result = validate_agent_build_suite_item(&suite, item);
-                    checks.push(serde_json::json!({
-                        "name": format!("agent_build_task.{}", item.id),
-                        "status": if result.is_ok() { "ok" } else { "fail" },
-                        "message": result.err().map(|error| error.to_string()).unwrap_or_else(|| "fixture and paths are valid".to_string()),
-                    }));
+                match item {
+                    mem_eval::EvalItem::AgentBuildTask(item) => {
+                        let result = validate_agent_build_suite_item(&suite, item);
+                        checks.push(serde_json::json!({
+                            "name": format!("agent_build_task.{}", item.id),
+                            "status": if result.is_ok() { "ok" } else { "fail" },
+                            "message": result.err().map(|error| error.to_string()).unwrap_or_else(|| "fixture and paths are valid".to_string()),
+                        }));
+                    }
+                    mem_eval::EvalItem::AgentBuildSequence(item) => {
+                        let result = validate_agent_build_sequence_suite_item(&suite, item);
+                        checks.push(serde_json::json!({
+                            "name": format!("agent_build_sequence.{}", item.id),
+                            "status": if result.is_ok() { "ok" } else { "fail" },
+                            "message": result.err().map(|error| error.to_string()).unwrap_or_else(|| format!("fixture, paths, and {} steps are valid", item.steps.len())),
+                        }));
+                    }
+                    _ => {}
                 }
             }
             match api.health().await {
@@ -8304,7 +8315,12 @@ async fn run_eval_suite(
 ) -> Result<mem_eval::EvalRun> {
     let mut results = Vec::new();
     for item in &suite.items {
-        if context.dry_run && !matches!(item, mem_eval::EvalItem::AgentBuildTask(_)) {
+        if context.dry_run
+            && !matches!(
+                item,
+                mem_eval::EvalItem::AgentBuildTask(_) | mem_eval::EvalItem::AgentBuildSequence(_)
+            )
+        {
             results.push(mem_eval::skipped_result(
                 item,
                 condition,
@@ -8382,6 +8398,9 @@ async fn run_eval_suite(
             mem_eval::EvalItem::CommandTask(item) => run_command_eval_item(item, condition)?,
             mem_eval::EvalItem::AgentBuildTask(item) => {
                 run_agent_build_eval_item(suite, item, condition, &context)?
+            }
+            mem_eval::EvalItem::AgentBuildSequence(item) => {
+                run_agent_build_sequence_eval_item(suite, item, condition, &context)?
             }
         };
         if matches!(
@@ -8743,6 +8762,9 @@ fn run_agent_build_eval_item(
                 memory_evidence_required: condition != mem_eval::EvalCondition::NoMemory
                     && !item.memory_questions.is_empty(),
                 memory_evidence_ok: false,
+                token_usage_required: false,
+                token_usage_ok: true,
+                token_usage: None,
                 duration_ms: Some(0),
                 notes: vec![
                     "dry-run: validated fixture and command templates without execution"
@@ -8919,11 +8941,359 @@ fn run_agent_build_eval_item(
             memory_queries_verified: memory_evidence.verified,
             memory_evidence_required: true,
             memory_evidence_ok: memory_evidence.ok,
+            token_usage_required: false,
+            token_usage_ok: true,
+            token_usage: codex_token_usage_from_run_dir(&run_dir)?,
             duration_ms: Some(started.elapsed().as_millis() as u64),
             notes,
             skipped: false,
         },
     ))
+}
+
+fn run_agent_build_sequence_eval_item(
+    suite: &mem_eval::EvalSuite,
+    item: &mem_eval::AgentBuildSequenceItem,
+    condition: mem_eval::EvalCondition,
+    context: &EvalRunContext,
+) -> Result<mem_eval::EvalItemResult> {
+    let started = Instant::now();
+    let fixture_dir = suite.root.join(&item.fixture);
+    if !fixture_dir.is_dir() {
+        anyhow::bail!(
+            "agent build sequence `{}` fixture is not a directory: {}",
+            item.id,
+            fixture_dir.display()
+        );
+    }
+    validate_agent_build_sequence_paths(item)?;
+    if context.dry_run {
+        return Ok(mem_eval::score_agent_build_sequence(
+            item,
+            condition,
+            mem_eval::AgentBuildScoreInput {
+                agent_exit_code: None,
+                setup_exit_codes: Vec::new(),
+                score_exit_codes: Vec::new(),
+                required_files_present: 0,
+                required_files_total: item
+                    .steps
+                    .iter()
+                    .map(|step| step.required_files.len())
+                    .sum(),
+                forbidden_files_absent: 0,
+                forbidden_files_total: item
+                    .steps
+                    .iter()
+                    .map(|step| step.forbidden_files.len())
+                    .sum(),
+                content_assertions_passed: 0,
+                content_assertions_total: item
+                    .steps
+                    .iter()
+                    .map(|step| step.required_content.len())
+                    .sum(),
+                memory_queries_required: item
+                    .steps
+                    .iter()
+                    .map(|step| step.memory_questions.len())
+                    .sum(),
+                memory_queries_verified: 0,
+                memory_evidence_required: condition != mem_eval::EvalCondition::NoMemory,
+                memory_evidence_ok: false,
+                token_usage_required: false,
+                token_usage_ok: true,
+                token_usage: None,
+                duration_ms: Some(0),
+                notes: vec![
+                    "dry-run: validated sequence fixture and command templates without execution"
+                        .to_string(),
+                ],
+                skipped: true,
+            },
+        ));
+    }
+
+    let run_dir = context.artifacts_root.join("build-runs").join(format!(
+        "{}-{}-{}-r{}-{}",
+        sanitize_filename(&suite.manifest.name),
+        sanitize_filename(&item.id),
+        condition,
+        context.repeat_index,
+        context.run_group_id.simple()
+    ));
+    if run_dir.exists() {
+        fs::remove_dir_all(&run_dir)
+            .with_context(|| format!("remove previous sequence run {}", run_dir.display()))?;
+    }
+    let workspace = run_dir.join("workspace");
+    let steps_dir = run_dir.join("steps");
+    fs::create_dir_all(&steps_dir).with_context(|| format!("create {}", steps_dir.display()))?;
+    copy_dir_recursive(&fixture_dir, &workspace)?;
+    let project = item
+        .project
+        .as_deref()
+        .or(suite.manifest.project.as_deref())
+        .unwrap_or("");
+
+    let mut notes = vec![format!("artifacts: {}", run_dir.display())];
+    let mut setup_exit_codes = Vec::new();
+    for (index, command) in item.setup_commands.iter().enumerate() {
+        let output = run_eval_shell_command(
+            &expand_agent_build_template(
+                command,
+                suite,
+                condition,
+                &run_dir,
+                &workspace,
+                &run_dir.join("setup-prompt.md"),
+                project,
+            ),
+            &workspace,
+            item.timeout_seconds,
+            Some(condition),
+            Some(project),
+            Some(context),
+        )?;
+        write_command_artifacts(&run_dir, &format!("setup-{index}"), &output)?;
+        setup_exit_codes.push(output.exit_code);
+    }
+
+    let mut agent_exit_codes = Vec::new();
+    let mut score_exit_codes = Vec::new();
+    let mut required_files_present = 0usize;
+    let mut required_files_total = 0usize;
+    let mut forbidden_files_absent = 0usize;
+    let mut forbidden_files_total = 0usize;
+    let mut content_assertions_passed = 0usize;
+    let mut content_assertions_total = 0usize;
+    let mut memory_queries_required = 0usize;
+    let mut memory_queries_verified = 0usize;
+    let mut memory_evidence_ok = true;
+    let mut token_usage = TokenUsage::default();
+    let mut saw_token_usage = false;
+    let mut step_summaries = Vec::new();
+
+    for (index, step) in item.steps.iter().enumerate() {
+        let step_label = format!("{:02}-{}", index + 1, sanitize_filename(&step.id));
+        let step_dir = steps_dir.join(&step_label);
+        fs::create_dir_all(&step_dir).with_context(|| format!("create {}", step_dir.display()))?;
+        let step_timeout = step.timeout_seconds.unwrap_or(item.timeout_seconds);
+        let step_task = sequence_step_as_task(item, step, step_timeout);
+        if workspace.join(".memory-eval").exists() {
+            fs::remove_dir_all(workspace.join(".memory-eval"))
+                .with_context(|| format!("clear step Memory evidence for {}", step.id))?;
+        }
+        if condition != mem_eval::EvalCondition::NoMemory && !step.memory_questions.is_empty() {
+            write_agent_build_memory_helper(&workspace, &step_task, context)?;
+        }
+        let prompt = agent_build_prompt(&step_task, condition, context);
+        let prompt_file = step_dir.join("prompt.md");
+        fs::write(&prompt_file, &prompt)
+            .with_context(|| format!("write {}", prompt_file.display()))?;
+        let agent_command = expand_agent_build_template(
+            &item.agent_command,
+            suite,
+            condition,
+            &step_dir,
+            &workspace,
+            &prompt_file,
+            project,
+        );
+        let agent_output = run_eval_shell_command(
+            &agent_command,
+            &workspace,
+            step_timeout,
+            Some(condition),
+            Some(project),
+            Some(context),
+        )?;
+        write_command_artifacts(&step_dir, "agent", &agent_output)?;
+        agent_exit_codes.push(agent_output.exit_code);
+        if agent_output.timed_out {
+            notes.push(format!(
+                "step {} agent command timed out after {} second(s)",
+                step.id, step_timeout
+            ));
+        }
+        let memory_evidence =
+            validate_agent_build_memory_evidence(&workspace, &step_task, condition)?;
+        notes.extend(
+            memory_evidence
+                .notes
+                .iter()
+                .map(|note| format!("step {}: {note}", step.id)),
+        );
+        memory_queries_required += memory_evidence.required;
+        memory_queries_verified += memory_evidence.verified;
+        memory_evidence_ok &= memory_evidence.ok;
+        if workspace.join(".memory-eval").is_dir() {
+            copy_dir_recursive(
+                &workspace.join(".memory-eval"),
+                &step_dir.join("memory-eval"),
+            )?;
+        }
+
+        let mut step_score_exit_codes = Vec::new();
+        for (score_index, command) in step.score_commands.iter().enumerate() {
+            let output = run_eval_shell_command(
+                &expand_agent_build_template(
+                    command,
+                    suite,
+                    condition,
+                    &step_dir,
+                    &workspace,
+                    &prompt_file,
+                    project,
+                ),
+                &workspace,
+                step_timeout,
+                Some(condition),
+                Some(project),
+                Some(context),
+            )?;
+            write_command_artifacts(&step_dir, &format!("score-{score_index}"), &output)?;
+            step_score_exit_codes.push(output.exit_code);
+            score_exit_codes.push(output.exit_code);
+        }
+
+        let step_required_present = step
+            .required_files
+            .iter()
+            .filter(|path| workspace.join(path).is_file())
+            .count();
+        let step_forbidden_absent = step
+            .forbidden_files
+            .iter()
+            .filter(|path| !workspace.join(path).exists())
+            .count();
+        let step_content_passed = step
+            .required_content
+            .iter()
+            .filter(|assertion| {
+                fs::read_to_string(workspace.join(&assertion.file))
+                    .map(|contents| contents.contains(&assertion.contains))
+                    .unwrap_or(false)
+            })
+            .count();
+        required_files_present += step_required_present;
+        required_files_total += step.required_files.len();
+        forbidden_files_absent += step_forbidden_absent;
+        forbidden_files_total += step.forbidden_files.len();
+        content_assertions_passed += step_content_passed;
+        content_assertions_total += step.required_content.len();
+
+        let step_token_usage = codex_token_usage_from_run_dir(&step_dir)?;
+        if let Some(usage) = &step_token_usage {
+            saw_token_usage = true;
+            add_token_usage(&mut token_usage, usage);
+        }
+        let step_success = agent_output.exit_code == Some(0)
+            && step_score_exit_codes.iter().all(|code| *code == Some(0))
+            && step_required_present == step.required_files.len()
+            && step_forbidden_absent == step.forbidden_files.len()
+            && step_content_passed == step.required_content.len()
+            && memory_evidence.ok;
+        step_summaries.push(serde_json::json!({
+            "id": step.id,
+            "success": step_success,
+            "agent_exit_code": agent_output.exit_code,
+            "score_exit_codes": step_score_exit_codes,
+            "memory_queries_required": memory_evidence.required,
+            "memory_queries_verified": memory_evidence.verified,
+            "memory_evidence_ok": memory_evidence.ok,
+            "token_usage": step_token_usage,
+        }));
+    }
+
+    let token_usage_required = agent_build_command_requires_token_usage(&item.agent_command);
+    let token_usage_ok = !token_usage_required || saw_token_usage;
+    if !token_usage_ok {
+        notes.push(
+            "Codex sequence run did not emit parseable token usage; expected codex-events.jsonl or codex-token-usage.json"
+                .to_string(),
+        );
+    }
+
+    let summary = serde_json::json!({
+        "item_id": item.id,
+        "condition": condition,
+        "run_dir": run_dir,
+        "workspace": workspace,
+        "steps": step_summaries,
+        "setup_exit_codes": setup_exit_codes,
+        "memory_queries_required": memory_queries_required,
+        "memory_queries_verified": memory_queries_verified,
+        "memory_evidence_ok": memory_evidence_ok,
+        "token_usage_required": token_usage_required,
+        "token_usage_ok": token_usage_ok,
+        "token_usage": if saw_token_usage { Some(&token_usage) } else { None },
+    });
+    fs::write(
+        run_dir.join("summary.json"),
+        serde_json::to_string_pretty(&summary)?,
+    )
+    .with_context(|| format!("write {}", run_dir.join("summary.json").display()))?;
+
+    let agent_exit_code = if agent_exit_codes.iter().all(|code| *code == Some(0)) {
+        Some(0)
+    } else {
+        agent_exit_codes
+            .iter()
+            .copied()
+            .find(|code| *code != Some(0))
+            .flatten()
+    };
+    Ok(mem_eval::score_agent_build_sequence(
+        item,
+        condition,
+        mem_eval::AgentBuildScoreInput {
+            agent_exit_code,
+            setup_exit_codes,
+            score_exit_codes,
+            required_files_present,
+            required_files_total,
+            forbidden_files_absent,
+            forbidden_files_total,
+            content_assertions_passed,
+            content_assertions_total,
+            memory_queries_required,
+            memory_queries_verified,
+            memory_evidence_required: true,
+            memory_evidence_ok,
+            token_usage_required,
+            token_usage_ok,
+            token_usage: saw_token_usage.then_some(token_usage),
+            duration_ms: Some(started.elapsed().as_millis() as u64),
+            notes,
+            skipped: false,
+        },
+    ))
+}
+
+fn agent_build_command_requires_token_usage(command: &str) -> bool {
+    command.contains("run-codex") || command.split_whitespace().any(|part| part == "codex")
+}
+
+fn sequence_step_as_task(
+    item: &mem_eval::AgentBuildSequenceItem,
+    step: &mem_eval::AgentBuildSequenceStep,
+    timeout_seconds: u64,
+) -> mem_eval::AgentBuildTaskItem {
+    mem_eval::AgentBuildTaskItem {
+        id: step.id.clone(),
+        project: item.project.clone(),
+        prompt: step.prompt.clone(),
+        fixture: item.fixture.clone(),
+        agent_command: item.agent_command.clone(),
+        memory_questions: step.memory_questions.clone(),
+        setup_commands: Vec::new(),
+        score_commands: step.score_commands.clone(),
+        timeout_seconds,
+        required_files: step.required_files.clone(),
+        forbidden_files: step.forbidden_files.clone(),
+        required_content: step.required_content.clone(),
+    }
 }
 
 #[derive(Debug)]
@@ -9266,6 +9636,131 @@ fn write_command_artifacts(run_dir: &Path, stem: &str, output: &EvalShellOutput)
     Ok(())
 }
 
+fn codex_token_usage_from_run_dir(run_dir: &Path) -> Result<Option<TokenUsage>> {
+    let usage_path = run_dir.join("codex-token-usage.json");
+    if usage_path.is_file() {
+        let value: serde_json::Value = read_json_file(&usage_path)?;
+        return Ok(token_usage_from_json_value(&value));
+    }
+    let events_path = run_dir.join("codex-events.jsonl");
+    if !events_path.is_file() {
+        return Ok(None);
+    }
+    let contents = fs::read_to_string(&events_path)
+        .with_context(|| format!("read {}", events_path.display()))?;
+    let mut usage = TokenUsage::default();
+    let mut found = false;
+    for line in contents.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if let Some(candidate) = token_usage_from_json_value(&value)
+            && candidate.total_tokens >= usage.total_tokens
+        {
+            usage = candidate;
+            found = true;
+        }
+    }
+    if found {
+        fs::write(&usage_path, serde_json::to_vec_pretty(&usage)?)
+            .with_context(|| format!("write {}", usage_path.display()))?;
+        Ok(Some(usage))
+    } else {
+        Ok(None)
+    }
+}
+
+fn token_usage_from_json_value(value: &serde_json::Value) -> Option<TokenUsage> {
+    let usage = value
+        .get("usage")
+        .or_else(|| value.get("token_usage"))
+        .or_else(|| value.get("tokenUsage"))
+        .or_else(|| value.get("total_token_usage"))
+        .or_else(|| value.get("totalTokenUsage"))
+        .unwrap_or(value);
+    let input_tokens = json_u64_any(
+        usage,
+        &[
+            "input_tokens",
+            "prompt_tokens",
+            "inputTokens",
+            "promptTokens",
+        ],
+    );
+    let output_tokens = json_u64_any(
+        usage,
+        &[
+            "output_tokens",
+            "completion_tokens",
+            "outputTokens",
+            "completionTokens",
+        ],
+    );
+    let cache_read_tokens = json_u64_any(
+        usage,
+        &[
+            "cache_read_tokens",
+            "cached_input_tokens",
+            "cacheReadTokens",
+            "cachedInputTokens",
+        ],
+    );
+    let cache_write_tokens = json_u64_any(
+        usage,
+        &[
+            "cache_write_tokens",
+            "cache_creation_input_tokens",
+            "cacheWriteTokens",
+            "cacheCreationInputTokens",
+        ],
+    );
+    let total_tokens = json_u64_any(usage, &["total_tokens", "totalTokens", "tokens_used"])
+        .unwrap_or(
+            input_tokens.unwrap_or(0)
+                + output_tokens.unwrap_or(0)
+                + cache_read_tokens.unwrap_or(0)
+                + cache_write_tokens.unwrap_or(0),
+        );
+    if total_tokens == 0 {
+        for child in value_children(value) {
+            if let Some(nested) = token_usage_from_json_value(child)
+                && nested.total_tokens > 0
+            {
+                return Some(nested);
+            }
+        }
+        return None;
+    }
+    Some(TokenUsage {
+        input_tokens: input_tokens.unwrap_or(0),
+        output_tokens: output_tokens.unwrap_or(0),
+        cache_read_tokens: cache_read_tokens.unwrap_or(0),
+        cache_write_tokens: cache_write_tokens.unwrap_or(0),
+        total_tokens,
+    })
+}
+
+fn json_u64_any(value: &serde_json::Value, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(serde_json::Value::as_u64))
+}
+
+fn value_children(value: &serde_json::Value) -> Vec<&serde_json::Value> {
+    match value {
+        serde_json::Value::Array(values) => values.iter().collect(),
+        serde_json::Value::Object(map) => map.values().collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn add_token_usage(total: &mut TokenUsage, usage: &TokenUsage) {
+    total.input_tokens += usage.input_tokens;
+    total.output_tokens += usage.output_tokens;
+    total.cache_read_tokens += usage.cache_read_tokens;
+    total.cache_write_tokens += usage.cache_write_tokens;
+    total.total_tokens += usage.total_tokens;
+}
+
 fn agent_build_prompt(
     item: &mem_eval::AgentBuildTaskItem,
     condition: mem_eval::EvalCondition,
@@ -9389,6 +9884,39 @@ fn validate_agent_build_suite_item(
         anyhow::bail!("agent_command must not be empty");
     }
     validate_agent_build_paths(item)?;
+    Ok(())
+}
+
+fn validate_agent_build_sequence_paths(item: &mem_eval::AgentBuildSequenceItem) -> Result<()> {
+    if item.steps.is_empty() {
+        anyhow::bail!(
+            "agent build sequence `{}` must contain at least one step",
+            item.id
+        );
+    }
+    for step in &item.steps {
+        let task = sequence_step_as_task(
+            item,
+            step,
+            step.timeout_seconds.unwrap_or(item.timeout_seconds),
+        );
+        validate_agent_build_paths(&task)?;
+    }
+    Ok(())
+}
+
+fn validate_agent_build_sequence_suite_item(
+    suite: &mem_eval::EvalSuite,
+    item: &mem_eval::AgentBuildSequenceItem,
+) -> Result<()> {
+    let fixture_dir = suite.root.join(&item.fixture);
+    if !fixture_dir.is_dir() {
+        anyhow::bail!("fixture is not a directory: {}", fixture_dir.display());
+    }
+    if item.agent_command.trim().is_empty() {
+        anyhow::bail!("agent_command must not be empty");
+    }
+    validate_agent_build_sequence_paths(item)?;
     Ok(())
 }
 
@@ -11396,6 +11924,31 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 2);
         assert_eq!(usage.cache_write_tokens, 3);
         assert_eq!(usage.total_tokens, 20);
+    }
+
+    #[test]
+    fn token_usage_from_json_value_supports_codex_nested_events() {
+        let value: serde_json::Value = serde_json::from_str(
+            r#"{
+                "type":"token_count",
+                "msg":{
+                    "total_token_usage":{
+                        "input_tokens":100,
+                        "output_tokens":25,
+                        "cached_input_tokens":10,
+                        "total_tokens":135
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let usage = crate::token_usage_from_json_value(&value).unwrap();
+
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 25);
+        assert_eq!(usage.cache_read_tokens, 10);
+        assert_eq!(usage.total_tokens, 135);
     }
 
     #[test]

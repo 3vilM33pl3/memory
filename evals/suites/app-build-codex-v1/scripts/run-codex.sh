@@ -5,6 +5,7 @@ workspace="$1"
 prompt_file="$2"
 run_dir="$3"
 final_file="$run_dir/codex-final.md"
+events_file="$run_dir/codex-events.jsonl"
 model="${MEMORY_EVAL_CODEX_MODEL:-gpt-5.4-mini}"
 sandbox="${MEMORY_EVAL_CODEX_SANDBOX:-danger-full-access}"
 if [ "$sandbox" = "danger-full-access" ]; then
@@ -20,7 +21,7 @@ if [ "$watchdog_seconds" -lt 30 ]; then
   watchdog_seconds=30
 fi
 
-rm -f "$final_file"
+rm -f "$final_file" "$events_file"
 
 workspace_changed() {
   find "$workspace" -type f -newer "$prompt_file" | grep -q .
@@ -36,9 +37,10 @@ codex exec \
   $sandbox_args \
   --ignore-rules \
   --ephemeral \
+  --json \
   --model "$model" \
   --output-last-message "$final_file" \
-  - < "$prompt_file" &
+  - < "$prompt_file" > "$events_file" &
 
 pid="$!"
 deadline=$(( $(date +%s) + watchdog_seconds ))

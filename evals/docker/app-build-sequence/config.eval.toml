@@ -1,0 +1,29 @@
+[service]
+bind_addr = "memory-service:4250"
+capnp_tcp_addr = "memory-service:4251"
+capnp_unix_socket = "/tmp/memory-layer.capnp.sock"
+api_token = "dev-memory-token"
+request_timeout = "600s"
+
+[database]
+url = "postgresql://memory:memory@postgres:5432/memory_eval"
+
+[cluster]
+enabled = false
+service_id = "memory-layer-docker-eval-client"
+
+[features]
+llm_curation = false
+
+[embeddings]
+enabled = false
+create_enabled = false
+
+[llm]
+provider = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-5.4"
+max_input_bytes = 120000
+max_output_tokens = 3000
+temperature = 0.0

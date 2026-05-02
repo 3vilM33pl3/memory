@@ -1,0 +1,7 @@
+.git
+.claude
+.mem/runtime
+target
+node_modules
+tmp
+*.log
