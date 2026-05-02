@@ -212,8 +212,10 @@ Agent notes:
 
 Examples:
   memory eval scaffold --project memory --out evals/suites/memory-smoke
-  memory eval run --suite evals/examples/memory-smoke --condition full-memory --dry-run
+  memory eval doctor --suite evals/examples/memory-smoke
+  memory eval run --suite evals/examples/memory-smoke --condition full-memory --repeat 5
   memory eval compare --baseline target/memory-evals/run-a.json --candidate target/memory-evals/run-b.json --text
+  memory eval gate --comparison target/memory-evals/comparison.json --policy evals/gates/research-v1.toml
   memory eval report --comparison target/memory-evals/comparison.json --text
 
 See also:
@@ -234,11 +236,12 @@ See also:
 const EVAL_RUN_AFTER_HELP: &str = "\
 Agent notes:
   Runs a suite under one or more conditions and writes immutable JSON artifacts under target/memory-evals by default.
+  Default profile is llm. Use --profile offline for deterministic CI-safe checks.
   Use --dry-run to validate suite parsing without LLM calls or shell command execution.
 
 Examples:
   memory eval run --suite evals/examples/memory-smoke --condition full-memory --dry-run
-  memory eval run --suite evals/examples/memory-smoke --condition no-memory --condition full-memory
+  memory eval run --suite evals/examples/memory-smoke --condition no-memory --condition full-memory --repeat 5
 
 See also:
   docs/user/cli/eval.md";
@@ -262,6 +265,28 @@ Agent notes:
 Examples:
   memory eval report --comparison target/memory-evals/comparison.json --text
   memory eval report --comparison target/memory-evals/comparison.json
+
+See also:
+  docs/user/cli/eval.md";
+
+const EVAL_DOCTOR_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only eval prerequisite check. Use before expensive LLM-backed research runs.
+
+Examples:
+  memory eval doctor --suite evals/examples/memory-smoke
+  memory eval doctor --suite evals/suites/research-v1 --text
+
+See also:
+  docs/user/cli/eval.md";
+
+const EVAL_GATE_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only comparison policy check. Exits with a failure when the gate does not pass.
+
+Examples:
+  memory eval gate --comparison target/memory-evals/comparison.json --policy evals/gates/research-v1.toml
+  memory eval gate --comparison target/memory-evals/comparison.json --policy evals/gates/research-v1.toml --text
 
 See also:
   docs/user/cli/eval.md";
@@ -1552,6 +1577,11 @@ struct EvalArgs {
 #[derive(Debug, Subcommand)]
 enum EvalCommand {
     #[command(
+        about = "Check whether an eval suite and environment are ready.",
+        after_help = EVAL_DOCTOR_AFTER_HELP
+    )]
+    Doctor(EvalDoctorArgs),
+    #[command(
         about = "Create a starter eval suite from recent project memories.",
         after_help = EVAL_SCAFFOLD_AFTER_HELP
     )]
@@ -1571,6 +1601,21 @@ enum EvalCommand {
         after_help = EVAL_REPORT_AFTER_HELP
     )]
     Report(EvalReportArgs),
+    #[command(
+        about = "Check an eval comparison against a gate policy.",
+        after_help = EVAL_GATE_AFTER_HELP
+    )]
+    Gate(EvalGateArgs),
+}
+
+#[derive(Debug, Args)]
+struct EvalDoctorArgs {
+    /// Suite directory or suite.toml path to validate.
+    #[arg(long)]
+    suite: PathBuf,
+    /// Emit a human-readable text view instead of JSON.
+    #[arg(long)]
+    text: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1603,6 +1648,21 @@ struct EvalRunArgs {
     /// Output directory for run JSON files.
     #[arg(long, default_value = "target/memory-evals")]
     out: PathBuf,
+    /// Execution profile: llm for official provider-backed runs, offline for CI-safe dry scoring.
+    #[arg(long, default_value = "llm")]
+    profile: String,
+    /// Number of repeated runs per condition.
+    #[arg(long, default_value_t = 1)]
+    repeat: usize,
+    /// Optional token budget guard for one run group.
+    #[arg(long)]
+    max_cost: Option<u64>,
+    /// Preserve raw answers/transcripts in artifacts. Currently metadata-only; answers are always kept.
+    #[arg(long)]
+    write_transcripts: bool,
+    /// Fail when the suite manifest is not marked reviewed.
+    #[arg(long)]
+    fail_on_unreviewed_labels: bool,
     /// Preview work without LLM calls or command execution.
     #[arg(long)]
     dry_run: bool,
@@ -1632,6 +1692,19 @@ struct EvalReportArgs {
     /// Comparison JSON file from memory eval compare.
     #[arg(long)]
     comparison: PathBuf,
+    /// Emit a human-readable text view instead of JSON.
+    #[arg(long)]
+    text: bool,
+}
+
+#[derive(Debug, Args)]
+struct EvalGateArgs {
+    /// Comparison JSON file from memory eval compare.
+    #[arg(long)]
+    comparison: PathBuf,
+    /// Gate policy TOML file.
+    #[arg(long)]
+    policy: PathBuf,
     /// Emit a human-readable text view instead of JSON.
     #[arg(long)]
     text: bool,
@@ -2227,6 +2300,8 @@ async fn main() -> Result<()> {
                 top_k: args.limit,
                 min_confidence: args.min_confidence,
                 history: args.history,
+                retrieval_mode: None,
+                answer_mode: None,
             };
             let payload: QueryResponse = get_json(
                 client
@@ -7901,6 +7976,74 @@ fn format_query_citations(numbers: &[usize]) -> String {
 
 async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Result<()> {
     match args.command {
+        EvalCommand::Doctor(args) => {
+            let suite = mem_eval::load_suite(&args.suite)?;
+            let mut checks = Vec::new();
+            checks.push(serde_json::json!({
+                "name": "suite.load",
+                "status": "ok",
+                "message": format!("Loaded {} item(s).", suite.items.len()),
+            }));
+            let checksum = mem_eval::suite_checksum(&suite)?;
+            checks.push(serde_json::json!({
+                "name": "suite.checksum",
+                "status": "ok",
+                "message": checksum,
+            }));
+            let reviewed = suite.manifest.label_status.as_deref() == Some("reviewed");
+            checks.push(serde_json::json!({
+                "name": "suite.labels",
+                "status": if reviewed { "ok" } else { "warn" },
+                "message": suite.manifest.label_status.as_deref().unwrap_or("unreviewed"),
+            }));
+            if let Some(min_items) = suite.manifest.min_items {
+                checks.push(serde_json::json!({
+                    "name": "suite.min_items",
+                    "status": if suite.items.len() >= min_items { "ok" } else { "fail" },
+                    "message": format!("{} item(s), required {}", suite.items.len(), min_items),
+                }));
+            }
+            match api.health().await {
+                Ok(value) => checks.push(serde_json::json!({
+                    "name": "backend.health",
+                    "status": "ok",
+                    "message": value,
+                })),
+                Err(error) => checks.push(serde_json::json!({
+                    "name": "backend.health",
+                    "status": "fail",
+                    "message": error.to_string(),
+                })),
+            }
+            let failed = checks
+                .iter()
+                .any(|check| check.get("status").and_then(|value| value.as_str()) == Some("fail"));
+            let payload = serde_json::json!({
+                "ok": !failed,
+                "suite": suite.manifest.name,
+                "checks": checks,
+            });
+            if args.text {
+                println!(
+                    "{}: {}",
+                    payload["suite"].as_str().unwrap_or("suite"),
+                    if failed { "fail" } else { "ok" }
+                );
+                for check in payload["checks"].as_array().into_iter().flatten() {
+                    println!(
+                        "{} [{}] {}",
+                        check["name"].as_str().unwrap_or("?"),
+                        check["status"].as_str().unwrap_or("?"),
+                        check["message"]
+                    );
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            }
+            if failed {
+                anyhow::bail!("eval doctor failed");
+            }
+        }
         EvalCommand::Scaffold(args) => {
             let project = resolve_project_slug(args.project, cwd)?;
             let response = api.project_memories(&project).await?;
@@ -7971,43 +8114,97 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
         }
         EvalCommand::Run(args) => {
             let suite = mem_eval::load_suite(&args.suite)?;
+            if args.fail_on_unreviewed_labels
+                && suite.manifest.label_status.as_deref() != Some("reviewed")
+            {
+                anyhow::bail!(
+                    "suite labels are not reviewed; set label_status = \"reviewed\" or omit --fail-on-unreviewed-labels"
+                );
+            }
             let project = match suite.manifest.project.clone() {
                 Some(project) => project,
                 None => resolve_project_slug(None, cwd)?,
             };
+            let profile = args.profile.parse::<mem_eval::EvalProfile>()?;
             let conditions = args
                 .conditions
                 .iter()
                 .map(|value| value.parse::<mem_eval::EvalCondition>())
                 .collect::<Result<Vec<_>>>()?;
             let mut runs = Vec::new();
-            for condition in conditions {
-                let run = run_eval_suite(&suite, &project, condition, args.dry_run, api).await?;
-                let filename = format!(
-                    "{}-{}-{}.json",
-                    sanitize_filename(&suite.manifest.name),
-                    condition,
-                    Utc::now().format("%Y%m%d%H%M%S")
-                );
-                let path = args.out.join(filename);
-                mem_eval::write_json(&path, &run)?;
-                runs.push(serde_json::json!({
+            let repeat = args
+                .repeat
+                .max(1)
+                .max(suite.manifest.default_repeats.unwrap_or(1));
+            let run_group_id = uuid::Uuid::new_v4();
+            let suite_checksum = mem_eval::suite_checksum(&suite).ok();
+            let mut total_tokens = 0u64;
+            for repeat_index in 0..repeat {
+                for condition in &conditions {
+                    let context = EvalRunContext {
+                        profile,
+                        repeat_index,
+                        run_group_id,
+                        suite_checksum: suite_checksum.clone(),
+                        dry_run: args.dry_run,
+                    };
+                    let run = run_eval_suite(&suite, &project, *condition, context, api).await?;
+                    total_tokens += run
+                        .results
+                        .iter()
+                        .filter_map(|result| result.token_usage.as_ref())
+                        .map(|usage| usage.total_tokens)
+                        .sum::<u64>();
+                    if let Some(max_cost) = args.max_cost
+                        && total_tokens > max_cost
+                    {
+                        anyhow::bail!(
+                            "eval token budget exceeded: used {} tokens, limit {}",
+                            total_tokens,
+                            max_cost
+                        );
+                    }
+                    let filename = format!(
+                        "{}-{}-r{}-{}.json",
+                        sanitize_filename(&suite.manifest.name),
+                        condition,
+                        repeat_index,
+                        Utc::now().format("%Y%m%d%H%M%S")
+                    );
+                    let path = args.out.join(filename);
+                    mem_eval::write_json(&path, &run)?;
+                    runs.push(serde_json::json!({
                     "condition": condition,
+                    "profile": profile,
+                    "repeat_index": repeat_index,
+                    "run_group_id": run_group_id,
                     "path": path,
                     "items": run.results.len(),
                     "successes": run.results.iter().filter(|result| result.success).count(),
                     "skipped": run.results.iter().filter(|result| result.skipped).count(),
+                    "tokens": run.results.iter().filter_map(|result| result.token_usage.as_ref()).map(|usage| usage.total_tokens).sum::<u64>(),
                 }));
+                }
             }
-            let payload = serde_json::json!({ "runs": runs });
+            let payload = serde_json::json!({
+                "run_group_id": run_group_id,
+                "profile": profile,
+                "repeat": repeat,
+                "write_transcripts": args.write_transcripts,
+                "total_tokens": total_tokens,
+                "runs": runs,
+            });
             if args.text {
                 for run in &payload["runs"].as_array().cloned().unwrap_or_default() {
                     println!(
-                        "{}: {} item(s), {} success, {} skipped -> {}",
+                        "{} [{} r{}]: {} item(s), {} success, {} skipped, {} tokens -> {}",
                         run["condition"].as_str().unwrap_or("?"),
+                        run["profile"].as_str().unwrap_or("?"),
+                        run["repeat_index"].as_u64().unwrap_or_default(),
                         run["items"].as_u64().unwrap_or_default(),
                         run["successes"].as_u64().unwrap_or_default(),
                         run["skipped"].as_u64().unwrap_or_default(),
+                        run["tokens"].as_u64().unwrap_or_default(),
                         run["path"].as_str().unwrap_or("<path>")
                     );
                 }
@@ -8040,20 +8237,53 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
                 println!("{}", serde_json::to_string_pretty(&comparison)?);
             }
         }
+        EvalCommand::Gate(args) => {
+            let comparison: mem_eval::EvalComparison = serde_json::from_str(
+                &fs::read_to_string(&args.comparison)
+                    .with_context(|| format!("read {}", args.comparison.display()))?,
+            )
+            .with_context(|| format!("parse {}", args.comparison.display()))?;
+            let policy: mem_eval::EvalGatePolicy = toml::from_str(
+                &fs::read_to_string(&args.policy)
+                    .with_context(|| format!("read {}", args.policy.display()))?,
+            )
+            .with_context(|| format!("parse {}", args.policy.display()))?;
+            let result = mem_eval::evaluate_gate(&comparison, &policy);
+            if args.text {
+                println!("gate: {}", if result.passed { "pass" } else { "fail" });
+                for reason in &result.reasons {
+                    println!("- {reason}");
+                }
+            } else {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            if !result.passed {
+                anyhow::bail!("eval gate failed");
+            }
+        }
     }
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct EvalRunContext {
+    profile: mem_eval::EvalProfile,
+    repeat_index: usize,
+    run_group_id: uuid::Uuid,
+    suite_checksum: Option<String>,
+    dry_run: bool,
 }
 
 async fn run_eval_suite(
     suite: &mem_eval::EvalSuite,
     default_project: &str,
     condition: mem_eval::EvalCondition,
-    dry_run: bool,
+    context: EvalRunContext,
     api: &ApiClient,
 ) -> Result<mem_eval::EvalRun> {
     let mut results = Vec::new();
     for item in &suite.items {
-        if dry_run {
+        if context.dry_run {
             results.push(mem_eval::skipped_result(
                 item,
                 condition,
@@ -8075,6 +8305,8 @@ async fn run_eval_suite(
                             top_k: item.top_k,
                             min_confidence: None,
                             history: false,
+                            retrieval_mode: Some(eval_condition_retrieval_mode(condition)),
+                            answer_mode: Some(mem_api::QueryAnswerMode::Deterministic),
                         })
                         .await?;
                     mem_eval::score_retrieval_qa(item, condition, &response)
@@ -8082,7 +8314,11 @@ async fn run_eval_suite(
             }
             mem_eval::EvalItem::GroundedAnswer(item) => {
                 if condition == mem_eval::EvalCondition::NoMemory {
-                    run_no_memory_grounded_answer_eval_item(api, item, condition).await?
+                    if context.profile == mem_eval::EvalProfile::Offline {
+                        offline_no_memory_grounded_answer_eval_item(item, condition)
+                    } else {
+                        run_no_memory_grounded_answer_eval_item(api, item, condition).await?
+                    }
                 } else {
                     let response = api
                         .query(&QueryRequest {
@@ -8092,6 +8328,13 @@ async fn run_eval_suite(
                             top_k: item.top_k,
                             min_confidence: None,
                             history: false,
+                            retrieval_mode: Some(eval_condition_retrieval_mode(condition)),
+                            answer_mode: Some(match context.profile {
+                                mem_eval::EvalProfile::Llm => mem_api::QueryAnswerMode::Llm,
+                                mem_eval::EvalProfile::Offline => {
+                                    mem_api::QueryAnswerMode::Deterministic
+                                }
+                            }),
                         })
                         .await?;
                     mem_eval::score_grounded_answer(item, condition, &response)
@@ -8099,7 +8342,11 @@ async fn run_eval_suite(
             }
             mem_eval::EvalItem::ResumeQuality(item) => {
                 if condition == mem_eval::EvalCondition::NoMemory {
-                    run_no_memory_resume_quality_eval_item(api, item, condition).await?
+                    if context.profile == mem_eval::EvalProfile::Offline {
+                        offline_no_memory_resume_quality_eval_item(item, condition)
+                    } else {
+                        run_no_memory_resume_quality_eval_item(api, item, condition).await?
+                    }
                 } else {
                     let response = api
                         .up_to_speed(&UpToSpeedRequest {
@@ -8119,10 +8366,9 @@ async fn run_eval_suite(
                 | mem_eval::EvalCondition::Semantic
                 | mem_eval::EvalCondition::Graph
         ) {
-            result.notes.push(
-                "condition label recorded; retrieval isolation currently follows service configuration"
-                    .to_string(),
-            );
+            result
+                .notes
+                .push("retrieval mode was explicitly requested for eval isolation".to_string());
         }
         results.push(result);
     }
@@ -8130,7 +8376,13 @@ async fn run_eval_suite(
         suite: suite.manifest.name.clone(),
         project: default_project.to_string(),
         condition,
-        dry_run,
+        profile: context.profile,
+        run_group_id: context.run_group_id,
+        repeat_index: context.repeat_index,
+        suite_checksum: context.suite_checksum,
+        fixture_checksum: suite.manifest.fixture.clone(),
+        config_fingerprint: None,
+        dry_run: context.dry_run,
         created_at: Utc::now(),
         git_head: git_head(),
         service_version: None,
@@ -8159,6 +8411,49 @@ fn no_memory_retrieval_result(
         answer: None,
         notes: vec!["no-memory condition has no memory retrieval channel".to_string()],
     }
+}
+
+fn eval_condition_retrieval_mode(
+    condition: mem_eval::EvalCondition,
+) -> mem_api::QueryRetrievalMode {
+    match condition {
+        mem_eval::EvalCondition::NoMemory | mem_eval::EvalCondition::FullMemory => {
+            mem_api::QueryRetrievalMode::FullMemory
+        }
+        mem_eval::EvalCondition::Lexical => mem_api::QueryRetrievalMode::Lexical,
+        mem_eval::EvalCondition::Semantic => mem_api::QueryRetrievalMode::Semantic,
+        mem_eval::EvalCondition::Graph => mem_api::QueryRetrievalMode::Graph,
+    }
+}
+
+fn offline_no_memory_grounded_answer_eval_item(
+    item: &mem_eval::GroundedAnswerItem,
+    condition: mem_eval::EvalCondition,
+) -> mem_eval::EvalItemResult {
+    mem_eval::score_plain_llm_grounded_answer(
+        item,
+        condition,
+        "Offline no-memory baseline: no Memory Layer context was supplied.".to_string(),
+        Some(0.0),
+        Some(0),
+        None,
+        vec!["answer_source: offline deterministic no-memory baseline".to_string()],
+    )
+}
+
+fn offline_no_memory_resume_quality_eval_item(
+    item: &mem_eval::ResumeQualityItem,
+    condition: mem_eval::EvalCondition,
+) -> mem_eval::EvalItemResult {
+    mem_eval::score_resume_text_quality(
+        item,
+        condition,
+        "Offline no-memory baseline: no Memory timeline or retrieval context was supplied."
+            .to_string(),
+        Some(0),
+        None,
+        vec!["answer_source: offline deterministic no-memory baseline".to_string()],
+    )
 }
 
 #[derive(Debug)]

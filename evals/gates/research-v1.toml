@@ -1,0 +1,7 @@
+min_paired_items = 3
+min_success_rate_delta = 0.0
+max_mcnemar_p_value = 1.0
+max_token_delta = 50000
+
+[min_metric_delta]
+recall_at_k = 0.0

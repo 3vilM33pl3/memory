@@ -2116,6 +2116,8 @@ impl App {
             top_k: 8,
             min_confidence: None,
             history: false,
+            retrieval_mode: None,
+            answer_mode: None,
         };
         let api = api.clone();
         let tx = self.background_tx.clone();
@@ -8105,6 +8107,8 @@ mod tests {
             top_k: 8,
             min_confidence: None,
             history: false,
+            retrieval_mode: None,
+            answer_mode: None,
         };
 
         app.apply_query_completed(1, request, 12, Err("older query failed".to_string()), None);

@@ -9,8 +9,8 @@ use chrono::{DateTime, Utc};
 use mem_api::{
     EmbeddingBackendConfig, EmbeddingsConfig, MemoryRelationType, MemoryType, QueryAnswerCitation,
     QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics, QueryGraphConnection,
-    QueryMatchKind, QueryRequest, QueryResponse, QueryResult, QueryResultDebug, QuerySource,
-    SourceKind,
+    QueryMatchKind, QueryRequest, QueryResponse, QueryResult, QueryResultDebug, QueryRetrievalMode,
+    QuerySource, SourceKind,
 };
 use pgvector::Vector;
 use sqlx::{PgPool, Row};
@@ -242,15 +242,35 @@ pub async fn query_memory(
     let total_started = Instant::now();
     let normalized = QueryIntent::from_query(&request.query);
     let candidate_limit = (request.top_k * 8).clamp(request.top_k, MAX_CANDIDATES);
+    let retrieval_mode = request.retrieval_mode.unwrap_or_default();
+    let lexical_enabled = matches!(
+        retrieval_mode,
+        QueryRetrievalMode::Lexical | QueryRetrievalMode::FullMemory
+    );
+    let semantic_enabled = matches!(
+        retrieval_mode,
+        QueryRetrievalMode::Semantic | QueryRetrievalMode::FullMemory
+    );
+    let graph_enabled = matches!(
+        retrieval_mode,
+        QueryRetrievalMode::Graph | QueryRetrievalMode::FullMemory
+    );
+    let relation_boost_enabled = matches!(retrieval_mode, QueryRetrievalMode::FullMemory);
 
     let lexical_started = Instant::now();
-    let lexical_candidates = fetch_lexical_candidates(pool, request, &normalized, candidate_limit)
-        .await
-        .context("fetch lexical candidates")?;
+    let lexical_candidates = if lexical_enabled {
+        fetch_lexical_candidates(pool, request, &normalized, candidate_limit)
+            .await
+            .context("fetch lexical candidates")?
+    } else {
+        Vec::new()
+    };
     let lexical_duration_ms = lexical_started.elapsed().as_millis() as u64;
 
     let semantic_started = Instant::now();
-    let (semantic_candidates, semantic_status) = if let Some(embedder) = embedder {
+    let (semantic_candidates, semantic_status) = if !semantic_enabled {
+        (Vec::new(), "disabled_by_mode".to_string())
+    } else if let Some(embedder) = embedder {
         match embedder
             .embed_texts(
                 std::slice::from_ref(&request.query),
@@ -297,11 +317,14 @@ pub async fn query_memory(
     let semantic_duration_ms = semantic_started.elapsed().as_millis() as u64;
 
     let graph_started = Instant::now();
-    let (graph_candidates, graph_status) =
+    let (graph_candidates, graph_status) = if graph_enabled {
         match fetch_graph_candidates(pool, request, &normalized, candidate_limit).await {
             Ok(outcome) => (outcome.candidates, outcome.status),
             Err(_) => (Vec::new(), "error".to_string()),
-        };
+        }
+    } else {
+        (Vec::new(), "disabled_by_mode".to_string())
+    };
     let graph_duration_ms = graph_started.elapsed().as_millis() as u64;
 
     let rerank_started = Instant::now();
@@ -315,9 +338,13 @@ pub async fn query_memory(
         .values()
         .filter(|candidate| candidate.graph_match_count > 0)
         .count();
-    let relation_map = fetch_relation_map(pool, &candidates.keys().copied().collect::<Vec<_>>())
-        .await
-        .context("fetch relation map")?;
+    let relation_map = if relation_boost_enabled {
+        fetch_relation_map(pool, &candidates.keys().copied().collect::<Vec<_>>())
+            .await
+            .context("fetch relation map")?
+    } else {
+        HashMap::new()
+    };
 
     let mut ranked = candidates
         .drain()
@@ -371,6 +398,11 @@ pub async fn query_memory(
         answer_generation: synthesis.answer_generation,
         answer_citations: synthesis.answer_citations,
         diagnostics: QueryDiagnostics {
+            retrieval_mode,
+            lexical_enabled,
+            semantic_enabled,
+            graph_enabled,
+            relation_boost_enabled,
             lexical_candidates: lexical_count,
             semantic_candidates: semantic_count,
             merged_candidates: merged_candidate_count,
@@ -2324,6 +2356,8 @@ mod tests {
                 top_k: 5,
                 min_confidence: None,
                 history: false,
+                retrieval_mode: None,
+                answer_mode: None,
             },
             None,
         )

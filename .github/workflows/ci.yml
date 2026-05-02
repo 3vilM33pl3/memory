@@ -18,6 +18,8 @@ jobs:
         run: cargo fmt --check
       - name: Test workspace
         run: cargo test --workspace --all-targets
+      - name: Check offline eval suite
+        run: cargo run --bin memory -- eval run --suite evals/examples/memory-smoke --condition full-memory --profile offline --dry-run
       - name: Lint workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
 

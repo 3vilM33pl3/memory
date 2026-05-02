@@ -1,4 +1,8 @@
 name = "memory smoke"
 description = "Tiny dry-run friendly suite showing the eval file format."
+suite_version = "1"
+label_status = "draft"
+default_profile = "offline"
+default_repeats = 1
 project = "memory"
 items = "items.jsonl"

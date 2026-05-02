@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use mem_api::{QueryResponse, ResumeResponse, TokenUsage, UpToSpeedResponse};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +16,18 @@ pub struct EvalSuiteManifest {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixture: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_profile: Option<EvalProfile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_items: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_repeats: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     #[serde(default = "default_items_path")]
@@ -161,11 +174,58 @@ impl std::str::FromStr for EvalCondition {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "kebab-case")]
+#[derive(Default)]
+pub enum EvalProfile {
+    #[default]
+    Llm,
+    Offline,
+}
+
+impl std::fmt::Display for EvalProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Llm => "llm",
+            Self::Offline => "offline",
+        };
+        f.write_str(value)
+    }
+}
+
+impl std::str::FromStr for EvalProfile {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "llm" => Ok(Self::Llm),
+            "offline" => Ok(Self::Offline),
+            other => bail!("unknown eval profile `{other}`; expected llm or offline"),
+        }
+    }
+}
+
+fn default_run_group_id() -> Uuid {
+    Uuid::nil()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalRun {
     pub suite: String,
     pub project: String,
     pub condition: EvalCondition,
+    #[serde(default)]
+    pub profile: EvalProfile,
+    #[serde(default = "default_run_group_id")]
+    pub run_group_id: Uuid,
+    #[serde(default)]
+    pub repeat_index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite_checksum: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixture_checksum: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_fingerprint: Option<String>,
     pub dry_run: bool,
     pub created_at: DateTime<Utc>,
     pub git_head: Option<String>,
@@ -196,13 +256,41 @@ pub struct EvalComparison {
     pub baseline_condition: EvalCondition,
     pub candidate_condition: EvalCondition,
     pub paired_items: usize,
+    pub baseline_profile: EvalProfile,
+    pub candidate_profile: EvalProfile,
     pub baseline_success_rate: f64,
     pub candidate_success_rate: f64,
     pub success_rate_delta: f64,
     pub mcnemar_b: usize,
     pub mcnemar_c: usize,
     pub mcnemar_p_value: f64,
+    pub baseline_total_tokens: u64,
+    pub candidate_total_tokens: u64,
+    pub token_delta: i64,
+    pub baseline_mean_duration_ms: f64,
+    pub candidate_mean_duration_ms: f64,
+    pub duration_delta_ms: f64,
     pub metric_deltas: BTreeMap<String, MetricDelta>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalGatePolicy {
+    #[serde(default)]
+    pub min_paired_items: usize,
+    #[serde(default)]
+    pub min_success_rate_delta: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_mcnemar_p_value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_token_delta: Option<i64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub min_metric_delta: BTreeMap<String, f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalGateResult {
+    pub passed: bool,
+    pub reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,6 +339,22 @@ pub fn load_items_jsonl(path: &Path) -> Result<Vec<EvalItem>> {
         items.push(item);
     }
     Ok(items)
+}
+
+pub fn suite_checksum(suite: &EvalSuite) -> Result<String> {
+    let manifest_path = suite.root.join("suite.toml");
+    let items_path = suite.root.join(&suite.manifest.items);
+    let mut hasher = Sha256::new();
+    hasher.update(
+        fs::read(&manifest_path)
+            .with_context(|| format!("read {} for suite checksum", manifest_path.display()))?,
+    );
+    hasher.update(b"\n--items--\n");
+    hasher.update(
+        fs::read(&items_path)
+            .with_context(|| format!("read {} for suite checksum", items_path.display()))?,
+    );
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 pub fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
@@ -621,6 +725,26 @@ pub fn compare_runs(baseline: &EvalRun, candidate: &EvalRun) -> EvalComparison {
     let paired_items = pairs.len();
     let baseline_successes = pairs.iter().filter(|(base, _)| base.success).count();
     let candidate_successes = pairs.iter().filter(|(_, cand)| cand.success).count();
+    let baseline_total_tokens = pairs
+        .iter()
+        .filter_map(|(base, _)| base.token_usage.as_ref())
+        .map(|usage| usage.total_tokens)
+        .sum::<u64>();
+    let candidate_total_tokens = pairs
+        .iter()
+        .filter_map(|(_, cand)| cand.token_usage.as_ref())
+        .map(|usage| usage.total_tokens)
+        .sum::<u64>();
+    let baseline_durations = pairs
+        .iter()
+        .filter_map(|(base, _)| base.duration_ms.map(|value| value as f64))
+        .collect::<Vec<_>>();
+    let candidate_durations = pairs
+        .iter()
+        .filter_map(|(_, cand)| cand.duration_ms.map(|value| value as f64))
+        .collect::<Vec<_>>();
+    let baseline_mean_duration_ms = mean(&baseline_durations);
+    let candidate_mean_duration_ms = mean(&candidate_durations);
     let b = pairs
         .iter()
         .filter(|(base, cand)| !base.success && cand.success)
@@ -669,6 +793,8 @@ pub fn compare_runs(baseline: &EvalRun, candidate: &EvalRun) -> EvalComparison {
         baseline_condition: baseline.condition,
         candidate_condition: candidate.condition,
         paired_items,
+        baseline_profile: baseline.profile,
+        candidate_profile: candidate.profile,
         baseline_success_rate: rate(baseline_successes, paired_items),
         candidate_success_rate: rate(candidate_successes, paired_items),
         success_rate_delta: rate(candidate_successes, paired_items)
@@ -676,7 +802,62 @@ pub fn compare_runs(baseline: &EvalRun, candidate: &EvalRun) -> EvalComparison {
         mcnemar_b: b,
         mcnemar_c: c,
         mcnemar_p_value: mcnemar_exact_p_value(b, c),
+        baseline_total_tokens,
+        candidate_total_tokens,
+        token_delta: candidate_total_tokens as i64 - baseline_total_tokens as i64,
+        baseline_mean_duration_ms,
+        candidate_mean_duration_ms,
+        duration_delta_ms: candidate_mean_duration_ms - baseline_mean_duration_ms,
         metric_deltas,
+    }
+}
+
+pub fn evaluate_gate(comparison: &EvalComparison, policy: &EvalGatePolicy) -> EvalGateResult {
+    let mut reasons = Vec::new();
+    if comparison.paired_items < policy.min_paired_items {
+        reasons.push(format!(
+            "paired_items {} is below required {}",
+            comparison.paired_items, policy.min_paired_items
+        ));
+    }
+    if comparison.success_rate_delta < policy.min_success_rate_delta {
+        reasons.push(format!(
+            "success_rate_delta {:.4} is below required {:.4}",
+            comparison.success_rate_delta, policy.min_success_rate_delta
+        ));
+    }
+    if let Some(max_p) = policy.max_mcnemar_p_value
+        && comparison.mcnemar_p_value > max_p
+    {
+        reasons.push(format!(
+            "mcnemar_p_value {:.4} is above allowed {:.4}",
+            comparison.mcnemar_p_value, max_p
+        ));
+    }
+    if let Some(max_delta) = policy.max_token_delta
+        && comparison.token_delta > max_delta
+    {
+        reasons.push(format!(
+            "token_delta {} is above allowed {}",
+            comparison.token_delta, max_delta
+        ));
+    }
+    for (metric, required) in &policy.min_metric_delta {
+        let actual = comparison
+            .metric_deltas
+            .get(metric)
+            .map(|delta| delta.mean_delta)
+            .unwrap_or(0.0);
+        if actual < *required {
+            reasons.push(format!(
+                "{metric} delta {:.4} is below required {:.4}",
+                actual, required
+            ));
+        }
+    }
+    EvalGateResult {
+        passed: reasons.is_empty(),
+        reasons,
     }
 }
 
@@ -738,8 +919,12 @@ fn bootstrap_ci95(values: &[f64]) -> (f64, f64) {
 pub fn comparison_text(comparison: &EvalComparison) -> String {
     let mut lines = vec![
         format!(
-            "{} vs {} ({} paired item(s))",
-            comparison.candidate_condition, comparison.baseline_condition, comparison.paired_items
+            "{} [{}] vs {} [{}] ({} paired item(s))",
+            comparison.candidate_condition,
+            comparison.candidate_profile,
+            comparison.baseline_condition,
+            comparison.baseline_profile,
+            comparison.paired_items
         ),
         format!(
             "success: {:.1}% -> {:.1}% ({:+.1} pp), McNemar p={:.4}",
@@ -747,6 +932,15 @@ pub fn comparison_text(comparison: &EvalComparison) -> String {
             comparison.candidate_success_rate * 100.0,
             comparison.success_rate_delta * 100.0,
             comparison.mcnemar_p_value
+        ),
+        format!(
+            "tokens: {} -> {} ({:+}), mean duration: {:.1}ms -> {:.1}ms ({:+.1}ms)",
+            comparison.baseline_total_tokens,
+            comparison.candidate_total_tokens,
+            comparison.token_delta,
+            comparison.baseline_mean_duration_ms,
+            comparison.candidate_mean_duration_ms,
+            comparison.duration_delta_ms
         ),
     ];
     for (name, delta) in &comparison.metric_deltas {
@@ -782,6 +976,12 @@ mod tests {
             suite: "s".to_string(),
             project: "p".to_string(),
             condition: EvalCondition::NoMemory,
+            profile: EvalProfile::Offline,
+            run_group_id: Uuid::new_v4(),
+            repeat_index: 0,
+            suite_checksum: None,
+            fixture_checksum: None,
+            config_fingerprint: None,
             dry_run: false,
             created_at: Utc::now(),
             git_head: None,
@@ -799,6 +999,53 @@ mod tests {
         assert_eq!(comparison.mcnemar_c, 0);
         assert_eq!(comparison.success_rate_delta, 0.5);
         assert!(comparison.metric_deltas.contains_key("recall_at_k"));
+    }
+
+    #[test]
+    fn gate_reports_failed_policy_reasons() {
+        let comparison = EvalComparison {
+            baseline_condition: EvalCondition::NoMemory,
+            candidate_condition: EvalCondition::FullMemory,
+            paired_items: 2,
+            baseline_profile: EvalProfile::Llm,
+            candidate_profile: EvalProfile::Llm,
+            baseline_success_rate: 0.5,
+            candidate_success_rate: 0.5,
+            success_rate_delta: 0.0,
+            mcnemar_b: 0,
+            mcnemar_c: 0,
+            mcnemar_p_value: 1.0,
+            baseline_total_tokens: 10,
+            candidate_total_tokens: 30,
+            token_delta: 20,
+            baseline_mean_duration_ms: 10.0,
+            candidate_mean_duration_ms: 12.0,
+            duration_delta_ms: 2.0,
+            metric_deltas: BTreeMap::from([(
+                "recall_at_k".to_string(),
+                MetricDelta {
+                    baseline_mean: 0.2,
+                    candidate_mean: 0.25,
+                    mean_delta: 0.05,
+                    ci95_low: 0.0,
+                    ci95_high: 0.1,
+                },
+            )]),
+        };
+
+        let gate = evaluate_gate(
+            &comparison,
+            &EvalGatePolicy {
+                min_paired_items: 10,
+                min_success_rate_delta: 0.1,
+                max_mcnemar_p_value: Some(0.05),
+                max_token_delta: Some(5),
+                min_metric_delta: BTreeMap::from([("recall_at_k".to_string(), 0.1)]),
+            },
+        );
+
+        assert!(!gate.passed);
+        assert_eq!(gate.reasons.len(), 5);
     }
 
     #[test]

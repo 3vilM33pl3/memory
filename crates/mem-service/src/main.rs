@@ -36,9 +36,9 @@ use mem_api::{
     ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
     ProjectMemoryListItem, ProjectOverviewResponse, PruneEmbeddingsRequest,
     PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryAnswerCitation,
-    QueryAnswerGeneration, QueryAnswerMethod, QueryGraphConnection, QueryRequest, QueryResponse,
-    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
-    ReplacementPolicy, ReplacementPolicyRequest, ReplacementPolicyResponse,
+    QueryAnswerGeneration, QueryAnswerMethod, QueryAnswerMode, QueryGraphConnection, QueryRequest,
+    QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
+    RelatedMemorySummary, ReplacementPolicy, ReplacementPolicyRequest, ReplacementPolicyResponse,
     ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
     ResumeCheckpoint, ResumeRequest, ResumeResponse, ScanActivityRequest,
     SetEmbeddingCreationRequest, SourceKind, StatsResponse, StreamRequest, StreamResponse,
@@ -2057,7 +2057,9 @@ async fn query(
     let embedders = state.embedders.read().await;
     match query_memory(pool, &request, embedders.active()).await {
         Ok(mut response) => {
-            enrich_query_answer_with_llm(&state, &request, &mut response).await;
+            if should_enrich_query_answer_with_llm(&request) {
+                enrich_query_answer_with_llm(&state, &request, &mut response).await;
+            }
             notify_project_changed_with_metadata(
                 &state,
                 request.project.clone(),
@@ -2104,6 +2106,13 @@ async fn query(
             Err(ApiError::io(error))
         }
     }
+}
+
+fn should_enrich_query_answer_with_llm(request: &QueryRequest) -> bool {
+    matches!(
+        request.answer_mode.unwrap_or_default(),
+        QueryAnswerMode::Auto | QueryAnswerMode::Llm
+    )
 }
 
 fn query_activity_details(request: &QueryRequest, response: &QueryResponse) -> ActivityDetails {
@@ -2798,9 +2807,37 @@ async fn fetch_project_embedding_coverage(
         let space: String = row.try_get("embedding_space").map_err(ApiError::sql)?;
         let chunk_count: i64 = row.try_get("chunk_count").map_err(ApiError::sql)?;
         let memory_count: i64 = row.try_get("memory_count").map_err(ApiError::sql)?;
-        map.insert(space, (chunk_count, memory_count));
+        insert_embedding_coverage_count(&mut map, space.clone(), chunk_count, memory_count);
+        if let Some(alias) = equivalent_openai_embedding_space_key(&space) {
+            insert_embedding_coverage_count(&mut map, alias, chunk_count, memory_count);
+        }
     }
     Ok(map)
+}
+
+fn insert_embedding_coverage_count(
+    map: &mut std::collections::HashMap<String, (i64, i64)>,
+    space: String,
+    chunk_count: i64,
+    memory_count: i64,
+) {
+    map.entry(space)
+        .and_modify(|(chunks, memories)| {
+            *chunks = (*chunks).max(chunk_count);
+            *memories = (*memories).max(memory_count);
+        })
+        .or_insert((chunk_count, memory_count));
+}
+
+fn equivalent_openai_embedding_space_key(space: &str) -> Option<String> {
+    space
+        .strip_prefix("openai|")
+        .map(|suffix| format!("openai_compatible|{suffix}"))
+        .or_else(|| {
+            space
+                .strip_prefix("openai_compatible|")
+                .map(|suffix| format!("openai|{suffix}"))
+        })
 }
 
 async fn activate_embedding_backend(
@@ -6691,6 +6728,28 @@ mod tests {
     }
 
     #[test]
+    fn openai_embedding_space_aliases_legacy_and_compatible_keys() {
+        assert_eq!(
+            equivalent_openai_embedding_space_key(
+                "openai|https://api.openai.com/v1|text-embedding-3-small"
+            )
+            .as_deref(),
+            Some("openai_compatible|https://api.openai.com/v1|text-embedding-3-small")
+        );
+        assert_eq!(
+            equivalent_openai_embedding_space_key(
+                "openai_compatible|https://api.openai.com/v1|text-embedding-3-small"
+            )
+            .as_deref(),
+            Some("openai|https://api.openai.com/v1|text-embedding-3-small")
+        );
+        assert!(
+            equivalent_openai_embedding_space_key("voyage|https://api.voyageai.com|voyage-code-3")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn llm_query_answer_content_accepts_valid_citations() {
         let response = test_query_response();
         let parsed = parse_llm_query_answer_content(
@@ -6740,6 +6799,8 @@ mod tests {
                 top_k: 8,
                 min_confidence: None,
                 history: false,
+                retrieval_mode: None,
+                answer_mode: None,
             },
             &response,
         );
@@ -6789,6 +6850,8 @@ mod tests {
                 top_k: 8,
                 min_confidence: None,
                 history: false,
+                retrieval_mode: None,
+                answer_mode: None,
             },
             &response,
         );

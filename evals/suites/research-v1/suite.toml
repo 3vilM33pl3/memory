@@ -1,0 +1,10 @@
+name = "memory research v1"
+description = "Reviewed-seed suite for repeatable LLM-backed Memory Layer evaluation. Expand this to 100+ held-out items before making publication-grade claims."
+suite_version = "1"
+label_status = "draft"
+fixture = "memory-research-v1"
+default_profile = "llm"
+default_repeats = 5
+min_items = 12
+project = "memory"
+items = "items.jsonl"

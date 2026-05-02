@@ -15,6 +15,10 @@ Create a directory containing `suite.toml` and `items.jsonl`:
 name = "memory smoke"
 project = "memory"
 items = "items.jsonl"
+suite_version = "1"
+label_status = "draft"
+default_profile = "llm"
+default_repeats = 5
 ```
 
 Each JSONL row is one eval item. Supported `eval_type` values are:
@@ -25,6 +29,12 @@ Each JSONL row is one eval item. Supported `eval_type` values are:
 - `command_task`: runs a shell command and scores the exit code.
 
 ## Commands
+
+Check a suite and environment before spending provider tokens:
+
+```bash
+memory eval doctor --suite evals/suites/research-v1 --text
+```
 
 Scaffold a starter suite from recent memories:
 
@@ -42,9 +52,12 @@ Run paired conditions:
 
 ```bash
 memory eval run \
-  --suite evals/examples/memory-smoke \
+  --suite evals/suites/research-v1 \
   --condition no-memory \
-  --condition full-memory
+  --condition full-memory \
+  --profile llm \
+  --repeat 5 \
+  --fail-on-unreviewed-labels
 ```
 
 The `no-memory` condition uses the configured OpenAI-compatible `[llm]` client
@@ -53,12 +66,29 @@ Memory retrieval, project timeline, or resume endpoints for those item types.
 `retrieval_qa` items still receive zero retrieval scores under `no-memory`
 because there is intentionally no retrieval channel.
 
+Use `--profile offline` for CI-safe checks. Offline runs do not call the direct
+no-memory LLM baseline and can be used to validate suite shape and scoring.
+Official evidence runs should use the default `llm` profile.
+
+`lexical`, `semantic`, `graph`, and `full-memory` now request explicit
+retrieval modes from the query API. This means condition names are enforced by
+the backend instead of merely recorded in artifacts.
+
 Compare two run artifacts:
 
 ```bash
 memory eval compare \
   --baseline target/memory-evals/no-memory.json \
   --candidate target/memory-evals/full-memory.json \
+  --text
+```
+
+Gate a comparison before release:
+
+```bash
+memory eval gate \
+  --comparison target/memory-evals/comparison.json \
+  --policy evals/gates/research-v1.toml \
   --text
 ```
 
@@ -70,15 +100,13 @@ report assertion/topic recall and forbidden-hit counts. Comparisons are paired
 by item id and include success-rate deltas, McNemar p-values, and bootstrap
 confidence intervals for numeric metric deltas.
 
-Run artifacts include `duration_ms` and provider token usage when the underlying
-LLM response reports it. This lets paired runs compare quality, latency, and
-token volume for plain LLM behavior versus Memory-backed behavior.
+Run artifacts include suite checksums, run group IDs, repeat indexes,
+`duration_ms`, and provider token usage when the underlying LLM response reports
+it. This lets paired runs compare quality, latency, and token volume for plain
+LLM behavior versus Memory-backed behavior.
 
 ## Notes
 
-The first version automates objective and deterministic evaluation. Subjective
-human scoring and calibrated LLM-as-judge scoring should be added as separate
-suite fields once there is a reviewed benchmark set. Condition isolation for
-`lexical`, `semantic`, and `graph` currently follows the service configuration;
-artifacts include a note when those labels are recorded without stricter service
-retrieval-mode controls.
+The checked-in `research-v1` suite is a reviewed-seed location, not yet a
+publication-grade benchmark. Expand it to 100+ held-out reviewed items before
+making external statistical claims.

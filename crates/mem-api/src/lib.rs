@@ -258,6 +258,50 @@ pub struct QueryFilters {
     pub tags: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[derive(Default)]
+pub enum QueryRetrievalMode {
+    Lexical,
+    Semantic,
+    Graph,
+    #[default]
+    FullMemory,
+}
+
+impl fmt::Display for QueryRetrievalMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Lexical => "lexical",
+            Self::Semantic => "semantic",
+            Self::Graph => "graph",
+            Self::FullMemory => "full-memory",
+        };
+        f.write_str(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[derive(Default)]
+pub enum QueryAnswerMode {
+    #[default]
+    Auto,
+    Deterministic,
+    Llm,
+}
+
+impl fmt::Display for QueryAnswerMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Auto => "auto",
+            Self::Deterministic => "deterministic",
+            Self::Llm => "llm",
+        };
+        f.write_str(value)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryRequest {
     pub project: String,
@@ -274,6 +318,14 @@ pub struct QueryRequest {
     /// deep-history or audit-style queries.
     #[serde(default)]
     pub history: bool,
+    /// Optional eval/debug control for isolating retrieval channels.
+    /// Normal user queries should omit this and use full memory behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retrieval_mode: Option<QueryRetrievalMode>,
+    /// Optional eval/debug control for answer synthesis.
+    /// Normal user queries should omit this and let the service choose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_mode: Option<QueryAnswerMode>,
 }
 
 impl QueryRequest {
@@ -412,6 +464,16 @@ pub struct QueryResultDebug {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QueryDiagnostics {
+    #[serde(default)]
+    pub retrieval_mode: QueryRetrievalMode,
+    #[serde(default)]
+    pub lexical_enabled: bool,
+    #[serde(default)]
+    pub semantic_enabled: bool,
+    #[serde(default)]
+    pub graph_enabled: bool,
+    #[serde(default)]
+    pub relation_boost_enabled: bool,
     #[serde(default)]
     pub lexical_candidates: usize,
     #[serde(default)]
@@ -3319,6 +3381,8 @@ mod tests {
             top_k: 8,
             min_confidence: None,
             history: false,
+            retrieval_mode: None,
+            answer_mode: None,
         };
 
         assert!(request.validate().is_err());
