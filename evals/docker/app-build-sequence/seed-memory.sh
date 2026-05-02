@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-memory_cmd="cargo run --quiet --bin memory -- --config /workspace/evals/docker/app-build-sequence/config.eval.toml"
+memory_cmd="/workspace/target/debug/memory --config /workspace/evals/docker/app-build-sequence/config.eval.toml"
 
 $memory_cmd remember --project memory --type project --title "Memory product positioning" --summary "Memory is a local-first memory system for coding agents." --note "Memory's user-facing features include multi-backend embeddings, graph-aware search, distributed agents and watchers, activity tracking, get-up-to-speed briefings, and automated evaluations."
 $memory_cmd remember --project memory --type reference --title "Memory evaluation explanation" --summary "Memory evaluations compare paired conditions." --note "A strong Memory evaluation runs the same task under no-memory and full-memory conditions, captures token usage and latency, verifies Memory evidence, and compares paired item scores instead of unrelated aggregate runs."
