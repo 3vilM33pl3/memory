@@ -10,6 +10,7 @@ Use `remember` when you want to store a durable project fact or task outcome dir
 - [Requirements](#requirements)
 - [Basic Examples](#basic-examples)
 - [What It Writes](#what-it-writes)
+- [Troubleshooting](#troubleshooting)
 - [When Not To Use It](#when-not-to-use-it)
 
 ## When To Use It
@@ -120,6 +121,48 @@ That means the result still follows the normal Memory Layer data model:
 For normal completed work, `remember` now records an explicit `implementation` memory by default so the shipped outcome is visible in the memory list and query results.
 
 If your notes also contain debugging lessons, decisions, or conventions, curation can still keep those as separate secondary memories when they are justified.
+
+## Troubleshooting
+
+`remember` performs two writes: capture, then curate. If the command times out,
+is interrupted, or appears to hang, do not assume nothing happened. The capture
+may already be stored, and curation may already have produced queryable memory.
+
+Check for a captured task:
+
+```bash
+memory activities --project my-project --kind capture_task --limit 10
+```
+
+If you see the capture but no queryable memory yet, run a bounded curation pass:
+
+```bash
+memory curate --project my-project --batch-size 5
+```
+
+Then verify with a targeted query:
+
+```bash
+memory query \
+  --project my-project \
+  --question "What did we just remember about deployment?" \
+  --limit 5 \
+  --json
+```
+
+Use `--dry-run` to isolate argument and payload problems without writing:
+
+```bash
+memory remember --project my-project --note "Deployment uses systemd." --dry-run
+```
+
+Interpretation:
+
+- `activities` shows `capture_task`: raw evidence was written.
+- `curate` reports `input_count = 0`: there may be no pending raw captures, or
+  the previous `remember` already consumed them.
+- `query` returns the new memory: the remember operation succeeded even if the
+  original process did not return cleanly.
 
 ## When Not To Use It
 

@@ -259,6 +259,20 @@ That path looks like this:
 
 This is the highest-confidence path because the user or agent is explicitly saying, “this work should be remembered now.”
 
+Because capture and curation are separate backend operations, partial success is
+possible if the CLI process times out or is interrupted. Treat the write path as
+inspectable rather than atomic from the user's perspective:
+
+1. Check `memory activities --project <slug> --kind capture_task` for the raw
+   capture.
+2. Run `memory curate --project <slug> --batch-size <n>` if a capture exists but
+   no memory is queryable yet.
+3. Verify with `memory query --project <slug> --question <task-specific text>`.
+
+If `curate` reports `input_count = 0`, either no raw captures are pending or the
+previous `remember` already consumed them. Query is the final confirmation that a
+canonical memory exists.
+
 ## Write Path: Raw Capture And Curation Separation
 
 The more advanced path is the watcher-driven one.

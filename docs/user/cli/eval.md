@@ -17,9 +17,20 @@ project = "memory"
 items = "items.jsonl"
 suite_version = "1"
 label_status = "draft"
+fixture = "memory-research-v1"
 default_profile = "llm"
 default_repeats = 5
+min_items = 100
 ```
+
+Suite manifest fields:
+
+- `suite_version` is a human-managed suite format/version label.
+- `label_status` should be `draft` while labels are still being tuned and `reviewed` before using `--fail-on-unreviewed-labels`.
+- `fixture` names the fixture/corpus used for reproducibility.
+- `default_profile` is usually `llm` for official evidence and `offline` for CI fixtures.
+- `default_repeats` is the minimum repeat count `memory eval run` should use for that suite.
+- `min_items` is checked by `memory eval doctor` so undersized suites are visible before expensive runs.
 
 Each JSONL row is one eval item. Supported `eval_type` values are:
 
@@ -74,6 +85,18 @@ Official evidence runs should use the default `llm` profile.
 retrieval modes from the query API. This means condition names are enforced by
 the backend instead of merely recorded in artifacts.
 
+Condition mapping:
+
+- `no-memory`: no retrieval channel; answer/resume items use the direct baseline path.
+- `lexical`: query with `retrieval_mode = "lexical"` and deterministic retrieval-only scoring where applicable.
+- `semantic`: query with `retrieval_mode = "semantic"`.
+- `graph`: query with `retrieval_mode = "graph"`.
+- `full-memory`: query with `retrieval_mode = "full-memory"`.
+
+For grounded-answer items, Memory-backed LLM runs force `answer_mode = "llm"`;
+offline runs force `answer_mode = "deterministic"` so CI can validate the
+pipeline without provider calls.
+
 Compare two run artifacts:
 
 ```bash
@@ -100,10 +123,10 @@ report assertion/topic recall and forbidden-hit counts. Comparisons are paired
 by item id and include success-rate deltas, McNemar p-values, and bootstrap
 confidence intervals for numeric metric deltas.
 
-Run artifacts include suite checksums, run group IDs, repeat indexes,
-`duration_ms`, and provider token usage when the underlying LLM response reports
-it. This lets paired runs compare quality, latency, and token volume for plain
-LLM behavior versus Memory-backed behavior.
+Run artifacts include `run_group_id`, `repeat_index`, `suite_checksum`,
+`fixture_checksum`, `duration_ms`, and provider token usage when the underlying
+LLM response reports it. Comparisons report quality, latency, and token deltas
+for plain LLM behavior versus Memory-backed behavior.
 
 ## Notes
 
