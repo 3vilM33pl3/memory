@@ -1957,14 +1957,23 @@ fn summarize_snippet(text: &str, lexical_terms: &[String], phrases: &[String]) -
         .find_map(|needle| lowered.find(&needle));
 
     if let Some(index) = target {
-        let start = index.saturating_sub(80);
-        let end = (start + 240).min(trimmed.len());
+        let start = floor_char_boundary(&trimmed, index.saturating_sub(80));
+        let end = floor_char_boundary(&trimmed, (start + 240).min(trimmed.len()));
         let prefix = if start > 0 { "..." } else { "" };
         let suffix = if end < trimmed.len() { "..." } else { "" };
         return format!("{prefix}{}{suffix}", &trimmed[start..end]);
     }
 
-    format!("{}...", &trimmed[..240])
+    let end = floor_char_boundary(&trimmed, 240);
+    format!("{}...", &trimmed[..end])
+}
+
+fn floor_char_boundary(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
 }
 
 pub fn split_search_chunks(summary: &str, canonical_text: &str) -> Vec<String> {
@@ -2136,6 +2145,24 @@ mod tests {
         let text = format!("{} needle {}", "alpha ".repeat(80), "beta ".repeat(80));
         let snippet = summarize_snippet(&text, &["needle".to_string()], &[]);
         assert!(snippet.contains("needle"));
+    }
+
+    #[test]
+    fn snippet_truncates_on_utf8_char_boundary() {
+        let text = format!("{}│ detail {}", "─".repeat(80), "candidate ".repeat(40));
+        let snippet = summarize_snippet(&text, &[], &[]);
+
+        assert!(snippet.ends_with("..."));
+        assert!(snippet.is_char_boundary(snippet.len()));
+    }
+
+    #[test]
+    fn snippet_matching_window_uses_utf8_char_boundaries() {
+        let text = format!("{} needle {}", "│".repeat(90), "candidate ".repeat(40));
+        let snippet = summarize_snippet(&text, &["needle".to_string()], &[]);
+
+        assert!(snippet.contains("needle"));
+        assert!(snippet.is_char_boundary(snippet.len()));
     }
 
     #[test]
