@@ -40,6 +40,7 @@ services:
         condition: service_started
     environment:
       CODEX_HOME: /codex-home
+      MEMORY_EVAL_SUITE: ${MEMORY_EVAL_SUITE:-/workspace/evals/suites/app-build-sequence-codex-v1}
       MEMORY_LAYER_PROFILE: prod
       MEMORY_LAYER_CONFIG: /workspace/evals/docker/app-build-sequence/config.eval.toml
       MEMORY_EVAL_CODEX_MODEL: ${MEMORY_EVAL_CODEX_MODEL:-gpt-5.4-mini}
