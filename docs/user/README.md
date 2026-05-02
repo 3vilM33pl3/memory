@@ -17,6 +17,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Getting Started](getting-started.md)
 - [TUI Guide](tui/README.md)
 - [Query Tab](tui/query.md)
+- [Beginner Guide To Evaluations](evaluation-guide.md)
 - [Code Graph Extraction](cli/graph.md)
 - [Embedding Operations](cli/embeddings.md)
 - [Automated Evaluation](cli/eval.md)

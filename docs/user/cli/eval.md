@@ -3,6 +3,10 @@
 Run automated evaluation suites that measure whether Memory improves retrieval,
 grounding, resume quality, task success, latency, and token cost.
 
+If you are new to evaluations, start with the
+[Beginner Guide To Evaluations](../evaluation-guide.md). This page is the CLI
+reference.
+
 The command is intentionally file-based: suites live in the repository and run
 results are written as immutable JSON artifacts under `target/memory-evals/`.
 That makes comparisons reproducible and easy to attach to release notes.

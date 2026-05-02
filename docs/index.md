@@ -21,11 +21,13 @@ It is designed for the real workflow: several agents, several projects, multiple
 
 - [Getting Started](user/getting-started.md)
 - [TUI Guide](user/tui/README.md)
+- [Beginner Guide To Evaluations](user/evaluation-guide.md)
 - [User Documentation Index](user/README.md)
 
 ## Feature Walkthroughs
 
 - [Query Tab](user/tui/query.md) and [Query Command](user/cli/query.md)
+- [Beginner Guide To Evaluations](user/evaluation-guide.md) and [Automated Evaluation](user/cli/eval.md)
 - [Code Graph Extraction](user/cli/graph.md)
 - [Embeddings Tab](user/tui/embeddings.md) and [Embedding Operations](user/cli/embeddings.md)
 - [Agents Tab](user/tui/agents.md) and [Watcher Health](user/cli/watchers.md)
