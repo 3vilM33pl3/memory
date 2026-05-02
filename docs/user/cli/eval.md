@@ -205,6 +205,20 @@ The Docker run writes artifacts to `target/memory-evals-docker/` on the host.
 The sequence suite has around 20 ordered steps and runs both `no-memory` and
 `full-memory`, so expect materially higher model cost than the smoke suites.
 
+Run the 10-step functionality-change follow-up against the saved final website
+fixture with the same Docker stack:
+
+```bash
+MEMORY_EVAL_SUITE=/workspace/evals/suites/app-build-functionality-sequence-codex-v1 \
+docker compose -f evals/docker/app-build-sequence/compose.yml run --rm eval
+```
+
+That suite starts from the saved `final-full-memory` product site fixture and
+asks Codex to add dependency-free browser functionality. The previous
+`final-no-memory` and `final-full-memory` generated websites are stored under
+`evals/fixtures/app-build-sequence-codex-v1/` so later follow-up tests can reuse
+the exact prior outputs instead of depending on local `target/` artifacts.
+
 Run paired conditions:
 
 ```bash

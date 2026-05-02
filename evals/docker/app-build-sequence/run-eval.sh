@@ -2,6 +2,7 @@
 set -eu
 
 memory_cmd="/workspace/target/debug/memory --config /workspace/evals/docker/app-build-sequence/config.eval.toml"
+eval_suite="${MEMORY_EVAL_SUITE:-/workspace/evals/suites/app-build-sequence-codex-v1}"
 
 mkdir -p "$CODEX_HOME"
 if [ -d /codex-home-host ]; then
@@ -14,9 +15,9 @@ done
 
 sh /workspace/evals/docker/app-build-sequence/seed-memory.sh
 
-$memory_cmd eval doctor --suite /workspace/evals/suites/app-build-sequence-codex-v1 --text
+$memory_cmd eval doctor --suite "$eval_suite" --text
 $memory_cmd eval run \
-  --suite /workspace/evals/suites/app-build-sequence-codex-v1 \
+  --suite "$eval_suite" \
   --condition no-memory \
   --condition full-memory \
   --profile llm \

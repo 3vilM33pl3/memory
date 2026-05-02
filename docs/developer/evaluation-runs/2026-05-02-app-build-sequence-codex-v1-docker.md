@@ -150,6 +150,8 @@ access.
 
 ## Follow-Up Work
 
+- Run the 10-step functionality-change follow-up suite:
+  `evals/suites/app-build-functionality-sequence-codex-v1`.
 - Run multiple repeats to estimate variance and confidence intervals.
 - Add harder project-building tasks where prior context should affect output
   quality, consistency, or rework.
