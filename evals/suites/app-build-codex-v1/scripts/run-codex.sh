@@ -6,6 +6,19 @@ prompt_file="$2"
 run_dir="$3"
 final_file="$run_dir/codex-final.md"
 model="${MEMORY_EVAL_CODEX_MODEL:-gpt-5.4-mini}"
+sandbox="${MEMORY_EVAL_CODEX_SANDBOX:-danger-full-access}"
+if [ "$sandbox" = "danger-full-access" ]; then
+  sandbox_args="--dangerously-bypass-approvals-and-sandbox"
+else
+  sandbox_args="--full-auto --sandbox $sandbox"
+fi
+watchdog_seconds="${MEMORY_EVAL_CODEX_WATCHDOG_SECONDS:-360}"
+if [ -n "${MEMORY_EVAL_TIMEOUT_SECONDS:-}" ] && [ "$watchdog_seconds" -ge "$MEMORY_EVAL_TIMEOUT_SECONDS" ]; then
+  watchdog_seconds=$((MEMORY_EVAL_TIMEOUT_SECONDS - 30))
+fi
+if [ "$watchdog_seconds" -lt 30 ]; then
+  watchdog_seconds=30
+fi
 
 rm -f "$final_file"
 
@@ -20,8 +33,7 @@ GIT_CEILING_DIRECTORIES="$repo_root" \
 codex exec \
   --cd "$workspace" \
   --skip-git-repo-check \
-  --full-auto \
-  --sandbox workspace-write \
+  $sandbox_args \
   --ignore-rules \
   --ephemeral \
   --model "$model" \
@@ -29,7 +41,7 @@ codex exec \
   - < "$prompt_file" &
 
 pid="$!"
-deadline=$(( $(date +%s) + ${MEMORY_EVAL_CODEX_WATCHDOG_SECONDS:-360} ))
+deadline=$(( $(date +%s) + watchdog_seconds ))
 stable_since=0
 last_size=-1
 

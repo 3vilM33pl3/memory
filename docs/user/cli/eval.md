@@ -75,6 +75,14 @@ agent to use Memory when useful. For Memory-enabled build tasks,
 `memory_questions` are appended as required questions and the runner exposes the
 Memory CLI in `$MEMORY_EVAL_MEMORY_COMMAND`.
 
+For build tasks with `memory_questions`, the harness also writes
+`./.memory-eval/query-memory` into the copied workspace. The generated prompt
+requires the agent to run that helper for each required question. The helper
+writes raw query JSON and status files under `.memory-eval/`, and the harness
+fails the item unless every required question has a successful query response
+with at least one returned memory. Hand-written `memory-evidence.md` is useful
+for humans, but it is not accepted as proof of Memory access by itself.
+
 ## Commands
 
 Check a suite and environment before spending provider tokens:
@@ -135,7 +143,11 @@ cargo run --bin memory -- eval run \
 The real suite uses `evals/suites/app-build-codex-v1/scripts/run-codex.sh` to
 wrap `codex exec`, write `codex-final.md`, and stop once the final message is
 stable. Set `MEMORY_EVAL_CODEX_WATCHDOG_SECONDS` if a local Codex run needs a
-longer watchdog.
+longer watchdog. Set `MEMORY_EVAL_CODEX_SANDBOX` to override the Codex sandbox;
+the real app-build suite defaults to `danger-full-access` because the evaluated
+Codex process must reach the local Memory service on localhost. In that default
+mode the wrapper uses Codex's explicit sandbox-bypass flag; only run this suite
+against disposable fixtures.
 
 Run paired conditions:
 

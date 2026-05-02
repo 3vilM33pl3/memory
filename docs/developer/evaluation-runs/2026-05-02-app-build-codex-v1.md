@@ -1,8 +1,10 @@
-# App Build Codex v1 Evaluation Run
+# App Build Codex v1 Evaluation Run (Invalidated)
 
 Date: 2026-05-02
 
 ## Summary
+
+Status: invalidated for Memory-quality claims.
 
 This run exercised the real Codex-backed app build simulation suite:
 `evals/suites/app-build-codex-v1`.
@@ -14,12 +16,19 @@ The suite compares the same three static app build tasks under two conditions:
 - `full-memory`: Codex receives required Memory questions, the
   `$MEMORY_EVAL_MEMORY_COMMAND` helper, and must create `memory-evidence.md`.
 
-Final result: both conditions passed all three deterministic build checks.
+Final result: both conditions passed all three deterministic build checks, but
+the result must not be used as evidence that Memory improved Codex output.
 
 This validates the real build-simulation harness and artifact flow. It does not
 yet show a quality advantage for Memory, because both conditions reached the
 same score and the Codex subprocesses reported that direct Memory CLI queries
 were unreachable from their sandbox.
+
+The benchmark has since been tightened so `full-memory` items must contain
+harness-verifiable `.memory-eval/` query artifacts produced by successful
+Memory CLI calls. A hand-written `memory-evidence.md` is no longer sufficient.
+
+See `2026-05-02-app-build-codex-v1-validated.md` for the replacement run.
 
 ## Commands
 
@@ -122,4 +131,3 @@ $MEMORY_EVAL_MEMORY_COMMAND query \
 
 After that, rerun the suite with multiple repeats and store comparison JSON
 artifacts next to this report.
-

@@ -121,8 +121,11 @@ memory eval run \
 ```
 
 That suite runs real `codex exec` agents against static app fixtures. The
-`full-memory` condition receives required Memory questions and must write
-`memory-evidence.md`; the `no-memory` condition is forbidden from using Memory.
+`full-memory` condition receives required Memory questions and must run the
+generated `./.memory-eval/query-memory` helper for each question. The harness
+verifies the helper's raw query JSON before accepting the item. The `no-memory`
+condition is forbidden from using Memory and fails if Memory evidence artifacts
+appear.
 
 ## Step 4: Run A Paired Evaluation
 

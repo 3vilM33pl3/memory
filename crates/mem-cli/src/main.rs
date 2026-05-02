@@ -8738,6 +8738,11 @@ fn run_agent_build_eval_item(
                 forbidden_files_total: item.forbidden_files.len(),
                 content_assertions_passed: 0,
                 content_assertions_total: item.required_content.len(),
+                memory_queries_required: item.memory_questions.len(),
+                memory_queries_verified: 0,
+                memory_evidence_required: condition != mem_eval::EvalCondition::NoMemory
+                    && !item.memory_questions.is_empty(),
+                memory_evidence_ok: false,
                 duration_ms: Some(0),
                 notes: vec![
                     "dry-run: validated fixture and command templates without execution"
@@ -8768,6 +8773,9 @@ fn run_agent_build_eval_item(
         .as_deref()
         .or(suite.manifest.project.as_deref())
         .unwrap_or("");
+    if condition != mem_eval::EvalCondition::NoMemory && !item.memory_questions.is_empty() {
+        write_agent_build_memory_helper(&workspace, item, context)?;
+    }
 
     let prompt = agent_build_prompt(item, condition, context);
     let prompt_file = run_dir.join("prompt.md");
@@ -8821,6 +8829,8 @@ fn run_agent_build_eval_item(
             item.timeout_seconds
         ));
     }
+    let memory_evidence = validate_agent_build_memory_evidence(&workspace, item, condition)?;
+    notes.extend(memory_evidence.notes.clone());
 
     let mut score_exit_codes = Vec::new();
     for (index, command) in item.score_commands.iter().enumerate() {
@@ -8880,6 +8890,11 @@ fn run_agent_build_eval_item(
         "forbidden_files_total": item.forbidden_files.len(),
         "content_assertions_passed": content_assertions_passed,
         "content_assertions_total": item.required_content.len(),
+        "memory_queries_required": memory_evidence.required,
+        "memory_queries_verified": memory_evidence.verified,
+        "memory_evidence_required": true,
+        "memory_evidence_ok": memory_evidence.ok,
+        "memory_evidence_notes": memory_evidence.notes,
     });
     fs::write(
         run_dir.join("summary.json"),
@@ -8900,11 +8915,248 @@ fn run_agent_build_eval_item(
             forbidden_files_total: item.forbidden_files.len(),
             content_assertions_passed,
             content_assertions_total: item.required_content.len(),
+            memory_queries_required: memory_evidence.required,
+            memory_queries_verified: memory_evidence.verified,
+            memory_evidence_required: true,
+            memory_evidence_ok: memory_evidence.ok,
             duration_ms: Some(started.elapsed().as_millis() as u64),
             notes,
             skipped: false,
         },
     ))
+}
+
+#[derive(Debug)]
+struct AgentBuildMemoryEvidence {
+    required: usize,
+    verified: usize,
+    ok: bool,
+    notes: Vec<String>,
+}
+
+fn write_agent_build_memory_helper(
+    workspace: &Path,
+    item: &mem_eval::AgentBuildTaskItem,
+    _context: &EvalRunContext,
+) -> Result<()> {
+    let evidence_dir = workspace.join(".memory-eval");
+    fs::create_dir_all(&evidence_dir)
+        .with_context(|| format!("create {}", evidence_dir.display()))?;
+    let helper_binary = evidence_dir.join("memory");
+    let current_exe = env::current_exe()?;
+    let copy_source = if Path::new("/proc/self/exe").is_file() {
+        Path::new("/proc/self/exe")
+    } else {
+        current_exe.as_path()
+    };
+    fs::copy(copy_source, &helper_binary)
+        .with_context(|| format!("copy Memory CLI to {}", helper_binary.display()))?;
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&helper_binary)
+            .with_context(|| format!("stat {}", helper_binary.display()))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&helper_binary, permissions)
+            .with_context(|| format!("chmod {}", helper_binary.display()))?;
+    }
+    let questions = item
+        .memory_questions
+        .iter()
+        .enumerate()
+        .map(|(index, question)| {
+            serde_json::json!({
+                "id": agent_build_memory_question_id(index),
+                "question": question,
+            })
+        })
+        .collect::<Vec<_>>();
+    fs::write(
+        evidence_dir.join("required-questions.json"),
+        serde_json::to_vec_pretty(&questions)?,
+    )
+    .with_context(|| {
+        format!(
+            "write {}",
+            evidence_dir.join("required-questions.json").display()
+        )
+    })?;
+    let helper = r#"#!/usr/bin/env sh
+set -eu
+
+if [ "$#" -lt 2 ]; then
+  echo "usage: ./.memory-eval/query-memory <question-id> <question>" >&2
+  exit 64
+fi
+
+question_id="$1"
+shift
+question="$*"
+
+case "$question_id" in
+  q[0-9]*) ;;
+  *)
+    echo "invalid Memory eval question id: $question_id" >&2
+    exit 64
+    ;;
+esac
+
+mkdir -p .memory-eval
+out=".memory-eval/${question_id}.json"
+err=".memory-eval/${question_id}.stderr.txt"
+status=".memory-eval/${question_id}.status.json"
+cmd="./.memory-eval/memory"
+
+set +e
+"$cmd" query --project "${MEMORY_LAYER_PROJECT:?}" --question "$question" --json > "$out" 2> "$err"
+code=$?
+set -e
+if [ "$code" -eq 0 ] && [ ! -s "$out" ]; then
+  echo "Memory query wrote an empty JSON payload" >> "$err"
+  code=65
+fi
+
+printf '{"question_id":"%s","exit_code":%s,"output_file":"%s"}\n' "$question_id" "$code" "$out" > "$status"
+exit "$code"
+"#;
+    let helper_path = evidence_dir.join("query-memory");
+    fs::write(&helper_path, helper).with_context(|| format!("write {}", helper_path.display()))?;
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&helper_path)
+            .with_context(|| format!("stat {}", helper_path.display()))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&helper_path, permissions)
+            .with_context(|| format!("chmod {}", helper_path.display()))?;
+    }
+    Ok(())
+}
+
+fn validate_agent_build_memory_evidence(
+    workspace: &Path,
+    item: &mem_eval::AgentBuildTaskItem,
+    condition: mem_eval::EvalCondition,
+) -> Result<AgentBuildMemoryEvidence> {
+    if condition == mem_eval::EvalCondition::NoMemory {
+        let forbidden = [
+            workspace.join("memory-evidence.md"),
+            workspace.join("memory-evidence.json"),
+            workspace.join(".memory-eval"),
+        ];
+        let leaked = forbidden
+            .iter()
+            .filter(|path| path.exists())
+            .map(|path| {
+                path.strip_prefix(workspace)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        let ok = leaked.is_empty();
+        return Ok(AgentBuildMemoryEvidence {
+            required: 0,
+            verified: 0,
+            ok,
+            notes: if ok {
+                vec!["no-memory run left no Memory evidence artifacts".to_string()]
+            } else {
+                vec![format!(
+                    "no-memory run produced forbidden Memory evidence artifact(s): {}",
+                    leaked.join(", ")
+                )]
+            },
+        });
+    }
+
+    if item.memory_questions.is_empty() {
+        return Ok(AgentBuildMemoryEvidence {
+            required: 0,
+            verified: 0,
+            ok: true,
+            notes: vec!["memory-enabled run had no required Memory questions".to_string()],
+        });
+    }
+
+    let mut verified = 0usize;
+    let mut notes = Vec::new();
+    for (index, question) in item.memory_questions.iter().enumerate() {
+        let question_id = agent_build_memory_question_id(index);
+        let output_path = workspace
+            .join(".memory-eval")
+            .join(format!("{question_id}.json"));
+        let status_path = workspace
+            .join(".memory-eval")
+            .join(format!("{question_id}.status.json"));
+        let status_ok = if !status_path.is_file() {
+            notes.push(format!("missing Memory query status for {question_id}"));
+            false
+        } else {
+            match read_json_file(&status_path) {
+                Ok(status) => {
+                    if status.get("exit_code").and_then(serde_json::Value::as_i64) != Some(0) {
+                        notes.push(format!("Memory query {question_id} exited non-zero"));
+                        false
+                    } else {
+                        true
+                    }
+                }
+                Err(error) => {
+                    notes.push(format!(
+                        "Memory query {question_id} status is invalid: {error}"
+                    ));
+                    false
+                }
+            }
+        };
+        let result_count = if !output_path.is_file() {
+            notes.push(format!("missing Memory query output for {question_id}"));
+            0
+        } else {
+            match read_json_file(&output_path) {
+                Ok(output) => {
+                    let result_count = output
+                        .get("results")
+                        .and_then(serde_json::Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0);
+                    if result_count == 0 {
+                        notes.push(format!("Memory query {question_id} returned no memories"));
+                    }
+                    result_count
+                }
+                Err(error) => {
+                    notes.push(format!(
+                        "Memory query {question_id} output is invalid: {error}"
+                    ));
+                    0
+                }
+            }
+        };
+        if status_ok && result_count > 0 {
+            verified += 1;
+            notes.push(format!(
+                "verified Memory query {question_id} ({result_count} result(s)): {question}"
+            ));
+        }
+    }
+    let required = item.memory_questions.len();
+    Ok(AgentBuildMemoryEvidence {
+        required,
+        verified,
+        ok: verified == required,
+        notes,
+    })
+}
+
+fn read_json_file(path: &Path) -> Result<serde_json::Value> {
+    let contents = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&contents).with_context(|| format!("parse {}", path.display()))
+}
+
+fn agent_build_memory_question_id(index: usize) -> String {
+    format!("q{}", index + 1)
 }
 
 #[derive(Debug)]
@@ -8930,7 +9182,8 @@ fn run_eval_shell_command(
         .current_dir(cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .env("MEMORY_EVAL_WORKSPACE", cwd);
+        .env("MEMORY_EVAL_WORKSPACE", cwd)
+        .env("MEMORY_EVAL_TIMEOUT_SECONDS", timeout_seconds.to_string());
     if let Some(condition) = condition {
         command_builder.env("MEMORY_EVAL_CONDITION", condition.to_string());
         match condition {
@@ -8957,6 +9210,13 @@ fn run_eval_shell_command(
                         command_builder
                             .env("MEMORY_CONFIG", config_path)
                             .env("MEMORY_LAYER_CONFIG", config_path);
+                        if config_path
+                            .parent()
+                            .map(|parent| parent.join("config.dev.toml").is_file())
+                            .unwrap_or(false)
+                        {
+                            command_builder.env("MEMORY_LAYER_PROFILE", "dev");
+                        }
                     }
                 }
             }
@@ -9015,7 +9275,7 @@ fn agent_build_prompt(
     prompt.push_str("\n\n");
     match condition {
         mem_eval::EvalCondition::NoMemory => prompt.push_str(
-            "Evaluation condition: no-memory. Do not query, read, or use Memory Layer context. Do not create memory-evidence.md. Work only from the repository files and this prompt.\n",
+            "Evaluation condition: no-memory. Do not query, read, or use Memory Layer context. Do not create memory-evidence.md, memory-evidence.json, or .memory-eval artifacts. Work only from the repository files and this prompt.\n",
         ),
         _ => {
             prompt.push_str(
@@ -9024,15 +9284,28 @@ fn agent_build_prompt(
             prompt.push_str("\nUse this Memory CLI command from the shell:\n\n```bash\n");
             prompt.push_str(&context.memory_command);
             prompt.push_str("\n```\n\n");
-            prompt.push_str("Write a file named memory-evidence.md that lists the Memory commands you ran and the useful facts you used.\n");
+            prompt.push_str("A harness-provided helper exists at `./.memory-eval/query-memory`. Use that helper for every required Memory question so the eval can verify real Memory service access. Do not fabricate Memory evidence; if a helper command fails, stop and report the failure.\n");
+            prompt.push_str("Write a file named memory-evidence.md that summarizes the useful facts you used after the helper commands succeed.\n");
             if !item.memory_questions.is_empty() {
                 prompt.push_str("\nRequired Memory questions:\n");
-                for question in &item.memory_questions {
+                for (index, question) in item.memory_questions.iter().enumerate() {
+                    let question_id = agent_build_memory_question_id(index);
                     prompt.push_str("- ");
+                    prompt.push_str(&question_id);
+                    prompt.push_str(": ");
                     prompt.push_str(question);
                     prompt.push('\n');
                 }
-                prompt.push_str("\nFor each question, run a command like:\n\n```bash\n$MEMORY_EVAL_MEMORY_COMMAND query --project $MEMORY_LAYER_PROJECT --question \"<question>\" --json\n```\n");
+                prompt.push_str("\nRun these exact helper commands before editing files:\n\n```bash\n");
+                for (index, question) in item.memory_questions.iter().enumerate() {
+                    let question_id = agent_build_memory_question_id(index);
+                    prompt.push_str("./.memory-eval/query-memory ");
+                    prompt.push_str(&question_id);
+                    prompt.push(' ');
+                    prompt.push_str(&shell_quote_value(question));
+                    prompt.push('\n');
+                }
+                prompt.push_str("```\n");
             }
         }
     }
@@ -9057,10 +9330,14 @@ fn expand_agent_build_template(
         .replace("{project}", project)
 }
 
+fn shell_quote_value(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 fn shell_quote_path(path: &Path) -> String {
     let absolute = absolute_eval_path(path);
     let value = absolute.to_string_lossy();
-    format!("'{}'", value.replace('\'', "'\\''"))
+    shell_quote_value(&value)
 }
 
 fn absolute_eval_path(path: &Path) -> PathBuf {
@@ -9116,9 +9393,21 @@ fn validate_agent_build_suite_item(
 }
 
 fn eval_memory_command() -> String {
-    env::current_exe()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "memory".to_string())
+    if let (Ok(exe), Ok(cwd)) = (env::current_exe(), env::current_dir()) {
+        let manifest_path = cwd.join("Cargo.toml");
+        let is_cargo_target_binary = exe
+            .components()
+            .any(|component| component.as_os_str() == "target")
+            && manifest_path.is_file();
+        if is_cargo_target_binary {
+            return format!(
+                "cargo run --quiet --manifest-path {} --bin memory --",
+                shell_quote_value(&manifest_path.to_string_lossy())
+            );
+        }
+        return exe.to_string_lossy().to_string();
+    }
+    "memory".to_string()
 }
 
 fn eval_memory_config_path(cwd: &Path) -> Option<PathBuf> {
@@ -11186,7 +11475,82 @@ mod tests {
         assert!(prompt.contains("no-memory"));
         assert!(prompt.contains("Do not query"));
         assert!(prompt.contains("Do not create memory-evidence.md"));
+        assert!(prompt.contains(".memory-eval"));
         assert!(!prompt.contains("What changed recently?"));
+    }
+
+    #[test]
+    fn agent_build_memory_evidence_verifies_required_queries() {
+        let workspace = std::env::temp_dir().join(format!("memory-eval-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(workspace.join(".memory-eval")).unwrap();
+        fs::write(
+            workspace.join(".memory-eval/q1.status.json"),
+            r#"{"question_id":"q1","exit_code":0,"output_file":".memory-eval/q1.json"}"#,
+        )
+        .unwrap();
+        fs::write(
+            workspace.join(".memory-eval/q1.json"),
+            r#"{"results":[{"memory_id":"00000000-0000-0000-0000-000000000000"}]}"#,
+        )
+        .unwrap();
+        let item = mem_eval::AgentBuildTaskItem {
+            id: "build".to_string(),
+            project: Some("memory".to_string()),
+            prompt: "Build the app.".to_string(),
+            fixture: "fixtures/app".to_string(),
+            agent_command: "codex exec - < {prompt_file}".to_string(),
+            memory_questions: vec!["What changed recently?".to_string()],
+            setup_commands: Vec::new(),
+            score_commands: Vec::new(),
+            timeout_seconds: 60,
+            required_files: Vec::new(),
+            forbidden_files: Vec::new(),
+            required_content: Vec::new(),
+        };
+
+        let evidence = crate::validate_agent_build_memory_evidence(
+            &workspace,
+            &item,
+            mem_eval::EvalCondition::FullMemory,
+        )
+        .unwrap();
+
+        assert!(evidence.ok);
+        assert_eq!(evidence.required, 1);
+        assert_eq!(evidence.verified, 1);
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    fn agent_build_no_memory_fails_on_memory_evidence_artifacts() {
+        let workspace = std::env::temp_dir().join(format!("memory-eval-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(workspace.join("memory-evidence.md"), "query").unwrap();
+        let item = mem_eval::AgentBuildTaskItem {
+            id: "build".to_string(),
+            project: Some("memory".to_string()),
+            prompt: "Build the app.".to_string(),
+            fixture: "fixtures/app".to_string(),
+            agent_command: "codex exec - < {prompt_file}".to_string(),
+            memory_questions: vec!["What changed recently?".to_string()],
+            setup_commands: Vec::new(),
+            score_commands: Vec::new(),
+            timeout_seconds: 60,
+            required_files: Vec::new(),
+            forbidden_files: Vec::new(),
+            required_content: Vec::new(),
+        };
+
+        let evidence = crate::validate_agent_build_memory_evidence(
+            &workspace,
+            &item,
+            mem_eval::EvalCondition::NoMemory,
+        )
+        .unwrap();
+
+        assert!(!evidence.ok);
+        assert!(evidence.notes[0].contains("forbidden Memory evidence"));
+        fs::remove_dir_all(workspace).unwrap();
     }
 
     #[test]

@@ -677,6 +677,10 @@ pub struct AgentBuildScoreInput {
     pub forbidden_files_total: usize,
     pub content_assertions_passed: usize,
     pub content_assertions_total: usize,
+    pub memory_queries_required: usize,
+    pub memory_queries_verified: usize,
+    pub memory_evidence_required: bool,
+    pub memory_evidence_ok: bool,
     pub duration_ms: Option<u64>,
     pub notes: Vec<String>,
     pub skipped: bool,
@@ -736,14 +740,28 @@ pub fn score_agent_build_task(
         "content_assertions_total".to_string(),
         input.content_assertions_total as f64,
     );
+    scores.insert(
+        "memory_queries_required".to_string(),
+        input.memory_queries_required as f64,
+    );
+    scores.insert(
+        "memory_queries_verified".to_string(),
+        input.memory_queries_verified as f64,
+    );
+    scores.insert(
+        "memory_evidence_ok".to_string(),
+        if input.memory_evidence_ok { 1.0 } else { 0.0 },
+    );
 
     let setup_ok = setup_passed == input.setup_exit_codes.len();
     let score_ok = score_passed == input.score_exit_codes.len();
     let files_ok = input.required_files_present == input.required_files_total
         && input.forbidden_files_absent == input.forbidden_files_total;
     let content_ok = input.content_assertions_passed == input.content_assertions_total;
+    let memory_ok = !input.memory_evidence_required || input.memory_evidence_ok;
     let agent_ok = input.agent_exit_code == Some(0);
-    let success = !input.skipped && agent_ok && setup_ok && score_ok && files_ok && content_ok;
+    let success =
+        !input.skipped && agent_ok && setup_ok && score_ok && files_ok && content_ok && memory_ok;
     scores.insert("total_score".to_string(), if success { 1.0 } else { 0.0 });
 
     EvalItemResult {
@@ -1300,6 +1318,10 @@ mod tests {
                 forbidden_files_total: 1,
                 content_assertions_passed: 1,
                 content_assertions_total: 1,
+                memory_queries_required: 1,
+                memory_queries_verified: 1,
+                memory_evidence_required: true,
+                memory_evidence_ok: true,
                 duration_ms: Some(10),
                 notes: Vec::new(),
                 skipped: false,
@@ -1309,6 +1331,7 @@ mod tests {
         assert!(result.success);
         assert_eq!(result.eval_type, "agent_build_task");
         assert_eq!(result.scores["total_score"], 1.0);
+        assert_eq!(result.scores["memory_evidence_ok"], 1.0);
     }
 
     fn result(id: &str, success: bool, recall: f64) -> EvalItemResult {

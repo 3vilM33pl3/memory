@@ -38,20 +38,30 @@ The checked-in `evals/suites/app-build-codex-v1` suite is the first real
 Codex-backed build simulation suite. It runs paired `no-memory` and
 `full-memory` agents against dependency-free static app fixtures. Memory-enabled
 runs receive `memory_questions`, the `$MEMORY_EVAL_MEMORY_COMMAND` environment
-variable, and must leave `memory-evidence.md` in the workspace; no-memory runs
-must not create that file.
+variable, and a generated `./.memory-eval/query-memory` helper. The prompt
+requires the agent to run that helper for every required question. The harness
+then verifies the helper-produced status and raw query JSON files before scoring
+the item as successful. A hand-written `memory-evidence.md` is only a human
+summary; it is not proof of Memory access.
 
 The suite calls Codex through `scripts/run-codex.sh` rather than invoking
 `codex exec` directly. The wrapper isolates git discovery from the parent repo,
 uses the workspace-local `AGENTS.md`, writes `codex-final.md`, and exits once
 the final message is stable so a completed agent does not hold the eval run open.
+It defaults `MEMORY_EVAL_CODEX_SANDBOX` to `danger-full-access` so the evaluated
+Codex process can reach the localhost Memory service. In that mode the wrapper
+uses Codex's explicit sandbox-bypass flag, so keep fixtures disposable and
+isolated. Override the environment variable only when the alternative sandbox
+can still reach Memory.
 
 Condition isolation for build tasks is practical rather than absolute in v1.
 The `no-memory` prompt explicitly forbids Memory usage and the runner removes
 common Memory environment variables. Memory-enabled conditions receive a prompt
-that encourages Memory usage and exposes `MEMORY_LAYER_PROJECT`. Stronger
-isolation, such as separate services or databases per condition, can be added
-later if the benchmark needs adversarial guarantees.
+that requires verified Memory helper calls and exposes `MEMORY_LAYER_PROJECT`.
+The harness also fails `no-memory` items if `memory-evidence.md`,
+`memory-evidence.json`, or `.memory-eval` artifacts appear. Stronger isolation,
+such as separate services or databases per condition, can be added later if the
+benchmark needs adversarial guarantees.
 
 ## Conditions
 
