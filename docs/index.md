@@ -13,6 +13,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 - **Multi-embedding retrieval:** configure several embedding backends, keep all spaces populated, and activate a different backend without reindexing.
 - **Distributed agent operations:** watch Codex and Claude sessions, token pressure, rate limits, watcher heartbeats, and process state from one dashboard.
 - **Get-up-to-speed briefings:** persisted activities and recent changes become concise context packs for new or returning agents.
+- **Repeatable evaluation:** run paired no-memory vs full-memory ablations with artifacted results, gates, token accounting, and retrieval-quality metrics.
 - **Curated knowledge base:** browse canonical memories, inspect provenance, and review proposed replacements before old knowledge is superseded.
 
 ![Memory Layer agents dashboard](img/tui/agents-tab.png)
@@ -27,7 +28,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 ## Feature Walkthroughs
 
 - [Query Tab](user/tui/query.md) and [Query Command](user/cli/query.md)
-- [Beginner Guide To Evaluations](user/evaluation-guide.md) and [Automated Evaluation](user/cli/eval.md)
+- [Beginner Guide To Evaluations](user/evaluation-guide.md), [Automated Evaluation](user/cli/eval.md), and [Research V1 Dev Evaluation](developer/evaluation-runs/2026-05-02-research-v1-dev.md)
 - [Code Graph Extraction](user/cli/graph.md)
 - [Embeddings Tab](user/tui/embeddings.md) and [Embedding Operations](user/cli/embeddings.md)
 - [Agents Tab](user/tui/agents.md) and [Watcher Health](user/cli/watchers.md)

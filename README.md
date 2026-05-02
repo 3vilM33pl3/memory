@@ -14,6 +14,7 @@ It captures what happened, curates what matters, stores it in PostgreSQL with pg
 - **Distributed agents:** monitor Codex and Claude sessions across projects, including token pressure, context usage, rate limits, process details, and open ports.
 - **Agent-linked watchers:** background watchers attach to agent sessions, identify the project automatically, heartbeat to the service, and stop when the owning agent exits.
 - **Get up to speed:** persisted activity events, recent memory changes, commits, warnings, and token summaries become a briefing for new or returning agents.
+- **Repeatable evaluation:** run paired no-memory vs full-memory ablations with artifacted results, gates, token accounting, and concrete retrieval-quality metrics.
 - **Human review loop:** curation can queue replacement proposals so important memory changes can be approved before older knowledge is superseded.
 
 ![Memory Layer agents dashboard](docs/img/tui/agents-tab.png)
@@ -71,6 +72,7 @@ Key docs after setup:
 - [Watcher Health](docs/user/cli/watchers.md) for distributed watcher behavior.
 - [Query Command](docs/user/cli/query.md) for cited answers from memory.
 - [Get Up To Speed](docs/user/cli/up-to-speed.md) for new-agent briefings.
+- [Beginner Guide To Evaluations](docs/user/evaluation-guide.md) for measuring whether Memory improves agent behavior.
 - [Memory Bundles](docs/user/cli/bundles.md) for shareable backup and restore.
 
 Most mutating `memory` commands support `--dry-run` so agents can preview writes, service actions, and plan/checkpoint flows before applying them.
@@ -114,6 +116,26 @@ The Query tab and `memory query` combine lexical search, vector search, relation
 When a completed code graph exists, query also looks at parser-backed symbols, references, and one-hop graph edges. Those graph hits are mapped back to curated memories through file provenance, so the system can explain why a memory about a function, module, or call path was retrieved without treating raw graph rows as answer citations.
 
 ![Memory Layer query tab](docs/img/tui/query-tab.png)
+
+### Evaluation That Measures Memory
+
+Memory Layer includes a repeatable evaluation harness so improvements can be
+measured instead of guessed. Eval suites run the same tasks under paired
+conditions, such as `no-memory` and `full-memory`, then write immutable
+artifacts, compare item-by-item results, apply gate policies, and report token
+and latency deltas.
+
+In the latest development `research-v1` paired run, `full-memory` moved
+retrieval metrics from `0.000` to `1.000` for Recall@K, MRR, and nDCG, and
+improved resume topic recall from `0.500` to `0.750`. The same run also exposed
+real tradeoffs: higher token use, higher latency, lower citation precision, and
+lower confidence. That is the point of the harness: it shows where Memory helps
+and where the next engineering work belongs.
+
+Start with the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md),
+use [`memory eval`](docs/user/cli/eval.md) for the command reference, and see
+the recorded [research-v1 dev run](docs/developer/evaluation-runs/2026-05-02-research-v1-dev.md)
+for the current evidence and caveats.
 
 ### Code Graph Memory
 
