@@ -15,8 +15,8 @@ use std::{
     io::{self, IsTerminal, Read, Write},
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
-    process::Command as ProcessCommand,
-    time::Duration,
+    process::{Command as ProcessCommand, Stdio},
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -213,6 +213,7 @@ Agent notes:
 Examples:
   memory eval scaffold --project memory --out evals/suites/memory-smoke
   memory eval doctor --suite evals/examples/memory-smoke
+  memory eval run --suite evals/examples/app-build-smoke --condition no-memory --condition full-memory --profile offline --text
   memory eval run --suite evals/examples/memory-smoke --condition full-memory --repeat 5
   memory eval compare --baseline target/memory-evals/run-a.json --candidate target/memory-evals/run-b.json --text
   memory eval gate --comparison target/memory-evals/comparison.json --policy evals/gates/research-v1.toml
@@ -238,9 +239,11 @@ Agent notes:
   Runs a suite under one or more conditions and writes immutable JSON artifacts under target/memory-evals by default.
   Default profile is llm. Use --profile offline for deterministic CI-safe checks.
   Use --dry-run to validate suite parsing without LLM calls or shell command execution.
+  agent_build_task items copy fixtures to target/memory-evals/build-runs and capture prompts, stdout, stderr, and scoring summaries.
 
 Examples:
   memory eval run --suite evals/examples/memory-smoke --condition full-memory --dry-run
+  memory eval run --suite evals/examples/app-build-smoke --condition no-memory --condition full-memory --profile offline --text
   memory eval run --suite evals/examples/memory-smoke --condition no-memory --condition full-memory --repeat 5
 
 See also:
@@ -8003,6 +8006,16 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
                     "message": format!("{} item(s), required {}", suite.items.len(), min_items),
                 }));
             }
+            for item in &suite.items {
+                if let mem_eval::EvalItem::AgentBuildTask(item) = item {
+                    let result = validate_agent_build_suite_item(&suite, item);
+                    checks.push(serde_json::json!({
+                        "name": format!("agent_build_task.{}", item.id),
+                        "status": if result.is_ok() { "ok" } else { "fail" },
+                        "message": result.err().map(|error| error.to_string()).unwrap_or_else(|| "fixture and paths are valid".to_string()),
+                    }));
+                }
+            }
             match api.health().await {
                 Ok(value) => checks.push(serde_json::json!({
                     "name": "backend.health",
@@ -8147,6 +8160,7 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
                         run_group_id,
                         suite_checksum: suite_checksum.clone(),
                         dry_run: args.dry_run,
+                        artifacts_root: args.out.clone(),
                     };
                     let run = run_eval_suite(&suite, &project, *condition, context, api).await?;
                     total_tokens += run
@@ -8272,6 +8286,7 @@ struct EvalRunContext {
     run_group_id: uuid::Uuid,
     suite_checksum: Option<String>,
     dry_run: bool,
+    artifacts_root: PathBuf,
 }
 
 async fn run_eval_suite(
@@ -8283,7 +8298,7 @@ async fn run_eval_suite(
 ) -> Result<mem_eval::EvalRun> {
     let mut results = Vec::new();
     for item in &suite.items {
-        if context.dry_run {
+        if context.dry_run && !matches!(item, mem_eval::EvalItem::AgentBuildTask(_)) {
             results.push(mem_eval::skipped_result(
                 item,
                 condition,
@@ -8359,6 +8374,9 @@ async fn run_eval_suite(
                 }
             }
             mem_eval::EvalItem::CommandTask(item) => run_command_eval_item(item, condition)?,
+            mem_eval::EvalItem::AgentBuildTask(item) => {
+                run_agent_build_eval_item(suite, item, condition, &context)?
+            }
         };
         if matches!(
             condition,
@@ -8682,6 +8700,397 @@ fn run_command_eval_item(
         Some(started.elapsed().as_millis() as u64),
         Vec::new(),
     ))
+}
+
+fn run_agent_build_eval_item(
+    suite: &mem_eval::EvalSuite,
+    item: &mem_eval::AgentBuildTaskItem,
+    condition: mem_eval::EvalCondition,
+    context: &EvalRunContext,
+) -> Result<mem_eval::EvalItemResult> {
+    let started = Instant::now();
+    let fixture_dir = suite.root.join(&item.fixture);
+    if !fixture_dir.is_dir() {
+        anyhow::bail!(
+            "agent build task `{}` fixture is not a directory: {}",
+            item.id,
+            fixture_dir.display()
+        );
+    }
+    validate_agent_build_paths(item)?;
+    if context.dry_run {
+        return Ok(mem_eval::score_agent_build_task(
+            item,
+            condition,
+            mem_eval::AgentBuildScoreInput {
+                agent_exit_code: None,
+                setup_exit_codes: Vec::new(),
+                score_exit_codes: Vec::new(),
+                required_files_present: 0,
+                required_files_total: item.required_files.len(),
+                forbidden_files_absent: 0,
+                forbidden_files_total: item.forbidden_files.len(),
+                content_assertions_passed: 0,
+                content_assertions_total: item.required_content.len(),
+                duration_ms: Some(0),
+                notes: vec![
+                    "dry-run: validated fixture and command templates without execution"
+                        .to_string(),
+                ],
+                skipped: true,
+            },
+        ));
+    }
+
+    let run_dir = context.artifacts_root.join("build-runs").join(format!(
+        "{}-{}-{}-r{}-{}",
+        sanitize_filename(&suite.manifest.name),
+        sanitize_filename(&item.id),
+        condition,
+        context.repeat_index,
+        context.run_group_id.simple()
+    ));
+    if run_dir.exists() {
+        fs::remove_dir_all(&run_dir)
+            .with_context(|| format!("remove previous build run {}", run_dir.display()))?;
+    }
+    let workspace = run_dir.join("workspace");
+    fs::create_dir_all(&run_dir).with_context(|| format!("create {}", run_dir.display()))?;
+    copy_dir_recursive(&fixture_dir, &workspace)?;
+    let project = item
+        .project
+        .as_deref()
+        .or(suite.manifest.project.as_deref())
+        .unwrap_or("");
+
+    let prompt = agent_build_prompt(item, condition);
+    let prompt_file = run_dir.join("prompt.md");
+    fs::write(&prompt_file, &prompt).with_context(|| format!("write {}", prompt_file.display()))?;
+
+    let mut notes = vec![format!("artifacts: {}", run_dir.display())];
+    let mut setup_exit_codes = Vec::new();
+    for (index, command) in item.setup_commands.iter().enumerate() {
+        let command = expand_agent_build_template(
+            command,
+            suite,
+            condition,
+            &run_dir,
+            &workspace,
+            &prompt_file,
+            project,
+        );
+        let output =
+            run_eval_shell_command(&command, &workspace, item.timeout_seconds, None, None)?;
+        write_command_artifacts(&run_dir, &format!("setup-{index}"), &output)?;
+        setup_exit_codes.push(output.exit_code);
+    }
+
+    let agent_command = expand_agent_build_template(
+        &item.agent_command,
+        suite,
+        condition,
+        &run_dir,
+        &workspace,
+        &prompt_file,
+        project,
+    );
+    let agent_output = run_eval_shell_command(
+        &agent_command,
+        &workspace,
+        item.timeout_seconds,
+        Some(condition),
+        Some(project),
+    )?;
+    write_command_artifacts(&run_dir, "agent", &agent_output)?;
+    if agent_output.timed_out {
+        notes.push(format!(
+            "agent command timed out after {} second(s)",
+            item.timeout_seconds
+        ));
+    }
+
+    let mut score_exit_codes = Vec::new();
+    for (index, command) in item.score_commands.iter().enumerate() {
+        let command = expand_agent_build_template(
+            command,
+            suite,
+            condition,
+            &run_dir,
+            &workspace,
+            &prompt_file,
+            project,
+        );
+        let output =
+            run_eval_shell_command(&command, &workspace, item.timeout_seconds, None, None)?;
+        write_command_artifacts(&run_dir, &format!("score-{index}"), &output)?;
+        score_exit_codes.push(output.exit_code);
+    }
+
+    let required_files_present = item
+        .required_files
+        .iter()
+        .filter(|path| workspace.join(path).is_file())
+        .count();
+    let forbidden_files_absent = item
+        .forbidden_files
+        .iter()
+        .filter(|path| !workspace.join(path).exists())
+        .count();
+    let content_assertions_passed = item
+        .required_content
+        .iter()
+        .filter(|assertion| {
+            fs::read_to_string(workspace.join(&assertion.file))
+                .map(|contents| contents.contains(&assertion.contains))
+                .unwrap_or(false)
+        })
+        .count();
+
+    let summary = serde_json::json!({
+        "item_id": item.id,
+        "condition": condition,
+        "run_dir": run_dir,
+        "workspace": workspace,
+        "agent_exit_code": agent_output.exit_code,
+        "agent_timed_out": agent_output.timed_out,
+        "setup_exit_codes": setup_exit_codes,
+        "score_exit_codes": score_exit_codes,
+        "required_files_present": required_files_present,
+        "required_files_total": item.required_files.len(),
+        "forbidden_files_absent": forbidden_files_absent,
+        "forbidden_files_total": item.forbidden_files.len(),
+        "content_assertions_passed": content_assertions_passed,
+        "content_assertions_total": item.required_content.len(),
+    });
+    fs::write(
+        run_dir.join("summary.json"),
+        serde_json::to_string_pretty(&summary)?,
+    )
+    .with_context(|| format!("write {}", run_dir.join("summary.json").display()))?;
+
+    Ok(mem_eval::score_agent_build_task(
+        item,
+        condition,
+        mem_eval::AgentBuildScoreInput {
+            agent_exit_code: agent_output.exit_code,
+            setup_exit_codes,
+            score_exit_codes,
+            required_files_present,
+            required_files_total: item.required_files.len(),
+            forbidden_files_absent,
+            forbidden_files_total: item.forbidden_files.len(),
+            content_assertions_passed,
+            content_assertions_total: item.required_content.len(),
+            duration_ms: Some(started.elapsed().as_millis() as u64),
+            notes,
+            skipped: false,
+        },
+    ))
+}
+
+#[derive(Debug)]
+struct EvalShellOutput {
+    exit_code: Option<i32>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    timed_out: bool,
+}
+
+fn run_eval_shell_command(
+    command: &str,
+    cwd: &Path,
+    timeout_seconds: u64,
+    condition: Option<mem_eval::EvalCondition>,
+    project: Option<&str>,
+) -> Result<EvalShellOutput> {
+    let mut command_builder = ProcessCommand::new("sh");
+    command_builder
+        .arg("-c")
+        .arg(command)
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("MEMORY_EVAL_WORKSPACE", cwd);
+    if let Some(condition) = condition {
+        command_builder.env("MEMORY_EVAL_CONDITION", condition.to_string());
+        match condition {
+            mem_eval::EvalCondition::NoMemory => {
+                command_builder
+                    .env("MEMORY_EVAL_MEMORY_ENABLED", "0")
+                    .env_remove("MEMORY_LAYER_API_TOKEN")
+                    .env_remove("MEMORY_LAYER_AGENT_ID")
+                    .env_remove("MEMORY_LAYER_PROJECT")
+                    .env_remove("MEMORY_CONFIG")
+                    .env_remove("MEMORY_LAYER_CONFIG")
+                    .env_remove("MEMORY_BASE_URL");
+            }
+            _ => {
+                command_builder.env("MEMORY_EVAL_MEMORY_ENABLED", "1");
+                if let Some(project) = project {
+                    command_builder.env("MEMORY_LAYER_PROJECT", project);
+                }
+            }
+        }
+    }
+    let mut child = command_builder
+        .spawn()
+        .with_context(|| format!("run eval command `{command}` in {}", cwd.display()))?;
+    let timeout = Duration::from_secs(timeout_seconds.max(1));
+    let started = Instant::now();
+    let mut timed_out = false;
+    loop {
+        if child.try_wait()?.is_some() {
+            break;
+        }
+        if started.elapsed() >= timeout {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let output = child
+        .wait_with_output()
+        .with_context(|| format!("collect eval command `{command}` output"))?;
+    Ok(EvalShellOutput {
+        exit_code: output.status.code(),
+        stdout: output.stdout,
+        stderr: output.stderr,
+        timed_out,
+    })
+}
+
+fn write_command_artifacts(run_dir: &Path, stem: &str, output: &EvalShellOutput) -> Result<()> {
+    fs::write(run_dir.join(format!("{stem}.stdout.txt")), &output.stdout)
+        .with_context(|| format!("write {stem} stdout"))?;
+    fs::write(run_dir.join(format!("{stem}.stderr.txt")), &output.stderr)
+        .with_context(|| format!("write {stem} stderr"))?;
+    fs::write(
+        run_dir.join(format!("{stem}.status.json")),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "exit_code": output.exit_code,
+            "timed_out": output.timed_out,
+        }))?,
+    )
+    .with_context(|| format!("write {stem} status"))?;
+    Ok(())
+}
+
+fn agent_build_prompt(
+    item: &mem_eval::AgentBuildTaskItem,
+    condition: mem_eval::EvalCondition,
+) -> String {
+    let mut prompt = item.prompt.trim().to_string();
+    prompt.push_str("\n\n");
+    match condition {
+        mem_eval::EvalCondition::NoMemory => prompt.push_str(
+            "Evaluation condition: no-memory. Do not query, read, or use Memory Layer context. Work only from the repository files and this prompt.\n",
+        ),
+        _ => prompt.push_str(
+            "Evaluation condition: memory-enabled. Use Memory Layer context when it can improve the implementation, then make the requested code changes in the workspace.\n",
+        ),
+    }
+    prompt
+}
+
+fn expand_agent_build_template(
+    template: &str,
+    suite: &mem_eval::EvalSuite,
+    condition: mem_eval::EvalCondition,
+    run_dir: &Path,
+    workspace: &Path,
+    prompt_file: &Path,
+    project: &str,
+) -> String {
+    template
+        .replace("{suite_dir}", &shell_quote_path(&suite.root))
+        .replace("{run_dir}", &shell_quote_path(run_dir))
+        .replace("{workspace}", &shell_quote_path(workspace))
+        .replace("{prompt_file}", &shell_quote_path(prompt_file))
+        .replace("{condition}", &condition.to_string())
+        .replace("{project}", project)
+}
+
+fn shell_quote_path(path: &Path) -> String {
+    let absolute = absolute_eval_path(path);
+    let value = absolute.to_string_lossy();
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn absolute_eval_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    }
+}
+
+fn validate_agent_build_paths(item: &mem_eval::AgentBuildTaskItem) -> Result<()> {
+    for path in item
+        .required_files
+        .iter()
+        .chain(item.forbidden_files.iter())
+        .chain(
+            item.required_content
+                .iter()
+                .map(|assertion| &assertion.file),
+        )
+    {
+        let candidate = Path::new(path);
+        if candidate.is_absolute()
+            || candidate
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            anyhow::bail!(
+                "agent build task `{}` path must be workspace-relative without `..`: {}",
+                item.id,
+                path
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_agent_build_suite_item(
+    suite: &mem_eval::EvalSuite,
+    item: &mem_eval::AgentBuildTaskItem,
+) -> Result<()> {
+    let fixture_dir = suite.root.join(&item.fixture);
+    if !fixture_dir.is_dir() {
+        anyhow::bail!("fixture is not a directory: {}", fixture_dir.display());
+    }
+    if item.agent_command.trim().is_empty() {
+        anyhow::bail!("agent_command must not be empty");
+    }
+    validate_agent_build_paths(item)?;
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination).with_context(|| format!("create {}", destination.display()))?;
+    for entry in fs::read_dir(source).with_context(|| format!("read {}", source.display()))? {
+        let entry = entry.with_context(|| format!("read entry in {}", source.display()))?;
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("read file type for {}", entry.path().display()))?;
+        let target = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else if file_type.is_file() {
+            fs::copy(entry.path(), &target).with_context(|| {
+                format!("copy {} to {}", entry.path().display(), target.display())
+            })?;
+        } else if file_type.is_symlink() {
+            anyhow::bail!(
+                "agent build fixtures may not contain symlinks: {}",
+                entry.path().display()
+            );
+        }
+    }
+    Ok(())
 }
 
 fn git_head() -> Option<String> {

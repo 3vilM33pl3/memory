@@ -48,6 +48,8 @@ The main item types are:
 - `resume_quality`: checks whether a get-up-to-speed briefing covers the right
   topics
 - `command_task`: checks whether a command succeeds
+- `agent_build_task`: copies a fixture app or website, lets an agent modify it,
+  then scores the finished workspace
 
 Start with the checked-in smoke suite:
 
@@ -92,6 +94,19 @@ This validates the suite and scoring path without spending provider tokens or
 executing shell tasks. A passing dry run means the harness shape is valid. It
 does not prove that Memory improves model behavior.
 
+You can also try the build-simulation smoke suite. It uses a fake deterministic
+agent, so it proves the fixture-copying, agent-command, and scoring path without
+model cost:
+
+```bash
+memory eval run \
+  --suite evals/examples/app-build-smoke \
+  --condition no-memory \
+  --condition full-memory \
+  --profile offline \
+  --text
+```
+
 ## Step 4: Run A Paired Evaluation
 
 For useful evidence, compare a baseline against a Memory-backed condition:
@@ -117,6 +132,14 @@ The important conditions are:
 
 Use `--repeat` for provider-backed runs. Repeats make flaky LLM behavior visible
 instead of hiding it behind one lucky or unlucky result.
+
+For software-building proof, use `agent_build_task`. It gives both conditions
+the same starter project, same prompt, same model, same timeout, and same
+deterministic checker. The no-memory run is told not to use Memory and has
+common Memory environment variables cleared; the full-memory run is told to use
+Memory where useful. This makes the result easier to explain than a pure Q&A
+test: Memory is valuable if the agent ships more of the requested app, passes
+more checks, or needs fewer interventions under the same budget.
 
 Run artifacts are written under `target/memory-evals/`. Keep the generated JSON
 files for release notes, research notes, or regression tracking.

@@ -52,6 +52,7 @@ pub enum EvalItem {
     GroundedAnswer(GroundedAnswerItem),
     ResumeQuality(ResumeQualityItem),
     CommandTask(CommandTaskItem),
+    AgentBuildTask(AgentBuildTaskItem),
 }
 
 impl EvalItem {
@@ -61,6 +62,7 @@ impl EvalItem {
             Self::GroundedAnswer(item) => &item.id,
             Self::ResumeQuality(item) => &item.id,
             Self::CommandTask(item) => &item.id,
+            Self::AgentBuildTask(item) => &item.id,
         }
     }
 
@@ -70,6 +72,7 @@ impl EvalItem {
             Self::GroundedAnswer(item) => item.project.as_deref().unwrap_or(default_project),
             Self::ResumeQuality(item) => item.project.as_deref().unwrap_or(default_project),
             Self::CommandTask(item) => item.project.as_deref().unwrap_or(default_project),
+            Self::AgentBuildTask(item) => item.project.as_deref().unwrap_or(default_project),
         }
     }
 }
@@ -130,8 +133,40 @@ pub struct CommandTaskItem {
     pub expected_exit_code: i32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentBuildTaskItem {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub prompt: String,
+    pub fixture: String,
+    pub agent_command: String,
+    #[serde(default)]
+    pub setup_commands: Vec<String>,
+    #[serde(default)]
+    pub score_commands: Vec<String>,
+    #[serde(default = "default_agent_build_timeout_seconds")]
+    pub timeout_seconds: u64,
+    #[serde(default)]
+    pub required_files: Vec<String>,
+    #[serde(default)]
+    pub forbidden_files: Vec<String>,
+    #[serde(default)]
+    pub required_content: Vec<AgentBuildContentAssertion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentBuildContentAssertion {
+    pub file: String,
+    pub contains: String,
+}
+
 fn default_top_k() -> i64 {
     8
+}
+
+fn default_agent_build_timeout_seconds() -> u64 {
+    900
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -629,6 +664,100 @@ pub fn score_command_task(
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentBuildScoreInput {
+    pub agent_exit_code: Option<i32>,
+    pub setup_exit_codes: Vec<Option<i32>>,
+    pub score_exit_codes: Vec<Option<i32>>,
+    pub required_files_present: usize,
+    pub required_files_total: usize,
+    pub forbidden_files_absent: usize,
+    pub forbidden_files_total: usize,
+    pub content_assertions_passed: usize,
+    pub content_assertions_total: usize,
+    pub duration_ms: Option<u64>,
+    pub notes: Vec<String>,
+    pub skipped: bool,
+}
+
+pub fn score_agent_build_task(
+    item: &AgentBuildTaskItem,
+    condition: EvalCondition,
+    input: AgentBuildScoreInput,
+) -> EvalItemResult {
+    let setup_passed = input
+        .setup_exit_codes
+        .iter()
+        .filter(|code| **code == Some(0))
+        .count();
+    let score_passed = input
+        .score_exit_codes
+        .iter()
+        .filter(|code| **code == Some(0))
+        .count();
+    let mut scores = BTreeMap::new();
+    scores.insert(
+        "agent_exit_code".to_string(),
+        input.agent_exit_code.unwrap_or(-1) as f64,
+    );
+    scores.insert("setup_commands_passed".to_string(), setup_passed as f64);
+    scores.insert(
+        "setup_commands_total".to_string(),
+        input.setup_exit_codes.len() as f64,
+    );
+    scores.insert("score_commands_passed".to_string(), score_passed as f64);
+    scores.insert(
+        "score_commands_total".to_string(),
+        input.score_exit_codes.len() as f64,
+    );
+    scores.insert(
+        "required_files_present".to_string(),
+        input.required_files_present as f64,
+    );
+    scores.insert(
+        "required_files_total".to_string(),
+        input.required_files_total as f64,
+    );
+    scores.insert(
+        "forbidden_files_absent".to_string(),
+        input.forbidden_files_absent as f64,
+    );
+    scores.insert(
+        "forbidden_files_total".to_string(),
+        input.forbidden_files_total as f64,
+    );
+    scores.insert(
+        "content_assertions_passed".to_string(),
+        input.content_assertions_passed as f64,
+    );
+    scores.insert(
+        "content_assertions_total".to_string(),
+        input.content_assertions_total as f64,
+    );
+
+    let setup_ok = setup_passed == input.setup_exit_codes.len();
+    let score_ok = score_passed == input.score_exit_codes.len();
+    let files_ok = input.required_files_present == input.required_files_total
+        && input.forbidden_files_absent == input.forbidden_files_total;
+    let content_ok = input.content_assertions_passed == input.content_assertions_total;
+    let agent_ok = input.agent_exit_code == Some(0);
+    let success = !input.skipped && agent_ok && setup_ok && score_ok && files_ok && content_ok;
+    scores.insert("total_score".to_string(), if success { 1.0 } else { 0.0 });
+
+    EvalItemResult {
+        item_id: item.id.clone(),
+        eval_type: "agent_build_task".to_string(),
+        condition,
+        success,
+        skipped: input.skipped,
+        scores,
+        duration_ms: input.duration_ms,
+        token_usage: None,
+        answer: None,
+        notes: input.notes,
+    }
+}
+
 pub fn skipped_result(
     item: &EvalItem,
     condition: EvalCondition,
@@ -641,6 +770,7 @@ pub fn skipped_result(
             EvalItem::GroundedAnswer(_) => "grounded_answer",
             EvalItem::ResumeQuality(_) => "resume_quality",
             EvalItem::CommandTask(_) => "command_task",
+            EvalItem::AgentBuildTask(_) => "agent_build_task",
         }
         .to_string(),
         condition,
@@ -1117,6 +1247,64 @@ mod tests {
         assert_eq!(usage.input_tokens, 7);
         assert_eq!(usage.cache_read_tokens, 1);
         assert_eq!(usage.total_tokens, 16);
+    }
+
+    #[test]
+    fn parses_agent_build_task_items() {
+        let line = r#"{"eval_type":"agent_build_task","id":"app","project":"memory","prompt":"Build it","fixture":"fixtures/app","agent_command":"sh agent.sh","score_commands":["sh scripts/check.sh"],"required_files":["index.html"],"forbidden_files":["debug.log"],"required_content":[{"file":"index.html","contains":"Launch"}]}"#;
+
+        let item: EvalItem = serde_json::from_str(line).expect("parse agent build task");
+
+        let EvalItem::AgentBuildTask(item) = item else {
+            panic!("expected agent build task");
+        };
+        assert_eq!(item.id, "app");
+        assert_eq!(item.timeout_seconds, 900);
+        assert_eq!(item.score_commands, vec!["sh scripts/check.sh"]);
+        assert_eq!(item.required_content[0].contains, "Launch");
+    }
+
+    #[test]
+    fn agent_build_task_scores_deterministic_checks() {
+        let item = AgentBuildTaskItem {
+            id: "app".to_string(),
+            project: Some("memory".to_string()),
+            prompt: "Build it".to_string(),
+            fixture: "fixtures/app".to_string(),
+            agent_command: "sh agent.sh".to_string(),
+            setup_commands: vec!["true".to_string()],
+            score_commands: vec!["sh scripts/check.sh".to_string()],
+            timeout_seconds: 60,
+            required_files: vec!["index.html".to_string()],
+            forbidden_files: vec!["debug.log".to_string()],
+            required_content: vec![AgentBuildContentAssertion {
+                file: "index.html".to_string(),
+                contains: "Launch".to_string(),
+            }],
+        };
+
+        let result = score_agent_build_task(
+            &item,
+            EvalCondition::FullMemory,
+            AgentBuildScoreInput {
+                agent_exit_code: Some(0),
+                setup_exit_codes: vec![Some(0)],
+                score_exit_codes: vec![Some(0)],
+                required_files_present: 1,
+                required_files_total: 1,
+                forbidden_files_absent: 1,
+                forbidden_files_total: 1,
+                content_assertions_passed: 1,
+                content_assertions_total: 1,
+                duration_ms: Some(10),
+                notes: Vec::new(),
+                skipped: false,
+            },
+        );
+
+        assert!(result.success);
+        assert_eq!(result.eval_type, "agent_build_task");
+        assert_eq!(result.scores["total_score"], 1.0);
     }
 
     fn result(id: &str, success: bool, recall: f64) -> EvalItemResult {

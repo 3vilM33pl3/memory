@@ -42,6 +42,35 @@ Each JSONL row is one eval item. Supported `eval_type` values are:
 - `grounded_answer`: asks a question and scores required/forbidden answer assertions.
 - `resume_quality`: scores a get-up-to-speed briefing against required/forbidden topics.
 - `command_task`: runs a shell command and scores the exit code.
+- `agent_build_task`: copies a fixture project, runs a noninteractive agent command, then scores the resulting workspace with deterministic checks.
+
+`agent_build_task` rows are for app/website build simulations. They use a
+workspace copy under `target/memory-evals/build-runs/`, so the source fixture is
+never edited. Minimal fields:
+
+```json
+{
+  "eval_type": "agent_build_task",
+  "id": "landing-page-build",
+  "project": "memory",
+  "prompt": "Build the requested landing page features.",
+  "fixture": "fixtures/static-site",
+  "agent_command": "codex exec --cd {workspace} --ask-for-approval never --sandbox workspace-write -- \"$(cat {prompt_file})\"",
+  "timeout_seconds": 900,
+  "score_commands": ["sh scripts/check.sh"],
+  "required_files": ["index.html", "styles.css"],
+  "forbidden_files": ["debug.log"],
+  "required_content": [
+    { "file": "index.html", "contains": "Launch" }
+  ]
+}
+```
+
+Command templates support `{suite_dir}`, `{run_dir}`, `{workspace}`,
+`{prompt_file}`, `{condition}`, and `{project}`. The runner appends condition
+instructions to the prompt: `no-memory` tells the agent not to use Memory and
+clears common Memory environment variables; Memory-enabled conditions tell the
+agent to use Memory when useful.
 
 ## Commands
 
@@ -61,6 +90,17 @@ Preview a run without LLM calls or shell task execution:
 
 ```bash
 memory eval run --suite evals/examples/memory-smoke --condition full-memory --dry-run --text
+```
+
+Run the build-simulation smoke suite without provider cost:
+
+```bash
+memory eval run \
+  --suite evals/examples/app-build-smoke \
+  --condition no-memory \
+  --condition full-memory \
+  --profile offline \
+  --text
 ```
 
 Run paired conditions:
@@ -126,6 +166,11 @@ candidate counts, and graph candidate counts. Grounded-answer and resume items
 report assertion/topic recall and forbidden-hit counts. Comparisons are paired
 by item id and include success-rate deltas, McNemar p-values, and bootstrap
 confidence intervals for numeric metric deltas.
+
+Agent build tasks report agent exit code, setup command pass count, score
+command pass count, required/forbidden file checks, required content checks,
+`total_score`, and duration. Raw command output and the copied workspace are
+stored beside the run artifacts so failed builds can be inspected.
 
 Run artifacts include `run_group_id`, `repeat_index`, `suite_checksum`,
 `fixture_checksum`, `duration_ms`, and provider token usage when the underlying

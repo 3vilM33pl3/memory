@@ -14,6 +14,33 @@ aggregate comparisons and makes statistical tests meaningful.
   release or research notes because they include suite checksum, run group,
   repeat index, latency, and token usage.
 
+## Agent Build Tasks
+
+`agent_build_task` is the build-simulation path. It is intentionally generic:
+the suite supplies a shell command template, so the harness can run Codex,
+Claude, a fake local agent, or any other noninteractive runner.
+
+For each item, `memory eval run`:
+
+- resolves the fixture directory relative to the suite root
+- copies it to `target/memory-evals/build-runs/<suite>-<item>-<condition>-rN/workspace`
+- writes the final prompt to `prompt.md`
+- runs optional setup commands, the agent command, and score commands in the copied workspace
+- captures stdout, stderr, exit status, timeout status, and a summary JSON file
+- scores deterministic file/content assertions and score command exits
+
+The checked-in `evals/examples/app-build-smoke` suite uses a fake deterministic
+agent. It exists to test the harness without provider cost. Real research suites
+should replace `agent_command` with a noninteractive agent invocation such as
+`codex exec --cd {workspace} ... "$(cat {prompt_file})"`.
+
+Condition isolation for build tasks is practical rather than absolute in v1.
+The `no-memory` prompt explicitly forbids Memory usage and the runner removes
+common Memory environment variables. Memory-enabled conditions receive a prompt
+that encourages Memory usage and exposes `MEMORY_LAYER_PROJECT`. Stronger
+isolation, such as separate services or databases per condition, can be added
+later if the benchmark needs adversarial guarantees.
+
 ## Conditions
 
 Supported condition labels are `no-memory`, `lexical`, `semantic`, `graph`, and

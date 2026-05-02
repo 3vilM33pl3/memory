@@ -1,0 +1,10 @@
+name = "app build smoke"
+project = "memory"
+items = "items.jsonl"
+suite_version = "1"
+label_status = "draft"
+fixture = "static-site-build"
+default_profile = "offline"
+default_repeats = 1
+min_items = 1
+
