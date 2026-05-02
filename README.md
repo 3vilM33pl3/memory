@@ -15,9 +15,9 @@ latency cost.
 
 In the latest development `research-v1` run, full Memory retrieval moved
 Recall@K, MRR, and nDCG from `0.000` to `1.000`, and improved resume topic
-recall from `0.500` to `0.750`. The same run also exposed the engineering
-tradeoffs: higher token use, higher latency, lower citation precision, and
-lower confidence.
+recall from `0.500` to `0.750`. The harness also reports token, latency,
+citation, and confidence tradeoffs, so improvements can be tuned with evidence
+instead of intuition.
 
 Read the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md), the
 [`memory eval` CLI reference](docs/user/cli/eval.md), and the recorded
@@ -144,10 +144,10 @@ and latency deltas.
 
 In the latest development `research-v1` paired run, `full-memory` moved
 retrieval metrics from `0.000` to `1.000` for Recall@K, MRR, and nDCG, and
-improved resume topic recall from `0.500` to `0.750`. The same run also exposed
-real tradeoffs: higher token use, higher latency, lower citation precision, and
-lower confidence. That is the point of the harness: it shows where Memory helps
-and where the next engineering work belongs.
+improved resume topic recall from `0.500` to `0.750`. The harness also reports
+token, latency, citation, and confidence tradeoffs, so improvements can be tuned
+with evidence instead of intuition. That is the point of the harness: it shows
+where Memory helps and where the next engineering work belongs.
 
 Start with the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md),
 use [`memory eval`](docs/user/cli/eval.md) for the command reference, and see
