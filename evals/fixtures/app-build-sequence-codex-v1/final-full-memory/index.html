@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Memory Product Site</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Memory home">Memory</a>
+      <!-- SEQ-02-NAV -->
+        <nav class="site-nav" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#agents">Agents</a>
+        <a href="#activity">Activity</a>
+        <a href="#evaluations">Evaluations</a>
+        <a href="#docker-evals">Docker evals</a>
+        <a href="#get-up-to-speed">Get up to speed</a>
+        <a href="#curation">Curation</a>
+        <a href="#local-privacy">Local-first</a>
+        <a href="#inspect-memory">Inspect memory</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#interview-proof">Interview</a>
+        <a href="#get-started">Get started</a>
+      </nav>
+    </header>
+    <main>
+      <!-- SEQ-01-HERO -->
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">Memory for coding agents</p>
+          <h1 id="hero-title">Remember the work, not just the prompt.</h1>
+          <p class="lede">
+            Memory keeps projects grounded with graph-aware search, distributed agents and
+            watchers, activity tracking, get-up-to-speed briefings, and automated evaluations.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#features">Explore features</a>
+            <a class="button button-secondary" href="#workflow">See the workflow</a>
+          </div>
+          <dl class="hero-stats" aria-label="Product highlights">
+            <div>
+              <dt>Search</dt>
+              <dd>Graph-aware context</dd>
+            </div>
+            <div>
+              <dt>Agents</dt>
+              <dd>Distributed coordination</dd>
+            </div>
+            <div>
+              <dt>Quality</dt>
+              <dd>Automated evaluations</dd>
+            </div>
+          </dl>
+        </div>
+        <div class="hero-panel" aria-hidden="true">
+          <div class="panel-card panel-card-main">
+            <span class="panel-label">Current thread</span>
+            <strong>Build sequence in progress</strong>
+            <p>Memory keeps each step linked to the work that came before it.</p>
+          </div>
+          <div class="panel-grid">
+            <article class="panel-card">
+              <span class="panel-label">Briefing</span>
+              <strong>Get up to speed fast</strong>
+            </article>
+            <article class="panel-card">
+              <span class="panel-label">Watchers</span>
+              <strong>Track activity automatically</strong>
+            </article>
+            <article class="panel-card">
+              <span class="panel-label">Evaluation</span>
+              <strong>Measure every change</strong>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="content-section" id="features" aria-labelledby="features-title">
+        <div class="section-heading">
+          <p class="eyebrow">Features</p>
+          <h2 id="features-title">Everything needed to keep long-lived work coherent.</h2>
+        </div>
+        <!-- SEQ-03-FEATURES -->
+        <div class="feature-grid">
+          <article class="info-card">
+            <h3>Multi-backend embeddings</h3>
+            <p>Index memory across multiple embedding backends so teams can choose the right retrieval foundation.</p>
+          </article>
+          <article class="info-card">
+            <h3>Graph-aware retrieval</h3>
+            <p>Use code and relationship context to explain why memories are related and return grounded answers.</p>
+          </article>
+          <article class="info-card">
+            <h3>Distributed agents</h3>
+            <p>Coordinate multiple workers while preserving a shared project history.</p>
+          </article>
+          <article class="info-card">
+            <h3>Activity tracking</h3>
+            <p>Record what changed, who changed it, and why the work moved forward.</p>
+          </article>
+        </div>
+      </section>
+      <section class="content-section" id="workflow" aria-labelledby="workflow-title">
+        <div class="section-heading">
+          <p class="eyebrow">Workflow</p>
+          <h2 id="workflow-title">Capture work, curate the context, retrieve what matters, and evaluate the result.</h2>
+        </div>
+        <!-- SEQ-04-WORKFLOW -->
+        <div class="workflow-steps">
+          <article class="step-card">
+            <span>01</span>
+            <p><strong>Capture</strong> the work as it happens so actions, decisions, and changes become part of the durable record.</p>
+          </article>
+          <article class="step-card">
+            <span>02</span>
+            <p><strong>Curate</strong> the context with briefings and activity tracking so the important thread stays organized.</p>
+          </article>
+          <article class="step-card">
+            <span>03</span>
+            <p><strong>Retrieve</strong> the right memory with query/resume and graph-aware search when a new agent picks up the task.</p>
+          </article>
+          <article class="step-card">
+            <span>04</span>
+            <p><strong>Evaluate</strong> changes with automated checks so regressions surface before the work moves forward.</p>
+          </article>
+        </div>
+      </section>
+      <section class="content-section query-section" id="query" aria-labelledby="query-title">
+        <div class="section-heading">
+          <p class="eyebrow">Query</p>
+          <h2 id="query-title">Show the returned memories, then ground the answer in them.</h2>
+        </div>
+        <!-- SEQ-05-QUERY -->
+        <div class="query-shell">
+          <div class="query-input">
+            <span class="panel-label">Query</span>
+            <strong>How does the query tab explain answers from returned memories?</strong>
+            <p>It pairs the retrieved memories with the grounded answer and highlights the relationship context that made the match useful.</p>
+          </div>
+          <div class="query-layout">
+            <section class="query-results" aria-label="Returned memories">
+              <article class="query-memory">
+                <div class="query-memory-head">
+                  <span class="query-score">1</span>
+                  <div>
+                    <strong>Graph-aware search augments retrieval</strong>
+                    <p>Relation boost 0.72, term overlap 70 percent, updated today.</p>
+                  </div>
+                </div>
+                <p class="query-memory-snippet">The query view should show returned memories and the grounded answer created from them.</p>
+              </article>
+              <article class="query-memory">
+                <div class="query-memory-head">
+                  <span class="query-score">2</span>
+                  <div>
+                    <strong>Memory graph and query behavior</strong>
+                    <p>Code and relationship context explain why the memories are related.</p>
+                  </div>
+                </div>
+                <p class="query-memory-snippet">Returned memories are presented beside the answer so the reasoning stays visible.</p>
+              </article>
+            </section>
+            <aside class="query-answer" aria-label="Grounded answer">
+              <span class="panel-label">Grounded answer</span>
+              <p>
+                The query tab explains answers by showing the returned memories next to the grounded answer created from them. It also explains why the memories are related with graph-aware search and relationship context.
+              </p>
+              <ul>
+                <li>Returned memories stay visible for auditability.</li>
+                <li>The grounded answer is explicitly tied back to those memories.</li>
+                <li>Relationship context explains why the result set is relevant.</li>
+              </ul>
+            </aside>
+          </div>
+        </div>
+      </section>
+      <section class="content-section graph-section" id="graph" aria-labelledby="graph-title">
+        <div class="section-heading">
+          <p class="eyebrow">Graph</p>
+          <h2 id="graph-title">Map the nodes and edges that make retrieval explainable.</h2>
+        </div>
+        <!-- SEQ-06-GRAPH -->
+        <div class="graph-shell">
+          <div class="graph-diagram">
+            <article class="graph-node graph-node-top">
+              <span class="panel-label">Node</span>
+              <strong>Memory trail</strong>
+              <p>Recent answers and the work that led there.</p>
+            </article>
+            <article class="graph-edge graph-edge-top">
+              <span class="panel-label">Edge</span>
+              <strong>Links the query to the related memory.</strong>
+            </article>
+            <article class="graph-node graph-node-left">
+              <span class="panel-label">Node</span>
+              <strong>Related memory</strong>
+              <p>Shares the task history or implementation path.</p>
+            </article>
+            <article class="graph-node graph-node-center">
+              <span class="panel-label">Node</span>
+              <strong>Current query</strong>
+              <p>The active question and context being resolved.</p>
+            </article>
+            <article class="graph-node graph-node-right">
+              <span class="panel-label">Node</span>
+              <strong>Code edge</strong>
+              <p>Connects files, functions, and dependencies.</p>
+            </article>
+            <article class="graph-edge graph-edge-left">
+              <span class="panel-label">Edge</span>
+              <strong>Boosts the shared project context.</strong>
+            </article>
+            <article class="graph-edge graph-edge-right">
+              <span class="panel-label">Edge</span>
+              <strong>Follows code references and path matches.</strong>
+            </article>
+            <article class="graph-node graph-node-bottom">
+              <span class="panel-label">Node</span>
+              <strong>Grounded answer</strong>
+              <p>The explanation returned to the agent.</p>
+            </article>
+            <article class="graph-edge graph-edge-bottom">
+              <span class="panel-label">Edge</span>
+              <strong>Keeps the answer tied to returned memories.</strong>
+            </article>
+          </div>
+          <aside class="graph-why" aria-labelledby="graph-why-title">
+            <span class="panel-label">Why it matters</span>
+            <h3 id="graph-why-title">Graph context turns retrieval into an explanation.</h3>
+            <p>
+              Graph-aware search does more than surface similar text. It shows how the nodes are
+              connected, which edges support the match, and why the final answer is trustworthy.
+            </p>
+            <ul>
+              <li>Node relationships make the active thread easier to follow.</li>
+              <li>Edges explain why the search result belongs in the current context.</li>
+              <li>The grounded answer stays auditable because it traces back to returned memories.</li>
+            </ul>
+          </aside>
+        </div>
+      </section>
+      <section class="content-section agents-section" id="agents" aria-labelledby="agents-title">
+        <div class="section-heading">
+          <p class="eyebrow">Agents</p>
+          <h2 id="agents-title">Coordinate distributed agents and keep watchers on the trail.</h2>
+        </div>
+        <!-- SEQ-07-AGENTS -->
+        <div class="agents-shell">
+          <article class="agents-panel agents-panel-main">
+            <span class="panel-label">Distributed agents</span>
+            <h3>Share the project history while workers divide the execution.</h3>
+            <p>
+              Memory positions distributed agents as a coordinated system that keeps a shared
+              project record available while multiple workers move on different parts of the task.
+            </p>
+            <ul>
+              <li>Each worker stays grounded in the same project context.</li>
+              <li>Task history remains available as the work fans out.</li>
+              <li>New work can pick up without losing the thread.</li>
+            </ul>
+          </article>
+          <div class="agents-stack">
+            <article class="agents-panel">
+              <span class="panel-label">Watchers</span>
+              <h3>Track activity automatically.</h3>
+              <p>
+                Watchers sit alongside the agents and record activity so the work stays visible as
+                it moves through the system.
+              </p>
+            </article>
+            <article class="agents-panel">
+              <span class="panel-label">Memory note</span>
+              <h3>Use the feature as documented, not beyond it.</h3>
+              <p>
+                The available Memory evidence confirms that distributed agents and watchers are
+                supported features, but it does not describe deeper internal behavior.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="content-section activity-section" id="activity" aria-labelledby="activity-title">
+        <div class="section-heading">
+          <p class="eyebrow">Activity</p>
+          <h2 id="activity-title">Keep a ledger of token-tracked actions as the work moves.</h2>
+        </div>
+        <!-- SEQ-08-ACTIVITY -->
+        <div class="activity-shell">
+          <article class="activity-panel activity-panel-main">
+            <span class="panel-label">Activity ledger</span>
+            <h3>Record the actions that shape the thread.</h3>
+            <p>
+              Memory stores agent activity as activity tracking and activity history, so the
+              current thread keeps a readable record of what happened without inventing extra
+              detail about the underlying events.
+            </p>
+            <ul>
+              <li>Token-tracked actions stay tied to the work that produced them.</li>
+              <li>Edits, decisions, and handoffs can be reviewed in sequence.</li>
+              <li>The ledger keeps the active thread auditable for the next agent.</li>
+            </ul>
+          </article>
+          <div class="activity-stack">
+            <article class="activity-panel">
+              <span class="panel-label">Tracked action</span>
+              <h3>Query before you change.</h3>
+              <p>
+                Each lookup is part of the activity trail, so the agent can explain why a memory
+                was used before any edit lands.
+              </p>
+            </article>
+            <article class="activity-panel">
+              <span class="panel-label">Tracked action</span>
+              <h3>Capture the update.</h3>
+              <p>
+                When the page changes, the ledger keeps the move connected to the reason the work
+                advanced.
+              </p>
+            </article>
+            <article class="activity-panel">
+              <span class="panel-label">Tracked action</span>
+              <h3>Resume with context.</h3>
+              <p>
+                The next agent can pick up the same path because the activity record preserves the
+                flow of work.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="content-section" id="evaluations" aria-labelledby="evaluations-title">
+        <div class="section-heading">
+          <p class="eyebrow">Evaluations</p>
+          <h2 id="evaluations-title">Measure quality before a change reaches users.</h2>
+        </div>
+        <p class="section-copy">
+          Automated evaluations make regressions visible early, so the memory trail stays useful
+          and the product story stays trustworthy.
+        </p>
+        <!-- SEQ-09-EVALS -->
+        <div class="evals-shell" aria-label="Evaluation comparison">
+          <article class="eval-card eval-card-no-memory">
+            <span class="panel-label">No-memory run</span>
+            <h3>Baseline the task without retrieved context.</h3>
+            <p>
+              The paired comparison starts by running the same task with no memory available, so
+              the eval can measure the baseline token usage, latency, and result quality.
+            </p>
+          </article>
+          <article class="eval-card eval-card-full-memory">
+            <span class="panel-label">Full-memory run</span>
+            <h3>Repeat the same task with Memory enabled.</h3>
+            <p>
+              The full-memory pass uses verified Memory evidence and compares the paired item
+              scores directly against the baseline instead of mixing in unrelated aggregate runs.
+            </p>
+          </article>
+          <aside class="eval-card eval-card-summary">
+            <span class="panel-label">Evaluation proof</span>
+            <h3>Compare the pair, not the pile.</h3>
+            <p>
+              The useful proof is the before-and-after run pair: no-memory establishes the
+              baseline, full-memory shows the Memory-assisted outcome, and the report keeps the
+              token, latency, and score differences tied to that exact pair.
+            </p>
+          </aside>
+        </div>
+      </section>
+      <section class="content-section token-section" id="token-cost" aria-labelledby="token-cost-title">
+        <div class="section-heading">
+          <p class="eyebrow">Token cost</p>
+          <h2 id="token-cost-title">Capture tokens so the evaluation explains what it paid for.</h2>
+        </div>
+        <p class="section-copy">
+          Token usage matters because it shows whether Memory improved the result efficiently or
+          just spent more context to get there. When the report keeps token capture alongside the
+          answer quality, the tradeoff between retrieval help and cost stays visible.
+        </p>
+        <!-- SEQ-11-TOKENS -->
+        <div class="token-shell" aria-label="Token cost explanation">
+          <article class="token-panel token-panel-main">
+            <span class="panel-label">Why capture tokens</span>
+            <h3>Better answers are only useful if the cost is explicit.</h3>
+            <p>
+              The evaluation should say how many tokens the no-memory baseline used, how many the
+              Memory-assisted run used, and why that delta matters for repeatable judging.
+            </p>
+          </article>
+          <div class="token-stack">
+            <article class="token-panel">
+              <span class="panel-label">Baseline</span>
+              <h3>Record the no-memory token count first.</h3>
+              <p>
+                The baseline gives the reference point for later comparison, so a reviewer can see
+                the minimum cost of completing the task without retrieved context.
+              </p>
+            </article>
+            <article class="token-panel">
+              <span class="panel-label">Memory gain</span>
+              <h3>Show whether Memory reduced or increased spend.</h3>
+              <p>
+                The paired run tells you if the Memory layer paid for itself through better recall
+                or if the result only came from consuming more context.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="content-section docker-section" id="docker-evals" aria-labelledby="docker-evals-title">
+        <div class="section-heading">
+          <p class="eyebrow">Docker evals</p>
+          <h2 id="docker-evals-title">Run the full stack in one reproducible Compose environment.</h2>
+        </div>
+        <p class="section-copy">
+          Dockerized Memory evaluations explain the workflow as a single full-stack run: Postgres
+          with pgvector, the Memory service, the eval runner, and Codex all start together so the
+          result can be reproduced from the same containerized setup.
+        </p>
+        <!-- SEQ-10-DOCKER -->
+        <div class="docker-shell" aria-label="Docker evaluation run">
+          <article class="docker-panel docker-panel-main">
+            <span class="panel-label">Reproducible stack</span>
+            <h3>Keep the whole evaluation in one Compose file.</h3>
+            <p>
+              The Dockerized run isolates the full stack so the same task can be replayed with the
+              same services, the same eval runner, and the same artifact path every time.
+            </p>
+            <ul>
+              <li>Postgres with pgvector provides the backing store.</li>
+              <li>The Memory service and Codex run in the same environment.</li>
+              <li>Artifacts land in `target/memory-evals` for easy inspection.</li>
+            </ul>
+          </article>
+          <div class="docker-stack">
+            <article class="docker-panel">
+              <span class="panel-label">Eval model</span>
+              <h3>Compare paired conditions, not unrelated runs.</h3>
+              <p>
+                Strong Memory evaluations still use the same task under no-memory and full-memory
+                conditions, then compare token usage, latency, and paired item scores.
+              </p>
+            </article>
+            <article class="docker-panel">
+              <span class="panel-label">Memory evidence</span>
+              <h3>Verify the Memory context before judging the result.</h3>
+              <p>
+                The explanation should call out the verified Memory evidence used in the run so
+                the evaluation is tied to an auditable memory-backed setup.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="content-section speed-section" id="get-up-to-speed" aria-labelledby="get-up-to-speed-title">
+        <div class="section-heading">
+          <p class="eyebrow">Get up to speed</p>
+          <h2 id="get-up-to-speed-title">Bring a new agent into the thread before it touches the work.</h2>
+        </div>
+        <!-- SEQ-12-SPEED -->
+        <p class="section-copy">
+          New agents should start with the get-up-to-speed briefing, then use query/resume,
+          checkpoints, activity history, and verified project memories so the next change is
+          grounded in the current project state.
+        </p>
+        <div class="speed-shell">
+          <article class="speed-panel speed-panel-main">
+            <span class="panel-label">First move</span>
+            <h3>Read the briefing before making any changes.</h3>
+            <p>
+              The project memory says a new agent should get up to speed first, then query and
+              resume with the current thread instead of guessing from the prompt alone.
+            </p>
+            <ul>
+              <li>Start with the get-up-to-speed briefing.</li>
+              <li>Query and resume the current thread.</li>
+              <li>Check plan checkpoints and activity history.</li>
+              <li>Use verified project memories before editing.</li>
+            </ul>
+          </article>
+          <div class="speed-stack">
+            <article class="speed-panel">
+              <span class="panel-label">Thread state</span>
+              <h3>Keep the current task bounded.</h3>
+              <p>
+                The briefing should make it clear what is already known, what is still in flight,
+                and where the next agent can safely continue.
+              </p>
+            </article>
+            <article class="speed-panel">
+              <span class="panel-label">Memory proof</span>
+              <h3>Anchor the next step in verified context.</h3>
+              <p>
+                The useful evidence is not a general overview. It is the project memory that says
+                a new agent should use the briefing, query/resume, checkpoints, activity history,
+                and verified memories before making changes.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="content-section types-section" id="memory-types" aria-labelledby="memory-types-title">
+        <div class="section-heading">
+          <p class="eyebrow">Memory types</p>
+          <h2 id="memory-types-title">Separate plans, implementation, debugging, reference, and project context.</h2>
+        </div>
+        <!-- SEQ-13-TYPES -->
+        <p class="section-copy">
+          Memory works best when each kind of knowledge has a clear place: plans for what comes
+          next, implementation for concrete changes, debugging for failures and fixes, reference
+          for explanations and conventions, and project memories for the broader product story.
+        </p>
+        <div class="types-shell">
+          <article class="types-panel types-panel-main">
+            <span class="panel-label">Plan memories</span>
+            <h3>Keep the next step visible before the work starts.</h3>
+            <p>
+              Planning memories hold checkpoints, intended actions, and the order of operations so
+              a new agent can continue from the current strategy instead of rebuilding it.
+            </p>
+            <ul>
+              <li>Track the intended path before edits land.</li>
+              <li>Keep checkpoints ready for the next handoff.</li>
+              <li>Preserve the reasoning behind the sequence of work.</li>
+            </ul>
+          </article>
+          <div class="types-stack">
+            <article class="types-panel">
+              <span class="panel-label">Implementation</span>
+              <h3>Capture concrete code and behavior.</h3>
+              <p>
+                Implementation memories describe the actual changes, feature behavior, and
+                technical details that a future edit needs to respect.
+              </p>
+            </article>
+            <article class="types-panel">
+              <span class="panel-label">Debugging</span>
+              <h3>Record failures, fixes, and root causes.</h3>
+              <p>
+                Debugging memories keep the troubleshooting trail visible so the next person can
+                see what broke, what changed, and what resolved the issue.
+              </p>
+            </article>
+            <article class="types-panel">
+              <span class="panel-label">Reference</span>
+              <h3>Hold explanations and conventions.</h3>
+              <p>
+                Reference memories are the notes you consult for definitions, evaluation rules,
+                and other background context that should stay easy to retrieve later.
+              </p>
+            </article>
+            <article class="types-panel">
+              <span class="panel-label">Project</span>
+              <h3>Preserve the broader product context.</h3>
+              <p>
+                Project memories keep the high-level story of the system, its goals, and the
+                user-facing features that define the work.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="content-section curation-section" id="curation" aria-labelledby="curation-title">
+        <div class="section-heading">
+          <p class="eyebrow">Curation</p>
+          <h2 id="curation-title">Keep durable facts, not every noisy log.</h2>
+        </div>
+        <!-- SEQ-14-CURATION -->
+        <p class="section-copy">
+          The Memory answer does not define a formal durability rule, so the safest curation move
+          is to treat verified project context as the durable layer and leave raw activity as the
+          noisy layer. Durable facts should explain what the project now believes. Logs should
+          explain what happened while getting there.
+        </p>
+        <div class="curation-shell">
+          <article class="curation-panel curation-panel-main">
+            <span class="panel-label">Durable facts</span>
+            <h3>Keep the project truths that future agents need.</h3>
+            <p>
+              Durable memory should carry forward decisions, definitions, confirmed constraints,
+              and verified project context. Those are the facts that keep the next step grounded.
+            </p>
+            <ul>
+              <li>Capture the decisions that changed the direction of the work.</li>
+              <li>Preserve confirmed context instead of every intermediate guess.</li>
+              <li>Prefer verified project memories when the thread needs a stable reference.</li>
+            </ul>
+          </article>
+          <div class="curation-stack">
+            <article class="curation-panel">
+              <span class="panel-label">Noisy logs</span>
+              <h3>Leave transient actions in the activity trail.</h3>
+              <p>
+                Raw lookups, temporary speculation, and step-by-step execution noise belong in the
+                activity record, where they can be audited without being mistaken for durable truth.
+              </p>
+            </article>
+            <article class="curation-panel">
+              <span class="panel-label">Curation note</span>
+              <h3>Store the signal, not the clutter.</h3>
+              <p>
+                The right curation filter keeps long-lived project knowledge readable while the
+                surrounding log stream stays useful for traceability but not for recall.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="content-section local-section" id="local-privacy" aria-labelledby="local-privacy-title">
+        <div class="section-heading">
+          <p class="eyebrow">Local-first</p>
+          <h2 id="local-privacy-title">Keep the memory layer close to the work, and the privacy story simple.</h2>
+        </div>
+        <!-- SEQ-15-LOCAL -->
+        <p class="section-copy">
+          The Memory result we have is intentionally narrow: Memory is a local-first memory
+          system for coding agents. The provided answer does not add more implementation detail,
+          so this page keeps the privacy message equally simple and avoids claiming anything
+          beyond that local-first baseline.
+        </p>
+        <div class="local-shell">
+          <article class="local-panel local-panel-main">
+            <span class="panel-label">Local-first baseline</span>
+            <h3>Start with the project on the machine, not in a distant service.</h3>
+            <p>
+              Local-first means the memory workflow is centered on the local coding environment.
+              That keeps the project context close to the agent that is doing the work.
+            </p>
+            <ul>
+              <li>Use the local project state as the default source of context.</li>
+              <li>Keep privacy framing tied to where the work already lives.</li>
+              <li>Avoid promising extra guarantees that the Memory evidence does not state.</li>
+            </ul>
+          </article>
+          <div class="local-stack">
+            <article class="local-panel">
+              <span class="panel-label">Privacy note</span>
+              <h3>Privacy is easier to explain when the data stays near the task.</h3>
+              <p>
+                The safest public claim is that local-first reduces the distance between the work
+                and the stored context, which makes the privacy story easier to reason about.
+              </p>
+            </article>
+            <article class="local-panel">
+              <span class="panel-label">Scope note</span>
+              <h3>Do not infer more than the evidence says.</h3>
+              <p>
+                The Memory answer does not describe sync, retention, or transport guarantees, so
+                those details should stay out of this section unless future evidence adds them.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="content-section inspect-section" id="inspect-memory" aria-labelledby="inspect-memory-title">
+        <div class="section-heading">
+          <p class="eyebrow">Inspect memory</p>
+          <h2 id="inspect-memory-title">Use the CLI and TUI to inspect the same returned memories.</h2>
+        </div>
+        <!-- SEQ-16-UI -->
+        <p class="section-copy">
+          The Memory helper shows one inspection pattern clearly: the query view returns the
+          relevant memories and the grounded answer built from them, while graph-aware search
+          explains why those memories are related. This section presents that flow in two forms:
+          agents drive the CLI, and humans review the same evidence in the TUI.
+        </p>
+        <div class="inspect-shell">
+          <article class="inspect-panel inspect-panel-main">
+            <span class="panel-label">CLI</span>
+            <h3>Agents query Memory from the shell.</h3>
+            <p>
+              The command line is the fastest way to ask for a focused lookup, then read the
+              returned memories and grounded answer as structured output.
+            </p>
+            <pre><code>cargo run --quiet --manifest-path '/workspace/Cargo.toml' --bin memory --</code></pre>
+            <ul>
+              <li>Run the Memory binary from a terminal.</li>
+              <li>Inspect the returned memories for the relevant thread.</li>
+              <li>Use the grounded answer to confirm the outcome.</li>
+            </ul>
+          </article>
+          <div class="inspect-stack">
+            <article class="inspect-panel">
+              <span class="panel-label">TUI</span>
+              <h3>Humans review the same retrieval in a readable interface.</h3>
+              <p>
+                The TUI can present the returned memories, the grounded answer, and the relation
+                context side by side so a reviewer can scan the result without leaving the
+                inspection flow.
+              </p>
+            </article>
+            <article class="inspect-panel">
+              <span class="panel-label">Shared view</span>
+              <h3>Keep the evidence aligned across both entry points.</h3>
+              <p>
+                Whether the inspection starts in the CLI or the TUI, the useful evidence is the
+                same: the returned memories, the grounded answer, and the context that explains
+                why the match was made.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="content-section architecture-section" id="architecture" aria-labelledby="architecture-title">
+        <div class="section-heading">
+          <p class="eyebrow">Architecture</p>
+          <h2 id="architecture-title">The memory stack is built around service, storage, graph, and embeddings.</h2>
+        </div>
+        <!-- SEQ-17-ARCH -->
+        <p class="section-copy">
+          The memory answer points to a stack that centers the Memory service and its surrounding
+          data and retrieval layers. This strip keeps the architecture view narrow: service
+          orchestration, Postgres with pgvector for storage, graph-aware retrieval, and
+          embeddings working together in one loop.
+        </p>
+        <div class="architecture-strip" aria-label="Memory architecture strip">
+          <article class="architecture-card architecture-card-service">
+            <span class="panel-label">Service</span>
+            <h3>Memory service</h3>
+            <p>The coordinating layer that sits in front of the rest of the stack and answers the query.</p>
+          </article>
+          <article class="architecture-card architecture-card-storage">
+            <span class="panel-label">Storage</span>
+            <h3>Postgres with pgvector</h3>
+            <p>The durable backing store that holds the vector data used for retrieval.</p>
+          </article>
+          <article class="architecture-card architecture-card-graph">
+            <span class="panel-label">Graph</span>
+            <h3>Graph-aware search</h3>
+            <p>The relationship layer that explains why memories belong together.</p>
+          </article>
+          <article class="architecture-card architecture-card-embeddings">
+            <span class="panel-label">Embeddings</span>
+            <h3>Multi-backend embeddings</h3>
+            <p>The retrieval foundation that can be indexed across more than one embedding backend.</p>
+          </article>
+        </div>
+      </section>
+      <section class="content-section interview-section" id="interview-proof" aria-labelledby="interview-proof-title">
+        <div class="section-heading">
+          <p class="eyebrow">Interview</p>
+          <h2 id="interview-proof-title">Explain Memory evaluations as paired experiments with verified evidence.</h2>
+        </div>
+        <!-- SEQ-18-INTERVIEW -->
+        <p class="section-copy">
+          In an interview, describe Memory evaluations as a controlled before-and-after test: run
+          the same task once with no memory, run it again with full memory, then compare token
+          usage, latency, and paired item scores while confirming that the Memory evidence used is
+          valid. That keeps the explanation concrete and auditable instead of sounding like a loose
+          aggregate report.
+        </p>
+        <div class="interview-shell">
+          <article class="interview-panel interview-panel-main">
+            <span class="panel-label">Interview answer</span>
+            <h3>Say that the evaluation compares matched runs, not unrelated totals.</h3>
+            <p>
+              A strong answer is: Memory evaluations are rigorous paired experiments. You run the
+              same task twice, first without memory and then with full memory, and you judge the
+              difference by the paired scores, token usage, latency, and verified Memory evidence.
+            </p>
+            <ul>
+              <li>Use the same task in both conditions.</li>
+              <li>Compare no-memory against full-memory.</li>
+              <li>Call out token and latency impact.</li>
+              <li>Verify the Memory evidence behind the run.</li>
+            </ul>
+          </article>
+          <div class="interview-stack">
+            <article class="interview-panel">
+              <span class="panel-label">What to avoid</span>
+              <h3>Do not describe it as a vague aggregate score.</h3>
+              <p>
+                The useful story is the paired comparison. Unrelated rollups hide the baseline and
+                make it harder to explain what Memory actually changed.
+              </p>
+            </article>
+            <article class="interview-panel">
+              <span class="panel-label">Feature context</span>
+              <h3>Automated evaluations are part of Memory's user-facing story.</h3>
+              <p>
+                You can mention that automated evaluations are one of Memory's user-facing features
+                alongside graph-aware search, distributed agents, activity tracking, and
+                get-up-to-speed briefings.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <!-- SEQ-19-POLISH -->
+      <section class="content-section get-started" id="get-started" aria-labelledby="get-started-title">
+        <div class="section-heading">
+          <p class="eyebrow">Get started</p>
+          <h2 id="get-started-title">Bring the current thread, then let Memory do the recall.</h2>
+        </div>
+        <!-- SEQ-20-A11Y -->
+        <p class="section-copy">
+          Finish with an accessible summary: the page keeps strong contrast, clear headings,
+          visible focus states, and concise link labels so the final call to action is easy to
+          scan and use with keyboard or screen reader navigation.
+        </p>
+        <div class="get-started-actions" aria-label="Final call to action">
+          <a class="button button-primary" href="#top">Return to top</a>
+          <a class="button button-secondary" href="#features">Review features again</a>
+        </div>
+        <ul class="get-started-notes" aria-label="Accessibility highlights">
+          <li>Semantic sections and headings keep the information order predictable.</li>
+          <li>Color and focus treatments stay readable without relying on any dependency.</li>
+          <li>Navigation targets and CTA text are specific enough to work without extra context.</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

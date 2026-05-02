@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Memory Product Site</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="site-header__brand" href="#top">Memory Product Site</a>
+      <!-- SEQ-02-NAV -->
+      <nav class="site-nav" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#graph">Graph search</a>
+        <a href="#agents">Agents</a>
+        <a href="#activity">Activity ledger</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#evaluations">Evaluations</a>
+        <a href="#tokens">Token costs</a>
+        <a href="#speed">Get up to speed</a>
+        <a href="#types">Memory types</a>
+        <a href="#curation">Curation</a>
+        <a href="#local">Local privacy</a>
+        <a href="#ui">CLI and TUI</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#interview">Interview proof</a>
+        <a href="#accessibility">Accessibility</a>
+        <a href="#get-started">Get started</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <!-- SEQ-19-POLISH -->
+      <!-- SEQ-01-HERO -->
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero__eyebrow">Memory product site</div>
+        <h1 id="hero-title">Build a workspace that remembers what matters.</h1>
+        <p class="hero__lede">
+          Capture decisions, surface context instantly, and keep every project aligned
+          without adding more process than the team can sustain.
+        </p>
+
+        <div class="hero__actions">
+          <a class="button button--primary" href="#overview">Explore the flow</a>
+          <a class="button button--secondary" href="#signals">See signals</a>
+        </div>
+
+        <dl class="hero__stats" id="overview">
+          <div>
+            <dt>Context recall</dt>
+            <dd>Instant</dd>
+          </div>
+          <div>
+            <dt>Team alignment</dt>
+            <dd>Shared</dd>
+          </div>
+          <div>
+            <dt>Setup</dt>
+            <dd>Dependency-free</dd>
+          </div>
+        </dl>
+
+        <aside class="hero__panel" id="signals" aria-label="Product highlights">
+          <p class="hero__panel-label">Live memory signals</p>
+          <ul>
+            <li>Capture decisions as they happen.</li>
+            <li>Surface the right note before the meeting starts.</li>
+            <li>Keep product context visible across every step.</li>
+          </ul>
+        </aside>
+      </section>
+
+      <section class="content-section" id="features" aria-labelledby="features-title">
+        <!-- SEQ-03-FEATURES -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Features</p>
+          <h2 id="features-title">Capabilities built for richer retrieval and coordination.</h2>
+        </div>
+        <div class="content-grid content-grid--features">
+          <article class="content-card">
+            <h3>Multi-backend embeddings</h3>
+            <p>Route embeddings through the best backend for the workload so retrieval stays fast, flexible, and easy to evolve.</p>
+          </article>
+          <article class="content-card">
+            <h3>Graph-aware retrieval</h3>
+            <p>Use entity and relationship signals to pull related context, not just nearby text, when the question needs deeper structure.</p>
+          </article>
+          <article class="content-card">
+            <h3>Distributed agents</h3>
+            <p>Coordinate specialized agents across tasks so planning, analysis, and execution can move in parallel without losing context.</p>
+          </article>
+          <article class="content-card">
+            <h3>Activities</h3>
+            <p>Track actions as first-class events so teams can review progress, surface follow-ups, and keep the work visible.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="content-section" id="graph" aria-labelledby="graph-title">
+        <!-- SEQ-06-GRAPH -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Graph-aware search</p>
+          <h2 id="graph-title">Follow nodes and edges when meaning lives in the relationships.</h2>
+        </div>
+        <div class="graph-layout">
+          <div class="graph-map" aria-label="Graph preview connecting launch messaging to related context">
+            <article class="graph-node graph-node--anchor">
+              <p class="graph-node__label">Core node</p>
+              <h3>Launch messaging</h3>
+              <p>Anchor the query on the April release decision that needs to stay consistent.</p>
+            </article>
+            <article class="graph-node graph-node--satellite graph-node--top">
+              <p class="graph-node__label">Node</p>
+              <h3>Customer promise</h3>
+              <p>The release should lead with reliability before any pricing update.</p>
+            </article>
+            <article class="graph-node graph-node--satellite graph-node--right">
+              <p class="graph-node__label">Node</p>
+              <h3>Rollout brief</h3>
+              <p>Sales and support need a single summary with the scope and fallback answer.</p>
+            </article>
+            <article class="graph-node graph-node--satellite graph-node--bottom">
+              <p class="graph-node__label">Node</p>
+              <h3>Pricing follow-up</h3>
+              <p>Keep the pricing update secondary so the message stays focused.</p>
+            </article>
+            <div class="graph-edge graph-edge--top">supports</div>
+            <div class="graph-edge graph-edge--right">guides</div>
+            <div class="graph-edge graph-edge--bottom">defers</div>
+          </div>
+          <div class="graph-summary">
+            <article class="content-card">
+              <h3>Why it matters</h3>
+              <p>
+                Graph-aware search can recover the right memory even when the question is
+                about a relationship, dependency, or follow-on decision rather than a single
+                isolated fact.
+              </p>
+            </article>
+            <article class="content-card">
+              <h3>What the search returns</h3>
+              <p>
+                The system can trace from a central node through edges to nearby context,
+                surfacing the supporting notes that explain why the decision exists.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="content-section" id="agents" aria-labelledby="agents-title">
+        <!-- SEQ-07-AGENTS -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Distributed agents</p>
+          <h2 id="agents-title">Split work across specialist agents and keep a watcher on the whole loop.</h2>
+        </div>
+        <div class="agents-layout">
+          <div class="agents-diagram" aria-label="Distributed agent coordination with a watcher">
+            <div class="agents-diagram__core">
+              <p class="agents-diagram__label">Orchestrator</p>
+              <h3>Coordination core</h3>
+              <p>Routes tasks to the right worker and keeps the shared state consistent.</p>
+            </div>
+            <div class="agents-diagram__node agents-diagram__node--planner">
+              <p class="agents-diagram__label">Agent</p>
+              <h3>Planner</h3>
+              <p>Breaks the goal into ordered steps and dependencies.</p>
+            </div>
+            <div class="agents-diagram__node agents-diagram__node--executor">
+              <p class="agents-diagram__label">Agent</p>
+              <h3>Executor</h3>
+              <p>Handles the active work and reports back on progress.</p>
+            </div>
+            <div class="agents-diagram__node agents-diagram__node--watcher">
+              <p class="agents-diagram__label">Watcher</p>
+              <h3>Consistency guard</h3>
+              <p>Checks for drift, stalled work, and missed handoffs.</p>
+            </div>
+            <div class="agents-diagram__link agents-diagram__link--planner">plans</div>
+            <div class="agents-diagram__link agents-diagram__link--executor">executes</div>
+            <div class="agents-diagram__link agents-diagram__link--watcher">monitors</div>
+          </div>
+          <div class="agents-summary">
+            <article class="content-card">
+              <h3>Parallel progress</h3>
+              <p>
+                Specialized agents can work at the same time on research, drafting, and validation without each one needing the full task history.
+              </p>
+            </article>
+            <article class="content-card">
+              <h3>Watcher feedback</h3>
+              <p>
+                The watcher keeps an eye on state transitions and flags when the work drifts from the agreed goal or misses a required checkpoint.
+              </p>
+            </article>
+            <article class="content-card">
+              <h3>Shared memory</h3>
+              <p>
+                Every agent writes back to the same memory layer so the next step starts with the latest verified context instead of a stale branch.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="content-section" id="workflow" aria-labelledby="workflow-title">
+        <!-- SEQ-04-WORKFLOW -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Workflow</p>
+          <h2 id="workflow-title">Capture, curate, retrieve, and evaluate every memory loop.</h2>
+        </div>
+        <ol class="workflow-list">
+          <li>
+            <strong>Capture</strong>
+            <p>Record the decision, note, or signal while it is still fresh and complete.</p>
+          </li>
+          <li>
+            <strong>Curate</strong>
+            <p>Shape the raw input into a clear, useful memory with the right context attached.</p>
+          </li>
+          <li>
+            <strong>Retrieve</strong>
+            <p>Surface the right context at the point of use without extra searching.</p>
+          </li>
+          <li>
+            <strong>Evaluate</strong>
+            <p>Check whether the memory helped the team move faster, align better, or avoid rework.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="content-section" id="query" aria-labelledby="query-title">
+        <!-- SEQ-05-QUERY -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Query panel</p>
+          <h2 id="query-title">Ask a question and see the supporting memories inline.</h2>
+        </div>
+        <div class="query-panel">
+          <div class="query-panel__prompt">
+            <p class="query-panel__label">Question</p>
+            <p class="query-panel__text">
+              What did the team decide about launch messaging for the April release?
+            </p>
+          </div>
+          <div class="query-panel__results">
+            <article class="query-panel__memory">
+              <p class="query-panel__label">Returned memory 01</p>
+              <h3>Launch message keeps the customer promise first.</h3>
+              <p>
+                The April release should lead with reliability improvements and defer the
+                pricing update to follow-up material.
+              </p>
+            </article>
+            <article class="query-panel__memory">
+              <p class="query-panel__label">Returned memory 02</p>
+              <h3>Channel notes favor a concise rollout brief.</h3>
+              <p>
+                Sales and support need a single summary that explains the release scope,
+                the primary benefit, and the fallback answer for customer questions.
+              </p>
+            </article>
+          </div>
+          <aside class="query-panel__answer" aria-label="Grounded answer">
+            <p class="query-panel__label">Grounded answer</p>
+            <p>
+              The team decided to frame the April release around reliability first, then
+              use a short rollout brief for sales and support so the pricing update stays
+              secondary and the customer promise remains the focus.
+            </p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="content-section" id="activity" aria-labelledby="activity-title">
+        <!-- SEQ-08-ACTIVITY -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Activity ledger</p>
+          <h2 id="activity-title">Log token-tracked actions so every step has a visible cost and outcome.</h2>
+          <p class="content-section__lede">
+            The ledger records each action, the tokens it consumed, and the result it produced so operators can review usage without guessing where the budget went.
+          </p>
+        </div>
+        <div class="activity-ledger">
+          <article class="content-card activity-ledger__summary">
+            <h3>What gets tracked</h3>
+            <p>
+              Each significant action writes a compact entry with the actor, the token count, and the reason the work was allowed to continue. That keeps the audit trail readable while still showing the operational cost.
+            </p>
+          </article>
+          <ol class="activity-ledger__list" aria-label="Tracked actions">
+            <li>
+              <strong>Reserve tokens</strong>
+              <p>Estimate the cost before execution starts so the system can stop early if the budget is too small.</p>
+            </li>
+            <li>
+              <strong>Record actions</strong>
+              <p>Capture prompts, retrievals, and handoffs as ledger entries with a clear token total attached.</p>
+            </li>
+            <li>
+              <strong>Review usage</strong>
+              <p>Compare the stored totals against the outcome to spot expensive steps that did not add enough value.</p>
+            </li>
+            <li>
+              <strong>Carry forward context</strong>
+              <p>Pass the ledger history into the next task so the team can see what already spent tokens and why.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="content-section" id="evaluations" aria-labelledby="evaluations-title">
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Evaluations</p>
+          <h2 id="evaluations-title">Measure whether memory actually helps the team.</h2>
+        </div>
+        <div class="content-grid content-grid--two">
+          <article class="content-card">
+            <h3>Recall speed</h3>
+            <p>Check whether the right note appears before the team has to ask for it.</p>
+          </article>
+          <article class="content-card">
+            <h3>Alignment quality</h3>
+            <p>Track whether decisions stay consistent across meetings, handoffs, and reviews.</p>
+          </article>
+        </div>
+        <!-- SEQ-09-EVALS -->
+        <div class="evaluation-proof">
+          <article class="content-card evaluation-proof__summary">
+            <h3>Paired run proof</h3>
+            <p>
+              Use the same prompt twice, once in a no-memory run and once in a full-memory
+              run, to show the difference between baseline recall and grounded retrieval.
+            </p>
+          </article>
+          <div class="evaluation-proof__compare" aria-label="Paired no-memory versus full-memory runs">
+            <article class="content-card">
+              <p class="evaluation-proof__label">No-memory run</p>
+              <h3>Baseline response</h3>
+              <p>
+                Start with no prior context so the answer shows what the system can produce
+                without stored memory support or prior retrieval.
+              </p>
+            </article>
+            <article class="content-card">
+              <p class="evaluation-proof__label">Full-memory run</p>
+              <h3>Grounded response</h3>
+              <p>
+                Repeat the same prompt with full memory enabled and confirm the response
+                pulls the right note, keeps the decision aligned, and avoids re-deriving the
+                missing context.
+              </p>
+            </article>
+          </div>
+        </div>
+        <!-- SEQ-10-DOCKER -->
+        <section class="evaluation-docker" aria-labelledby="docker-title">
+          <div class="content-section__header">
+            <p class="content-section__eyebrow">Docker evaluation</p>
+            <h3 id="docker-title">Re-run the full stack in one container for the same result every time.</h3>
+          </div>
+          <div class="content-grid content-grid--two">
+            <article class="content-card">
+              <h3>Reproducible environment</h3>
+              <p>
+                Package the UI, scripts, and server steps into one image so each run starts
+                from the same dependencies, runtime, and file layout.
+              </p>
+            </article>
+            <article class="content-card">
+              <h3>Full-stack confidence</h3>
+              <p>
+                Execute the complete flow end to end in Docker and verify the evaluation
+                behaves the same on fresh clones, clean machines, and repeated runs.
+              </p>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <!-- SEQ-11-TOKENS -->
+      <section class="content-section token-cost" id="tokens" aria-labelledby="tokens-title">
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Token cost</p>
+          <h2 id="tokens-title">Capture tokens early so the team can see the real cost before it compounds.</h2>
+          <p class="content-section__lede">
+            Token capture turns invisible spend into a visible signal. When every prompt,
+            retrieval, and handoff carries a cost, the team can compare approaches, spot
+            waste, and keep the memory loop efficient instead of guessing where the budget went.
+          </p>
+        </div>
+        <div class="content-grid content-grid--two">
+          <article class="content-card">
+            <h3>Why capture matters</h3>
+            <p>
+              Recorded token totals make tradeoffs concrete. A short answer, a broader
+              retrieval, or an extra agent hop can all look reasonable in isolation, but
+              the ledger shows which path actually stays within budget.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>What the team learns</h3>
+            <p>
+              With visible costs, operators can prune expensive steps, defend the right
+              level of context, and keep future runs aligned with the same budget target.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- SEQ-12-SPEED -->
+      <section class="content-section" id="speed" aria-labelledby="speed-title">
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Get up to speed</p>
+          <h2 id="speed-title">Give new agents the shortest path to useful context.</h2>
+          <p class="content-section__lede">
+            New agents should be able to orient themselves quickly, find the current
+            objective, and avoid repeating work that already has a verified answer. This
+            section collects the essentials they need before they take action.
+          </p>
+        </div>
+        <div class="content-grid content-grid--two">
+          <article class="content-card">
+            <h3>Start with the sequence</h3>
+            <p>
+              Read the hero, workflow, and evaluation sections first so the agent sees the
+              product shape, the operating loop, and the criteria for success in one pass.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>Check the current state</h3>
+            <p>
+              Review the ledger, token cost, and paired run proof to understand what has
+              already been verified and where the next step should avoid duplication.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <!-- SEQ-13-TYPES -->
+      <section class="content-section" id="types" aria-labelledby="types-title">
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Memory types</p>
+          <h2 id="types-title">Use the right memory shape for the job instead of forcing every note into one bucket.</h2>
+          <p class="content-section__lede">
+            Plan, implementation, debugging, reference, and project memories each answer a
+            different question. Separating them keeps retrieval precise, helps the team
+            know what to trust, and makes the stored context easier to maintain over time.
+          </p>
+        </div>
+        <div class="content-grid content-grid--memory-types">
+          <article class="content-card">
+            <h3>Plan memory</h3>
+            <p>
+              Store intent, milestones, sequencing, and decision criteria so the team can
+              see what is supposed to happen next.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>Implementation memory</h3>
+            <p>
+              Capture how the system was built, including important architecture choices,
+              code paths, and integration details.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>Debugging memory</h3>
+            <p>
+              Record symptoms, root cause, and fix so the same issue can be resolved faster
+              if it appears again.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>Reference memory</h3>
+            <p>
+              Keep durable facts, links, definitions, and background material that the team
+              may need to consult repeatedly.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>Project memory</h3>
+            <p>
+              Preserve the broader context for scope, ownership, status, and the decisions
+              that shape the work across the whole project.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="content-section" id="curation" aria-labelledby="curation-title">
+        <!-- SEQ-14-CURATION -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Curation</p>
+          <h2 id="curation-title">Keep durable facts and filter out noisy logs before they crowd the signal.</h2>
+          <p class="content-section__lede">
+            Good curation keeps memory useful over time. Durable facts belong in the record because they describe decisions, definitions, ownership, or other context the team will need again. Noisy logs document activity, but they are often too repetitive, transient, or low-value to preserve as memory.
+          </p>
+        </div>
+        <div class="content-grid content-grid--two">
+          <article class="content-card">
+            <h3>Durable facts</h3>
+            <p>
+              Keep statements that stay true across many sessions: final decisions, stable constraints, key project context, and reference details that help the next person reason correctly without re-deriving the answer.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>Noisy logs</h3>
+            <p>
+              Treat repetitive status updates, low-signal traces, and short-lived execution chatter as logs instead of memory. They are useful for debugging in the moment, but they usually should not outlive the task that produced them.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>Simple rule</h3>
+            <p>
+              Ask whether the note will still matter after the current run. If it explains a durable decision or a recurring fact, curate it into memory. If it only reflects momentary activity, keep it as operational noise.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>Result</h3>
+            <p>
+              This split keeps retrieval clean, reduces drift from irrelevant details, and makes the memory layer easier to trust when the team needs a grounded answer fast.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="content-section" id="local" aria-labelledby="local-title">
+        <!-- SEQ-15-LOCAL -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Local first, privacy by default</p>
+          <h2 id="local-title">Keep sensitive context close to the user and limit what leaves the device.</h2>
+          <p class="content-section__lede">
+            Local-first memory keeps the smallest necessary data path in play. Store and
+            process what you can on the machine, sync only what is needed, and make every
+            transfer explicit so privacy stays easy to understand and audit.
+          </p>
+        </div>
+        <div class="content-grid content-grid--two">
+          <article class="content-card">
+            <h3>Local storage</h3>
+            <p>
+              Keep working notes, cached context, and short-lived state on the device so
+              the core loop stays fast without exposing more data than the task requires.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>Minimal sharing</h3>
+            <p>
+              Send only the fields that are needed for retrieval or collaboration and
+              avoid copying full histories when a summary will do the job.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>Consent and control</h3>
+            <p>
+              Make retention, sync, and deletion choices visible so people can decide what
+              stays local, what moves upstream, and what should be removed entirely.
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>Clear boundaries</h3>
+            <p>
+              Separate private context from shared project memory so the system can respect
+              confidentiality while still giving the team the facts they need.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="content-section" id="ui" aria-labelledby="ui-title">
+        <!-- SEQ-16-UI -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">CLI and TUI</p>
+          <h2 id="ui-title">Inspect Memory from a terminal or a text UI, depending on who is looking.</h2>
+          <p class="content-section__lede">
+            Agents can query memory in scripts and pipelines, while humans can scan the same
+            records in a keyboard-first interface. Both views expose the same grounded
+            context so the inspection step stays fast, explicit, and easy to trust.
+          </p>
+        </div>
+        <div class="ui-inspection">
+          <article class="content-card ui-inspection__panel ui-inspection__panel--cli">
+            <h3>Agent CLI</h3>
+            <p>
+              Use short commands when a runbook, script, or agent needs to check memory
+              without leaving the shell.
+            </p>
+            <pre class="ui-inspection__code" aria-label="Agent CLI example"><code>$ memory find "launch messaging"
+ID 1842  type: project  status: current
+summary: lead with reliability, defer pricing
+$ memory inspect 1842 --relations
+linked: rollout brief, support note, pricing follow-up</code></pre>
+          </article>
+          <article class="content-card ui-inspection__panel ui-inspection__panel--tui">
+            <h3>Human TUI</h3>
+            <p>
+              Show the same memory in a readable list when a person wants to browse,
+              filter, and confirm context quickly.
+            </p>
+            <div class="ui-inspection__screen" aria-label="Human TUI example">
+              <div class="ui-inspection__screen-bar">
+                <span>Memory browser</span>
+                <span>Filter: current</span>
+              </div>
+              <div class="ui-inspection__screen-body">
+                <div class="ui-inspection__row ui-inspection__row--active">
+                  <strong>1842</strong>
+                  <span>Launch messaging</span>
+                  <em>Reliability first</em>
+                </div>
+                <div class="ui-inspection__row">
+                  <strong>1837</strong>
+                  <span>Rollout brief</span>
+                  <em>Sales and support</em>
+                </div>
+                <div class="ui-inspection__row">
+                  <strong>1829</strong>
+                  <span>Pricing follow-up</span>
+                  <em>Deferred note</em>
+                </div>
+              </div>
+            </div>
+          </article>
+          <article class="content-card ui-inspection__panel ui-inspection__panel--shared">
+            <h3>Shared inspection rules</h3>
+            <p>
+              Keep lookups narrow, surface relationships with the record, and preserve the
+              same labels in both interfaces so agents and humans reach the same answer.
+            </p>
+            <ul class="ui-inspection__list">
+              <li>Start from the current task or question.</li>
+              <li>Show the record and its related notes together.</li>
+              <li>Keep the view compact enough to scan in one pass.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="content-section" id="architecture" aria-labelledby="architecture-title">
+        <!-- SEQ-17-ARCH -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Architecture strip</p>
+          <h2 id="architecture-title">Service, storage, graph, and embeddings stay aligned in one loop.</h2>
+          <p class="content-section__lede">
+            The service coordinates requests, Postgres/pgvector stores retrieval state,
+            the graph layer preserves relationship context, and embeddings connect the
+            query to the right semantic neighborhood.
+          </p>
+        </div>
+        <div class="architecture-strip" aria-label="Core architecture components">
+          <article class="architecture-strip__item">
+            <p class="architecture-strip__label">Service</p>
+            <h3>Request orchestration</h3>
+            <p>Handles capture, retrieval, and response assembly so each step flows through one controlled path.</p>
+          </article>
+          <article class="architecture-strip__item">
+            <p class="architecture-strip__label">Postgres/pgvector</p>
+            <h3>Durable memory store</h3>
+            <p>Persists notes, vectors, and supporting metadata in the same database for straightforward retrieval.</p>
+          </article>
+          <article class="architecture-strip__item">
+            <p class="architecture-strip__label">Graph</p>
+            <h3>Relationship layer</h3>
+            <p>Links related memories so the system can follow dependencies, not just isolated matches.</p>
+          </article>
+          <article class="architecture-strip__item">
+            <p class="architecture-strip__label">Embeddings</p>
+            <h3>Semantic entry point</h3>
+            <p>Maps the query into vector space so the service can reach the most relevant memory neighborhood quickly.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="content-section" id="interview" aria-labelledby="interview-title">
+        <!-- SEQ-18-INTERVIEW -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Interview proof</p>
+          <h2 id="interview-title">Describe memory evaluations as a before-and-after test, not a vague promise.</h2>
+          <p class="content-section__lede">
+            In interviews, explain that the evaluation starts with no-memory so the baseline is
+            honest, then compares the same prompt with retrieval enabled to show whether memory
+            actually improves the answer.
+          </p>
+        </div>
+        <div class="content-grid content-grid--two">
+          <article class="content-card">
+            <h3>Simple script</h3>
+            <p>
+              "We run the same task twice. First with no stored memory, then with memory enabled.
+              If the second run finds the right note faster, stays aligned, and avoids re-deriving
+              context, the evaluation passes."
+            </p>
+          </article>
+          <article class="content-card">
+            <h3>What to emphasize</h3>
+            <ul>
+              <li>Start from a clean baseline so the comparison is fair.</li>
+              <li>Measure recall speed, alignment, and whether the answer uses stored context.</li>
+              <li>Describe results as observable behaviors, not platform claims.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="content-section" id="get-started" aria-labelledby="get-started-title">
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Get started</p>
+          <h2 id="get-started-title">Start with one project, one note, and one repeatable habit.</h2>
+        </div>
+        <p class="content-section__lede">
+          Use the navigation above to jump to the part of the page you need, then add the
+          first decision that should never get lost again.
+        </p>
+      </section>
+
+      <section class="content-section" id="accessibility" aria-labelledby="accessibility-title">
+        <!-- SEQ-20-A11Y -->
+        <div class="content-section__header">
+          <p class="content-section__eyebrow">Accessibility and action</p>
+          <h2 id="accessibility-title">Keep the page easy to scan, easy to reach, and easy to act on.</h2>
+        </div>
+        <div class="final-cta">
+          <article class="content-card final-cta__panel">
+            <h3>Accessibility details</h3>
+            <ul class="final-cta__list">
+              <li>Semantic landmarks and section headings support screen-reader navigation.</li>
+              <li>Clear focus states make every link and button usable from the keyboard.</li>
+              <li>High-contrast text and generous spacing keep the content readable at a glance.</li>
+              <li>Reduced-motion handling keeps the page calm for people who prefer less movement.</li>
+            </ul>
+          </article>
+          <article class="content-card final-cta__panel final-cta__panel--action">
+            <h3>Final call to action</h3>
+            <p>
+              Review the full flow, then move straight to the first decision that should stay
+              visible for the whole team.
+            </p>
+            <div class="final-cta__actions">
+              <a class="button button--primary" href="#features">Review the flow</a>
+              <a class="button button--secondary" href="#get-started">Return to start</a>
+            </div>
+            <p class="final-cta__note">
+              The site remains dependency-free: just HTML and CSS, with no scripts required.
+            </p>
+          </article>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
