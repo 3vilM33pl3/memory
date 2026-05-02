@@ -34,6 +34,18 @@ agent. It exists to test the harness without provider cost. Real research suites
 should replace `agent_command` with a noninteractive agent invocation such as
 `codex exec --cd {workspace} ... "$(cat {prompt_file})"`.
 
+The checked-in `evals/suites/app-build-codex-v1` suite is the first real
+Codex-backed build simulation suite. It runs paired `no-memory` and
+`full-memory` agents against dependency-free static app fixtures. Memory-enabled
+runs receive `memory_questions`, the `$MEMORY_EVAL_MEMORY_COMMAND` environment
+variable, and must leave `memory-evidence.md` in the workspace; no-memory runs
+must not create that file.
+
+The suite calls Codex through `scripts/run-codex.sh` rather than invoking
+`codex exec` directly. The wrapper isolates git discovery from the parent repo,
+uses the workspace-local `AGENTS.md`, writes `codex-final.md`, and exits once
+the final message is stable so a completed agent does not hold the eval run open.
+
 Condition isolation for build tasks is practical rather than absolute in v1.
 The `no-memory` prompt explicitly forbids Memory usage and the runner removes
 common Memory environment variables. Memory-enabled conditions receive a prompt

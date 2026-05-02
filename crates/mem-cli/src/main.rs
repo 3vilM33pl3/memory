@@ -8161,6 +8161,9 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
                         suite_checksum: suite_checksum.clone(),
                         dry_run: args.dry_run,
                         artifacts_root: args.out.clone(),
+                        memory_command: eval_memory_command(),
+                        memory_base_url: service_url(&api.config, ""),
+                        memory_config_path: eval_memory_config_path(cwd),
                     };
                     let run = run_eval_suite(&suite, &project, *condition, context, api).await?;
                     total_tokens += run
@@ -8287,6 +8290,9 @@ struct EvalRunContext {
     suite_checksum: Option<String>,
     dry_run: bool,
     artifacts_root: PathBuf,
+    memory_command: String,
+    memory_base_url: String,
+    memory_config_path: Option<PathBuf>,
 }
 
 async fn run_eval_suite(
@@ -8763,7 +8769,7 @@ fn run_agent_build_eval_item(
         .or(suite.manifest.project.as_deref())
         .unwrap_or("");
 
-    let prompt = agent_build_prompt(item, condition);
+    let prompt = agent_build_prompt(item, condition, context);
     let prompt_file = run_dir.join("prompt.md");
     fs::write(&prompt_file, &prompt).with_context(|| format!("write {}", prompt_file.display()))?;
 
@@ -8779,8 +8785,14 @@ fn run_agent_build_eval_item(
             &prompt_file,
             project,
         );
-        let output =
-            run_eval_shell_command(&command, &workspace, item.timeout_seconds, None, None)?;
+        let output = run_eval_shell_command(
+            &command,
+            &workspace,
+            item.timeout_seconds,
+            Some(condition),
+            Some(project),
+            Some(context),
+        )?;
         write_command_artifacts(&run_dir, &format!("setup-{index}"), &output)?;
         setup_exit_codes.push(output.exit_code);
     }
@@ -8800,6 +8812,7 @@ fn run_agent_build_eval_item(
         item.timeout_seconds,
         Some(condition),
         Some(project),
+        Some(context),
     )?;
     write_command_artifacts(&run_dir, "agent", &agent_output)?;
     if agent_output.timed_out {
@@ -8820,8 +8833,14 @@ fn run_agent_build_eval_item(
             &prompt_file,
             project,
         );
-        let output =
-            run_eval_shell_command(&command, &workspace, item.timeout_seconds, None, None)?;
+        let output = run_eval_shell_command(
+            &command,
+            &workspace,
+            item.timeout_seconds,
+            Some(condition),
+            Some(project),
+            Some(context),
+        )?;
         write_command_artifacts(&run_dir, &format!("score-{index}"), &output)?;
         score_exit_codes.push(output.exit_code);
     }
@@ -8902,6 +8921,7 @@ fn run_eval_shell_command(
     timeout_seconds: u64,
     condition: Option<mem_eval::EvalCondition>,
     project: Option<&str>,
+    context: Option<&EvalRunContext>,
 ) -> Result<EvalShellOutput> {
     let mut command_builder = ProcessCommand::new("sh");
     command_builder
@@ -8928,6 +8948,16 @@ fn run_eval_shell_command(
                 command_builder.env("MEMORY_EVAL_MEMORY_ENABLED", "1");
                 if let Some(project) = project {
                     command_builder.env("MEMORY_LAYER_PROJECT", project);
+                }
+                if let Some(context) = context {
+                    command_builder
+                        .env("MEMORY_EVAL_MEMORY_COMMAND", &context.memory_command)
+                        .env("MEMORY_BASE_URL", &context.memory_base_url);
+                    if let Some(config_path) = &context.memory_config_path {
+                        command_builder
+                            .env("MEMORY_CONFIG", config_path)
+                            .env("MEMORY_LAYER_CONFIG", config_path);
+                    }
                 }
             }
         }
@@ -8979,16 +9009,32 @@ fn write_command_artifacts(run_dir: &Path, stem: &str, output: &EvalShellOutput)
 fn agent_build_prompt(
     item: &mem_eval::AgentBuildTaskItem,
     condition: mem_eval::EvalCondition,
+    context: &EvalRunContext,
 ) -> String {
     let mut prompt = item.prompt.trim().to_string();
     prompt.push_str("\n\n");
     match condition {
         mem_eval::EvalCondition::NoMemory => prompt.push_str(
-            "Evaluation condition: no-memory. Do not query, read, or use Memory Layer context. Work only from the repository files and this prompt.\n",
+            "Evaluation condition: no-memory. Do not query, read, or use Memory Layer context. Do not create memory-evidence.md. Work only from the repository files and this prompt.\n",
         ),
-        _ => prompt.push_str(
-            "Evaluation condition: memory-enabled. Use Memory Layer context when it can improve the implementation, then make the requested code changes in the workspace.\n",
-        ),
+        _ => {
+            prompt.push_str(
+                "Evaluation condition: memory-enabled. Use Memory Layer context before implementing, then make the requested code changes in the workspace.\n",
+            );
+            prompt.push_str("\nUse this Memory CLI command from the shell:\n\n```bash\n");
+            prompt.push_str(&context.memory_command);
+            prompt.push_str("\n```\n\n");
+            prompt.push_str("Write a file named memory-evidence.md that lists the Memory commands you ran and the useful facts you used.\n");
+            if !item.memory_questions.is_empty() {
+                prompt.push_str("\nRequired Memory questions:\n");
+                for question in &item.memory_questions {
+                    prompt.push_str("- ");
+                    prompt.push_str(question);
+                    prompt.push('\n');
+                }
+                prompt.push_str("\nFor each question, run a command like:\n\n```bash\n$MEMORY_EVAL_MEMORY_COMMAND query --project $MEMORY_LAYER_PROJECT --question \"<question>\" --json\n```\n");
+            }
+        }
     }
     prompt
 }
@@ -9067,6 +9113,22 @@ fn validate_agent_build_suite_item(
     }
     validate_agent_build_paths(item)?;
     Ok(())
+}
+
+fn eval_memory_command() -> String {
+    env::current_exe()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "memory".to_string())
+}
+
+fn eval_memory_config_path(cwd: &Path) -> Option<PathBuf> {
+    env::var_os("MEMORY_CONFIG")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("MEMORY_LAYER_CONFIG").map(PathBuf::from))
+        .or_else(|| {
+            let candidate = cwd.join(".mem").join("config.toml");
+            candidate.exists().then_some(candidate)
+        })
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<()> {
@@ -10577,17 +10639,18 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        Cli, DEV_API_TOKEN, PlanExecutionFinishReport, RememberArgs, SERVICE_API_TOKEN_KEY,
-        ServiceApiTokenAction, WatcherCommand, WatcherManagerArgs, WatcherManagerCommand,
-        build_finish_execution_implementation_request, build_graph_activity_request,
-        build_plan_execution_finish_report, build_plan_execution_request, build_remember_request,
-        chat_completion_content, derive_plan_thread_key, derive_plan_title,
-        durable_plan_source_path, ensure_checkbox_plan, ensure_shared_service_api_token,
-        initialize_repo, is_placeholder_database_url, mask_database_url,
-        parse_no_memory_grounded_answer, parse_plan_checkboxes, render_agent_project_config,
-        render_claude_md_memory_section, repair_repo_bootstrap, resolve_project_slug,
-        resolve_repo_root, resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
-        token_usage_from_chat_body, watcher_command_requires_config_load, write_headers,
+        Cli, DEV_API_TOKEN, EvalRunContext, PlanExecutionFinishReport, RememberArgs,
+        SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, WatcherCommand, WatcherManagerArgs,
+        WatcherManagerCommand, agent_build_prompt, build_finish_execution_implementation_request,
+        build_graph_activity_request, build_plan_execution_finish_report,
+        build_plan_execution_request, build_remember_request, chat_completion_content,
+        derive_plan_thread_key, derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
+        ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
+        mask_database_url, parse_no_memory_grounded_answer, parse_plan_checkboxes,
+        render_agent_project_config, render_claude_md_memory_section, repair_repo_bootstrap,
+        resolve_project_slug, resolve_repo_root, resolve_writer_identity,
+        root_gitignore_contains_mem, shared_env_lookup, token_usage_from_chat_body,
+        watcher_command_requires_config_load, write_headers,
     };
     use mem_api::AppConfig;
 
@@ -11052,6 +11115,78 @@ mod tests {
             .expect_err("missing content should fail");
 
         assert!(error.to_string().contains("missing content"));
+    }
+
+    #[test]
+    fn agent_build_prompt_adds_memory_questions_for_memory_conditions() {
+        let item = mem_eval::AgentBuildTaskItem {
+            id: "build".to_string(),
+            project: Some("memory".to_string()),
+            prompt: "Build the app.".to_string(),
+            fixture: "fixtures/app".to_string(),
+            agent_command: "codex exec - < {prompt_file}".to_string(),
+            memory_questions: vec!["What changed recently?".to_string()],
+            setup_commands: Vec::new(),
+            score_commands: Vec::new(),
+            timeout_seconds: 60,
+            required_files: Vec::new(),
+            forbidden_files: Vec::new(),
+            required_content: Vec::new(),
+        };
+        let context = EvalRunContext {
+            profile: mem_eval::EvalProfile::Llm,
+            repeat_index: 0,
+            run_group_id: Uuid::nil(),
+            suite_checksum: None,
+            dry_run: false,
+            artifacts_root: PathBuf::from("target/memory-evals"),
+            memory_command: "/tmp/memory".to_string(),
+            memory_base_url: "http://127.0.0.1:4250".to_string(),
+            memory_config_path: Some(PathBuf::from(".mem/config.toml")),
+        };
+
+        let prompt = agent_build_prompt(&item, mem_eval::EvalCondition::FullMemory, &context);
+
+        assert!(prompt.contains("memory-enabled"));
+        assert!(prompt.contains("/tmp/memory"));
+        assert!(prompt.contains("What changed recently?"));
+        assert!(prompt.contains("memory-evidence.md"));
+    }
+
+    #[test]
+    fn agent_build_prompt_forbids_memory_for_no_memory_condition() {
+        let item = mem_eval::AgentBuildTaskItem {
+            id: "build".to_string(),
+            project: Some("memory".to_string()),
+            prompt: "Build the app.".to_string(),
+            fixture: "fixtures/app".to_string(),
+            agent_command: "codex exec - < {prompt_file}".to_string(),
+            memory_questions: vec!["What changed recently?".to_string()],
+            setup_commands: Vec::new(),
+            score_commands: Vec::new(),
+            timeout_seconds: 60,
+            required_files: Vec::new(),
+            forbidden_files: Vec::new(),
+            required_content: Vec::new(),
+        };
+        let context = EvalRunContext {
+            profile: mem_eval::EvalProfile::Llm,
+            repeat_index: 0,
+            run_group_id: Uuid::nil(),
+            suite_checksum: None,
+            dry_run: false,
+            artifacts_root: PathBuf::from("target/memory-evals"),
+            memory_command: "/tmp/memory".to_string(),
+            memory_base_url: "http://127.0.0.1:4250".to_string(),
+            memory_config_path: None,
+        };
+
+        let prompt = agent_build_prompt(&item, mem_eval::EvalCondition::NoMemory, &context);
+
+        assert!(prompt.contains("no-memory"));
+        assert!(prompt.contains("Do not query"));
+        assert!(prompt.contains("Do not create memory-evidence.md"));
+        assert!(!prompt.contains("What changed recently?"));
     }
 
     #[test]

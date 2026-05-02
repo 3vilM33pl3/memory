@@ -142,6 +142,8 @@ pub struct AgentBuildTaskItem {
     pub fixture: String,
     pub agent_command: String,
     #[serde(default)]
+    pub memory_questions: Vec<String>,
+    #[serde(default)]
     pub setup_commands: Vec<String>,
     #[serde(default)]
     pub score_commands: Vec<String>,
@@ -1251,7 +1253,7 @@ mod tests {
 
     #[test]
     fn parses_agent_build_task_items() {
-        let line = r#"{"eval_type":"agent_build_task","id":"app","project":"memory","prompt":"Build it","fixture":"fixtures/app","agent_command":"sh agent.sh","score_commands":["sh scripts/check.sh"],"required_files":["index.html"],"forbidden_files":["debug.log"],"required_content":[{"file":"index.html","contains":"Launch"}]}"#;
+        let line = r#"{"eval_type":"agent_build_task","id":"app","project":"memory","prompt":"Build it","fixture":"fixtures/app","agent_command":"sh agent.sh","memory_questions":["What changed recently?"],"score_commands":["sh scripts/check.sh"],"required_files":["index.html"],"forbidden_files":["debug.log"],"required_content":[{"file":"index.html","contains":"Launch"}]}"#;
 
         let item: EvalItem = serde_json::from_str(line).expect("parse agent build task");
 
@@ -1260,6 +1262,7 @@ mod tests {
         };
         assert_eq!(item.id, "app");
         assert_eq!(item.timeout_seconds, 900);
+        assert_eq!(item.memory_questions, vec!["What changed recently?"]);
         assert_eq!(item.score_commands, vec!["sh scripts/check.sh"]);
         assert_eq!(item.required_content[0].contains, "Launch");
     }
@@ -1272,6 +1275,7 @@ mod tests {
             prompt: "Build it".to_string(),
             fixture: "fixtures/app".to_string(),
             agent_command: "sh agent.sh".to_string(),
+            memory_questions: vec!["What should I know first?".to_string()],
             setup_commands: vec!["true".to_string()],
             score_commands: vec!["sh scripts/check.sh".to_string()],
             timeout_seconds: 60,

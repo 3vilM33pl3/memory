@@ -1,0 +1,10 @@
+name = "app build codex v1"
+project = "memory"
+items = "items.jsonl"
+suite_version = "1"
+label_status = "draft"
+fixture = "codex-app-build-v1"
+default_profile = "llm"
+default_repeats = 1
+min_items = 3
+

@@ -107,6 +107,23 @@ memory eval run \
   --text
 ```
 
+When you want the full token-spending version, run the Codex-backed suite:
+
+```bash
+MEMORY_EVAL_CODEX_MODEL=gpt-5.4-mini \
+memory eval run \
+  --suite evals/suites/app-build-codex-v1 \
+  --condition no-memory \
+  --condition full-memory \
+  --profile llm \
+  --repeat 1 \
+  --text
+```
+
+That suite runs real `codex exec` agents against static app fixtures. The
+`full-memory` condition receives required Memory questions and must write
+`memory-evidence.md`; the `no-memory` condition is forbidden from using Memory.
+
 ## Step 4: Run A Paired Evaluation
 
 For useful evidence, compare a baseline against a Memory-backed condition:

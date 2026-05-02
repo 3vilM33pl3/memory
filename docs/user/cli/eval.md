@@ -55,7 +55,8 @@ never edited. Minimal fields:
   "project": "memory",
   "prompt": "Build the requested landing page features.",
   "fixture": "fixtures/static-site",
-  "agent_command": "codex exec --cd {workspace} --ask-for-approval never --sandbox workspace-write -- \"$(cat {prompt_file})\"",
+  "agent_command": "sh {suite_dir}/scripts/run-codex.sh {workspace} {prompt_file} {run_dir}",
+  "memory_questions": ["What should the agent know before building this?"],
   "timeout_seconds": 900,
   "score_commands": ["sh scripts/check.sh"],
   "required_files": ["index.html", "styles.css"],
@@ -70,7 +71,9 @@ Command templates support `{suite_dir}`, `{run_dir}`, `{workspace}`,
 `{prompt_file}`, `{condition}`, and `{project}`. The runner appends condition
 instructions to the prompt: `no-memory` tells the agent not to use Memory and
 clears common Memory environment variables; Memory-enabled conditions tell the
-agent to use Memory when useful.
+agent to use Memory when useful. For Memory-enabled build tasks,
+`memory_questions` are appended as required questions and the runner exposes the
+Memory CLI in `$MEMORY_EVAL_MEMORY_COMMAND`.
 
 ## Commands
 
@@ -102,6 +105,37 @@ memory eval run \
   --profile offline \
   --text
 ```
+
+Run the real Codex-backed build simulation suite:
+
+```bash
+MEMORY_EVAL_CODEX_MODEL=gpt-5.4-mini \
+memory eval run \
+  --suite evals/suites/app-build-codex-v1 \
+  --condition no-memory \
+  --condition full-memory \
+  --profile llm \
+  --repeat 1 \
+  --text
+```
+
+Use the dev binary form inside this repository:
+
+```bash
+MEMORY_EVAL_CODEX_MODEL=gpt-5.4-mini \
+cargo run --bin memory -- eval run \
+  --suite evals/suites/app-build-codex-v1 \
+  --condition no-memory \
+  --condition full-memory \
+  --profile llm \
+  --repeat 1 \
+  --text
+```
+
+The real suite uses `evals/suites/app-build-codex-v1/scripts/run-codex.sh` to
+wrap `codex exec`, write `codex-final.md`, and stop once the final message is
+stable. Set `MEMORY_EVAL_CODEX_WATCHDOG_SECONDS` if a local Codex run needs a
+longer watchdog.
 
 Run paired conditions:
 
