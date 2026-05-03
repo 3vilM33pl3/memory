@@ -28,7 +28,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 ## Feature Walkthroughs
 
 - [Query Tab](user/tui/query.md) and [Query Command](user/cli/query.md)
-- [Beginner Guide To Evaluations](user/evaluation-guide.md), [Automated Evaluation](user/cli/eval.md), and [Research V1 Dev Evaluation](developer/evaluation-runs/2026-05-02-research-v1-dev.md)
+- [Beginner Guide To Evaluations](user/evaluation-guide.md), [Automated Evaluation](user/cli/eval.md), and [Memory Improvement Evaluation](developer/evaluation-memory-improvement.md)
 - [Code Graph Extraction](user/cli/graph.md)
 - [Embeddings Tab](user/tui/embeddings.md) and [Embedding Operations](user/cli/embeddings.md)
 - [Agents Tab](user/tui/agents.md) and [Watcher Health](user/cli/watchers.md)

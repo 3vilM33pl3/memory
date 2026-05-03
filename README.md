@@ -13,15 +13,14 @@ paired ablations such as `no-memory` vs `full-memory`, writes immutable
 artifacts, compares item-by-item results, applies gates, and reports token and
 latency cost.
 
-In the latest development `research-v1` run, full Memory retrieval moved
-Recall@K, MRR, and nDCG from `0.000` to `1.000`, and improved resume topic
-recall from `0.500` to `0.750`. The harness also reports token, latency,
-citation, and confidence tradeoffs, so improvements can be tuned with evidence
-instead of intuition.
+The current `memory-improvement-v1` suite combines memory-only facts,
+multi-step continuity tasks, graph-backed retrieval checks, token accounting,
+latency tracking, and optional LLM judging. That keeps Memory claims tied to
+repeatable evidence instead of isolated demonstrations.
 
 Read the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md), the
-[`memory eval` CLI reference](docs/user/cli/eval.md), and the recorded
-[research-v1 dev run](docs/developer/evaluation-runs/2026-05-02-research-v1-dev.md).
+[`memory eval` CLI reference](docs/user/cli/eval.md), and the latest recorded
+[memory-improvement run](docs/developer/evaluation-runs/2026-05-03-memory-improvement-v1-full.md).
 
 ## Why It Is Interesting
 
@@ -142,16 +141,16 @@ conditions, such as `no-memory` and `full-memory`, then write immutable
 artifacts, compare item-by-item results, apply gate policies, and report token
 and latency deltas.
 
-In the latest development `research-v1` paired run, `full-memory` moved
-retrieval metrics from `0.000` to `1.000` for Recall@K, MRR, and nDCG, and
-improved resume topic recall from `0.500` to `0.750`. The harness also reports
-token, latency, citation, and confidence tradeoffs, so improvements can be tuned
-with evidence instead of intuition. That is the point of the harness: it shows
-where Memory helps and where the next engineering work belongs.
+The current `memory-improvement-v1` suite combines hidden memory-only facts,
+reasoning-mode groups, multi-step continuity tasks, graph-backed retrieval
+checks, token accounting, latency tracking, and optional LLM judging. That is
+the point of the harness: it shows where Memory helps and where the next
+engineering work belongs.
 
 Start with the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md),
 use [`memory eval`](docs/user/cli/eval.md) for the command reference, and see
-the recorded [research-v1 dev run](docs/developer/evaluation-runs/2026-05-02-research-v1-dev.md)
+the latest recorded
+[memory-improvement run](docs/developer/evaluation-runs/2026-05-03-memory-improvement-v1-full.md)
 for the current evidence and caveats.
 
 ### Code Graph Memory
