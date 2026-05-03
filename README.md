@@ -78,12 +78,18 @@ macOS:
 
 ```bash
 brew tap 3vilM33pl3/memory https://github.com/3vilM33pl3/memory
-brew install --HEAD 3vilM33pl3/memory/memory-layer
+brew install 3vilM33pl3/memory/memory-layer
 memory wizard --global
 cd /path/to/your-project
 memory wizard
 memory service enable
 memory tui
+```
+
+For unreleased changes from `main`:
+
+```bash
+brew install --HEAD 3vilM33pl3/memory/memory-layer
 ```
 
 For the full onboarding flow, prerequisites, upgrade path, and troubleshooting, use [Getting Started](docs/user/getting-started.md).

@@ -34,6 +34,12 @@ Install from the tap:
 
 ```bash
 brew tap 3vilM33pl3/memory https://github.com/3vilM33pl3/memory
+brew install 3vilM33pl3/memory/memory-layer
+```
+
+For unreleased `main` branch changes:
+
+```bash
 brew install --HEAD 3vilM33pl3/memory/memory-layer
 ```
 

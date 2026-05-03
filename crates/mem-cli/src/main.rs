@@ -12055,6 +12055,12 @@ mod tests {
     use mem_api::AppConfig;
 
     #[cfg(target_os = "macos")]
+    use chrono::Utc;
+
+    #[cfg(target_os = "macos")]
+    use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
+
+    #[cfg(target_os = "macos")]
     use super::{
         backend_launch_agent_label, default_global_config_path, managed_watch_launch_agent_label,
         render_backend_launch_agent, render_managed_watch_launch_agent, render_watch_launch_agent,

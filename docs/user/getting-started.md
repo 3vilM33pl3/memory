@@ -82,6 +82,12 @@ memory tui
 
 ```bash
 brew tap 3vilM33pl3/memory https://github.com/3vilM33pl3/memory
+brew install 3vilM33pl3/memory/memory-layer
+```
+
+If you specifically want the latest unreleased `main` branch:
+
+```bash
 brew install --HEAD 3vilM33pl3/memory/memory-layer
 ```
 

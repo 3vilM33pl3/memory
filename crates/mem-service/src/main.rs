@@ -3,6 +3,7 @@ use std::{
     io::ErrorKind,
     io::Read,
     net::SocketAddr,
+    os::fd::AsRawFd,
     path::{Path as FsPath, PathBuf},
     sync::{
         Arc, Mutex,
@@ -625,6 +626,8 @@ fn bind_cluster_socket(multicast_addr: &str) -> Result<UdpSocket> {
     socket
         .set_reuse_address(true)
         .context("set discovery SO_REUSEADDR")?;
+    #[cfg(target_vendor = "apple")]
+    enable_socket_reuse_port(&socket)?;
     socket
         .bind(&SocketAddr::from(([0, 0, 0, 0], addr.port())).into())
         .context("bind discovery socket")?;
@@ -638,6 +641,25 @@ fn bind_cluster_socket(multicast_addr: &str) -> Result<UdpSocket> {
         .set_nonblocking(true)
         .context("set discovery socket nonblocking")?;
     UdpSocket::from_std(socket.into()).context("convert discovery socket")
+}
+
+#[cfg(target_vendor = "apple")]
+fn enable_socket_reuse_port(socket: &Socket) -> Result<()> {
+    let enabled: libc::c_int = 1;
+    let result = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_REUSEPORT,
+            &enabled as *const _ as *const libc::c_void,
+            std::mem::size_of_val(&enabled) as libc::socklen_t,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error()).context("set discovery SO_REUSEPORT")
+    }
 }
 
 async fn run_cluster_listener(socket: Arc<UdpSocket>, state: AppState) -> Result<()> {
