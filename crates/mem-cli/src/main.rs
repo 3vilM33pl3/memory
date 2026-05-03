@@ -5831,7 +5831,7 @@ pub(crate) fn tui_restart_marker_paths() -> Vec<PathBuf> {
 
 fn write_tui_restart_marker(reason: &str, restarted_services: Vec<String>) -> Result<Vec<PathBuf>> {
     let marker = TuiRestartMarker {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: Profile::detect().display_version(env!("CARGO_PKG_VERSION")),
         marked_at: Utc::now(),
         reason: reason.to_string(),
         binary_path: memory_binary_path()
@@ -5880,6 +5880,9 @@ pub(crate) fn newest_tui_restart_notice(
         .filter_map(|path| {
             let contents = fs::read_to_string(&path).ok()?;
             let marker: TuiRestartMarker = serde_json::from_str(&contents).ok()?;
+            if !restart_marker_applies_to_running_version(&marker.version, running_version) {
+                return None;
+            }
             let newer_than_tui = marker.marked_at > startup_at;
             let different_version = marker.version.trim() != running_version.trim();
             (newer_than_tui || different_version).then_some(TuiRestartNotice {
@@ -5894,6 +5897,18 @@ pub(crate) fn newest_tui_restart_notice(
                 .and_then(|contents| serde_json::from_str::<TuiRestartMarker>(&contents).ok())
                 .map(|marker| marker.marked_at)
         })
+}
+
+fn restart_marker_applies_to_running_version(marker_version: &str, running_version: &str) -> bool {
+    version_profile_suffix(marker_version) == version_profile_suffix(running_version)
+}
+
+fn version_profile_suffix(version: &str) -> &'static str {
+    if version.trim().ends_with("-dev") {
+        "dev"
+    } else {
+        "prod"
+    }
 }
 
 async fn wait_for_backend_health(config_path: &Path) -> Result<serde_json::Value> {
@@ -13066,6 +13081,30 @@ mod tests {
 
         assert_eq!(notice.marker_path, marker_path);
         assert_eq!(notice.version, "9.9.9");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn restart_notice_ignores_prod_marker_for_dev_tui() {
+        let dir = std::env::temp_dir().join(format!(
+            "memory-tui-restart-dev-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let marker_path = dir.join("tui-restart-required.json");
+        let startup_at = chrono::Utc::now();
+        let marker = TuiRestartMarker {
+            version: "0.8.2".to_string(),
+            marked_at: startup_at + chrono::Duration::seconds(30),
+            reason: "install-or-upgrade".to_string(),
+            binary_path: "memory".to_string(),
+            restarted_services: vec!["memory-layer.service".to_string()],
+        };
+        fs::write(&marker_path, serde_json::to_string(&marker).unwrap()).unwrap();
+
+        let notice = newest_tui_restart_notice(startup_at, "0.8.2-dev", vec![marker_path.clone()]);
+
+        assert!(notice.is_none());
         fs::remove_dir_all(&dir).ok();
     }
 
