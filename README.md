@@ -6,8 +6,6 @@ It captures what happened, curates what matters, stores it in PostgreSQL with pg
 
 ![Memory Layer memories tab](docs/img/tui/memories-tab.png)
 
-![How Memory Layer turns project work into cited context](docs/img/infograph.png)
-
 ## Measured Impact
 
 Memory Layer is built to be evaluated, not just demoed. Its eval harness runs
@@ -43,7 +41,7 @@ Read the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md), the
 - **Repeatable evaluation:** run paired no-memory vs full-memory ablations with artifacted results, gates, token accounting, and concrete retrieval-quality metrics.
 - **Human review loop:** curation can queue replacement proposals so important memory changes can be approved before older knowledge is superseded.
 
-![Memory Layer agents dashboard](docs/img/tui/agents-tab.png)
+![How Memory Layer turns project work into cited context](docs/img/infograph.png)
 
 ## Table of Contents
 
