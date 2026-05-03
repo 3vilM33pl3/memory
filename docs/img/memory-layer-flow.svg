@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1696" height="804" viewBox="0 0 1696 804" role="img" aria-labelledby="title desc">
+  <title id="title">How Memory Layer turns project work into cited context</title>
+  <desc id="desc">A left-to-right infographic showing work capture, curation, storage, retrieval, and faster agent re-entry.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7f3ea"/>
+      <stop offset="0.48" stop-color="#edf5ef"/>
+      <stop offset="1" stop-color="#eaf1f8"/>
+    </linearGradient>
+    <linearGradient id="rail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#254f45"/>
+      <stop offset="0.38" stop-color="#d78c42"/>
+      <stop offset="0.7" stop-color="#315f7d"/>
+      <stop offset="1" stop-color="#5b4e8a"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#24312f" flood-opacity="0.16"/>
+    </filter>
+    <style>
+      .title { font: 800 54px Georgia, "Times New Roman", serif; fill: #192724; letter-spacing: -1.2px; }
+      .subtitle { font: 400 23px "Aptos", "Segoe UI", sans-serif; fill: #485954; }
+      .stage-title { font: 800 25px "Aptos", "Segoe UI", sans-serif; fill: #172522; }
+      .stage-text { font: 400 17px "Aptos", "Segoe UI", sans-serif; fill: #53615d; }
+      .stage-num { font: 900 20px "Aptos", "Segoe UI", sans-serif; fill: #fffaf0; }
+      .callout-title { font: 800 19px "Aptos", "Segoe UI", sans-serif; fill: #20302c; }
+      .callout-text { font: 400 15px "Aptos", "Segoe UI", sans-serif; fill: #596763; }
+      .tiny { font: 700 13px "Aptos", "Segoe UI", sans-serif; fill: #66736f; letter-spacing: .8px; text-transform: uppercase; }
+      .card { fill: rgba(255,255,255,0.84); stroke: rgba(33,54,49,0.13); stroke-width: 1.4; }
+      .node { fill: #fffdf8; stroke: rgba(28,44,40,0.18); stroke-width: 1.5; }
+      .soft-line { stroke: rgba(40,64,58,0.2); stroke-width: 2; fill: none; }
+      .icon-line { stroke: #203b35; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+      .icon-fill { fill: #203b35; }
+      .accent-green { fill: #2c6b58; }
+      .accent-gold { fill: #d99142; }
+      .accent-blue { fill: #386d8f; }
+      .accent-ink { fill: #293d38; }
+      .accent-purple { fill: #62548f; }
+    </style>
+  </defs>
+
+  <rect width="1696" height="804" fill="url(#bg)"/>
+  <circle cx="90" cy="110" r="220" fill="#fff8e8" opacity="0.62"/>
+  <circle cx="1545" cy="665" r="260" fill="#dbeaf6" opacity="0.58"/>
+  <path d="M119 706 C 329 585, 487 759, 677 643 S 1020 548, 1199 640 S 1467 713, 1614 573" fill="none" stroke="#fffaf2" stroke-width="78" stroke-linecap="round" opacity="0.45"/>
+
+  <text x="96" y="94" class="tiny">Memory Layer mental model</text>
+  <text x="96" y="158" class="title">Project work becomes cited context</text>
+  <text x="98" y="200" class="subtitle">Capture evidence, curate durable memory, connect it to code and activity, then help the next agent start with proof.</text>
+
+  <rect x="94" y="246" width="1508" height="330" rx="38" class="card" filter="url(#shadow)"/>
+  <path d="M187 411 H1494" stroke="url(#rail)" stroke-width="14" stroke-linecap="round"/>
+
+  <g transform="translate(118 278)">
+    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
+    <circle cx="44" cy="42" r="22" class="accent-green"/>
+    <text x="38" y="49" class="stage-num">1</text>
+    <text x="28" y="91" class="stage-title">Work happens</text>
+    <text x="28" y="126" class="stage-text">Agents and humans</text>
+    <text x="28" y="150" class="stage-text">edit code, run tests,</text>
+    <text x="28" y="174" class="stage-text">make decisions, and</text>
+    <text x="28" y="198" class="stage-text">ask questions.</text>
+    <path d="M142 55 c20 0 36 16 36 36 s-16 36-36 36 s-36-16-36-36 s16-36 36-36" class="soft-line"/>
+    <path d="M127 87 l14 15 l29-34" class="icon-line"/>
+  </g>
+
+  <g transform="translate(366 278)">
+    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
+    <circle cx="44" cy="42" r="22" class="accent-gold"/>
+    <text x="38" y="49" class="stage-num">2</text>
+    <text x="28" y="91" class="stage-title">Capture evidence</text>
+    <text x="28" y="126" class="stage-text">Prompts, notes, files,</text>
+    <text x="28" y="150" class="stage-text">commands, tests, and</text>
+    <text x="28" y="174" class="stage-text">activities stay tied</text>
+    <text x="28" y="198" class="stage-text">to provenance.</text>
+    <rect x="122" y="55" width="50" height="66" rx="8" fill="none" stroke="#203b35" stroke-width="5"/>
+    <path d="M134 74 h26 M134 91 h26 M134 108 h17" class="icon-line"/>
+  </g>
+
+  <g transform="translate(614 278)">
+    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
+    <circle cx="44" cy="42" r="22" class="accent-blue"/>
+    <text x="38" y="49" class="stage-num">3</text>
+    <text x="28" y="91" class="stage-title">Curate memory</text>
+    <text x="28" y="126" class="stage-text">Raw captures become</text>
+    <text x="28" y="150" class="stage-text">short canonical facts</text>
+    <text x="28" y="174" class="stage-text">with types, tags, and</text>
+    <text x="28" y="198" class="stage-text">confidence.</text>
+    <path d="M121 101 c16-42 69-42 85 0 c-18 34-67 34-85 0Z" fill="none" stroke="#203b35" stroke-width="5"/>
+    <circle cx="164" cy="101" r="13" class="icon-fill"/>
+  </g>
+
+  <g transform="translate(862 278)">
+    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
+    <circle cx="44" cy="42" r="22" class="accent-ink"/>
+    <text x="38" y="49" class="stage-num">4</text>
+    <text x="28" y="91" class="stage-title">Store + link</text>
+    <text x="28" y="126" class="stage-text">PostgreSQL keeps the</text>
+    <text x="28" y="150" class="stage-text">truth; pgvector and</text>
+    <text x="28" y="174" class="stage-text">code graph edges make</text>
+    <text x="28" y="198" class="stage-text">it connected.</text>
+    <ellipse cx="157" cy="69" rx="40" ry="15" fill="none" stroke="#203b35" stroke-width="5"/>
+    <path d="M117 69 v48 c0 8 18 15 40 15 s40-7 40-15 V69 M117 93 c0 8 18 15 40 15 s40-7 40-15" class="icon-line"/>
+  </g>
+
+  <g transform="translate(1110 278)">
+    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
+    <circle cx="44" cy="42" r="22" class="accent-purple"/>
+    <text x="38" y="49" class="stage-num">5</text>
+    <text x="28" y="91" class="stage-title">Retrieve + explain</text>
+    <text x="28" y="126" class="stage-text">Lexical, semantic,</text>
+    <text x="28" y="150" class="stage-text">hybrid, relation, and</text>
+    <text x="28" y="174" class="stage-text">graph matches return</text>
+    <text x="28" y="198" class="stage-text">cited answers.</text>
+    <circle cx="143" cy="83" r="27" fill="none" stroke="#203b35" stroke-width="5"/>
+    <path d="M164 104 l29 29" class="icon-line"/>
+  </g>
+
+  <g transform="translate(1358 278)">
+    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
+    <circle cx="44" cy="42" r="22" class="accent-green"/>
+    <text x="38" y="49" class="stage-num">6</text>
+    <text x="28" y="91" class="stage-title">Next agent starts</text>
+    <text x="28" y="126" class="stage-text">Resume briefings, TUI</text>
+    <text x="28" y="150" class="stage-text">tabs, and query answers</text>
+    <text x="28" y="174" class="stage-text">show what happened and</text>
+    <text x="28" y="198" class="stage-text">why it matters.</text>
+    <path d="M126 122 h73 v-54 h-73 Z M139 136 h47" class="icon-line"/>
+    <path d="M140 82 h43 M140 99 h28" class="icon-line"/>
+  </g>
+
+  <g transform="translate(143 624)">
+    <rect x="0" y="0" width="300" height="88" rx="24" fill="#fffdf8" stroke="#d9c7a4" stroke-width="1.5"/>
+    <text x="26" y="35" class="callout-title">Auditable by default</text>
+    <text x="26" y="62" class="callout-text">Every durable memory keeps provenance.</text>
+  </g>
+  <g transform="translate(496 624)">
+    <rect x="0" y="0" width="300" height="88" rx="24" fill="#fffdf8" stroke="#c6d4cc" stroke-width="1.5"/>
+    <text x="26" y="35" class="callout-title">Typed memory</text>
+    <text x="26" y="62" class="callout-text">Plans, tasks, facts, feedback, references.</text>
+  </g>
+  <g transform="translate(849 624)">
+    <rect x="0" y="0" width="300" height="88" rx="24" fill="#fffdf8" stroke="#c4d7e3" stroke-width="1.5"/>
+    <text x="26" y="35" class="callout-title">Search is inspectable</text>
+    <text x="26" y="62" class="callout-text">See match type, citations, tokens, graph boosts.</text>
+  </g>
+  <g transform="translate(1202 624)">
+    <rect x="0" y="0" width="300" height="88" rx="24" fill="#fffdf8" stroke="#cec8e6" stroke-width="1.5"/>
+    <text x="26" y="35" class="callout-title">Built for teams of agents</text>
+    <text x="26" y="62" class="callout-text">Watchers, activities, and re-entry context.</text>
+  </g>
+
+  <text x="96" y="758" class="tiny">Capture -> Curate -> Connect -> Retrieve -> Explain</text>
+  <text x="1234" y="758" class="tiny">Local-first, project-scoped, evidence-backed</text>
+</svg>

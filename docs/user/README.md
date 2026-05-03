@@ -6,6 +6,8 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 
 ![Memory Layer query answer](../img/tui/query-tab.png)
 
+![How Memory Layer turns project work into cited context](../img/memory-layer-flow.png)
+
 ## Table of Contents
 
 - [Start Here](#start-here)

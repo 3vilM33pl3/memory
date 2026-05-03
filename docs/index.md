@@ -6,6 +6,8 @@ It is designed for the real workflow: several agents, several projects, multiple
 
 ![Memory Layer cited query answer](img/tui/query-tab.png)
 
+![How Memory Layer turns project work into cited context](img/memory-layer-flow.png)
+
 ## Highlights
 
 - **Cited answers from project memory:** ask a question, get an answer, and inspect the exact ranked memories behind it.
