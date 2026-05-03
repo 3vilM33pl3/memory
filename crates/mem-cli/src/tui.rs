@@ -3374,7 +3374,7 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         rows,
         [
             Constraint::Percentage(34),
-            Constraint::Length(12),
+            Constraint::Length(16),
             Constraint::Length(8),
             Constraint::Length(5),
             Constraint::Length(20),
