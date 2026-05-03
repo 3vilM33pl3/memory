@@ -6667,6 +6667,7 @@ fn embedding_base_url_is_default(provider: &str, base_url: &str) -> bool {
     // Keep in sync with mem_search::embedding_backend::default_base_url.
     let expected = match provider {
         "openai_compatible" | "openai" => "https://api.openai.com/v1",
+        "ollama" => "http://127.0.0.1:11434/v1",
         "voyage" => "https://api.voyageai.com",
         "cohere" => "https://api.cohere.com",
         "gemini" => "https://generativelanguage.googleapis.com/v1beta",

@@ -42,14 +42,17 @@ provider's native REST dialect. The service chooses a backend from
 | Provider string | Backend | Default `base_url` | Auth | Notes |
 |---|---|---|---|---|
 | `openai` | `OpenAiBackend` | `https://api.openai.com/v1` | `Authorization: Bearer` | Uses OpenAI's embeddings API, sends `encoding_format = "float"`, and supports optional `dimensions`. Ignores document/query distinction. |
-| `openai_compatible` | `OpenAiBackend` | `https://api.openai.com/v1` | `Authorization: Bearer` | For Ollama, llama-server, and local/proxy APIs that mimic OpenAI's `/embeddings` shape. OpenAI-only options are omitted for compatibility. |
+| `openai_compatible` | `OpenAiBackend` | `https://api.openai.com/v1` | `Authorization: Bearer` | For hosted/proxy APIs that mimic OpenAI's `/embeddings` shape. OpenAI-only options are omitted for compatibility. |
+| `ollama` | `OpenAiBackend` | `http://127.0.0.1:11434/v1` | none by default | First-class local Ollama support using Ollama's OpenAI-compatible `/embeddings` endpoint. Set `api_key_env` only when a proxy requires auth. |
 | `voyage` | `VoyageBackend` | `https://api.voyageai.com` | `Authorization: Bearer` | Anthropic's recommended partner. Uses `input_type: document` at index time, `query` at query time. |
 | `cohere` | `CohereBackend` | `https://api.cohere.com` | `Authorization: Bearer` | Posts to `/v2/embed`. Uses `input_type: search_document` / `search_query`. Response carries vectors under `embeddings.float`. |
 | `gemini` | `GeminiBackend` | `https://generativelanguage.googleapis.com/v1beta` | `x-goog-api-key` | Model goes in the URL path (`/models/{model}:batchEmbedContents`) and is `"models/{model}"`-qualified in the body. Uses `taskType: RETRIEVAL_DOCUMENT` / `RETRIEVAL_QUERY`. |
 
-All backends take their API key from the env var named in
+All remote backends take their API key from the env var named in
 `embeddings.api_key_env` (`OPENAI_API_KEY`, `VOYAGE_API_KEY`,
 `COHERE_API_KEY`, `GEMINI_API_KEY` are common choices).
+For `provider = "ollama"`, `api_key_env = ""` is valid and no
+`Authorization` header is sent.
 
 Every `embed_texts` call also carries an `EmbeddingPurpose`:
 

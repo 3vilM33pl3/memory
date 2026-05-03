@@ -45,8 +45,9 @@ use mem_api::{
     TokenUsage, TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse, ValidationError,
     WatcherHealth, WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary,
     WatcherRestartRequest, WatcherRestartResponse, WatcherUnregisterRequest,
-    load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
-    write_capnp_text_frame,
+    effective_llm_base_url, is_supported_llm_provider, llm_max_output_tokens_field,
+    llm_requires_api_key, load_repo_replacement_policy, read_capnp_text_frame,
+    repo_agent_settings_path, resolve_llm_api_key, write_capnp_text_frame,
 };
 use mem_curate::{
     approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
@@ -5162,21 +5163,25 @@ async fn summarize_resume_with_llm(
     project: &str,
     deterministic: &str,
 ) -> Result<String> {
-    if state.config.llm.provider.trim() != "openai_compatible"
+    if !is_supported_llm_provider(&state.config.llm.provider)
         || state.config.llm.model.trim().is_empty()
     {
         anyhow::bail!("llm summary is not configured");
     }
-    let api_key = std::env::var(&state.config.llm.api_key_env)
-        .context("read llm api key for resume summary")?;
+    let api_key = resolve_llm_api_key(&state.config.llm);
+    if llm_requires_api_key(&state.config.llm) && api_key.is_none() {
+        anyhow::bail!(
+            "read llm api key {} for resume summary",
+            state.config.llm.api_key_env
+        );
+    }
     let url = format!(
         "{}/chat/completions",
-        state.config.llm.base_url.trim_end_matches('/')
+        effective_llm_base_url(&state.config.llm)
     );
-    let request = serde_json::json!({
+    let mut request = serde_json::json!({
         "model": state.config.llm.model,
         "temperature": 0.0,
-        "max_completion_tokens": 600,
         "messages": [
             {
                 "role": "system",
@@ -5188,10 +5193,12 @@ async fn summarize_resume_with_llm(
             }
         ]
     });
-    let response = state
-        .http_client
-        .post(url)
-        .bearer_auth(api_key)
+    request[llm_max_output_tokens_field(&state.config.llm.provider)] = serde_json::json!(600);
+    let mut builder = state.http_client.post(url);
+    if let Some(api_key) = api_key {
+        builder = builder.bearer_auth(api_key);
+    }
+    let response = builder
         .json(&request)
         .send()
         .await
@@ -5287,21 +5294,25 @@ async fn synthesize_query_answer_with_llm(
     if response.results.is_empty() {
         anyhow::bail!("no query memories available for llm answer synthesis");
     }
-    if state.config.llm.provider.trim() != "openai_compatible"
+    if !is_supported_llm_provider(&state.config.llm.provider)
         || state.config.llm.model.trim().is_empty()
     {
         anyhow::bail!("llm query answer is not configured");
     }
-    let api_key = std::env::var(&state.config.llm.api_key_env)
-        .context("read llm api key for query answer")?;
+    let api_key = resolve_llm_api_key(&state.config.llm);
+    if llm_requires_api_key(&state.config.llm) && api_key.is_none() {
+        anyhow::bail!(
+            "read llm api key {} for query answer",
+            state.config.llm.api_key_env
+        );
+    }
     let url = format!(
         "{}/chat/completions",
-        state.config.llm.base_url.trim_end_matches('/')
+        effective_llm_base_url(&state.config.llm)
     );
-    let request_body = serde_json::json!({
+    let mut request_body = serde_json::json!({
         "model": state.config.llm.model,
         "temperature": 0.0,
-        "max_completion_tokens": state.config.llm.max_output_tokens.min(800),
         "messages": [
             {
                 "role": "system",
@@ -5313,10 +5324,13 @@ async fn synthesize_query_answer_with_llm(
             }
         ]
     });
-    let http_response = state
-        .http_client
-        .post(url)
-        .bearer_auth(api_key)
+    request_body[llm_max_output_tokens_field(&state.config.llm.provider)] =
+        serde_json::json!(state.config.llm.max_output_tokens.min(800));
+    let mut builder = state.http_client.post(url);
+    if let Some(api_key) = api_key {
+        builder = builder.bearer_auth(api_key);
+    }
+    let http_response = builder
         .json(&request_body)
         .send()
         .await

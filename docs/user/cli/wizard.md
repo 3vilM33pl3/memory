@@ -15,7 +15,7 @@ Use `wizard` to bootstrap Memory Layer configuration either globally for the mac
 
 - `database.url`
 - optional shared `writer.id`
-- optional LLM settings
+- optional LLM settings, including local Ollama via `provider = "ollama"`
 
 The shared service API token is usually generated automatically into the adjacent `memory-layer.env` file. The wizard only needs an explicit token value if you want to override that generated token.
 If you leave `writer.id` unset, Memory Layer derives a stable writer identity automatically at runtime.

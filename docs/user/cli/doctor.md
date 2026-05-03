@@ -18,6 +18,7 @@ Use `doctor` when Memory Layer is installed but something is not working the way
 - missing or placeholder service API token
 - unexpected auto-derived or overridden writer identity
 - backend connectivity issues
+- Ollama reachability and missing local LLM models when `[llm].provider = "ollama"`
 - missing `pgvector`
 - project bootstrap problems such as missing `.mem` files
 - repo-local service or watcher configuration issues
@@ -52,6 +53,8 @@ Typical remediation paths are:
   - run `memory wizard` or `memory init`
 - backend unreachable
   - start the shared backend service or the local development backend
+- Ollama unreachable or model missing
+  - start Ollama with `ollama serve` and pull the configured model with `ollama pull <model>`
 - placeholder service API token
   - run `memory service ensure-api-token --rotate-placeholder` or `memory wizard --global`
 

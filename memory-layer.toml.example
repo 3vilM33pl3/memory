@@ -35,6 +35,7 @@ url = "postgresql://memory:<password>@localhost:5432/memory"
 llm_curation = false
 
 [llm]
+# Use "ollama" for a local Ollama server at http://127.0.0.1:11434/v1.
 provider = "openai_compatible"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
@@ -49,6 +50,14 @@ base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 model = ""
 batch_size = 16
+
+# Local Ollama embedding example:
+# [[embeddings.backends]]
+# name = "ollama-nomic"
+# provider = "ollama"
+# base_url = "http://127.0.0.1:11434/v1"
+# api_key_env = ""
+# model = "nomic-embed-text"
 
 [automation]
 enabled = false

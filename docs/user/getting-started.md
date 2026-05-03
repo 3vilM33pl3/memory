@@ -181,7 +181,7 @@ Use this for values shared by many repos:
 - `service.api_token`
 - `[cluster]` settings for backend relay discovery on a local network
 - `[llm]` settings
-- `[[embeddings.backends]]` — one block per embedding backend you want available (OpenAI, Voyage, Cohere, Gemini). See [Embedding Operations](cli/embeddings.md#configuring-multiple-backends) for the full shape and the "enable two backends from day one" workflow.
+- `[[embeddings.backends]]` — one block per embedding backend you want available (OpenAI, Voyage, Cohere, Gemini, Ollama). See [Embedding Operations](cli/embeddings.md#configuring-multiple-backends) for the full shape and the "enable two backends from day one" workflow.
 
 The shared service API token normally lives in the adjacent `memory-layer.env` file and is provisioned automatically during setup.
 
@@ -223,6 +223,28 @@ VOYAGE_API_KEY=your-voyage-key-here
 ```
 
 When you declare multiple `[[embeddings.backends]]` blocks, each one's `api_key_env` field names the variable the service will look up here. The name is arbitrary — whatever you put in `api_key_env` in the TOML, put the same key in `memory-layer.env`.
+
+For local Ollama, use the first-class `ollama` provider and leave `api_key_env`
+empty unless you are running behind a proxy that requires auth:
+
+```toml
+[llm]
+provider = "ollama"
+base_url = "http://127.0.0.1:11434/v1"
+api_key_env = ""
+model = "llama3.2"
+
+[[embeddings.backends]]
+name = "ollama-nomic"
+provider = "ollama"
+base_url = "http://127.0.0.1:11434/v1"
+api_key_env = ""
+model = "nomic-embed-text"
+```
+
+Run `ollama serve` and pull the models first, for example `ollama pull
+llama3.2` and `ollama pull nomic-embed-text`. `memory doctor` checks the
+local `/v1/models` endpoint and warns when the configured LLM model is missing.
 
 ## Writer ID
 

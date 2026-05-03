@@ -70,21 +70,23 @@ pub fn build_backend(config: &EmbeddingBackendConfig) -> Option<Arc<dyn Embeddin
     if config.model.trim().is_empty() {
         return None;
     }
-    let api_key = resolve_secret_value(&config.api_key_env)?;
-    let api_key = api_key.trim();
-    if api_key.is_empty() {
+    let provider = config.provider.trim();
+    let api_key = resolve_embedding_api_key(provider, &config.api_key_env).unwrap_or_default();
+    let explicit_ollama_key = provider == "ollama"
+        && !config.api_key_env.trim().is_empty()
+        && config.api_key_env.trim() != "OPENAI_API_KEY";
+    if (provider != "ollama" || explicit_ollama_key) && api_key.trim().is_empty() {
         return None;
     }
-    let provider = config.provider.trim();
     let base_url = effective_embedding_base_url(provider, &config.base_url)?;
     let client = Client::new();
     match provider {
-        "openai_compatible" | "openai" => Some(Arc::new(OpenAiBackend::new(
+        "openai_compatible" | "openai" | "ollama" => Some(Arc::new(OpenAiBackend::new(
             client,
             provider.to_string(),
             base_url,
             config.model.trim().to_string(),
-            api_key.to_string(),
+            api_key,
             config.dimensions,
         ))),
         "voyage" => Some(Arc::new(VoyageBackend::new(
@@ -110,21 +112,38 @@ pub fn build_backend(config: &EmbeddingBackendConfig) -> Option<Arc<dyn Embeddin
 }
 
 pub fn effective_embedding_base_url(provider: &str, configured: &str) -> Option<String> {
-    if configured.trim().is_empty() {
+    let configured = configured.trim().trim_end_matches('/');
+    if provider.trim() == "ollama"
+        && (configured.is_empty() || configured == "https://api.openai.com/v1")
+    {
+        Some("http://127.0.0.1:11434/v1".to_string())
+    } else if configured.is_empty() {
         default_base_url(provider).map(str::to_string)
     } else {
-        Some(configured.trim_end_matches('/').to_string())
+        Some(configured.to_string())
     }
 }
 
 fn default_base_url(provider: &str) -> Option<&'static str> {
     match provider {
         "openai_compatible" | "openai" => Some("https://api.openai.com/v1"),
+        "ollama" => Some("http://127.0.0.1:11434/v1"),
         "voyage" => Some("https://api.voyageai.com"),
         "cohere" => Some("https://api.cohere.com"),
         "gemini" => Some("https://generativelanguage.googleapis.com/v1beta"),
         _ => None,
     }
+}
+
+fn resolve_embedding_api_key(provider: &str, key_env: &str) -> Option<String> {
+    let key_env = key_env.trim();
+    if key_env.is_empty() {
+        return None;
+    }
+    if provider.trim() == "ollama" && key_env == "OPENAI_API_KEY" {
+        return None;
+    }
+    resolve_secret_value(key_env).filter(|value| !value.trim().is_empty())
 }
 
 // ---------- OpenAI / OpenAI-compatible ----------
@@ -195,11 +214,14 @@ impl EmbeddingBackend for OpenAiBackend {
                 .flatten(),
         };
         let url = format!("{}/embeddings", self.space.base_url);
-        let response = self
+        let mut builder = self
             .client
             .post(url)
-            .header(header::AUTHORIZATION, format!("Bearer {}", self.api_key))
-            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CONTENT_TYPE, "application/json");
+        if !self.api_key.trim().is_empty() {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {}", self.api_key));
+        }
+        let response = builder
             .json(&body)
             .send()
             .await
@@ -600,6 +622,46 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(vectors.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn ollama_backend_uses_openai_shape_without_default_auth() {
+        let server = MockServer::start().await;
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/embeddings"))
+            .and(matchers::body_json(serde_json::json!({
+                "model": "nomic-embed-text",
+                "input": ["hello"],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {"index": 0, "embedding": [0.1, 0.2]},
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let backend = build_backend(&config_with_dimensions(
+            "ollama",
+            &server.uri(),
+            "nomic-embed-text",
+            "OPENAI_API_KEY",
+            512,
+        ))
+        .expect("backend resolves");
+        assert_eq!(backend.space().provider, "ollama");
+        let vectors = backend
+            .embed(&["hello".to_string()], EmbeddingPurpose::Document)
+            .await
+            .unwrap();
+        assert_eq!(vectors.len(), 1);
+    }
+
+    #[test]
+    fn ollama_embedding_default_url_ignores_inherited_openai_default() {
+        assert_eq!(
+            effective_embedding_base_url("ollama", "https://api.openai.com/v1"),
+            Some("http://127.0.0.1:11434/v1".to_string())
+        );
     }
 
     #[tokio::test]

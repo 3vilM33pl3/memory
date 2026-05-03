@@ -33,7 +33,9 @@ use mem_api::{
     QueryRequest, QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
     ReplacementPolicy, ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult, TokenUsage,
     UpToSpeedRequest, UpToSpeedResponse, discover_global_config_path, discover_repo_env_path,
-    load_repo_replacement_policy, read_repo_project_slug,
+    effective_llm_base_url, is_ollama_provider, is_supported_llm_provider,
+    llm_max_output_tokens_field, llm_requires_api_key, load_repo_replacement_policy,
+    read_repo_project_slug, resolve_llm_api_key,
 };
 use mem_platform as platform;
 use mem_service as service_runtime;
@@ -3992,7 +3994,8 @@ async fn run_doctor(
             },
             Some(format!(
                 "provider={} base_url={}",
-                config.llm.provider, config.llm.base_url
+                config.llm.provider,
+                effective_llm_base_url(&config.llm)
             )),
             if config.llm.model.trim().is_empty() {
                 Some(format!(
@@ -4009,27 +4012,20 @@ async fn run_doctor(
         ));
 
         let repo_env_path = discover_repo_env_path();
-        let llm_api_key_value = env::var(&config.llm.api_key_env)
-            .ok()
-            .or_else(|| {
-                repo_env_path
-                    .as_ref()
-                    .and_then(|path| shared_env_lookup(path, &config.llm.api_key_env))
-            })
-            .or_else(|| {
-                global_config_path.as_ref().and_then(|path| {
-                    shared_env_lookup(&shared_env_path_for_config(path), &config.llm.api_key_env)
-                })
-            })
-            .unwrap_or_default();
+        let llm_api_key_value = resolve_llm_api_key(&config.llm).unwrap_or_default();
+        let llm_api_key_required = llm_requires_api_key(&config.llm);
         report.push(doctor_check(
             "config.llm_api_key",
-            if llm_api_key_value.trim().is_empty() {
+            if !llm_api_key_required {
+                DoctorStatus::Skipped
+            } else if llm_api_key_value.trim().is_empty() {
                 DoctorStatus::Fail
             } else {
                 DoctorStatus::Ok
             },
-            if llm_api_key_value.trim().is_empty() {
+            if !llm_api_key_required {
+                "LLM API key is optional for this provider."
+            } else if llm_api_key_value.trim().is_empty() {
                 "LLM API key environment variable is missing."
             } else {
                 "LLM API key environment variable is present."
@@ -4062,6 +4058,71 @@ async fn run_doctor(
             },
             false,
         ));
+
+        if is_ollama_provider(&config.llm.provider) {
+            let models_url = format!("{}/models", effective_llm_base_url(&config.llm));
+            let ollama_check = match Client::new().get(&models_url).send().await {
+                Ok(response) if response.status().is_success() => {
+                    match response.json::<serde_json::Value>().await {
+                        Ok(body) => {
+                            let model = config.llm.model.trim();
+                            let found = body
+                                .get("data")
+                                .and_then(|value| value.as_array())
+                                .is_some_and(|models| {
+                                    models.iter().any(|entry| {
+                                        entry
+                                            .get("id")
+                                            .and_then(|value| value.as_str())
+                                            .is_some_and(|id| id == model)
+                                    })
+                                });
+                            doctor_check(
+                                "config.ollama",
+                                if found {
+                                    DoctorStatus::Ok
+                                } else {
+                                    DoctorStatus::Warn
+                                },
+                                if found {
+                                    "Ollama is reachable and the configured model is available."
+                                } else {
+                                    "Ollama is reachable but the configured model was not listed."
+                                },
+                                Some(models_url),
+                                (!found).then(|| format!("Run `ollama pull {model}`")),
+                                false,
+                            )
+                        }
+                        Err(error) => doctor_check(
+                            "config.ollama",
+                            DoctorStatus::Warn,
+                            "Ollama responded but the model list could not be parsed.",
+                            Some(models_url),
+                            Some(error.to_string()),
+                            false,
+                        ),
+                    }
+                }
+                Ok(response) => doctor_check(
+                    "config.ollama",
+                    DoctorStatus::Fail,
+                    "Ollama model endpoint returned an error.",
+                    Some(models_url),
+                    Some(format!("HTTP {}", response.status())),
+                    false,
+                ),
+                Err(error) => doctor_check(
+                    "config.ollama",
+                    DoctorStatus::Fail,
+                    "Ollama is not reachable at the configured base URL.",
+                    Some(models_url),
+                    Some(format!("Start Ollama with `ollama serve`: {error}")),
+                    false,
+                ),
+            };
+            report.push(ollama_check);
+        }
 
         report.push(doctor_check(
             "config.service_endpoints",
@@ -8911,26 +8972,27 @@ async fn run_direct_llm_eval(
     max_output_tokens: u32,
 ) -> Result<DirectLlmEvalResponse> {
     ensure_direct_llm_eval_config(&api.config)?;
-    let api_key = env::var(&api.config.llm.api_key_env)
-        .with_context(|| format!("read {} for no-memory eval", api.config.llm.api_key_env))?;
+    let api_key = resolve_llm_api_key(&api.config.llm);
     let url = format!(
         "{}/chat/completions",
-        api.config.llm.base_url.trim_end_matches('/')
+        effective_llm_base_url(&api.config.llm)
     );
-    let request = serde_json::json!({
+    let mut request = serde_json::json!({
         "model": api.config.llm.model,
         "temperature": 0.0,
-        "max_completion_tokens": max_output_tokens,
         "messages": [
             { "role": "system", "content": system_prompt },
             { "role": "user", "content": user_prompt }
         ]
     });
+    request[llm_max_output_tokens_field(&api.config.llm.provider)] =
+        serde_json::json!(max_output_tokens);
     let started = std::time::Instant::now();
-    let http_response = api
-        .client
-        .post(url)
-        .bearer_auth(api_key)
+    let mut builder = api.client.post(url);
+    if let Some(api_key) = api_key {
+        builder = builder.bearer_auth(api_key);
+    }
+    let http_response = builder
         .json(&request)
         .send()
         .await
@@ -8952,14 +9014,20 @@ async fn run_direct_llm_eval(
 }
 
 fn ensure_direct_llm_eval_config(config: &AppConfig) -> Result<()> {
-    if config.llm.provider.trim() != "openai_compatible" {
+    if !is_supported_llm_provider(&config.llm.provider) {
         anyhow::bail!(
-            "no-memory eval requires [llm].provider = openai_compatible; got `{}`",
+            "no-memory eval requires [llm].provider = openai_compatible or ollama; got `{}`",
             config.llm.provider
         );
     }
     if config.llm.model.trim().is_empty() {
         anyhow::bail!("no-memory eval requires [llm].model to be configured");
+    }
+    if llm_requires_api_key(&config.llm) && resolve_llm_api_key(&config.llm).is_none() {
+        anyhow::bail!(
+            "no-memory eval requires {} to be set",
+            config.llm.api_key_env
+        );
     }
     Ok(())
 }
@@ -11976,12 +12044,13 @@ mod tests {
         build_graph_activity_request, build_plan_execution_finish_report,
         build_plan_execution_request, build_remember_request, build_task_start_request,
         chat_completion_content, derive_plan_thread_key, derive_plan_title,
-        durable_plan_source_path, ensure_checkbox_plan, ensure_shared_service_api_token,
-        initialize_repo, is_placeholder_database_url, mask_database_url, parse_memory_type_arg,
-        parse_no_memory_grounded_answer, parse_plan_checkboxes, render_agent_project_config,
-        render_claude_md_memory_section, repair_repo_bootstrap, resolve_project_slug,
-        resolve_repo_root, resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
-        token_usage_from_chat_body, watcher_command_requires_config_load, write_headers,
+        durable_plan_source_path, ensure_checkbox_plan, ensure_direct_llm_eval_config,
+        ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
+        mask_database_url, parse_memory_type_arg, parse_no_memory_grounded_answer,
+        parse_plan_checkboxes, render_agent_project_config, render_claude_md_memory_section,
+        repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
+        root_gitignore_contains_mem, shared_env_lookup, token_usage_from_chat_body,
+        watcher_command_requires_config_load, write_headers,
     };
     use mem_api::AppConfig;
 
@@ -13313,6 +13382,20 @@ mod tests {
             Some("ml_testtoken")
         );
         assert!(headers.get("origin").is_none());
+    }
+
+    #[test]
+    fn direct_llm_eval_accepts_ollama_without_api_key() {
+        let mut config = test_app_config();
+        config.llm = mem_api::LlmConfig {
+            provider: "ollama".to_string(),
+            base_url: String::new(),
+            api_key_env: "OPENAI_API_KEY".to_string(),
+            model: "llama3.2".to_string(),
+            ..mem_api::LlmConfig::default()
+        };
+
+        assert!(ensure_direct_llm_eval_config(&config).is_ok());
     }
 
     fn test_app_config() -> AppConfig {

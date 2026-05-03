@@ -60,6 +60,14 @@ base_url = ""
 api_key_env = "VOYAGE_API_KEY"
 model = "voyage-code-3"
 batch_size = 16
+
+[[embeddings.backends]]
+name = "ollama-nomic"
+provider = "ollama"
+base_url = "http://127.0.0.1:11434/v1"
+api_key_env = ""
+model = "nomic-embed-text"
+batch_size = 16
 ```
 
 The `name` field is your activation handle and must be unique. If you leave `name` empty, Memory Layer derives one from `{provider}-{model}` at load time.
@@ -68,7 +76,7 @@ Set `enabled = false` under `[embeddings]` to keep backend declarations availabl
 
 Set `create_enabled = false` inside a specific `[[embeddings.backends]]` block to keep semantic search available for existing vectors while preventing automatic creation of new embeddings for that provider. In the TUI Embeddings tab, highlight a backend and press `c` to toggle this value.
 
-Use `provider = "openai"` for the official OpenAI embeddings API. Use `provider = "openai_compatible"` for local or proxy APIs that mimic OpenAI's `/embeddings` endpoint but may not support OpenAI-specific request options. For OpenAI `text-embedding-3` models, `dimensions = <n>` is optional and asks OpenAI to return a smaller vector.
+Use `provider = "openai"` for the official OpenAI embeddings API. Use `provider = "openai_compatible"` for hosted or proxy APIs that mimic OpenAI's `/embeddings` endpoint but may not support OpenAI-specific request options. Use `provider = "ollama"` for local Ollama embeddings with no API key by default. For OpenAI `text-embedding-3` models, `dimensions = <n>` is optional and asks OpenAI to return a smaller vector.
 
 The **legacy singleton shape** still works:
 
@@ -81,7 +89,7 @@ api_key_env = "VOYAGE_API_KEY"
 
 Internally this is normalized to a one-element `backends` list with an auto-derived name, so `memory embeddings list` will show the same information.
 
-`base_url = ""` falls back to the provider's well-known endpoint (`https://api.openai.com/v1`, `https://api.voyageai.com`, etc.).
+`base_url = ""` falls back to the provider's well-known endpoint (`https://api.openai.com/v1`, `https://api.voyageai.com`, `http://127.0.0.1:11434/v1`, etc.).
 
 ## Commands
 

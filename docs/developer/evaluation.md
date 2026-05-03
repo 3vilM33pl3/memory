@@ -159,10 +159,10 @@ auto-answer behavior.
 The `no-memory` condition has no retrieval channel, so retrieval items receive
 zero retrieval scores rather than being skipped. For `grounded_answer` and
 `resume_quality` items, `memory eval run` calls the configured
-OpenAI-compatible `[llm]` client directly and scores the resulting text without
-Memory retrieval, project timeline, or resume context. This keeps provider I/O
-in `mem-cli`; `mem-eval` remains responsible for file formats, scoring, and
-statistics.
+OpenAI-compatible or Ollama `[llm]` client directly and scores the resulting
+text without Memory retrieval, project timeline, or resume context. This keeps
+provider I/O in `mem-cli`; `mem-eval` remains responsible for file formats,
+scoring, and statistics.
 
 Memory-backed `resume_quality` conditions currently use the deterministic
 `up-to-speed` briefing (`include_llm_summary = false`) so the default comparison
@@ -171,8 +171,9 @@ step.
 
 ## Profiles And Repeats
 
-The default official profile is `llm`. It uses the configured provider for the
-plain no-memory baseline and Memory-backed answer synthesis. Use
+The default official profile is `llm`. It uses the configured provider
+(`openai_compatible` or `ollama`) for the plain no-memory baseline and
+Memory-backed answer synthesis. Use
 `--profile offline` for CI-safe validation that must not depend on external
 network calls.
 

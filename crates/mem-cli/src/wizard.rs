@@ -319,7 +319,7 @@ impl WizardDraft {
                 .unwrap_or_else(|| "openai_compatible".to_string()),
             llm_base_url: global_config
                 .as_ref()
-                .map(|config| config.llm.base_url.clone())
+                .map(|config| mem_api::effective_llm_base_url(&config.llm))
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             llm_api_key_env,
             llm_model_choice: LlmModelChoice::from_model(&llm_model),
@@ -433,6 +433,8 @@ enum FieldKey {
     IncludeGlobal,
     DatabaseUrl,
     ApiToken,
+    LlmProvider,
+    LlmBaseUrl,
     LlmModelChoice,
     LlmCustomModel,
     LlmApiKeyEnv,
@@ -762,6 +764,8 @@ impl WizardApp {
         match field {
             FieldKey::DatabaseUrl => self.draft.database_url.clone(),
             FieldKey::ApiToken => self.draft.api_token.clone(),
+            FieldKey::LlmProvider => self.draft.llm_provider.clone(),
+            FieldKey::LlmBaseUrl => self.draft.llm_base_url.clone(),
             FieldKey::LlmCustomModel => self.draft.llm_custom_model.clone(),
             FieldKey::LlmApiKeyEnv => self.draft.llm_api_key_env.clone(),
             FieldKey::LlmApiKeyValue => self.draft.llm_api_key_value.clone(),
@@ -788,6 +792,15 @@ impl WizardApp {
         match field {
             FieldKey::DatabaseUrl => self.draft.database_url = value,
             FieldKey::ApiToken => self.draft.api_token = value,
+            FieldKey::LlmProvider => {
+                self.draft.llm_provider = value;
+                if self.draft.llm_provider.trim() == "ollama"
+                    && self.draft.llm_base_url.trim().is_empty()
+                {
+                    self.draft.llm_base_url = mem_api::OLLAMA_BASE_URL.to_string();
+                }
+            }
+            FieldKey::LlmBaseUrl => self.draft.llm_base_url = value,
             FieldKey::LlmCustomModel => self.draft.llm_custom_model = value,
             FieldKey::LlmApiKeyEnv => self.draft.llm_api_key_env = value,
             FieldKey::LlmApiKeyValue => self.draft.llm_api_key_value = value,
@@ -853,6 +866,8 @@ fn shared_items(draft: &WizardDraft) -> Vec<StepItem> {
             "Service API token override",
             &secret_label(&draft.api_token),
         ),
+        text_item(FieldKey::LlmProvider, "LLM provider", &draft.llm_provider),
+        text_item(FieldKey::LlmBaseUrl, "LLM base URL", &draft.llm_base_url),
         choice_item(
             FieldKey::LlmModelChoice,
             "LLM model",
@@ -1237,6 +1252,10 @@ fn review_lines(
                 lines.push(Line::from(format!(
                     "Service API token override: {}",
                     secret_label(&draft.api_token)
+                )));
+                lines.push(Line::from(format!(
+                    "LLM provider/base URL: {} / {}",
+                    draft.llm_provider, draft.llm_base_url
                 )));
                 lines.push(Line::from(format!(
                     "LLM model: {}",
@@ -1880,6 +1899,15 @@ fn field_description(field: FieldKey) -> &'static str {
             Leave empty to keep the generated or existing token. Stored in the shared env \
             file, not the TOML config, so it doesn't land in version control."
         }
+        FieldKey::LlmProvider => {
+            "LLM provider used for curation, query answers, resume summaries, and evals. \
+            Use openai_compatible for hosted OpenAI-compatible APIs or ollama for a local \
+            Ollama server."
+        }
+        FieldKey::LlmBaseUrl => {
+            "Base URL for the provider's OpenAI-compatible API. Ollama normally uses \
+            http://127.0.0.1:11434/v1; hosted providers usually use their HTTPS /v1 URL."
+        }
         FieldKey::LlmModelChoice => {
             "Cycles through known OpenAI-compatible models for \
             curation/summary calls. Pick Custom to type any other model name in the next \
@@ -2030,6 +2058,8 @@ fn field_label(field: FieldKey) -> &'static str {
         FieldKey::IncludeGlobal => "Include shared/global setup",
         FieldKey::DatabaseUrl => "Database URL",
         FieldKey::ApiToken => "Service API token override",
+        FieldKey::LlmProvider => "LLM provider",
+        FieldKey::LlmBaseUrl => "LLM base URL",
         FieldKey::LlmModelChoice => "LLM model",
         FieldKey::LlmCustomModel => "Custom LLM model",
         FieldKey::LlmApiKeyEnv => "LLM API key env var",

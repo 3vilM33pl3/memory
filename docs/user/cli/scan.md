@@ -35,7 +35,7 @@ At a high level, `scan` does this:
 2. read a curated subset of repository files
 3. read a bounded amount of recent git history
 4. build a structured dossier from that material
-5. send the dossier to an OpenAI-compatible chat model
+5. send the dossier to an OpenAI-compatible or Ollama chat model
 6. require strict JSON back
 7. validate and deduplicate the returned candidates
 8. write them as a normal Memory Layer capture
@@ -155,7 +155,7 @@ The CLI builds a structured dossier with:
 - selected file contents
 - selected git commits
 
-It then sends that dossier to the configured OpenAI-compatible chat endpoint with a system prompt that tells the model to:
+It then sends that dossier to the configured OpenAI-compatible or Ollama chat endpoint with a system prompt that tells the model to:
 
 - extract durable repository memory
 - return strict JSON
@@ -295,18 +295,28 @@ This is useful for debugging why a scan produced the memory it did.
 
 ## Configuration Requirements
 
-`scan` requires working LLM configuration.
+`scan` requires working LLM configuration. Supported providers are:
 
-Today that means:
+- `[llm].provider = "openai_compatible"` for hosted or proxied OpenAI-compatible chat APIs.
+- `[llm].provider = "ollama"` for a local Ollama server.
 
-- `[llm].provider = "openai_compatible"`
-- `[llm].base_url`
-- `[llm].model`
-- `[llm].api_key_env`
-- the API key available in:
-  - process environment
-  - `.mem/memory-layer.env`
-  - shared `memory-layer.env`
+For Ollama:
+
+```toml
+[llm]
+provider = "ollama"
+base_url = "http://127.0.0.1:11434/v1"
+api_key_env = ""
+model = "llama3.2"
+```
+
+Run `ollama serve` and `ollama pull llama3.2` before scanning.
+
+For hosted providers, the API key must be available in:
+
+- process environment
+- `.mem/memory-layer.env`
+- shared `memory-layer.env`
 
 If these are not present, `scan` fails before doing any repository work.
 
@@ -314,11 +324,11 @@ If these are not present, `scan` fails before doing any repository work.
 
 Important implementation details:
 
-- only `openai_compatible` providers are supported today
+- `openai_compatible` and `ollama` providers are supported
 - the request goes to `POST /chat/completions`
 - `response_format` is forced to JSON object
 - `temperature` is sent first, then omitted on retry if the model rejects it
-- `max_completion_tokens` comes from `[llm].max_output_tokens`
+- the output-token limit comes from `[llm].max_output_tokens`
 
 Current fixed limits:
 

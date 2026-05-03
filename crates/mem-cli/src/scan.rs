@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeSet, HashSet},
-    env, fs,
+    fs,
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
 };
@@ -11,7 +11,9 @@ use mem_analyze::{AnalysisReport, AnalyzerSummary};
 use mem_api::{
     AgentProjectConfig, AppConfig, CaptureCandidateInput, CaptureCandidateSourceInput,
     CaptureTaskRequest, MemoryType, ScanActivityRequest, SourceKind, discover_global_config_path,
-    discover_repo_env_path, load_repo_agent_settings, load_repo_replacement_policy,
+    discover_repo_env_path, effective_llm_base_url, is_supported_llm_provider,
+    llm_max_output_tokens_field, load_repo_agent_settings, load_repo_replacement_policy,
+    resolve_llm_api_key,
 };
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
@@ -321,14 +323,13 @@ pub(crate) fn load_graph_index(
 }
 
 fn ensure_llm_config(config: &AppConfig) -> Result<()> {
-    if config.llm.provider.trim() != "openai_compatible" {
+    if !is_supported_llm_provider(&config.llm.provider) {
         anyhow::bail!("unsupported llm.provider: {}", config.llm.provider);
     }
     if config.llm.model.trim().is_empty() {
         anyhow::bail!("missing [llm].model in config");
     }
-    let api_key = llm_api_key(config).unwrap_or_default();
-    if api_key.trim().is_empty() {
+    if mem_api::llm_requires_api_key(&config.llm) && llm_api_key(config).is_none() {
         let repo_env = discover_repo_env_path()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "<repo-local env file not found>".to_string());
@@ -396,7 +397,10 @@ struct ChatCompletionRequest<'a> {
     model: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
-    max_completion_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_completion_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
     response_format: serde_json::Value,
     messages: Vec<ChatMessage<'a>>,
 }
@@ -764,13 +768,13 @@ async fn analyze_dossier(
     config: &AppConfig,
     dossier: &ScanDossier,
 ) -> Result<ScanLlmResponse> {
-    let api_key = llm_api_key(config)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("read {}", config.llm.api_key_env))?;
+    let api_key = llm_api_key(config);
+    let uses_max_tokens = llm_max_output_tokens_field(&config.llm.provider) == "max_tokens";
     let request = ChatCompletionRequest {
         model: &config.llm.model,
         temperature: Some(config.llm.temperature),
-        max_completion_tokens: config.llm.max_output_tokens,
+        max_completion_tokens: (!uses_max_tokens).then_some(config.llm.max_output_tokens),
+        max_tokens: uses_max_tokens.then_some(config.llm.max_output_tokens),
         response_format: serde_json::json!({ "type": "json_object" }),
         messages: vec![
             ChatMessage {
@@ -798,11 +802,8 @@ async fn analyze_dossier(
         ],
     };
 
-    let url = format!(
-        "{}/chat/completions",
-        config.llm.base_url.trim_end_matches('/')
-    );
-    let (status, body) = send_scan_request(client, &url, &api_key, &request).await?;
+    let url = format!("{}/chat/completions", effective_llm_base_url(&config.llm));
+    let (status, body) = send_scan_request(client, &url, api_key.as_deref(), &request).await?;
     if !status.is_success() {
         if request_rejects_temperature(&body) {
             let retry_request = ChatCompletionRequest {
@@ -810,7 +811,7 @@ async fn analyze_dossier(
                 ..request
             };
             let (retry_status, retry_body) =
-                send_scan_request(client, &url, &api_key, &retry_request).await?;
+                send_scan_request(client, &url, api_key.as_deref(), &retry_request).await?;
             if !retry_status.is_success() {
                 anyhow::bail!("llm scan request failed: {retry_status} {retry_body}");
             }
@@ -824,13 +825,16 @@ async fn analyze_dossier(
 async fn send_scan_request(
     client: &Client,
     url: &str,
-    api_key: &str,
+    api_key: Option<&str>,
     request: &ChatCompletionRequest<'_>,
 ) -> Result<(reqwest::StatusCode, String)> {
-    let response = client
+    let mut builder = client
         .post(url)
-        .header(header::AUTHORIZATION, format!("Bearer {api_key}"))
-        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(api_key) = api_key {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {api_key}"));
+    }
+    let response = builder
         .json(request)
         .send()
         .await
@@ -861,37 +865,7 @@ fn parse_scan_response(body: &str) -> Result<ScanLlmResponse> {
 }
 
 fn llm_api_key(config: &AppConfig) -> Option<String> {
-    env::var(&config.llm.api_key_env)
-        .ok()
-        .or_else(|| {
-            discover_repo_env_path()
-                .and_then(|path| shared_env_lookup(&path, &config.llm.api_key_env))
-        })
-        .or_else(|| {
-            discover_global_config_path()
-                .map(|path| {
-                    path.parent()
-                        .unwrap_or_else(|| Path::new("."))
-                        .join("memory-layer.env")
-                })
-                .and_then(|path| shared_env_lookup(&path, &config.llm.api_key_env))
-        })
-}
-
-fn shared_env_lookup(path: &Path, key: &str) -> Option<String> {
-    let content = fs::read_to_string(path).ok()?;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some((name, value)) = trimmed.split_once('=')
-            && name.trim() == key
-        {
-            return Some(value.trim().to_string());
-        }
-    }
-    None
+    resolve_llm_api_key(&config.llm)
 }
 
 fn extract_content_text(value: &serde_json::Value) -> Result<String> {

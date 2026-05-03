@@ -32,7 +32,7 @@ The default text output shows:
 - cited memory numbers, matching the ranked result list
 - retrieval diagnostics and provenance highlights
 
-If LLM answering is configured, the backend asks the model to answer using only the returned memories. If the model is unavailable or returns invalid citations, Memory Layer falls back to deterministic summary synthesis and reports the fallback reason.
+If LLM answering is configured, the backend asks the model to answer using only the returned memories. Supported LLM providers are `openai_compatible` and `ollama`; Ollama uses `http://127.0.0.1:11434/v1` and no API key by default. If the model is unavailable or returns invalid citations, Memory Layer falls back to deterministic summary synthesis and reports the fallback reason.
 
 ## Graph-Aware Retrieval
 

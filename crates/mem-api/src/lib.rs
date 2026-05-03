@@ -2660,6 +2660,74 @@ impl Default for LlmConfig {
     }
 }
 
+pub const OPENAI_COMPATIBLE_PROVIDER: &str = "openai_compatible";
+pub const OLLAMA_PROVIDER: &str = "ollama";
+pub const OPENAI_COMPATIBLE_BASE_URL: &str = "https://api.openai.com/v1";
+pub const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
+
+pub fn is_ollama_provider(provider: &str) -> bool {
+    provider.trim().eq_ignore_ascii_case(OLLAMA_PROVIDER)
+}
+
+pub fn is_supported_llm_provider(provider: &str) -> bool {
+    matches!(
+        provider.trim(),
+        OPENAI_COMPATIBLE_PROVIDER | OLLAMA_PROVIDER
+    )
+}
+
+pub fn effective_llm_base_url(config: &LlmConfig) -> String {
+    effective_llm_base_url_for(&config.provider, &config.base_url)
+}
+
+pub fn effective_llm_base_url_for(provider: &str, configured: &str) -> String {
+    let configured = configured.trim().trim_end_matches('/');
+    if is_ollama_provider(provider)
+        && (configured.is_empty() || configured == OPENAI_COMPATIBLE_BASE_URL)
+    {
+        OLLAMA_BASE_URL.to_string()
+    } else if configured.is_empty() {
+        OPENAI_COMPATIBLE_BASE_URL.to_string()
+    } else {
+        configured.to_string()
+    }
+}
+
+pub fn llm_max_output_tokens_field(provider: &str) -> &'static str {
+    if is_ollama_provider(provider) {
+        "max_tokens"
+    } else {
+        "max_completion_tokens"
+    }
+}
+
+pub fn resolve_llm_api_key(config: &LlmConfig) -> Option<String> {
+    let key = config.llm_api_key_env_for_resolution()?;
+    resolve_secret_value(key).filter(|value| !value.trim().is_empty())
+}
+
+pub fn llm_requires_api_key(config: &LlmConfig) -> bool {
+    if is_ollama_provider(&config.provider) {
+        let key = config.api_key_env.trim();
+        !key.is_empty() && key != default_llm_api_key_env()
+    } else {
+        true
+    }
+}
+
+impl LlmConfig {
+    fn llm_api_key_env_for_resolution(&self) -> Option<&str> {
+        let key = self.api_key_env.trim();
+        if key.is_empty() {
+            return None;
+        }
+        if is_ollama_provider(&self.provider) && key == default_llm_api_key_env() {
+            return None;
+        }
+        Some(key)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingBackendConfig {
     /// Stable identifier used by CLI/API activation and user-visible
@@ -3153,6 +3221,37 @@ mod tests {
     #[test]
     fn memory_type_task_displays_as_snake_case() {
         assert_eq!(MemoryType::Task.to_string(), "task");
+    }
+
+    #[test]
+    fn ollama_llm_uses_local_default_and_no_inherited_openai_key() {
+        let config = LlmConfig {
+            provider: OLLAMA_PROVIDER.to_string(),
+            base_url: OPENAI_COMPATIBLE_BASE_URL.to_string(),
+            api_key_env: "OPENAI_API_KEY".to_string(),
+            model: "llama3.2".to_string(),
+            ..LlmConfig::default()
+        };
+        assert_eq!(effective_llm_base_url(&config), OLLAMA_BASE_URL);
+        assert_eq!(llm_max_output_tokens_field(&config.provider), "max_tokens");
+        assert!(!llm_requires_api_key(&config));
+        assert!(resolve_llm_api_key(&config).is_none());
+        let empty_key_config = LlmConfig {
+            api_key_env: String::new(),
+            ..config
+        };
+        assert!(!llm_requires_api_key(&empty_key_config));
+    }
+
+    #[test]
+    fn openai_compatible_llm_keeps_existing_defaults() {
+        let config = LlmConfig::default();
+        assert_eq!(effective_llm_base_url(&config), OPENAI_COMPATIBLE_BASE_URL);
+        assert_eq!(
+            llm_max_output_tokens_field(&config.provider),
+            "max_completion_tokens"
+        );
+        assert!(llm_requires_api_key(&config));
     }
 
     #[test]
