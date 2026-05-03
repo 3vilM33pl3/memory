@@ -101,3 +101,11 @@ affect success, step-level sequence scoring, and token-aware reporting.
 It is still not publication-grade proof by itself. For external claims, grow the
 suite with more held-out items, run enough repeats for stable confidence
 intervals, and preserve every run artifact.
+
+## Recorded Runs
+
+- [2026-05-03 full Docker run](evaluation-runs/2026-05-03-memory-improvement-v1-full.md):
+  five paired repeats with LLM judge enabled. Full-memory improved aggregate
+  success from `0.0%` to `18.1%`, with strong retrieval and grounded-answer
+  gains, but the coding-continuity sequence still failed Memory-evidence
+  verification.
