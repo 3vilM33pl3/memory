@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-memory_cmd="/workspace/target/debug/memory --config /workspace/evals/docker/memory-improvement/config.eval.toml"
+memory_cmd="/usr/local/bin/memory --config /workspace/evals/docker/memory-improvement/config.eval.toml"
 eval_suite="${MEMORY_EVAL_SUITE:-/workspace/evals/suites/memory-improvement-v1}"
 repeat="${MEMORY_EVAL_REPEAT:-5}"
 conditions="${MEMORY_EVAL_CONDITIONS:-no-memory lexical semantic graph full-memory}"

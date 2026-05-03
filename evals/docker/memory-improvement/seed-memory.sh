@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-memory_cmd="${MEMORY_EVAL_MEMORY_CMD:-/workspace/target/debug/memory --config /workspace/evals/docker/memory-improvement/config.eval.toml}"
+memory_cmd="${MEMORY_EVAL_MEMORY_CMD:-/usr/local/bin/memory --config /workspace/evals/docker/memory-improvement/config.eval.toml}"
 payload="/tmp/memory-improvement-seed.json"
 
 cat > "$payload" <<'JSON'

@@ -25,7 +25,7 @@ services:
     volumes:
       - ../../..:/workspace
       - ${CODEX_HOME:-$HOME/.codex}:/codex-home-host:ro
-    command: ["/workspace/target/debug/memory", "--config", "/workspace/evals/docker/memory-improvement/config.service.toml", "service", "run"]
+    command: ["/usr/local/bin/memory", "--config", "/workspace/evals/docker/memory-improvement/config.service.toml", "service", "run"]
   eval:
     build:
       context: ../../..
