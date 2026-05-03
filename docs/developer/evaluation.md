@@ -54,6 +54,13 @@ uses Codex's explicit sandbox-bypass flag, so keep fixtures disposable and
 isolated. Override the environment variable only when the alternative sandbox
 can still reach Memory.
 
+Dockerized Codex benchmarks must use a sanitized `CODEX_HOME`. The eval
+containers may copy authentication bootstrap files such as `auth.json`,
+`installation_id`, and `version.json`, but must not copy host `AGENTS.md`,
+`config.toml`, plugin caches, history, logs, rules, or session databases.
+Copying those files makes token and quality claims invalid because global
+agent instructions or tools can affect the evaluated run.
+
 Condition isolation for build tasks is practical rather than absolute in v1.
 The `no-memory` prompt explicitly forbids Memory usage and the runner removes
 common Memory environment variables. Memory-enabled conditions receive a prompt
@@ -105,8 +112,9 @@ docker compose -f evals/docker/app-build-sequence/compose.yml run --rm eval
 Artifacts are bind-mounted to `target/memory-evals-docker/` on the host. Use
 `docker compose -f evals/docker/app-build-sequence/compose.yml down -v` for a
 clean database before rerunning. The eval container mounts the host Codex home
-read-only so the Codex CLI can use the same local credentials without baking
-secrets into the image.
+read-only, then copies only the minimal auth bootstrap files into an otherwise
+clean `CODEX_HOME` so credentials are available without importing global agent
+configuration.
 
 The same Docker stack can run follow-up suites by setting `MEMORY_EVAL_SUITE`.
 `evals/suites/app-build-functionality-sequence-codex-v1` is the first follow-up:

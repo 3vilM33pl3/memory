@@ -6,7 +6,11 @@ eval_suite="${MEMORY_EVAL_SUITE:-/workspace/evals/suites/app-build-sequence-code
 
 mkdir -p "$CODEX_HOME"
 if [ -d /codex-home-host ]; then
-  cp -a /codex-home-host/. "$CODEX_HOME"/
+  for file in auth.json installation_id version.json; do
+    if [ -f "/codex-home-host/$file" ]; then
+      cp "/codex-home-host/$file" "$CODEX_HOME/$file"
+    fi
+  done
 fi
 
 until $memory_cmd health >/tmp/memory-health.txt 2>/tmp/memory-health.err; do

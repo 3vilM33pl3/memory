@@ -200,6 +200,11 @@ Codex process must reach the local Memory service on localhost. In that default
 mode the wrapper uses Codex's explicit sandbox-bypass flag; only run this suite
 against disposable fixtures.
 
+Dockerized Codex evals use a sanitized `CODEX_HOME`: only minimal auth bootstrap
+files are copied from the host. Do not copy host `AGENTS.md`, Codex config,
+plugins, session state, history, or logs into benchmark containers, because
+those files can introduce non-benchmark instructions and skew token totals.
+
 Run the longer Dockerized sequence suite when you want an isolated full-stack
 evaluation with PostgreSQL, pgvector, Memory service, seeded memories, and real
 Codex agents:
