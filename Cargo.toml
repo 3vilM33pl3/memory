@@ -42,6 +42,7 @@ tokio-tungstenite = { version = "0.24.0", default-features = false, features = [
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
 sha2 = "0.10.9"
 humantime-serde = "1.1.1"
+notify = "8.2.0"
 ratatui = "0.29.0"
 crossterm = "0.28.1"
 capnp = "0.19.8"

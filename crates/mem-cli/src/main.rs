@@ -21,7 +21,7 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
-use mem_agenttop::{AgentSession, AgentTop, SessionStatus};
+use mem_agenttop::LightweightAgentSession;
 use mem_api::{
     ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
     CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
@@ -5670,19 +5670,33 @@ fn watch_service_status(repo_root: &Path, project: &str) -> Result<String> {
 
 #[cfg(not(target_os = "macos"))]
 const WATCH_MANAGER_UNIT_NAME: &str = "memory-watch-manager.service";
-const WATCH_MANAGER_POLL_INTERVAL_SECONDS: u64 = 2;
+const WATCH_MANAGER_EVENT_DEBOUNCE_MS: u64 = 500;
+const WATCH_MANAGER_FALLBACK_SCAN_SECONDS: u64 = 30;
+const WATCH_MANAGER_HEALTH_SCAN_SECONDS: u64 = 60;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 struct WatcherManagerState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    last_reconcile_reason: String,
+    #[serde(default)]
+    last_reconcile_duration_ms: u128,
+    #[serde(default)]
+    event_count: u64,
+    #[serde(default)]
+    fallback_scan_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lock_owner_pid: Option<u32>,
     #[serde(default)]
     sessions: std::collections::BTreeMap<String, ManagedWatcherSession>,
     #[serde(default)]
     warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ManagedWatcherSession {
     unit_name: String,
     project: String,
@@ -5694,12 +5708,13 @@ struct ManagedWatcherSession {
 }
 
 async fn run_watcher_manager(config: AppConfig, config_path: Option<PathBuf>) -> Result<()> {
+    let _lock = WatcherManagerLock::acquire(config.profile)?;
     let version = config.profile.display_version(env!("CARGO_PKG_VERSION"));
     eprintln!(
-        "watcher manager v{version} starting (profile={profile}, service={service_addr}, poll={poll}s)",
+        "watcher manager v{version} starting (profile={profile}, service={service_addr}, mode=event-driven, fallback={fallback}s)",
         profile = config.profile,
         service_addr = config.service.bind_addr,
-        poll = WATCH_MANAGER_POLL_INTERVAL_SECONDS,
+        fallback = WATCH_MANAGER_FALLBACK_SCAN_SECONDS,
     );
     if let Some(path) = config.resolved_config_path.as_deref() {
         eprintln!("  config: {}", path.display());
@@ -5713,30 +5728,102 @@ async fn run_watcher_manager(config: AppConfig, config_path: Option<PathBuf>) ->
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "unknown".to_string())
     );
-    reconcile_watcher_manager(&config, config_path.as_deref()).await?;
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-        WATCH_MANAGER_POLL_INTERVAL_SECONDS,
+    let mut event_rx = match start_watcher_manager_event_source() {
+        Ok(rx) => Some(rx),
+        Err(error) => {
+            eprintln!(
+                "watcher manager session file events unavailable; using fallback scans only: {error}"
+            );
+            None
+        }
+    };
+    reconcile_watcher_manager(&config, config_path.as_deref(), "startup", true, 0, 0).await?;
+    let mut debounce: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
+    let mut fallback = tokio::time::interval(std::time::Duration::from_secs(
+        WATCH_MANAGER_FALLBACK_SCAN_SECONDS,
     ));
+    fallback.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    fallback.tick().await;
+    let mut health = tokio::time::interval(std::time::Duration::from_secs(
+        WATCH_MANAGER_HEALTH_SCAN_SECONDS,
+    ));
+    health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    health.tick().await;
+    let mut event_count = 0u64;
+    let mut fallback_scan_count = 0u64;
     loop {
-        interval.tick().await;
-        if let Err(error) = reconcile_watcher_manager(&config, config_path.as_deref()).await {
-            eprintln!("watcher manager reconcile failed: {error}");
+        tokio::select! {
+            Some(_) = async {
+                match event_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            }, if event_rx.is_some() => {
+                event_count = event_count.saturating_add(1);
+                debounce = Some(Box::pin(tokio::time::sleep(std::time::Duration::from_millis(
+                    WATCH_MANAGER_EVENT_DEBOUNCE_MS,
+                ))));
+            }
+            _ = async {
+                if let Some(delay) = debounce.as_mut() {
+                    delay.as_mut().await;
+                }
+            }, if debounce.is_some() => {
+                debounce = None;
+                if let Err(error) = reconcile_watcher_manager(
+                    &config,
+                    config_path.as_deref(),
+                    "session-file-event",
+                    false,
+                    event_count,
+                    fallback_scan_count,
+                ).await {
+                    eprintln!("watcher manager reconcile failed: {error}");
+                }
+            }
+            _ = fallback.tick() => {
+                fallback_scan_count = fallback_scan_count.saturating_add(1);
+                if let Err(error) = reconcile_watcher_manager(
+                    &config,
+                    config_path.as_deref(),
+                    "fallback-scan",
+                    false,
+                    event_count,
+                    fallback_scan_count,
+                ).await {
+                    eprintln!("watcher manager reconcile failed: {error}");
+                }
+            }
+            _ = health.tick() => {
+                if let Err(error) = reconcile_watcher_manager(
+                    &config,
+                    config_path.as_deref(),
+                    "health-scan",
+                    true,
+                    event_count,
+                    fallback_scan_count,
+                ).await {
+                    eprintln!("watcher manager reconcile failed: {error}");
+                }
+            }
         }
     }
 }
 
-async fn reconcile_watcher_manager(config: &AppConfig, config_path: Option<&Path>) -> Result<()> {
+async fn reconcile_watcher_manager(
+    config: &AppConfig,
+    config_path: Option<&Path>,
+    reason: &str,
+    verify_units: bool,
+    event_count: u64,
+    fallback_scan_count: u64,
+) -> Result<()> {
+    let started = Instant::now();
     let mut state = load_watcher_manager_state(config.profile)?;
-    state.updated_at = Some(Utc::now());
+    let previous_state = state.clone();
     state.warnings.clear();
 
-    let mut top = AgentTop::new();
-    let snapshot = top.collect_snapshot();
-    let sessions = snapshot
-        .sessions
-        .into_iter()
-        .filter(is_live_agent_session)
-        .collect::<Vec<_>>();
+    let sessions = mem_agenttop::collect_lightweight_agent_sessions();
     let mut seen = std::collections::BTreeSet::new();
 
     for session in sessions {
@@ -5766,12 +5853,15 @@ async fn reconcile_watcher_manager(config: &AppConfig, config_path: Option<&Path
         }
 
         let unit_name = managed_watch_service_name(&session.session_id);
-        if should_start_agent_watcher(
-            state.sessions.contains_key(&session.session_id),
-            managed_watch_service_loaded(&session.session_id),
-            managed_watch_service_running(&session.session_id),
-        ) {
-            if managed_watch_service_loaded(&session.session_id) {
+        let tracked = state.sessions.contains_key(&session.session_id);
+        let mut unit_loaded = tracked;
+        let mut unit_running = tracked;
+        if !tracked || verify_units {
+            unit_loaded = managed_watch_service_loaded(&session.session_id);
+            unit_running = managed_watch_service_running(&session.session_id);
+        }
+        if should_start_agent_watcher(tracked, unit_loaded, unit_running) {
+            if unit_loaded {
                 let _ = stop_managed_watch_service(&session.session_id);
             }
             start_managed_agent_watcher(&repo_root, &project, &session, config_path)?;
@@ -5813,12 +5903,15 @@ async fn reconcile_watcher_manager(config: &AppConfig, config_path: Option<&Path
         }
     }
 
-    save_watcher_manager_state(config.profile, &state)?;
+    state.updated_at = Some(Utc::now());
+    state.mode = "event-driven".to_string();
+    state.last_reconcile_reason = reason.to_string();
+    state.last_reconcile_duration_ms = started.elapsed().as_millis();
+    state.event_count = event_count;
+    state.fallback_scan_count = fallback_scan_count;
+    state.lock_owner_pid = Some(std::process::id());
+    save_watcher_manager_state_if_changed(config.profile, &previous_state, &state)?;
     Ok(())
-}
-
-fn is_live_agent_session(session: &AgentSession) -> bool {
-    matches!(session.agent_cli, "codex" | "claude") && session.status != SessionStatus::Done
 }
 
 fn resolve_agent_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
@@ -5916,8 +6009,7 @@ fn ensure_agent_watch_repo_config(repo_root: &Path) -> Result<()> {
         "repo_root".to_string(),
         toml::Value::String(repo_root.display().to_string()),
     );
-    fs::write(&path, toml::to_string_pretty(&value)?)
-        .with_context(|| format!("write {}", path.display()))?;
+    write_file_if_changed(&path, toml::to_string_pretty(&value)?.as_bytes())?;
     Ok(())
 }
 
@@ -5993,7 +6085,7 @@ fn managed_watch_service_running(session_id: &str) -> bool {
 fn start_managed_agent_watcher(
     repo_root: &Path,
     project: &str,
-    session: &AgentSession,
+    session: &LightweightAgentSession,
     config_path: Option<&Path>,
 ) -> Result<()> {
     let started_at = DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
@@ -6104,6 +6196,32 @@ fn save_watcher_manager_state(profile: Profile, state: &WatcherManagerState) -> 
         .with_context(|| format!("write {}", path.display()))
 }
 
+fn save_watcher_manager_state_if_changed(
+    profile: Profile,
+    previous: &WatcherManagerState,
+    next: &WatcherManagerState,
+) -> Result<()> {
+    let mut comparable_previous = previous.clone();
+    let mut comparable_next = next.clone();
+    comparable_previous.updated_at = None;
+    comparable_next.updated_at = None;
+    comparable_previous.last_reconcile_duration_ms = 0;
+    comparable_next.last_reconcile_duration_ms = 0;
+    if comparable_previous == comparable_next {
+        return Ok(());
+    }
+    save_watcher_manager_state(profile, next)
+}
+
+fn write_file_if_changed(path: &Path, next: &[u8]) -> Result<()> {
+    if let Ok(current) = fs::read(path)
+        && current == next
+    {
+        return Ok(());
+    }
+    fs::write(path, next).with_context(|| format!("write {}", path.display()))
+}
+
 fn clear_watcher_manager_state(profile: Profile) -> Result<()> {
     let path = watcher_manager_state_path(profile)?;
     if path.exists() {
@@ -6120,6 +6238,93 @@ fn watcher_manager_state_path(profile: Profile) -> Result<PathBuf> {
     Ok(platform::preferred_user_state_dir()
         .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
         .join(filename))
+}
+
+fn watcher_manager_lock_path(profile: Profile) -> Result<PathBuf> {
+    Ok(watcher_manager_state_path(profile)?.with_extension("lock"))
+}
+
+struct WatcherManagerLock {
+    path: PathBuf,
+}
+
+impl WatcherManagerLock {
+    fn acquire(profile: Profile) -> Result<Self> {
+        let path = watcher_manager_lock_path(profile)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        let pid = std::process::id();
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                writeln!(file, "{pid}")?;
+                Ok(Self { path })
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                let owner = fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u32>().ok());
+                if let Some(owner) = owner
+                    && process_is_alive(owner)
+                {
+                    anyhow::bail!(
+                        "watcher manager is already running with pid {owner}; stop it before starting another manager"
+                    );
+                }
+                let _ = fs::remove_file(&path);
+                Self::acquire(profile)
+            }
+            Err(error) => Err(error).with_context(|| format!("create {}", path.display())),
+        }
+    }
+}
+
+impl Drop for WatcherManagerLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    ProcessCommand::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn start_watcher_manager_event_source() -> Result<tokio::sync::mpsc::UnboundedReceiver<()>> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+        if result.is_ok() {
+            let _ = tx.send(());
+        }
+    })
+    .context("create watcher manager filesystem watcher")?;
+
+    for dir in watcher_manager_session_dirs() {
+        if dir.is_dir() {
+            notify::Watcher::watch(&mut watcher, &dir, notify::RecursiveMode::Recursive)
+                .with_context(|| format!("watch {}", dir.display()))?;
+        }
+    }
+
+    std::mem::forget(watcher);
+    Ok(rx)
+}
+
+fn watcher_manager_session_dirs() -> Vec<PathBuf> {
+    let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let mut dirs = vec![home.join(".codex").join("sessions")];
+    let claude_base = env::var("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home.join(".claude"));
+    dirs.push(claude_base.join("sessions"));
+    dirs
 }
 
 fn enable_watch_manager_service(config_path: &Path) -> Result<String> {
@@ -6262,6 +6467,26 @@ fn watch_manager_service_status(profile: Profile) -> Result<String> {
     } else {
         format!("- warnings: {}", state.warnings.join(" | "))
     };
+    let runtime_lines = format!(
+        "- mode: {}\n- last reconcile reason: {}\n- last reconcile duration: {} ms\n- event count: {}\n- fallback scans: {}\n- lock owner pid: {}",
+        if state.mode.is_empty() {
+            "unknown"
+        } else {
+            state.mode.as_str()
+        },
+        if state.last_reconcile_reason.is_empty() {
+            "n/a"
+        } else {
+            state.last_reconcile_reason.as_str()
+        },
+        state.last_reconcile_duration_ms,
+        state.event_count,
+        state.fallback_scan_count,
+        state
+            .lock_owner_pid
+            .map(|pid| pid.to_string())
+            .unwrap_or_else(|| "n/a".to_string())
+    );
 
     #[cfg(target_os = "macos")]
     {
@@ -6269,7 +6494,7 @@ fn watch_manager_service_status(profile: Profile) -> Result<String> {
         let label = watch_manager_launch_agent_label();
         let status = launch_agent_status(label)?;
         return Ok(format!(
-            "Watcher manager service:\n- label: {}\n- plist: {}\n- installed: {}\n- loaded: {}\n- running: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n\nInspect with:\n- launchctl print {}/{}\n- memory watcher manager status",
+            "Watcher manager service:\n- label: {}\n- plist: {}\n- installed: {}\n- loaded: {}\n- running: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n{}\n\nInspect with:\n- launchctl print {}/{}\n- memory watcher manager status",
             label,
             plist_path.display(),
             yes_no(plist_path.exists()),
@@ -6280,6 +6505,7 @@ fn watch_manager_service_status(profile: Profile) -> Result<String> {
                 .updated_at
                 .map(|value| value.to_rfc3339())
                 .unwrap_or_else(|| "n/a".to_string()),
+            runtime_lines,
             warning_lines,
             launchctl_domain_target()?,
             label
@@ -6292,7 +6518,7 @@ fn watch_manager_service_status(profile: Profile) -> Result<String> {
         let is_enabled = run_systemctl_user(["is-enabled", WATCH_MANAGER_UNIT_NAME]).is_ok();
         let is_active = run_systemctl_user(["is-active", WATCH_MANAGER_UNIT_NAME]).is_ok();
         Ok(format!(
-            "Watcher manager service:\n- unit: {}\n- installed: {}\n- enabled: {}\n- active: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n\nInspect with:\n- systemctl --user status {}\n- memory watcher manager status",
+            "Watcher manager service:\n- unit: {}\n- installed: {}\n- enabled: {}\n- active: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n{}\n\nInspect with:\n- systemctl --user status {}\n- memory watcher manager status",
             unit_path.display(),
             yes_no(unit_path.exists()),
             yes_no(is_enabled),
@@ -6302,6 +6528,7 @@ fn watch_manager_service_status(profile: Profile) -> Result<String> {
                 .updated_at
                 .map(|value| value.to_rfc3339())
                 .unwrap_or_else(|| "n/a".to_string()),
+            runtime_lines,
             warning_lines,
             WATCH_MANAGER_UNIT_NAME
         ))
@@ -7065,7 +7292,8 @@ fn render_repo_config(repo_root: &Path) -> String {
 enabled = false
 mode = "suggest"
 repo_root = "{repo_root}"
-poll_interval = "10s"
+file_events = true
+poll_interval = "60s"
 idle_threshold = "5m"
 min_changed_files = 2
 require_passing_test = false
@@ -12049,8 +12277,9 @@ mod tests {
         mask_database_url, parse_memory_type_arg, parse_no_memory_grounded_answer,
         parse_plan_checkboxes, render_agent_project_config, render_claude_md_memory_section,
         repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
-        root_gitignore_contains_mem, shared_env_lookup, token_usage_from_chat_body,
-        watcher_command_requires_config_load, write_headers,
+        root_gitignore_contains_mem, shared_env_lookup, should_start_agent_watcher,
+        token_usage_from_chat_body, watcher_command_requires_config_load, write_file_if_changed,
+        write_headers,
     };
     use mem_api::AppConfig;
 
@@ -13196,34 +13425,12 @@ mod tests {
     fn managed_watch_launch_agent_uses_agent_metadata() {
         let repo_root = unique_temp_dir("mem-managed-watch-launch-agent");
         fs::create_dir_all(&repo_root).unwrap();
-        let session = AgentSession {
+        let session = LightweightAgentSession {
             agent_cli: "codex",
             pid: 42,
             session_id: "session-123".to_string(),
             cwd: repo_root.display().to_string(),
-            project_name: "homelab".to_string(),
             started_at: Utc::now().timestamp_millis() as u64,
-            status: AgentSessionStatus::Waiting,
-            model: "gpt-5.4".to_string(),
-            context_percent: 0.0,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_cache_read: 0,
-            total_cache_create: 0,
-            turn_count: 0,
-            current_tasks: Vec::new(),
-            mem_mb: 0,
-            version: "test".to_string(),
-            git_branch: "main".to_string(),
-            git_added: 0,
-            git_modified: 0,
-            token_history: Vec::new(),
-            subagents: Vec::new(),
-            mem_file_count: 0,
-            mem_line_count: 0,
-            children: Vec::new(),
-            initial_prompt: String::new(),
-            first_assistant_text: String::new(),
         };
         let plist = render_managed_watch_launch_agent(
             &repo_root,
@@ -13396,6 +13603,30 @@ mod tests {
         };
 
         assert!(ensure_direct_llm_eval_config(&config).is_ok());
+    }
+
+    #[test]
+    fn watcher_manager_start_check_uses_cached_tracked_state() {
+        assert!(!should_start_agent_watcher(true, true, true));
+        assert!(should_start_agent_watcher(false, true, true));
+        assert!(should_start_agent_watcher(true, false, true));
+        assert!(should_start_agent_watcher(true, true, false));
+    }
+
+    #[test]
+    fn write_file_if_changed_skips_identical_content() {
+        let dir = unique_temp_dir("mem-write-if-changed");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        write_file_if_changed(&path, b"same").unwrap();
+        let first_modified = fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        write_file_if_changed(&path, b"same").unwrap();
+        let second_modified = fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(first_modified, second_modified);
+        write_file_if_changed(&path, b"different").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "different");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn test_app_config() -> AppConfig {

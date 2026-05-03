@@ -7,7 +7,7 @@ use mem_platform as platform;
 use mem_watch::{
     WatcherAgentOwner, build_watcher_heartbeat_request, build_watcher_unregister_request,
     detect_hostname, fetch_service_instance_id, flush_path, heartbeat_watcher, load_state,
-    owner_session_is_alive, run_once, to_status, unregister_watcher,
+    owner_session_is_alive, path_is_ignored, run_once, to_status, unregister_watcher,
 };
 use reqwest::Client;
 use uuid::Uuid;
@@ -150,13 +150,56 @@ pub async fn run_loop(
         heartbeat_watcher(&client, &config, &heartbeat_request).await,
     );
 
-    let mut poll = tokio::time::interval(config.automation.poll_interval);
+    let mut repo_events = if config.automation.file_events {
+        match start_repo_event_source(&repo_root, &config.automation.ignored_paths) {
+            Ok(rx) => Some(rx),
+            Err(error) => {
+                eprintln!("watcher file events unavailable; falling back to polling: {error}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let mut debounce: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
+    let mut fallback_poll = tokio::time::interval(config.automation.poll_interval);
+    fallback_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    fallback_poll.tick().await;
     let mut liveness = tokio::time::interval(std::time::Duration::from_secs(30));
+    liveness.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    liveness.tick().await;
     let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    heartbeat.tick().await;
 
     loop {
         tokio::select! {
-            _ = poll.tick() => {
+            Some(_) = async {
+                match repo_events.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            }, if repo_events.is_some() => {
+                debounce = Some(Box::pin(tokio::time::sleep(std::time::Duration::from_secs(2))));
+            }
+            _ = async {
+                if let Some(delay) = debounce.as_mut() {
+                    delay.as_mut().await;
+                }
+            }, if debounce.is_some() => {
+                debounce = None;
+                run_once(
+                    &config,
+                    &client,
+                    &project,
+                    &repo_root,
+                    false,
+                    false,
+                    &writer_id,
+                    writer_name.as_deref(),
+                ).await?;
+            }
+            _ = fallback_poll.tick() => {
                 run_once(
                     &config,
                     &client,
@@ -209,6 +252,34 @@ pub async fn run_loop(
         }
     }
     Ok(())
+}
+
+fn start_repo_event_source(
+    repo_root: &std::path::Path,
+    ignored_paths: &[String],
+) -> Result<tokio::sync::mpsc::UnboundedReceiver<()>> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let root = repo_root.to_path_buf();
+    let ignored = ignored_paths.to_vec();
+    let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+        let Ok(event) = result else {
+            return;
+        };
+        let useful = event.paths.iter().any(|path| {
+            path.strip_prefix(&root)
+                .ok()
+                .and_then(|relative| relative.to_str())
+                .is_some_and(|relative| !path_is_ignored(relative, &ignored))
+        });
+        if useful {
+            let _ = tx.send(());
+        }
+    })
+    .context("create repository filesystem watcher")?;
+    notify::Watcher::watch(&mut watcher, repo_root, notify::RecursiveMode::Recursive)
+        .with_context(|| format!("watch {}", repo_root.display()))?;
+    std::mem::forget(watcher);
+    Ok(rx)
 }
 
 fn update_backend_instance_state(

@@ -6,7 +6,9 @@ pub mod rate_limit;
 pub use claude::ClaudeCollector;
 pub use codex::CodexCollector;
 
-use crate::model::{AgentSession, OrphanPort, RateLimitInfo, SessionStatus};
+use crate::model::{
+    AgentSession, LightweightAgentSession, OrphanPort, RateLimitInfo, SessionStatus,
+};
 use std::collections::HashMap;
 
 /// Trait for agent-specific session collectors.
@@ -205,4 +207,13 @@ impl MultiCollector {
 
         all
     }
+}
+
+pub fn collect_lightweight_sessions() -> Vec<LightweightAgentSession> {
+    let shared = SharedProcessData::fetch(Some(&HashMap::new()));
+    let mut sessions = Vec::new();
+    sessions.extend(codex::collect_lightweight_sessions(&shared.process_info));
+    sessions.extend(claude::collect_lightweight_sessions(&shared.process_info));
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.started_at));
+    sessions
 }

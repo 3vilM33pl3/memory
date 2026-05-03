@@ -19,6 +19,7 @@ mem-graph = { path = "../mem-graph" }
 mem-platform = { path = "../mem-platform" }
 mem-service = { path = "../mem-service" }
 mem-watch = { path = "../mem-watch" }
+notify.workspace = true
 ratatui.workspace = true
 reqwest.workspace = true
 serde.workspace = true

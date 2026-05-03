@@ -447,6 +447,10 @@ struct ManagerFooterStatus {
     tracked_sessions: usize,
     warning_count: usize,
     mode: Option<ManagerMode>,
+    runtime_mode: Option<String>,
+    last_reconcile_reason: Option<String>,
+    event_count: u64,
+    fallback_scan_count: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -465,6 +469,14 @@ enum ManagerMode {
 
 #[derive(Debug, Default, Deserialize)]
 struct ManagerStateFile {
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    last_reconcile_reason: String,
+    #[serde(default)]
+    event_count: u64,
+    #[serde(default)]
+    fallback_scan_count: u64,
     #[serde(default)]
     sessions: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
@@ -7399,6 +7411,12 @@ fn manager_status_detail(app: &App) -> Option<String> {
             ManagerMode::Foreground => "manual".to_string(),
         });
     }
+    if let Some(runtime_mode) = &status.runtime_mode {
+        parts.push(runtime_mode.clone());
+    }
+    if let Some(reason) = &status.last_reconcile_reason {
+        parts.push(format!("last {reason}"));
+    }
     parts.push(format!(
         "{} session{}",
         status.tracked_sessions,
@@ -7410,6 +7428,12 @@ fn manager_status_detail(app: &App) -> Option<String> {
     ));
     if status.warning_count > 0 {
         parts.push(format!("{} warn", status.warning_count));
+    }
+    if status.event_count > 0 || status.fallback_scan_count > 0 {
+        parts.push(format!(
+            "{} events, {} fallback",
+            status.event_count, status.fallback_scan_count
+        ));
     }
     Some(parts.join(", "))
 }
@@ -7786,6 +7810,20 @@ fn load_manager_footer_status(profile: Profile) -> ManagerFooterStatus {
         .as_ref()
         .map(|state| state.warnings.len())
         .unwrap_or(0);
+    let runtime_mode = state_file
+        .as_ref()
+        .and_then(|state| (!state.mode.is_empty()).then(|| state.mode.clone()));
+    let last_reconcile_reason = state_file.as_ref().and_then(|state| {
+        (!state.last_reconcile_reason.is_empty()).then(|| state.last_reconcile_reason.clone())
+    });
+    let event_count = state_file
+        .as_ref()
+        .map(|state| state.event_count)
+        .unwrap_or(0);
+    let fallback_scan_count = state_file
+        .as_ref()
+        .map(|state| state.fallback_scan_count)
+        .unwrap_or(0);
     let state = derive_manager_state(
         unit_installed,
         unit_enabled,
@@ -7805,6 +7843,10 @@ fn load_manager_footer_status(profile: Profile) -> ManagerFooterStatus {
         tracked_sessions,
         warning_count,
         mode,
+        runtime_mode,
+        last_reconcile_reason,
+        event_count,
+        fallback_scan_count,
     }
 }
 
@@ -8348,12 +8390,19 @@ mod tests {
             tracked_sessions: 2,
             warning_count: 1,
             mode: Some(super::ManagerMode::Foreground),
+            runtime_mode: Some("event-driven".to_string()),
+            last_reconcile_reason: Some("session-file-event".to_string()),
+            event_count: 3,
+            fallback_scan_count: 1,
         });
 
         assert_eq!(manager_status_label(&app), "active");
         assert_eq!(
             manager_status_detail(&app),
-            Some("manual, 2 sessions, 1 warn".to_string())
+            Some(
+                "manual, event-driven, last session-file-event, 2 sessions, 1 warn, 3 events, 1 fallback"
+                    .to_string()
+            )
         );
     }
 

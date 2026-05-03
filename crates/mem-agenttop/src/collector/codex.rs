@@ -1,5 +1,7 @@
 use super::process::{self, ProcInfo};
-use crate::model::{AgentSession, ChildProcess, RateLimitInfo, SessionStatus};
+use crate::model::{
+    AgentSession, ChildProcess, LightweightAgentSession, RateLimitInfo, SessionStatus,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -415,6 +417,49 @@ impl CodexCollector {
     }
 }
 
+pub fn collect_lightweight_sessions(
+    process_info: &HashMap<u32, ProcInfo>,
+) -> Vec<LightweightAgentSession> {
+    let sessions_dir = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".codex")
+        .join("sessions");
+    if !sessions_dir.exists() {
+        return Vec::new();
+    }
+
+    let codex_pids = CodexCollector::find_codex_pids_from_shared(process_info);
+    let just_pids = codex_pids.iter().map(|(pid, _)| *pid).collect::<Vec<_>>();
+    let pid_to_jsonl = CodexCollector::map_pid_to_jsonl(&just_pids);
+    let mut sessions = Vec::new();
+
+    for (pid, jsonl_path) in pid_to_jsonl {
+        if let Some(mut session) = parse_codex_jsonl_lightweight(&jsonl_path) {
+            session.pid = pid;
+            sessions.push(session);
+        }
+    }
+
+    for (pid, _) in codex_pids {
+        if sessions.iter().any(|session| session.pid == pid) {
+            continue;
+        }
+        if let Some(cwd) = read_proc_cwd(pid)
+            && let Some((started_at, start_ticks)) = read_proc_started_at(pid)
+        {
+            sessions.push(LightweightAgentSession {
+                agent_cli: "codex",
+                pid,
+                session_id: format!("pending-{pid}-{start_ticks}"),
+                cwd,
+                started_at,
+            });
+        }
+    }
+
+    sessions
+}
+
 #[cfg(target_os = "linux")]
 fn read_proc_cwd(pid: u32) -> Option<String> {
     std::fs::read_link(format!("/proc/{pid}/cwd"))
@@ -530,6 +575,40 @@ struct CodexJSONLResult {
 /// - event_msg.task_complete: session done
 /// - response_item (function_call): current tool use
 /// - turn_context: model, effort
+fn parse_codex_jsonl_lightweight(path: &Path) -> Option<LightweightAgentSession> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines() {
+        let line = line.ok()?;
+        if line.is_empty() {
+            continue;
+        }
+        let val: Value = serde_json::from_str(&line).ok()?;
+        if val["type"].as_str() != Some("session_meta") {
+            continue;
+        }
+        let payload = &val["payload"];
+        let session_id = payload["id"].as_str()?.to_string();
+        let cwd = payload["cwd"].as_str()?.to_string();
+        let started_at = payload["timestamp"]
+            .as_str()
+            .or_else(|| val["timestamp"].as_str())
+            .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+            .map(|dt| dt.timestamp_millis() as u64)
+            .unwrap_or(0);
+        return Some(LightweightAgentSession {
+            agent_cli: "codex",
+            pid: 0,
+            session_id,
+            cwd,
+            started_at,
+        });
+    }
+
+    None
+}
+
 fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
     let file = fs::File::open(path).ok()?;
     let reader = BufReader::new(file);
@@ -765,6 +844,24 @@ mod tests {
         assert_eq!(result.cwd, "/home/user/project");
         assert_eq!(result.version, "0.1.5");
         assert_eq!(result.git_branch, "feature/x");
+    }
+
+    #[test]
+    fn lightweight_parse_stops_at_session_meta() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100}}}}"#,
+            ],
+        );
+
+        let session = parse_codex_jsonl_lightweight(file.path()).unwrap();
+
+        assert_eq!(session.agent_cli, "codex");
+        assert_eq!(session.session_id, "sess-123");
+        assert_eq!(session.cwd, "/home/user/project");
     }
 
     #[test]
