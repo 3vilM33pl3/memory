@@ -3158,9 +3158,18 @@ async fn main() -> Result<()> {
             request.dry_run = dry_run;
             let api = ApiClient::new(client, config);
             let capture = api.capture_task(&request).await?;
-            let curate = api
-                .curate(&project, repo_replacement_policy(&repo_root), dry_run)
-                .await?;
+            let curate = if dry_run {
+                api.curate(&project, repo_replacement_policy(&repo_root), true)
+                    .await?
+            } else {
+                api.curate_capture(
+                    &project,
+                    capture.raw_capture_id,
+                    repo_replacement_policy(&repo_root),
+                    false,
+                )
+                .await?
+            };
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
