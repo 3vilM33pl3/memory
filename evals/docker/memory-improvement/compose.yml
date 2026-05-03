@@ -19,7 +19,7 @@ services:
         condition: service_healthy
     environment:
       CODEX_HOME: /codex-home
-      MEMORY_LAYER_PROFILE: dev
+      MEMORY_LAYER_PROFILE: prod
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
     volumes:
@@ -35,7 +35,7 @@ services:
         condition: service_started
     environment:
       CODEX_HOME: /codex-home
-      MEMORY_LAYER_PROFILE: dev
+      MEMORY_LAYER_PROFILE: prod
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       MEMORY_EVAL_REPEAT: ${MEMORY_EVAL_REPEAT:-5}
