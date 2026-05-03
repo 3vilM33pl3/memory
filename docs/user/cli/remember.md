@@ -25,6 +25,10 @@ Use `remember` for:
 - verified task outcomes worth keeping
 - distilled explanations of code, files, modules, architecture paths, or the whole codebase
 
+For direct no-plan work, agents should record a `task` memory with
+`memory checkpoint start-task` when execution starts, then use `remember` after
+completion to record the `implementation` memory.
+
 This is the normal direct write command for users. Agents often use the higher-level repo-local helper through:
 
 ```bash

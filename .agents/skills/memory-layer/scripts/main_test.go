@@ -51,6 +51,26 @@ func TestBuildCheckpointProjectInvocationAddsJSONByDefault(t *testing.T) {
 	}
 }
 
+func TestBuildStartTaskExecutionAddsJSONInJSONMode(t *testing.T) {
+	got, err := buildInvocation([]string{"start-task-execution", "--project", "memory", "--title", "Fix query input", "--prompt", "Improve query input"}, outputJSON)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"checkpoint", "start-task", "--project", "memory", "--title", "Fix query input", "--prompt", "Improve query input", "--json"}
+	if len(got.commandArgs) != len(want) {
+		t.Fatalf("unexpected arg count: got %v want %v", got, want)
+	}
+	for i := range want {
+		if got.commandArgs[i] != want[i] {
+			t.Fatalf("arg %d mismatch: got %q want %q", i, got.commandArgs[i], want[i])
+		}
+	}
+	if !got.expectJSON {
+		t.Fatal("expected JSON output")
+	}
+}
+
 func TestBuildCaptureTaskArgsRejectsMissingFile(t *testing.T) {
 	_, err := buildCaptureTaskInvocation([]string{"/tmp/does-not-exist.json"})
 	if err == nil {

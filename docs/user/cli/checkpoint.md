@@ -1,6 +1,6 @@
 # `memory checkpoint`
 
-`memory checkpoint` manages saved project checkpoints and the plan-backed execution flow.
+`memory checkpoint` manages saved project checkpoints, approved-plan execution, and direct no-plan task starts.
 
 ## Subcommands
 
@@ -30,6 +30,28 @@ memory checkpoint start-execution --project memory --plan-stdin --thread-key tas
 ```
 
 Saves the checkpoint and stores the approved plan as a `plan` memory. The plan must contain Markdown checkbox items.
+
+### Start Task
+
+```bash
+memory checkpoint start-task \
+  --project memory \
+  --title "Fix query input" \
+  --prompt "The query input field should activate with Enter and keep query history."
+
+memory checkpoint start-task \
+  --project memory \
+  --title "Update README" \
+  --prompt "Highlight the benchmark report" \
+  --dry-run \
+  --json
+```
+
+Saves the checkpoint and stores the direct user instruction as a `task` memory when execution starts without an approved plan.
+
+Use this for actionable implementation work that begins directly from a user request. Do not use it for pure questions, planning-only turns, trivial read-only checks, or work that already has an approved plan.
+
+After the direct task is complete, use `memory remember --type implementation` or the repo-local remember skill to record what was actually delivered.
 
 ### Finish Execution
 

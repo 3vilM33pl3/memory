@@ -68,6 +68,7 @@ Agent contract:
   Prefer --dry-run before mutating repository, service, memory, history, or embedding state.
   Before answering repo-specific questions, run query; after interruptions, run resume.
   When an approved plan moves into implementation, run checkpoint start-execution.
+  When direct no-plan work starts, run checkpoint start-task.
   Before claiming plan-backed work is complete, run checkpoint finish-execution.
   After meaningful completed work, run remember with concrete notes and changed files.
 
@@ -75,6 +76,7 @@ Examples:
   memory wizard --global
   memory query --project memory --question \"What changed recently?\" --json
   memory resume --project memory --json
+  memory checkpoint start-task --project memory --title \"Task title\" --prompt \"Original user request\"
   memory remember --project memory --title \"Task title\" --summary \"What changed\" --note \"Durable fact\"
 
 See also:
@@ -657,13 +659,27 @@ See also:
 
 const CHECKPOINT_GROUP_AFTER_HELP: &str = "\
 Agent notes:
-  Use for plan-backed execution state. start-execution records the approved plan before implementation.
+  Use for execution state. start-execution records approved plans; start-task records direct no-plan tasks.
   finish-execution verifies plan completion before the final response. Prefer --dry-run for previews.
 
 Examples:
   memory checkpoint save --project memory
   memory checkpoint start-execution --project memory --plan-file /tmp/plan.md
+  memory checkpoint start-task --project memory --title \"Fix query input\" --prompt \"Improve query input UX\"
   memory checkpoint finish-execution --project memory
+
+See also:
+  docs/user/cli/checkpoint.md";
+
+const CHECKPOINT_START_TASK_AFTER_HELP: &str = "\
+Agent notes:
+  Run when an actionable user instruction starts execution without an approved plan.
+  This records a task memory as the start marker; use remember after completion for the implemented outcome.
+  Prefer --dry-run --json before wiring this into an agent workflow.
+
+Examples:
+  memory checkpoint start-task --project memory --title \"Fix query input\" --prompt \"Improve query input UX\"
+  memory checkpoint start-task --project memory --title \"Update README\" --prompt \"Highlight the benchmark\" --dry-run --json
 
 See also:
   docs/user/cli/checkpoint.md";
@@ -1742,6 +1758,8 @@ enum CheckpointCommand {
     Show(CheckpointShowArgs),
     #[command(about = "Save a checkpoint and record the approved execution plan.", after_help = CHECKPOINT_START_AFTER_HELP)]
     StartExecution(CheckpointStartExecutionArgs),
+    #[command(about = "Record a direct no-plan task at execution start.", after_help = CHECKPOINT_START_TASK_AFTER_HELP)]
+    StartTask(CheckpointStartTaskArgs),
     #[command(about = "Verify that the active approved plan is fully complete.", after_help = CHECKPOINT_FINISH_AFTER_HELP)]
     FinishExecution(CheckpointFinishExecutionArgs),
 }
@@ -1792,6 +1810,28 @@ struct CheckpointStartExecutionArgs {
     /// Validate and preview the execution-start flow without writing checkpoint or memory state.
     #[arg(long)]
     dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct CheckpointStartTaskArgs {
+    /// Project slug to update; defaults to the current repo when available.
+    #[arg(long)]
+    project: Option<String>,
+    /// Short title for the direct task.
+    #[arg(long)]
+    title: String,
+    /// Original user instruction or task framing.
+    #[arg(long)]
+    prompt: String,
+    /// Stable task thread key; derived from title/project when omitted.
+    #[arg(long)]
+    thread_key: Option<String>,
+    /// Validate and preview the task-start flow without writing checkpoint or memory state.
+    #[arg(long)]
+    dry_run: bool,
+    /// Emit the task-start report as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2701,6 +2741,69 @@ async fn main() -> Result<()> {
                             "dry_run": args.dry_run,
                         }))?
                     );
+                }
+                CheckpointCommand::StartTask(args) => {
+                    let project = resolve_project_slug(args.project, &cwd)?;
+                    let api = ApiClient::new(client.clone(), config.clone());
+                    let title = args.title.trim();
+                    let prompt = args.prompt.trim();
+                    if title.is_empty() {
+                        anyhow::bail!("--title must be non-empty");
+                    }
+                    if prompt.is_empty() {
+                        anyhow::bail!("--prompt must be non-empty");
+                    }
+                    let thread_key =
+                        derive_plan_thread_key(args.thread_key.as_deref(), title, &project);
+                    let note = format!("Direct task started: {title}");
+                    let (checkpoint, path) = if args.dry_run {
+                        preview_checkpoint(&project, &repo_root, Some(note))?
+                    } else {
+                        save_checkpoint_with_activity(&api, &project, &repo_root, Some(note))
+                            .await?
+                    };
+                    let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
+                    let mut request = build_task_start_request(
+                        &project,
+                        &writer,
+                        title,
+                        prompt,
+                        &thread_key,
+                        repo_git_head(&repo_root).as_deref(),
+                    );
+                    request.dry_run = args.dry_run;
+                    let capture = api
+                        .capture_task(&request)
+                        .await
+                        .context("capture direct task start")?;
+                    let curate = api
+                        .curate(&project, repo_replacement_policy(&repo_root), args.dry_run)
+                        .await
+                        .context("curate direct task start")?;
+                    let report = serde_json::json!({
+                        "checkpoint": {
+                            "path": path.display().to_string(),
+                            "data": checkpoint,
+                        },
+                        "task": {
+                            "title": title,
+                            "thread_key": thread_key,
+                            "prompt": prompt,
+                        },
+                        "capture": capture,
+                        "curate": curate,
+                        "dry_run": args.dry_run,
+                    });
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        println!("Task execution started.");
+                        println!("Checkpoint: {}", path.display());
+                        println!("Task: {title} ({thread_key})");
+                        if args.dry_run {
+                            println!("Dry run: true");
+                        }
+                    }
                 }
                 CheckpointCommand::FinishExecution(args) => {
                     let project = resolve_project_slug(args.project, &cwd)?;
@@ -10906,6 +11009,7 @@ fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
         "debugging" => Ok(mem_api::MemoryType::Debugging),
         "environment" => Ok(mem_api::MemoryType::Environment),
         "domain_fact" => Ok(mem_api::MemoryType::DomainFact),
+        "task" => Ok(mem_api::MemoryType::Task),
         "plan" => Ok(mem_api::MemoryType::Plan),
         "implementation" => Ok(mem_api::MemoryType::Implementation),
         _ => anyhow::bail!("unknown memory type: {input}"),
@@ -11034,6 +11138,7 @@ fn parse_memory_type_arg(value: &str) -> Result<MemoryType> {
         "debugging" => Ok(MemoryType::Debugging),
         "environment" => Ok(MemoryType::Environment),
         "domain_fact" => Ok(MemoryType::DomainFact),
+        "task" => Ok(MemoryType::Task),
         "plan" => Ok(MemoryType::Plan),
         "implementation" => Ok(MemoryType::Implementation),
         "user" => Ok(MemoryType::User),
@@ -11042,7 +11147,7 @@ fn parse_memory_type_arg(value: &str) -> Result<MemoryType> {
         "reference" => Ok(MemoryType::Reference),
         _ => anyhow::bail!(
             "unknown memory type '{value}'; expected one of: architecture, convention, \
-             decision, incident, debugging, environment, domain_fact, plan, implementation, \
+             decision, incident, debugging, environment, domain_fact, task, plan, implementation, \
              user, feedback, project, reference"
         ),
     }
@@ -11339,6 +11444,104 @@ fn build_plan_execution_request(
             thread_key,
             &normalized_plan,
             git_head,
+        )),
+        dry_run: false,
+    }
+}
+
+fn build_task_start_idempotency_key(
+    project: &str,
+    thread_key: &str,
+    title: &str,
+    prompt: &str,
+    git_head: Option<&str>,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"task-start");
+    hasher.update(project.as_bytes());
+    hasher.update(thread_key.as_bytes());
+    hasher.update(title.trim().as_bytes());
+    hasher.update(prompt.trim().as_bytes());
+    if let Some(git_head) = git_head.map(str::trim).filter(|value| !value.is_empty()) {
+        hasher.update(git_head.as_bytes());
+    }
+    format!("task-start:{:x}", hasher.finalize())
+}
+
+fn build_task_start_canonical_text(
+    project: &str,
+    title: &str,
+    prompt: &str,
+    thread_key: &str,
+    git_head: Option<&str>,
+) -> String {
+    let mut lines = vec![
+        format!("# Task: {}", title.trim()),
+        String::new(),
+        "Status: started".to_string(),
+        format!("Project: {project}"),
+        format!("Thread: {thread_key}"),
+    ];
+    if let Some(git_head) = git_head.map(str::trim).filter(|value| !value.is_empty()) {
+        lines.push(format!("Git head: {git_head}"));
+    }
+    lines.extend([
+        String::new(),
+        "Original user request:".to_string(),
+        prompt.trim().to_string(),
+    ]);
+    lines.join("\n")
+}
+
+fn build_task_start_request(
+    project: &str,
+    writer: &WriterIdentity,
+    title: &str,
+    prompt: &str,
+    thread_key: &str,
+    git_head: Option<&str>,
+) -> CaptureTaskRequest {
+    let canonical_text =
+        build_task_start_canonical_text(project, title, prompt, thread_key, git_head);
+    CaptureTaskRequest {
+        project: project.to_string(),
+        task_title: format!("Task started: {}", title.trim()),
+        user_prompt: prompt.trim().to_string(),
+        writer_id: writer.id.clone(),
+        writer_name: writer.name.clone(),
+        agent_summary: format!("Started direct no-plan task: {}", title.trim()),
+        files_changed: Vec::new(),
+        git_diff_summary: git_head.map(|head| format!("Task started from git HEAD {head}")),
+        tests: Vec::new(),
+        notes: Vec::new(),
+        structured_candidates: vec![mem_api::CaptureCandidateInput {
+            canonical_text,
+            summary: title.trim().to_string(),
+            memory_type: mem_api::MemoryType::Task,
+            confidence: 0.95,
+            importance: 3,
+            tags: vec![
+                "task".to_string(),
+                format!("task-thread:{thread_key}"),
+                "direct-execution".to_string(),
+                "no-approved-plan".to_string(),
+            ],
+            sources: vec![
+                mem_api::CaptureCandidateSourceInput {
+                    file_path: None,
+                    source_kind: mem_api::SourceKind::TaskPrompt,
+                    excerpt: Some(prompt.trim().to_string()),
+                },
+                mem_api::CaptureCandidateSourceInput {
+                    file_path: None,
+                    source_kind: mem_api::SourceKind::Note,
+                    excerpt: Some("Direct no-plan task entered execution.".to_string()),
+                },
+            ],
+        }],
+        command_output: None,
+        idempotency_key: Some(build_task_start_idempotency_key(
+            project, thread_key, title, prompt, git_head,
         )),
         dry_run: false,
     }
@@ -11771,14 +11974,14 @@ mod tests {
         SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, WatcherCommand, WatcherManagerArgs,
         WatcherManagerCommand, agent_build_prompt, build_finish_execution_implementation_request,
         build_graph_activity_request, build_plan_execution_finish_report,
-        build_plan_execution_request, build_remember_request, chat_completion_content,
-        derive_plan_thread_key, derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
-        ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
-        mask_database_url, parse_no_memory_grounded_answer, parse_plan_checkboxes,
-        render_agent_project_config, render_claude_md_memory_section, repair_repo_bootstrap,
-        resolve_project_slug, resolve_repo_root, resolve_writer_identity,
-        root_gitignore_contains_mem, shared_env_lookup, token_usage_from_chat_body,
-        watcher_command_requires_config_load, write_headers,
+        build_plan_execution_request, build_remember_request, build_task_start_request,
+        chat_completion_content, derive_plan_thread_key, derive_plan_title,
+        durable_plan_source_path, ensure_checkbox_plan, ensure_shared_service_api_token,
+        initialize_repo, is_placeholder_database_url, mask_database_url, parse_memory_type_arg,
+        parse_no_memory_grounded_answer, parse_plan_checkboxes, render_agent_project_config,
+        render_claude_md_memory_section, repair_repo_bootstrap, resolve_project_slug,
+        resolve_repo_root, resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
+        token_usage_from_chat_body, watcher_command_requires_config_load, write_headers,
     };
     use mem_api::AppConfig;
 
@@ -11908,6 +12111,7 @@ mod tests {
         assert!(output.contains("Agent contract:"));
         assert!(output.contains("Prefer --json"));
         assert!(output.contains("checkpoint start-execution"));
+        assert!(output.contains("checkpoint start-task"));
         assert!(output.contains("checkpoint finish-execution"));
         assert!(output.contains("Examples:"));
         assert!(output.contains("docs/user/README.md"));
@@ -11934,6 +12138,16 @@ mod tests {
         assert!(output.contains("Agent notes:"));
         assert!(output.contains("approved plan moves into implementation"));
         assert!(output.contains("Examples:"));
+        assert!(output.contains("docs/user/cli/checkpoint.md"));
+    }
+
+    #[test]
+    fn start_task_help_includes_agent_workflow_guidance() {
+        let output = rendered_help(&["memory", "checkpoint", "start-task", "--help"]);
+        assert!(output.contains("Record a direct no-plan task"));
+        assert!(output.contains("Original user instruction"));
+        assert!(output.contains("direct no-plan task"));
+        assert!(output.contains("--dry-run --json"));
         assert!(output.contains("docs/user/cli/checkpoint.md"));
     }
 
@@ -12083,6 +12297,60 @@ mod tests {
                 .tags
                 .contains(&"plan-thread:resume-redesign".to_string())
         );
+    }
+
+    #[test]
+    fn task_memory_type_parses_from_cli_args() {
+        assert_eq!(
+            parse_memory_type_arg("task").unwrap(),
+            mem_api::MemoryType::Task
+        );
+    }
+
+    #[test]
+    fn task_start_request_uses_task_type_and_prompt_source() {
+        let writer = super::WriterIdentity {
+            id: "writer".to_string(),
+            name: Some("Writer".to_string()),
+        };
+        let request = build_task_start_request(
+            "memory",
+            &writer,
+            "Fix query input",
+            "Make the query input easier to use.",
+            "fix-query-input",
+            Some("abc123"),
+        );
+
+        assert_eq!(request.task_title, "Task started: Fix query input");
+        assert_eq!(request.user_prompt, "Make the query input easier to use.");
+        assert_eq!(request.structured_candidates.len(), 1);
+        assert!(
+            request
+                .idempotency_key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("task-start:"))
+        );
+        let candidate = &request.structured_candidates[0];
+        assert_eq!(candidate.memory_type, mem_api::MemoryType::Task);
+        assert!(candidate.canonical_text.contains("# Task: Fix query input"));
+        assert!(candidate.canonical_text.contains("Status: started"));
+        assert!(candidate.canonical_text.contains("Git head: abc123"));
+        assert!(candidate.tags.contains(&"task".to_string()));
+        assert!(
+            candidate
+                .tags
+                .contains(&"task-thread:fix-query-input".to_string())
+        );
+        assert!(candidate.tags.contains(&"direct-execution".to_string()));
+        assert!(candidate.tags.contains(&"no-approved-plan".to_string()));
+        assert!(candidate.sources.iter().any(|source| {
+            source.source_kind == mem_api::SourceKind::TaskPrompt
+                && source
+                    .excerpt
+                    .as_deref()
+                    .is_some_and(|excerpt| excerpt.contains("query input"))
+        }));
     }
 
     #[test]

@@ -144,6 +144,11 @@ fn classify_type(request: &CaptureTaskRequest, text: &str) -> MemoryType {
         || haystack.contains("business")
     {
         MemoryType::DomainFact
+    } else if haystack.contains("task")
+        || haystack.contains("user request")
+        || haystack.contains("direct execution")
+    {
+        MemoryType::Task
     } else if haystack.contains("feedback")
         || haystack.contains("correction")
         || haystack.contains("stop doing")
@@ -266,7 +271,9 @@ fn build_sources(
 
 fn normalize_candidate_canonical_text(memory_type: &MemoryType, input: &str) -> String {
     match memory_type {
-        MemoryType::Plan | MemoryType::Implementation => normalize_markdown_block(input),
+        MemoryType::Task | MemoryType::Plan | MemoryType::Implementation => {
+            normalize_markdown_block(input)
+        }
         _ => normalize_sentence(input),
     }
 }

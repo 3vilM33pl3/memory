@@ -4968,7 +4968,8 @@ fn select_resume_context(
     if let Some(item) = changed_memories.iter().find(|item| {
         matches!(
             item.memory_type,
-            mem_api::MemoryType::Plan
+            mem_api::MemoryType::Task
+                | mem_api::MemoryType::Plan
                 | mem_api::MemoryType::Decision
                 | mem_api::MemoryType::Architecture
                 | mem_api::MemoryType::Convention

@@ -725,6 +725,7 @@ pub fn parse_memory_type(value: &str) -> MemoryType {
         "debugging" => MemoryType::Debugging,
         "environment" => MemoryType::Environment,
         "domain_fact" => MemoryType::DomainFact,
+        "task" => MemoryType::Task,
         "plan" => MemoryType::Plan,
         "implementation" => MemoryType::Implementation,
         "user" => MemoryType::User,
@@ -2032,6 +2033,11 @@ pub fn split_search_chunks(summary: &str, canonical_text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_memory_type_accepts_task() {
+        assert_eq!(parse_memory_type("task"), MemoryType::Task);
+    }
 
     #[test]
     fn embedding_registry_is_empty_when_no_backends_ready() {

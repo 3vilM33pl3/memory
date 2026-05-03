@@ -25,6 +25,7 @@ pub enum MemoryType {
     Debugging,
     Environment,
     DomainFact,
+    Task,
     Plan,
     Implementation,
     User,
@@ -43,6 +44,7 @@ impl fmt::Display for MemoryType {
             Self::Debugging => "debugging",
             Self::Environment => "environment",
             Self::DomainFact => "domain_fact",
+            Self::Task => "task",
             Self::Plan => "plan",
             Self::Implementation => "implementation",
             Self::User => "user",
@@ -3147,6 +3149,11 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn memory_type_task_displays_as_snake_case() {
+        assert_eq!(MemoryType::Task.to_string(), "task");
+    }
 
     #[test]
     fn profile_display_version_adds_dev_suffix_only_in_dev() {

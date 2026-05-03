@@ -44,11 +44,12 @@ go run ./.agents/skills/memory-layer/scripts/main.go remember-task \
 
 1. Use the automatic remember workflow after meaningful work is actually complete.
 2. Run it after any required plan-completion verification has already succeeded.
-3. Provide one or more `--note` values for durable facts.
-4. Only store verified outcomes and durable lessons.
-5. For explanation memories, store a distilled reusable summary, not the whole chat answer.
-6. Do not use `--file-changed` for explanation-only turns unless files actually changed.
-7. If title, prompt, or summary are omitted, let the helper derive them from the repo state when possible.
+3. For direct no-plan actionable tasks, a `task` memory should already have been recorded at execution start; this workflow records the completed `implementation` memory.
+4. Provide one or more `--note` values for durable facts.
+5. Only store verified outcomes and durable lessons.
+6. For explanation memories, store a distilled reusable summary, not the whole chat answer.
+7. Do not use `--file-changed` for explanation-only turns unless files actually changed.
+8. If title, prompt, or summary are omitted, let the helper derive them from the repo state when possible.
 
 ## Model Routing
 

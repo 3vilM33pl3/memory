@@ -47,6 +47,7 @@ go run ./.agents/skills/memory-layer/scripts/main.go checkpoint-project \
 3. If the plan changes materially during execution, save the revised approved plan first with the same thread key.
 4. Before claiming plan-backed work is finished, run `finish-plan-execution`.
 5. Do not present the task as finished if any checkbox item remains unchecked.
+6. If there is no approved plan and the user gives a direct actionable task, use the umbrella skill's `start-task-execution` workflow instead of this plan workflow.
 
 ## Model Routing
 

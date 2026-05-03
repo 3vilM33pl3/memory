@@ -199,6 +199,17 @@ func buildInvocation(args []string, mode outputMode) (helperInvocation, error) {
 			expectJSON:     true,
 			textPassthrough: false,
 		}, nil
+	case "start-task-execution":
+		commandArgs := append([]string{"checkpoint", "start-task"}, args[1:]...)
+		if mode == outputJSON {
+			commandArgs = append(commandArgs, "--json")
+		}
+		return helperInvocation{
+			helperCommand:  "start-task-execution",
+			commandArgs:    commandArgs,
+			expectJSON:     mode == outputJSON,
+			textPassthrough: mode == outputText,
+		}, nil
 	case "finish-plan-execution":
 		commandArgs := append([]string{"checkpoint", "finish-execution"}, args[1:]...)
 		if mode == outputJSON {
@@ -232,6 +243,7 @@ Commands:
   capture-task <payload.json>
   curate-memory [project-slug]
   start-plan-execution <memory checkpoint start-execution args...>
+  start-task-execution <memory checkpoint start-task args...>
   finish-plan-execution <memory checkpoint finish-execution args...>
   remember-task <memory remember args...>
   remember-current-work <memory remember args...>`)

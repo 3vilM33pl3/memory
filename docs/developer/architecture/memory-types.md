@@ -61,6 +61,7 @@ Memory Layer currently supports these curated memory types:
 - `debugging`
 - `environment`
 - `domain_fact`
+- `task`
 - `plan`
 - `implementation`
 - `user`
@@ -261,6 +262,37 @@ Examples:
 
 - “SCTP message boundaries must be preserved across a single message send/receive exchange.”
 
+### `task`
+
+Use this for an actionable user instruction that has entered execution without an approved plan.
+
+Contains:
+
+- the original user request
+- the direct task title
+- execution-start metadata such as project, thread key, and git head
+
+Should not contain:
+
+- approved checklist plans
+- the final implemented outcome
+- durable post-task lessons
+
+Typical triggers:
+
+- `memory checkpoint start-task`
+- repo-local `start-task-execution` helper when an agent begins direct no-plan work
+
+Important current behavior:
+
+- `task` is a start marker for work in progress
+- direct tasks should later produce an `implementation` memory through `memory remember`
+- task memories use `task-thread:<thread_key>` tags so follow-up implementation memories can be related by curation
+
+Examples:
+
+- “Task started: update the README front page with benchmark evidence.”
+
 ### `plan`
 
 Use this for an approved execution plan that should guide the current implementation thread.
@@ -401,6 +433,8 @@ Current important examples:
 
 - `memory checkpoint start-execution`
   - writes a structured `plan` candidate
+- `memory checkpoint start-task`
+  - writes a structured `task` candidate for direct no-plan work
 - `memory checkpoint finish-execution`
   - writes a structured `implementation` candidate after successful verification
 - `memory remember`
@@ -560,6 +594,9 @@ All memory types share the same basic lifecycle:
 
 Important current special cases:
 
+- `task`
+  - marks a direct user instruction entering execution without an approved plan
+  - remains separate from the later `implementation` memory that records the completed result
 - `plan`
   - same-thread updates replace the older active plan rather than creating ambiguous duplicates
 - `implementation`
@@ -576,6 +613,18 @@ The type is visible in:
 ## Practical Distinctions
 
 The most important boundaries are:
+
+### `task` vs `plan`
+
+`task` records a direct user instruction starting execution without an approved checklist.
+
+`plan` records an approved checklist that must be verified before the agent claims completion.
+
+### `task` vs `implementation`
+
+`task` is the start marker: what the user asked the agent to do.
+
+`implementation` is the finish marker: what was actually delivered.
 
 ### `implementation` vs `debugging`
 

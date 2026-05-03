@@ -39,11 +39,12 @@ These rules apply across the whole memory skill bundle:
 1. Query memory before answering project-specific questions.
 2. Use `resume` instead of a generic query for interruption-recovery prompts.
 3. Save the approved plan before implementation begins when a planning phase turns into execution.
-4. Verify plan-backed work is complete before claiming the task is finished.
-5. Remember meaningful work after it is actually done.
-6. When you explain code, a file, a module, or the whole codebase, remember the distilled reusable explanation after answering.
-7. Prefer insufficient evidence over unsupported conclusions.
-8. Never invent provenance.
+4. When an actionable user instruction starts execution without an approved plan, save a task memory before implementation begins.
+5. Verify plan-backed work is complete before claiming the task is finished.
+6. Remember meaningful work after it is actually done.
+7. When you explain code, a file, a module, or the whole codebase, remember the distilled reusable explanation after answering.
+8. Prefer insufficient evidence over unsupported conclusions.
+9. Never invent provenance.
 
 ## Mandatory post-task rule
 
@@ -80,6 +81,19 @@ The shared helper is now Go-based:
 
 - run helpers with `go run ./.agents/skills/memory-layer/scripts/main.go <command> ...`
 - `go` must be available on `PATH`
+
+## Direct Task Start Rule
+
+When the user gives an actionable implementation instruction without first approving a plan, record the start of that work with:
+
+```bash
+go run ./.agents/skills/memory-layer/scripts/main.go start-task-execution \
+  --project <project-slug> \
+  --title "<short task title>" \
+  --prompt "<original user request>"
+```
+
+Do not use this for pure questions, planning-only turns, trivial read-only answers, or work that already has an approved plan. Completed direct tasks still use `memory-remember` afterward to record what was implemented.
 
 ## Model Routing
 

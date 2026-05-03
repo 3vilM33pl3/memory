@@ -2870,6 +2870,7 @@ enum TypeFilter {
     Debugging,
     Environment,
     DomainFact,
+    Task,
     Plan,
     Implementation,
 }
@@ -2884,7 +2885,8 @@ impl TypeFilter {
             Self::Incident => Self::Debugging,
             Self::Debugging => Self::Environment,
             Self::Environment => Self::DomainFact,
-            Self::DomainFact => Self::Plan,
+            Self::DomainFact => Self::Task,
+            Self::Task => Self::Plan,
             Self::Plan => Self::Implementation,
             Self::Implementation => Self::All,
         }
@@ -2901,6 +2903,7 @@ impl TypeFilter {
                 | (Self::Debugging, MemoryType::Debugging)
                 | (Self::Environment, MemoryType::Environment)
                 | (Self::DomainFact, MemoryType::DomainFact)
+                | (Self::Task, MemoryType::Task)
                 | (Self::Plan, MemoryType::Plan)
                 | (Self::Implementation, MemoryType::Implementation)
         )
@@ -2916,6 +2919,7 @@ impl TypeFilter {
             Self::Debugging => "debugging",
             Self::Environment => "environment",
             Self::DomainFact => "domain_fact",
+            Self::Task => "task",
             Self::Plan => "plan",
             Self::Implementation => "implementation",
         }
