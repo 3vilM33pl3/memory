@@ -3,7 +3,6 @@ use std::{
     io::ErrorKind,
     io::Read,
     net::SocketAddr,
-    os::fd::AsRawFd,
     path::{Path as FsPath, PathBuf},
     sync::{
         Arc, Mutex,
@@ -11,6 +10,9 @@ use std::{
     },
     time::{Duration as StdDuration, SystemTime},
 };
+
+#[cfg(target_vendor = "apple")]
+use std::os::fd::AsRawFd;
 
 use anyhow::{Context, Result};
 use axum::{

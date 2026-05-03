@@ -1,8 +1,8 @@
 class MemoryLayer < Formula
   desc "Local project memory service and terminal UI for coding agents"
   homepage "https://github.com/3vilM33pl3/memory"
-  url "https://github.com/3vilM33pl3/memory/releases/download/v0.8.1/memory-0.8.1.tar.gz"
-  sha256 "2f6994e99a27bf818585c713208b236a735af4e68272962e5e5396a95102517d"
+  url "https://github.com/3vilM33pl3/memory/releases/download/v0.8.2/memory-0.8.2.tar.gz"
+  sha256 "68be6794ee8af99083842e9f3444902b0331712563b8183bf34db4da7a81cb69"
   head "https://github.com/3vilM33pl3/memory.git", branch: "main"
 
   depends_on "node" => :build
