@@ -6,6 +6,8 @@ It captures what happened, curates what matters, stores it in PostgreSQL with pg
 
 ![Memory Layer memories tab](docs/img/tui/memories-tab.png)
 
+![How Memory Layer turns project work into cited context](docs/img/infograph.png)
+
 ## Measured Impact
 
 Memory Layer is built to be evaluated, not just demoed. Its eval harness runs
