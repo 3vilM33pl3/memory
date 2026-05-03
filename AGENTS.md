@@ -1,7 +1,9 @@
 # Memory Repo Instructions
+Use the dev environment to store/retrieve/search for memories
 
 ## Version control
 - Keep commits small and incremental.
+- Commit during a task if the subtask is contained.
 - Always commit at the end of a task.
 - Use expressive commit prefixes when they fit:
   - `Feat:` for user-visible features or capabilities
