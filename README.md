@@ -4,7 +4,7 @@ Memory Layer is a local-first memory system for coding agents and developers. It
 
 It captures what happened, curates what matters, stores it in PostgreSQL with pgvector, and exposes it through a fast TUI, browser UI, and agent-friendly CLI.
 
-![Memory Layer query answer and evidence](docs/img/tui/query-tab.png)
+![Memory Layer memories tab](docs/img/tui/memories-tab.png)
 
 ## Measured Impact
 
