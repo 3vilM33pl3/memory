@@ -1,0 +1,38 @@
+[service]
+bind_addr = "service:4250"
+capnp_tcp_addr = "service:4251"
+capnp_unix_socket = "/tmp/memory-layer.capnp.sock"
+api_token = "memory-eval-token"
+request_timeout = "600s"
+
+[database]
+url = "postgresql://memory:memory@postgres:5432/memory"
+
+[cluster]
+enabled = false
+service_id = "memory-layer-memory-improvement-client"
+
+[features]
+llm_curation = false
+
+[llm]
+provider = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-5.4-mini"
+max_output_tokens = 3000
+
+[embeddings]
+active = "openai-3-small"
+
+[[embeddings.backends]]
+name = "openai-3-small"
+provider = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+model = "text-embedding-3-small"
+batch_size = 16
+dimensions = 1536
+
+[graph]
+enabled = true

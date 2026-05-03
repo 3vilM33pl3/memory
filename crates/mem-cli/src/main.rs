@@ -8545,12 +8545,22 @@ fn no_memory_retrieval_result(
     scores.insert("mrr".to_string(), 0.0);
     scores.insert("ndcg".to_string(), 0.0);
     scores.insert("citation_precision".to_string(), 1.0);
+    scores.insert(
+        "tag_recall_at_k".to_string(),
+        if item.expected_tags.is_empty() { 1.0 } else { 0.0 },
+    );
+    scores.insert(
+        "file_recall_at_k".to_string(),
+        if item.expected_files.is_empty() { 1.0 } else { 0.0 },
+    );
     mem_eval::EvalItemResult {
         item_id: item.id.clone(),
         eval_type: "retrieval_qa".to_string(),
         condition,
         metadata: item.metadata.clone(),
-        success: item.expected_memory_ids.is_empty(),
+        success: item.expected_memory_ids.is_empty()
+            && item.expected_tags.is_empty()
+            && item.expected_files.is_empty(),
         skipped: false,
         scores,
         duration_ms: Some(0),

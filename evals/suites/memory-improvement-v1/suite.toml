@@ -1,0 +1,10 @@
+name = "memory improvement v1"
+description = "Paired benchmark for measuring whether Memory improves retrieval, grounded answers, onboarding continuity, and coding-agent work by reasoning mode."
+project = "memory"
+items = "items.jsonl"
+suite_version = "1"
+label_status = "reviewed"
+fixture = "memory-improvement-v1"
+default_profile = "llm"
+default_repeats = 5
+min_items = 10
