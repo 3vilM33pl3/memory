@@ -13,14 +13,22 @@ paired ablations such as `no-memory` vs `full-memory`, writes immutable
 artifacts, compares item-by-item results, applies gates, and reports token and
 latency cost.
 
-The current `memory-improvement-v1` suite combines memory-only facts,
-multi-step continuity tasks, graph-backed retrieval checks, token accounting,
-latency tracking, and optional LLM judging. That keeps Memory claims tied to
-repeatable evidence instead of isolated demonstrations.
+**Latest report:** the valid `2026-05-03` Dockerized
+[`memory-improvement-v1` benchmark](docs/developer/evaluation-runs/2026-05-03-memory-improvement-v1-full.md)
+ran five paired repeats against hidden memory-only facts, graph-backed
+retrieval checks, and grounded-answer tasks. Full Memory moved aggregate
+success from `0.0%` to `18.1%`, Recall@K/MRR/nDCG from `0.000` to `1.000`,
+assertion recall from `0.000` to `0.725`, and total tokens from `22,069,461`
+to `12,970,186`.
+
+The result is deliberately specific: it shows strong improvement for retrieval
+and grounded answers, while the report calls out that long-running autonomous
+coding continuity still needs verified Memory-query evidence before making a
+stronger claim.
 
 Read the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md), the
-[`memory eval` CLI reference](docs/user/cli/eval.md), and the latest recorded
-[memory-improvement run](docs/developer/evaluation-runs/2026-05-03-memory-improvement-v1-full.md).
+[`memory eval` CLI reference](docs/user/cli/eval.md), and the full
+[benchmark report](docs/developer/evaluation-runs/2026-05-03-memory-improvement-v1-full.md).
 
 ## Why It Is Interesting
 
@@ -141,11 +149,12 @@ conditions, such as `no-memory` and `full-memory`, then write immutable
 artifacts, compare item-by-item results, apply gate policies, and report token
 and latency deltas.
 
-The current `memory-improvement-v1` suite combines hidden memory-only facts,
-reasoning-mode groups, multi-step continuity tasks, graph-backed retrieval
-checks, token accounting, latency tracking, and optional LLM judging. That is
-the point of the harness: it shows where Memory helps and where the next
-engineering work belongs.
+The current featured run is the valid `2026-05-03` Dockerized
+`memory-improvement-v1` benchmark highlighted above. It combines hidden
+memory-only facts, reasoning-mode groups, multi-step continuity tasks,
+graph-backed retrieval checks, token accounting, latency tracking, and optional
+LLM judging. That is the point of the harness: it shows where Memory helps and
+where the next engineering work belongs.
 
 Start with the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md),
 use [`memory eval`](docs/user/cli/eval.md) for the command reference, and see
