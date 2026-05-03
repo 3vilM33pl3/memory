@@ -19,7 +19,7 @@ ran five paired repeats against hidden memory-only facts, graph-backed
 retrieval checks, and grounded-answer tasks. Full Memory moved aggregate
 success from `0.0%` to `18.1%`, Recall@K/MRR/nDCG from `0.000` to `1.000`,
 assertion recall from `0.000` to `0.725`, and total tokens from `22,069,461`
-to `12,970,186`.
+to `12,970,186`, a `41.2%` reduction.
 
 The result is deliberately specific: it shows strong improvement for retrieval
 and grounded answers, while the report calls out that long-running autonomous
