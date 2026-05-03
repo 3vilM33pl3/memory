@@ -2815,9 +2815,23 @@ async fn main() -> Result<()> {
                         .await
                         .context("capture direct task start")?;
                     let curate = api
-                        .curate(&project, repo_replacement_policy(&repo_root), args.dry_run)
+                        .curate_capture(
+                            &project,
+                            capture.raw_capture_id,
+                            repo_replacement_policy(&repo_root),
+                            args.dry_run,
+                        )
                         .await
                         .context("curate direct task start")?;
+                    let task_memory = if args.dry_run {
+                        None
+                    } else {
+                        Some(
+                            verify_task_start_memory(&api, &project, &thread_key)
+                                .await
+                                .context("verify direct task memory was created")?,
+                        )
+                    };
                     let report = serde_json::json!({
                         "checkpoint": {
                             "path": path.display().to_string(),
@@ -2830,6 +2844,7 @@ async fn main() -> Result<()> {
                         },
                         "capture": capture,
                         "curate": curate,
+                        "task_memory": task_memory,
                         "dry_run": args.dry_run,
                     });
                     if args.json {
@@ -3165,6 +3180,7 @@ async fn main() -> Result<()> {
                 .json(&CurateRequest {
                     project: args.project,
                     batch_size: args.batch_size,
+                    raw_capture_id: None,
                     replacement_policy: Some(replacement_policy),
                     dry_run: args.dry_run,
                 })
@@ -8611,6 +8627,31 @@ impl ApiClient {
                     project: project.to_string(),
                     batch_size: None,
                     replacement_policy: Some(replacement_policy),
+                    raw_capture_id: None,
+                    dry_run,
+                })
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn curate_capture(
+        &self,
+        project: &str,
+        raw_capture_id: Uuid,
+        replacement_policy: ReplacementPolicy,
+        dry_run: bool,
+    ) -> Result<CurateResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/curate"))
+                .headers(write_headers(&self.config)?)
+                .json(&CurateRequest {
+                    project: project.to_string(),
+                    batch_size: Some(1),
+                    raw_capture_id: Some(raw_capture_id),
+                    replacement_policy: Some(replacement_policy),
                     dry_run,
                 })
                 .send()
@@ -12414,6 +12455,28 @@ fn build_task_start_request(
         )),
         dry_run: false,
     }
+}
+
+async fn verify_task_start_memory(
+    api: &ApiClient,
+    project: &str,
+    thread_key: &str,
+) -> Result<mem_api::ProjectMemoryListItem> {
+    let thread_tag = format!("task-thread:{thread_key}");
+    let memories = api.project_memories(project).await?;
+    memories
+        .items
+        .into_iter()
+        .find(|item| {
+            item.status == mem_api::MemoryStatus::Active
+                && item.memory_type == mem_api::MemoryType::Task
+                && item.tags.iter().any(|tag| tag == &thread_tag)
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "task start capture was written, but no active `task` memory with tag `{thread_tag}` exists. Run `memory curate --project {project}` or review queued replacement proposals, then retry."
+            )
+        })
 }
 
 fn implementation_sources(

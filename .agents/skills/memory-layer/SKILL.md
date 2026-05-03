@@ -26,6 +26,8 @@ Prefer the focused skills when the task is clearly one of these:
 - `memory-plan-execution`
   - save the approved plan and checkpoint at execution start
   - verify all plan checkbox items are complete before claiming the task is finished
+- `memory-direct-task-start`
+  - save a task memory before direct no-plan implementation work begins
 - `memory-remember`
   - remember meaningful completed work after the task is done
   - remember distilled code or codebase explanations after answering explanation requests
@@ -94,6 +96,8 @@ go run ./.agents/skills/memory-layer/scripts/main.go start-task-execution \
 ```
 
 Do not use this for pure questions, planning-only turns, trivial read-only answers, or work that already has an approved plan. Completed direct tasks still use `memory-remember` afterward to record what was implemented.
+
+The helper/CLI verifies that the resulting active `task` memory exists. If it fails, stop and surface the failure instead of proceeding silently.
 
 ## Model Routing
 

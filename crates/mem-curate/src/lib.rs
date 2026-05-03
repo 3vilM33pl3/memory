@@ -131,12 +131,14 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
         JOIN sessions s ON s.id = t.session_id
         WHERE s.project_id = $1
           AND rc.curated_at IS NULL
+          AND ($3::uuid IS NULL OR rc.id = $3)
         ORDER BY rc.created_at ASC
         LIMIT $2
         "#,
     )
     .bind(project_id)
     .bind(limit)
+    .bind(request.raw_capture_id)
     .fetch_all(&mut *tx)
     .await?;
 
@@ -144,6 +146,7 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
     let mut output_count = 0_i64;
     let mut replaced_count = 0_i64;
     let mut proposal_count = 0_i64;
+    let mut memory_ids = Vec::new();
     let mut replacements = Vec::new();
     let policy = request.replacement_policy.unwrap_or_default();
 
@@ -237,6 +240,7 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
             rebuild_memory_chunks(&mut tx, memory_id).await?;
 
             refresh_relations(&mut tx, project_id, memory_id).await?;
+            memory_ids.push(memory_id);
         }
 
         sqlx::query("UPDATE raw_captures SET curated_at = now() WHERE id = $1")
@@ -265,6 +269,7 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
         run_id,
         input_count: captures.len() as i64,
         output_count,
+        memory_ids,
         replaced_count,
         proposal_count,
         replacements,
@@ -291,12 +296,14 @@ pub async fn preview_curate(
         JOIN sessions s ON s.id = t.session_id
         WHERE s.project_id = $1
           AND rc.curated_at IS NULL
+          AND ($3::uuid IS NULL OR rc.id = $3)
         ORDER BY rc.created_at ASC
         LIMIT $2
         "#,
     )
     .bind(project_id)
     .bind(limit)
+    .bind(request.raw_capture_id)
     .fetch_all(pool)
     .await?;
 
@@ -345,6 +352,7 @@ pub async fn preview_curate(
         run_id: Uuid::nil(),
         input_count: captures.len() as i64,
         output_count,
+        memory_ids: Vec::new(),
         replaced_count,
         proposal_count,
         replacements: Vec::new(),

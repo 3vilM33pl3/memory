@@ -5,6 +5,7 @@ Use the dev environment to store/retrieve/search for memories
 - Keep commits small and incremental.
 - Commit during a task if the subtask is contained.
 - Always commit at the end of a task.
+- For direct no-plan implementation work, record the task start before edits with `memory-direct-task-start` / `start-task-execution`; completed work should still be remembered as `implementation`.
 - Use expressive commit prefixes when they fit:
   - `Feat:` for user-visible features or capabilities
   - `Fix:` for bugs, regressions, and broken behavior

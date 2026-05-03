@@ -51,6 +51,8 @@ Saves the checkpoint and stores the direct user instruction as a `task` memory w
 
 Use this for actionable implementation work that begins directly from a user request. Do not use it for pure questions, planning-only turns, trivial read-only checks, or work that already has an approved plan.
 
+The command curates the raw capture it just wrote and verifies that an active `task` memory with the expected `task-thread:<thread_key>` tag exists before reporting success. If that postcondition fails, the command exits with an actionable error instead of silently leaving only raw capture evidence.
+
 After the direct task is complete, use `memory remember --type implementation` or the repo-local remember skill to record what was actually delivered.
 
 ### Finish Execution

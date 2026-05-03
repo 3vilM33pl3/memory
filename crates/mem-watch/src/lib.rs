@@ -354,6 +354,7 @@ pub async fn run_curate_flow(
             .json(&CurateRequest {
                 project: project.to_string(),
                 batch_size: None,
+                raw_capture_id: None,
                 replacement_policy: Some(replacement_policy),
                 dry_run: false,
             })

@@ -453,6 +453,22 @@ pub async fn rebuild_chunks_for_automatic_creation(
     rebuild_chunks_selected(pool, project, selected).await
 }
 
+pub async fn rebuild_memory_chunks_for_automatic_creation(
+    pool: &PgPool,
+    project: &str,
+    memory_ids: &[Uuid],
+    registry: &EmbeddingRegistry,
+    global_create_enabled: bool,
+) -> Result<u64> {
+    let selected: Vec<(&str, &EmbeddingService)> = if global_create_enabled {
+        registry.iter_create_enabled().collect()
+    } else {
+        Vec::new()
+    };
+
+    rebuild_memory_chunks_selected(pool, project, memory_ids, selected).await
+}
+
 async fn rebuild_chunks_selected(
     pool: &PgPool,
     project: &str,
@@ -473,65 +489,107 @@ async fn rebuild_chunks_selected(
 
     let mut count = 0_u64;
     for row in rows {
-        let memory_id: Uuid = row.try_get("id")?;
-        let canonical_text: String = row.try_get("canonical_text")?;
-        let summary: String = row.try_get("summary")?;
-        sqlx::query("DELETE FROM memory_chunks WHERE memory_entry_id = $1")
-            .bind(memory_id)
-            .execute(pool)
-            .await
-            .context("delete old chunks")?;
-
-        let chunks = split_search_chunks(&summary, &canonical_text);
-
-        let mut batches: Vec<EmbeddingBatch> = Vec::with_capacity(selected.len());
-        for (_, service) in &selected {
-            batches.push(
-                service
-                    .embed_texts(&chunks, EmbeddingPurpose::Document)
-                    .await
-                    .context("embed rebuilt chunks")?,
-            );
-        }
-        if selected.is_empty() {
-            batches.push(empty_embedding_batch());
-        }
-
-        for (index, chunk_text) in chunks.iter().enumerate() {
-            let chunk_id = Uuid::new_v4();
-            sqlx::query(
-                r#"
-                INSERT INTO memory_chunks
-                    (
-                        id,
-                        memory_entry_id,
-                        chunk_text,
-                        search_text,
-                        tsv
-                    )
-                VALUES
-                    ($1, $2, $3, $4, to_tsvector('english', $4))
-                "#,
-            )
-            .bind(chunk_id)
-            .bind(memory_id)
-            .bind(chunk_text)
-            .bind(format!("{summary}\n{chunk_text}"))
-            .execute(pool)
-            .await
-            .context("insert rebuilt chunk")?;
-            for batch in &batches {
-                let Some(embedding) = batch.vectors.get(index).cloned() else {
-                    continue;
-                };
-                upsert_chunk_embedding(pool, chunk_id, &batch.space, batch.dimension, embedding)
-                    .await
-                    .context("upsert rebuilt chunk embedding")?;
-            }
-        }
+        rebuild_memory_chunks_from_row(pool, &selected, &row).await?;
         count += 1;
     }
     Ok(count)
+}
+
+async fn rebuild_memory_chunks_selected(
+    pool: &PgPool,
+    project: &str,
+    memory_ids: &[Uuid],
+    selected: Vec<(&str, &EmbeddingService)>,
+) -> Result<u64> {
+    if memory_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let rows = sqlx::query(
+        r#"
+        SELECT m.id, m.canonical_text, m.summary
+        FROM memory_entries m
+        JOIN projects p ON p.id = m.project_id
+        WHERE p.slug = $1
+          AND m.id = ANY($2)
+        "#,
+    )
+    .bind(project)
+    .bind(memory_ids)
+    .fetch_all(pool)
+    .await
+    .context("load targeted memories for chunk rebuild")?;
+
+    let mut count = 0_u64;
+    for row in rows {
+        rebuild_memory_chunks_from_row(pool, &selected, &row).await?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+async fn rebuild_memory_chunks_from_row(
+    pool: &PgPool,
+    selected: &[(&str, &EmbeddingService)],
+    row: &sqlx::postgres::PgRow,
+) -> Result<()> {
+    let memory_id: Uuid = row.try_get("id")?;
+    let canonical_text: String = row.try_get("canonical_text")?;
+    let summary: String = row.try_get("summary")?;
+    sqlx::query("DELETE FROM memory_chunks WHERE memory_entry_id = $1")
+        .bind(memory_id)
+        .execute(pool)
+        .await
+        .context("delete old chunks")?;
+
+    let chunks = split_search_chunks(&summary, &canonical_text);
+
+    let mut batches: Vec<EmbeddingBatch> = Vec::with_capacity(selected.len());
+    for (_, service) in selected {
+        batches.push(
+            service
+                .embed_texts(&chunks, EmbeddingPurpose::Document)
+                .await
+                .context("embed rebuilt chunks")?,
+        );
+    }
+    if selected.is_empty() {
+        batches.push(empty_embedding_batch());
+    }
+
+    for (index, chunk_text) in chunks.iter().enumerate() {
+        let chunk_id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO memory_chunks
+                (
+                    id,
+                    memory_entry_id,
+                    chunk_text,
+                    search_text,
+                    tsv
+                )
+            VALUES
+                ($1, $2, $3, $4, to_tsvector('english', $4))
+            "#,
+        )
+        .bind(chunk_id)
+        .bind(memory_id)
+        .bind(chunk_text)
+        .bind(format!("{summary}\n{chunk_text}"))
+        .execute(pool)
+        .await
+        .context("insert rebuilt chunk")?;
+        for batch in &batches {
+            let Some(embedding) = batch.vectors.get(index).cloned() else {
+                continue;
+            };
+            upsert_chunk_embedding(pool, chunk_id, &batch.space, batch.dimension, embedding)
+                .await
+                .context("upsert rebuilt chunk embedding")?;
+        }
+    }
+    Ok(())
 }
 
 pub async fn reembed_project_chunks(

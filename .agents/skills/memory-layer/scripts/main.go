@@ -22,20 +22,21 @@ const (
 )
 
 type helperInvocation struct {
-	helperCommand  string
-	project        string
-	commandArgs    []string
-	expectJSON     bool
+	helperCommand   string
+	project         string
+	preludeArgs     [][]string
+	commandArgs     []string
+	expectJSON      bool
 	textPassthrough bool
 }
 
 type helperEnvelope struct {
-	Ok            bool                 `json:"ok"`
-	HelperCommand string               `json:"helper_command"`
-	Project       string               `json:"project,omitempty"`
-	Result        any                  `json:"result,omitempty"`
-	Error         *helperError         `json:"error,omitempty"`
-	Details       *helperErrorDetails  `json:"details,omitempty"`
+	Ok            bool                `json:"ok"`
+	HelperCommand string              `json:"helper_command"`
+	Project       string              `json:"project,omitempty"`
+	Result        any                 `json:"result,omitempty"`
+	Error         *helperError        `json:"error,omitempty"`
+	Details       *helperErrorDetails `json:"details,omitempty"`
 }
 
 type helperError struct {
@@ -77,8 +78,56 @@ func run(args []string) int {
 	if err != nil {
 		return emitHelperFailure(mode, invocation.helperCommand, invocation.project, "resolver_error", err.Error(), 1, nil, "", "")
 	}
+	for _, prelude := range invocation.preludeArgs {
+		preludeArgs := append(append([]string{}, cmdArgs...), prelude...)
+		if code := runPreludeCommand(mode, invocation, preludeArgs); code != 0 {
+			return code
+		}
+	}
 	cmdArgs = append(cmdArgs, invocation.commandArgs...)
 
+	return runWrappedCommand(mode, invocation, cmdArgs, invocation.expectJSON)
+}
+
+func runPreludeCommand(mode outputMode, invocation helperInvocation, cmdArgs []string) int {
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Env = os.Environ()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	if runErr == nil {
+		return 0
+	}
+	exitCode := 1
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		exitCode = exitErr.ExitCode()
+	}
+	message := strings.TrimSpace(stderr.String())
+	if message == "" {
+		message = strings.TrimSpace(stdout.String())
+	}
+	if message == "" {
+		message = runErr.Error()
+	}
+	return emitHelperFailure(
+		mode,
+		invocation.helperCommand,
+		invocation.project,
+		"prelude_failed",
+		message,
+		exitCode,
+		cmdArgs,
+		stdout.String(),
+		stderr.String(),
+	)
+}
+
+func runWrappedCommand(mode outputMode, invocation helperInvocation, cmdArgs []string, expectJSON bool) int {
 	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Env = os.Environ()
@@ -134,7 +183,7 @@ func run(args []string) int {
 	}
 
 	var parsed any
-	if invocation.expectJSON {
+	if expectJSON {
 		if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil {
 			return emitHelperFailure(
 				mode,
@@ -194,9 +243,9 @@ func buildInvocation(args []string, mode outputMode) (helperInvocation, error) {
 		return buildCurateMemoryInvocation(args[1:])
 	case "start-plan-execution":
 		return helperInvocation{
-			helperCommand:  "start-plan-execution",
-			commandArgs:    append([]string{"checkpoint", "start-execution"}, args[1:]...),
-			expectJSON:     true,
+			helperCommand:   "start-plan-execution",
+			commandArgs:     append([]string{"checkpoint", "start-execution"}, args[1:]...),
+			expectJSON:      true,
 			textPassthrough: false,
 		}, nil
 	case "start-task-execution":
@@ -205,9 +254,9 @@ func buildInvocation(args []string, mode outputMode) (helperInvocation, error) {
 			commandArgs = append(commandArgs, "--json")
 		}
 		return helperInvocation{
-			helperCommand:  "start-task-execution",
-			commandArgs:    commandArgs,
-			expectJSON:     mode == outputJSON,
+			helperCommand:   "start-task-execution",
+			commandArgs:     commandArgs,
+			expectJSON:      mode == outputJSON,
 			textPassthrough: mode == outputText,
 		}, nil
 	case "finish-plan-execution":
@@ -216,18 +265,13 @@ func buildInvocation(args []string, mode outputMode) (helperInvocation, error) {
 			commandArgs = append(commandArgs, "--json")
 		}
 		return helperInvocation{
-			helperCommand:  "finish-plan-execution",
-			commandArgs:    commandArgs,
-			expectJSON:     mode == outputJSON,
+			helperCommand:   "finish-plan-execution",
+			commandArgs:     commandArgs,
+			expectJSON:      mode == outputJSON,
 			textPassthrough: mode == outputText,
 		}, nil
 	case "remember-task", "remember-current-work":
-		return helperInvocation{
-			helperCommand:  args[0],
-			commandArgs:    append([]string{"remember"}, args[1:]...),
-			expectJSON:     true,
-			textPassthrough: false,
-		}, nil
+		return buildRememberInvocation(args[0], args[1:])
 	default:
 		return helperInvocation{}, fmt.Errorf("unknown skill helper command: %s\n\n%s", args[0], usageText())
 	}
@@ -307,10 +351,10 @@ func buildQueryMemoryInvocation(args []string, mode outputMode) (helperInvocatio
 		commandArgs = append(commandArgs, "--json")
 	}
 	return helperInvocation{
-		helperCommand:  "query-memory",
-		project:        project,
-		commandArgs:    commandArgs,
-		expectJSON:     mode == outputJSON,
+		helperCommand:   "query-memory",
+		project:         project,
+		commandArgs:     commandArgs,
+		expectJSON:      mode == outputJSON,
 		textPassthrough: mode == outputText,
 	}, nil
 }
@@ -328,10 +372,10 @@ func buildResumeProjectInvocation(args []string, mode outputMode) (helperInvocat
 		commandArgs = append(commandArgs, "--json")
 	}
 	return helperInvocation{
-		helperCommand:  "resume-project",
-		project:        project,
-		commandArgs:    commandArgs,
-		expectJSON:     mode == outputJSON,
+		helperCommand:   "resume-project",
+		project:         project,
+		commandArgs:     commandArgs,
+		expectJSON:      mode == outputJSON,
 		textPassthrough: mode == outputText,
 	}, nil
 }
@@ -357,10 +401,10 @@ func buildCheckpointProjectInvocation(args []string, mode outputMode) (helperInv
 		commandArgs = append(commandArgs, "--json")
 	}
 	return helperInvocation{
-		helperCommand:  "checkpoint-project",
-		project:        project,
-		commandArgs:    commandArgs,
-		expectJSON:     mode == outputJSON,
+		helperCommand:   "checkpoint-project",
+		project:         project,
+		commandArgs:     commandArgs,
+		expectJSON:      mode == outputJSON,
 		textPassthrough: mode == outputText,
 	}, nil
 }
@@ -373,9 +417,9 @@ func buildCaptureTaskInvocation(args []string) (helperInvocation, error) {
 		return helperInvocation{}, fmt.Errorf("Payload file not found: %s", args[0])
 	}
 	return helperInvocation{
-		helperCommand:  "capture-task",
-		commandArgs:    []string{"capture", "task", "--file", args[0]},
-		expectJSON:     true,
+		helperCommand:   "capture-task",
+		commandArgs:     []string{"capture", "task", "--file", args[0]},
+		expectJSON:      true,
 		textPassthrough: false,
 	}, nil
 }
@@ -389,12 +433,103 @@ func buildCurateMemoryInvocation(args []string) (helperInvocation, error) {
 		project = args[0]
 	}
 	return helperInvocation{
-		helperCommand:  "curate-memory",
-		project:        project,
-		commandArgs:    []string{"curate", "--project", project},
-		expectJSON:     true,
+		helperCommand:   "curate-memory",
+		project:         project,
+		commandArgs:     []string{"curate", "--project", project},
+		expectJSON:      true,
 		textPassthrough: false,
 	}, nil
+}
+
+func buildRememberInvocation(helperCommand string, args []string) (helperInvocation, error) {
+	cleanArgs, options, err := parseRememberOptions(args)
+	if err != nil {
+		return helperInvocation{}, err
+	}
+	invocation := helperInvocation{
+		helperCommand:   helperCommand,
+		project:         options.project,
+		commandArgs:     append([]string{"remember"}, cleanArgs...),
+		expectJSON:      true,
+		textPassthrough: false,
+	}
+	if options.shouldStartTask() {
+		invocation.preludeArgs = append(invocation.preludeArgs, []string{
+			"checkpoint",
+			"start-task",
+			"--project",
+			options.project,
+			"--title",
+			options.title,
+			"--prompt",
+			options.prompt,
+			"--json",
+		})
+	}
+	return invocation, nil
+}
+
+type rememberOptions struct {
+	project       string
+	title         string
+	prompt        string
+	memoryType    string
+	skipTaskStart bool
+}
+
+func (o rememberOptions) shouldStartTask() bool {
+	if o.skipTaskStart {
+		return false
+	}
+	if strings.TrimSpace(o.title) == "" || strings.TrimSpace(o.prompt) == "" {
+		return false
+	}
+	memoryType := strings.TrimSpace(o.memoryType)
+	return memoryType == "" || memoryType == "implementation"
+}
+
+func parseRememberOptions(args []string) ([]string, rememberOptions, error) {
+	options := rememberOptions{project: defaultProject()}
+	clean := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--skip-task-start":
+			options.skipTaskStart = true
+		case arg == "--project" || arg == "--title" || arg == "--prompt" || arg == "--type":
+			if i+1 >= len(args) {
+				return nil, options, fmt.Errorf("%s requires a value", arg)
+			}
+			value := args[i+1]
+			switch arg {
+			case "--project":
+				options.project = value
+			case "--title":
+				options.title = value
+			case "--prompt":
+				options.prompt = value
+			case "--type":
+				options.memoryType = value
+			}
+			clean = append(clean, arg, value)
+			i++
+		case strings.HasPrefix(arg, "--project="):
+			options.project = strings.TrimPrefix(arg, "--project=")
+			clean = append(clean, arg)
+		case strings.HasPrefix(arg, "--title="):
+			options.title = strings.TrimPrefix(arg, "--title=")
+			clean = append(clean, arg)
+		case strings.HasPrefix(arg, "--prompt="):
+			options.prompt = strings.TrimPrefix(arg, "--prompt=")
+			clean = append(clean, arg)
+		case strings.HasPrefix(arg, "--type="):
+			options.memoryType = strings.TrimPrefix(arg, "--type=")
+			clean = append(clean, arg)
+		default:
+			clean = append(clean, arg)
+		}
+	}
+	return clean, options, nil
 }
 
 func emitTextResult(invocation helperInvocation, stdout, stderr string, exitCode int) int {

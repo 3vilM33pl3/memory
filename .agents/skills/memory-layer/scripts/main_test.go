@@ -71,6 +71,66 @@ func TestBuildStartTaskExecutionAddsJSONInJSONMode(t *testing.T) {
 	}
 }
 
+func TestRememberTaskStartsDirectTaskByDefault(t *testing.T) {
+	got, err := buildInvocation([]string{
+		"remember-task",
+		"--project", "memory",
+		"--title", "Fix query input",
+		"--prompt", "Improve query input",
+		"--summary", "Implemented query input",
+	}, outputJSON)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantPrelude := []string{"checkpoint", "start-task", "--project", "memory", "--title", "Fix query input", "--prompt", "Improve query input", "--json"}
+	if len(got.preludeArgs) != 1 {
+		t.Fatalf("expected one prelude command, got %v", got.preludeArgs)
+	}
+	for i := range wantPrelude {
+		if got.preludeArgs[0][i] != wantPrelude[i] {
+			t.Fatalf("prelude arg %d mismatch: got %q want %q", i, got.preludeArgs[0][i], wantPrelude[i])
+		}
+	}
+}
+
+func TestRememberTaskSkipTaskStartBypassesPrelude(t *testing.T) {
+	got, err := buildInvocation([]string{
+		"remember-task",
+		"--skip-task-start",
+		"--project", "memory",
+		"--title", "Fix query input",
+		"--prompt", "Improve query input",
+	}, outputJSON)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.preludeArgs) != 0 {
+		t.Fatalf("expected no prelude command, got %v", got.preludeArgs)
+	}
+	for _, arg := range got.commandArgs {
+		if arg == "--skip-task-start" {
+			t.Fatal("skip flag must not be forwarded to memory remember")
+		}
+	}
+}
+
+func TestRememberProjectExplanationDoesNotStartTask(t *testing.T) {
+	got, err := buildInvocation([]string{
+		"remember-task",
+		"--type", "project",
+		"--project", "memory",
+		"--title", "Explained TUI",
+		"--prompt", "How does the TUI work?",
+	}, outputJSON)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.preludeArgs) != 0 {
+		t.Fatalf("expected no prelude command for project memory, got %v", got.preludeArgs)
+	}
+}
+
 func TestBuildCaptureTaskArgsRejectsMissingFile(t *testing.T) {
 	_, err := buildCaptureTaskInvocation([]string{"/tmp/does-not-exist.json"})
 	if err == nil {

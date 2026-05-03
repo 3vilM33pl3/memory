@@ -286,6 +286,7 @@ Typical triggers:
 Important current behavior:
 
 - `task` is a start marker for work in progress
+- `checkpoint start-task` curates the exact raw capture it wrote and fails if the active `task` memory cannot be verified
 - direct tasks should later produce an `implementation` memory through `memory remember`
 - task memories use `task-thread:<thread_key>` tags so follow-up implementation memories can be related by curation
 

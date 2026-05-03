@@ -62,7 +62,8 @@ use mem_platform::{
 use mem_search::{
     EmbeddingRegistry, effective_embedding_base_url, parse_memory_type, parse_relation_type,
     parse_source_kind, prune_project_embeddings, query_memory, rebuild_chunks,
-    rebuild_chunks_for_automatic_creation, reembed_project_chunks,
+    rebuild_chunks_for_automatic_creation, rebuild_memory_chunks_for_automatic_creation,
+    reembed_project_chunks,
 };
 use mem_service::{
     fetch_project_commit, fetch_project_commits, fetch_project_memories, fetch_project_overview,
@@ -2445,16 +2446,30 @@ async fn curate_memory(
     }
     let embedders = state.embedders.read().await;
     if !embedders.is_empty() {
-        rebuild_chunks_for_automatic_creation(
-            state.pool()?,
-            &request.project,
-            &embedders,
-            state
-                .automated_embedding_creation_enabled
-                .load(Ordering::Relaxed),
-        )
-        .await
-        .map_err(ApiError::io)?;
+        if request.raw_capture_id.is_some() {
+            rebuild_memory_chunks_for_automatic_creation(
+                state.pool()?,
+                &request.project,
+                &response.memory_ids,
+                &embedders,
+                state
+                    .automated_embedding_creation_enabled
+                    .load(Ordering::Relaxed),
+            )
+            .await
+            .map_err(ApiError::io)?;
+        } else {
+            rebuild_chunks_for_automatic_creation(
+                state.pool()?,
+                &request.project,
+                &embedders,
+                state
+                    .automated_embedding_creation_enabled
+                    .load(Ordering::Relaxed),
+            )
+            .await
+            .map_err(ApiError::io)?;
+        }
     }
     notify_project_changed(
         &state,

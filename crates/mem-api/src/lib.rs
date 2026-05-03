@@ -233,6 +233,8 @@ pub struct CurateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_size: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_capture_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replacement_policy: Option<ReplacementPolicy>,
     #[serde(default)]
     pub dry_run: bool,
@@ -606,6 +608,8 @@ pub struct CurateResponse {
     pub run_id: Uuid,
     pub input_count: i64,
     pub output_count: i64,
+    #[serde(default)]
+    pub memory_ids: Vec<Uuid>,
     #[serde(default)]
     pub replaced_count: i64,
     #[serde(default)]
