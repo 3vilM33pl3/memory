@@ -11,6 +11,41 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvalItemMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_capability: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub difficulty: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<String>,
+}
+
+impl EvalItemMetadata {
+    pub fn is_empty(&self) -> bool {
+        self.reasoning_mode.is_none()
+            && self.memory_capability.is_none()
+            && self.difficulty.is_none()
+            && self.claim.is_none()
+    }
+
+    fn group_value(&self, field: &str) -> Option<&str> {
+        match field {
+            "reasoning_mode" => self.reasoning_mode.as_deref(),
+            "memory_capability" => self.memory_capability.as_deref(),
+            "difficulty" => self.difficulty.as_deref(),
+            "claim" => self.claim.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+fn skip_metadata(value: &EvalItemMetadata) -> bool {
+    value.is_empty()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalSuiteManifest {
     pub name: String,
@@ -78,11 +113,24 @@ impl EvalItem {
             Self::AgentBuildSequence(item) => item.project.as_deref().unwrap_or(default_project),
         }
     }
+
+    pub fn metadata(&self) -> &EvalItemMetadata {
+        match self {
+            Self::RetrievalQa(item) => &item.metadata,
+            Self::GroundedAnswer(item) => &item.metadata,
+            Self::ResumeQuality(item) => &item.metadata,
+            Self::CommandTask(item) => &item.metadata,
+            Self::AgentBuildTask(item) => &item.metadata,
+            Self::AgentBuildSequence(item) => &item.metadata,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrievalQaItem {
     pub id: String,
+    #[serde(flatten, default, skip_serializing_if = "skip_metadata")]
+    pub metadata: EvalItemMetadata,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     pub question: String,
@@ -99,6 +147,8 @@ pub struct RetrievalQaItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroundedAnswerItem {
     pub id: String,
+    #[serde(flatten, default, skip_serializing_if = "skip_metadata")]
+    pub metadata: EvalItemMetadata,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     pub question: String,
@@ -115,6 +165,8 @@ pub struct GroundedAnswerItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResumeQualityItem {
     pub id: String,
+    #[serde(flatten, default, skip_serializing_if = "skip_metadata")]
+    pub metadata: EvalItemMetadata,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     #[serde(default)]
@@ -128,6 +180,8 @@ pub struct ResumeQualityItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandTaskItem {
     pub id: String,
+    #[serde(flatten, default, skip_serializing_if = "skip_metadata")]
+    pub metadata: EvalItemMetadata,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     pub prompt: String,
@@ -139,6 +193,8 @@ pub struct CommandTaskItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentBuildTaskItem {
     pub id: String,
+    #[serde(flatten, default, skip_serializing_if = "skip_metadata")]
+    pub metadata: EvalItemMetadata,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     pub prompt: String,
@@ -163,6 +219,8 @@ pub struct AgentBuildTaskItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentBuildSequenceItem {
     pub id: String,
+    #[serde(flatten, default, skip_serializing_if = "skip_metadata")]
+    pub metadata: EvalItemMetadata,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     pub fixture: String,
@@ -177,6 +235,8 @@ pub struct AgentBuildSequenceItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentBuildSequenceStep {
     pub id: String,
+    #[serde(flatten, default, skip_serializing_if = "skip_metadata")]
+    pub metadata: EvalItemMetadata,
     pub prompt: String,
     #[serde(default)]
     pub memory_questions: Vec<String>,
@@ -310,6 +370,8 @@ pub struct EvalItemResult {
     pub item_id: String,
     pub eval_type: String,
     pub condition: EvalCondition,
+    #[serde(default, skip_serializing_if = "skip_metadata")]
+    pub metadata: EvalItemMetadata,
     pub success: bool,
     pub skipped: bool,
     pub scores: BTreeMap<String, f64>,
@@ -319,6 +381,25 @@ pub struct EvalItemResult {
     pub token_usage: Option<TokenUsage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sub_results: Vec<EvalSubResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalSubResult {
+    pub id: String,
+    pub eval_type: String,
+    #[serde(default, skip_serializing_if = "skip_metadata")]
+    pub metadata: EvalItemMetadata,
+    pub success: bool,
+    pub skipped: bool,
+    pub scores: BTreeMap<String, f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<TokenUsage>,
     #[serde(default)]
     pub notes: Vec<String>,
 }
@@ -342,6 +423,28 @@ pub struct EvalComparison {
     pub baseline_mean_duration_ms: f64,
     pub candidate_mean_duration_ms: f64,
     pub duration_delta_ms: f64,
+    pub cost_adjusted_success_delta_per_1k_tokens: f64,
+    pub metric_deltas: BTreeMap<String, MetricDelta>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub groups: BTreeMap<String, EvalComparisonGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalComparisonGroup {
+    pub paired_items: usize,
+    pub baseline_success_rate: f64,
+    pub candidate_success_rate: f64,
+    pub success_rate_delta: f64,
+    pub mcnemar_b: usize,
+    pub mcnemar_c: usize,
+    pub mcnemar_p_value: f64,
+    pub baseline_total_tokens: u64,
+    pub candidate_total_tokens: u64,
+    pub token_delta: i64,
+    pub baseline_mean_duration_ms: f64,
+    pub candidate_mean_duration_ms: f64,
+    pub duration_delta_ms: f64,
+    pub cost_adjusted_success_delta_per_1k_tokens: f64,
     pub metric_deltas: BTreeMap<String, MetricDelta>,
 }
 
@@ -449,7 +552,12 @@ pub fn score_retrieval_qa(
     condition: EvalCondition,
     response: &QueryResponse,
 ) -> EvalItemResult {
-    let mut scores = retrieval_scores(&item.expected_memory_ids, response);
+    let mut scores = retrieval_scores(
+        &item.expected_memory_ids,
+        &item.expected_tags,
+        &item.expected_files,
+        response,
+    );
     scores.insert(
         "semantic_candidates".to_string(),
         response.diagnostics.semantic_candidates as f64,
@@ -458,11 +566,12 @@ pub fn score_retrieval_qa(
         "graph_candidates".to_string(),
         response.diagnostics.graph_candidates as f64,
     );
-    let success = scores.get("recall_at_k").copied().unwrap_or(0.0) >= 1.0;
+    let success = retrieval_success(&scores);
     EvalItemResult {
         item_id: item.id.clone(),
         eval_type: "retrieval_qa".to_string(),
         condition,
+        metadata: item.metadata.clone(),
         success,
         skipped: false,
         scores,
@@ -470,6 +579,7 @@ pub fn score_retrieval_qa(
         token_usage: response.answer_generation.token_usage.clone(),
         answer: Some(response.answer.clone()),
         notes: Vec::new(),
+        sub_results: Vec::new(),
     }
 }
 
@@ -478,7 +588,7 @@ pub fn score_grounded_answer(
     condition: EvalCondition,
     response: &QueryResponse,
 ) -> EvalItemResult {
-    let mut scores = retrieval_scores(&item.expected_memory_ids, response);
+    let mut scores = retrieval_scores(&item.expected_memory_ids, &[], &[], response);
     let assertion_scores = assertion_scores(
         &response.answer,
         &item.required_assertions,
@@ -494,6 +604,7 @@ pub fn score_grounded_answer(
         item_id: item.id.clone(),
         eval_type: "grounded_answer".to_string(),
         condition,
+        metadata: item.metadata.clone(),
         success,
         skipped: false,
         scores,
@@ -503,6 +614,7 @@ pub fn score_grounded_answer(
         token_usage: response.answer_generation.token_usage.clone(),
         answer: Some(response.answer.clone()),
         notes: Vec::new(),
+        sub_results: Vec::new(),
     }
 }
 
@@ -537,6 +649,7 @@ pub fn score_plain_llm_grounded_answer(
         item_id: item.id.clone(),
         eval_type: "grounded_answer".to_string(),
         condition,
+        metadata: item.metadata.clone(),
         success: assertion_scores.assertion_recall >= 1.0 && assertion_scores.forbidden_hits == 0,
         skipped: false,
         scores,
@@ -544,6 +657,7 @@ pub fn score_plain_llm_grounded_answer(
         token_usage,
         answer: Some(answer),
         notes,
+        sub_results: Vec::new(),
     }
 }
 
@@ -560,6 +674,7 @@ pub fn score_resume_quality(
         &item.required_topics,
         &item.forbidden_topics,
         None,
+        item.metadata.clone(),
     )
 }
 
@@ -576,6 +691,7 @@ pub fn score_up_to_speed_quality(
         &item.required_topics,
         &item.forbidden_topics,
         Some(response.token_usage.total_tokens),
+        item.metadata.clone(),
     )
 }
 
@@ -587,6 +703,7 @@ fn score_briefing(
     required_topics: &[String],
     forbidden_topics: &[String],
     tokens: Option<u64>,
+    metadata: EvalItemMetadata,
 ) -> EvalItemResult {
     let text = briefing.to_lowercase();
     let topic_hits = required_topics
@@ -609,6 +726,7 @@ fn score_briefing(
         item_id: item_id.to_string(),
         eval_type: eval_type.to_string(),
         condition,
+        metadata,
         success: topic_recall >= 1.0 && forbidden_hits == 0,
         skipped: false,
         scores,
@@ -619,6 +737,7 @@ fn score_briefing(
         }),
         answer: Some(briefing.to_string()),
         notes: Vec::new(),
+        sub_results: Vec::new(),
     }
 }
 
@@ -638,6 +757,7 @@ pub fn score_resume_text_quality(
         &item.required_topics,
         &item.forbidden_topics,
         None,
+        item.metadata.clone(),
     );
     result.duration_ms = duration_ms;
     result.token_usage = token_usage;
@@ -691,6 +811,7 @@ pub fn score_command_task(
         item_id: item.id.clone(),
         eval_type: "command_task".to_string(),
         condition,
+        metadata: item.metadata.clone(),
         success: exit_code == Some(item.expected_exit_code),
         skipped: exit_code.is_none(),
         scores,
@@ -698,6 +819,7 @@ pub fn score_command_task(
         token_usage: None,
         answer: None,
         notes,
+        sub_results: Vec::new(),
     }
 }
 
@@ -721,6 +843,7 @@ pub struct AgentBuildScoreInput {
     pub token_usage: Option<TokenUsage>,
     pub duration_ms: Option<u64>,
     pub notes: Vec<String>,
+    pub sub_results: Vec<EvalSubResult>,
     pub skipped: bool,
 }
 
@@ -817,6 +940,7 @@ pub fn score_agent_build_task(
         item_id: item.id.clone(),
         eval_type: "agent_build_task".to_string(),
         condition,
+        metadata: item.metadata.clone(),
         success,
         skipped: input.skipped,
         scores,
@@ -824,6 +948,7 @@ pub fn score_agent_build_task(
         token_usage: input.token_usage,
         answer: None,
         notes: input.notes,
+        sub_results: input.sub_results,
     }
 }
 
@@ -835,6 +960,7 @@ pub fn score_agent_build_sequence(
     let mut result = score_agent_build_task(
         &AgentBuildTaskItem {
             id: item.id.clone(),
+            metadata: item.metadata.clone(),
             project: item.project.clone(),
             prompt: String::new(),
             fixture: item.fixture.clone(),
@@ -871,6 +997,7 @@ pub fn skipped_result(
         }
         .to_string(),
         condition,
+        metadata: item.metadata().clone(),
         success: false,
         skipped: true,
         scores: BTreeMap::new(),
@@ -878,11 +1005,14 @@ pub fn skipped_result(
         token_usage: None,
         answer: None,
         notes: vec![note.into()],
+        sub_results: Vec::new(),
     }
 }
 
 fn retrieval_scores(
     expected_memory_ids: &[Uuid],
+    expected_tags: &[String],
+    expected_files: &[String],
     response: &QueryResponse,
 ) -> BTreeMap<String, f64> {
     let expected: HashSet<Uuid> = expected_memory_ids.iter().copied().collect();
@@ -932,23 +1062,207 @@ fn retrieval_scores(
             cited_expected as f64 / response.answer_citations.len() as f64
         },
     );
+    scores.insert(
+        "tag_recall_at_k".to_string(),
+        expected_value_recall(expected_tags, response.results.iter().flat_map(|result| {
+            result.tags.iter().map(|tag| normalize_expected_value(tag))
+        })),
+    );
+    scores.insert(
+        "file_recall_at_k".to_string(),
+        expected_value_recall(
+            expected_files,
+            response.results.iter().flat_map(|result| {
+                result
+                    .sources
+                    .iter()
+                    .filter_map(|source| source.file_path.as_deref())
+                    .chain(result.graph_connections.iter().map(|connection| {
+                        connection.file_path.as_str()
+                    }))
+                    .map(normalize_expected_value)
+            }),
+        ),
+    );
     scores
 }
 
-pub fn compare_runs(baseline: &EvalRun, candidate: &EvalRun) -> EvalComparison {
-    let baseline_by_id: HashMap<_, _> = baseline
-        .results
+fn expected_value_recall<I>(expected: &[String], observed: I) -> f64
+where
+    I: IntoIterator<Item = String>,
+{
+    if expected.is_empty() {
+        return 1.0;
+    }
+    let observed = observed.into_iter().collect::<HashSet<_>>();
+    let hits = expected
         .iter()
-        .filter(|result| !result.skipped)
-        .map(|result| (result.item_id.as_str(), result))
-        .collect();
-    let mut pairs = Vec::new();
-    for candidate_result in candidate.results.iter().filter(|result| !result.skipped) {
-        if let Some(baseline_result) = baseline_by_id.get(candidate_result.item_id.as_str()) {
-            pairs.push((*baseline_result, candidate_result));
+        .map(|value| normalize_expected_value(value))
+        .filter(|value| observed.contains(value))
+        .count();
+    hits as f64 / expected.len() as f64
+}
+
+fn normalize_expected_value(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+fn retrieval_success(scores: &BTreeMap<String, f64>) -> bool {
+    ["recall_at_k", "tag_recall_at_k", "file_recall_at_k"]
+        .iter()
+        .all(|name| scores.get(*name).copied().unwrap_or(1.0) >= 1.0)
+}
+
+pub fn compare_runs(baseline: &EvalRun, candidate: &EvalRun) -> EvalComparison {
+    compare_run_sets(std::slice::from_ref(baseline), std::slice::from_ref(candidate))
+}
+
+pub fn compare_run_sets(baselines: &[EvalRun], candidates: &[EvalRun]) -> EvalComparison {
+    let baseline_condition = baselines
+        .first()
+        .map(|run| run.condition)
+        .unwrap_or(EvalCondition::NoMemory);
+    let candidate_condition = candidates
+        .first()
+        .map(|run| run.condition)
+        .unwrap_or(EvalCondition::FullMemory);
+    let baseline_profile = baselines
+        .first()
+        .map(|run| run.profile)
+        .unwrap_or(EvalProfile::Llm);
+    let candidate_profile = candidates
+        .first()
+        .map(|run| run.profile)
+        .unwrap_or(EvalProfile::Llm);
+    let pairs = paired_observations(baselines, candidates);
+    let overall = summarize_pairs(&pairs);
+    let groups = grouped_summaries(&pairs);
+    EvalComparison {
+        baseline_condition,
+        candidate_condition,
+        paired_items: overall.paired_items,
+        baseline_profile,
+        candidate_profile,
+        baseline_success_rate: overall.baseline_success_rate,
+        candidate_success_rate: overall.candidate_success_rate,
+        success_rate_delta: overall.success_rate_delta,
+        mcnemar_b: overall.mcnemar_b,
+        mcnemar_c: overall.mcnemar_c,
+        mcnemar_p_value: overall.mcnemar_p_value,
+        baseline_total_tokens: overall.baseline_total_tokens,
+        candidate_total_tokens: overall.candidate_total_tokens,
+        token_delta: overall.token_delta,
+        baseline_mean_duration_ms: overall.baseline_mean_duration_ms,
+        candidate_mean_duration_ms: overall.candidate_mean_duration_ms,
+        duration_delta_ms: overall.duration_delta_ms,
+        cost_adjusted_success_delta_per_1k_tokens: overall
+            .cost_adjusted_success_delta_per_1k_tokens,
+        metric_deltas: overall.metric_deltas,
+        groups,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EvalObservation {
+    key: String,
+    eval_type: String,
+    metadata: EvalItemMetadata,
+    success: bool,
+    skipped: bool,
+    scores: BTreeMap<String, f64>,
+    duration_ms: Option<u64>,
+    token_usage: Option<TokenUsage>,
+}
+
+fn paired_observations(
+    baselines: &[EvalRun],
+    candidates: &[EvalRun],
+) -> Vec<(EvalObservation, EvalObservation)> {
+    let baseline_by_key = baselines
+        .iter()
+        .flat_map(observations_for_run)
+        .filter(|observation| !observation.skipped)
+        .map(|observation| (observation.key.clone(), observation))
+        .collect::<HashMap<_, _>>();
+    candidates
+        .iter()
+        .flat_map(observations_for_run)
+        .filter(|observation| !observation.skipped)
+        .filter_map(|candidate| {
+            baseline_by_key
+                .get(&candidate.key)
+                .cloned()
+                .map(|baseline| (baseline, candidate))
+        })
+        .collect()
+}
+
+fn observations_for_run(run: &EvalRun) -> Vec<EvalObservation> {
+    let mut observations = Vec::new();
+    for result in &run.results {
+        let base_key = format!("{}::r{}", result.item_id, run.repeat_index);
+        observations.push(EvalObservation {
+            key: base_key.clone(),
+            eval_type: result.eval_type.clone(),
+            metadata: result.metadata.clone(),
+            success: result.success,
+            skipped: result.skipped,
+            scores: result.scores.clone(),
+            duration_ms: result.duration_ms,
+            token_usage: result.token_usage.clone(),
+        });
+        for sub_result in &result.sub_results {
+            observations.push(EvalObservation {
+                key: format!("{base_key}::{}", sub_result.id),
+                eval_type: sub_result.eval_type.clone(),
+                metadata: sub_result.metadata.clone(),
+                success: sub_result.success,
+                skipped: sub_result.skipped,
+                scores: sub_result.scores.clone(),
+                duration_ms: sub_result.duration_ms,
+                token_usage: sub_result.token_usage.clone(),
+            });
         }
     }
+    observations
+}
 
+fn grouped_summaries(
+    pairs: &[(EvalObservation, EvalObservation)],
+) -> BTreeMap<String, EvalComparisonGroup> {
+    let mut grouped = BTreeMap::new();
+    for field in ["eval_type", "reasoning_mode", "memory_capability"] {
+        let values = pairs
+            .iter()
+            .filter_map(|(base, cand)| group_value(field, base, cand).map(str::to_string))
+            .collect::<HashSet<_>>();
+        for value in values {
+            let group_pairs = pairs
+                .iter()
+                .filter(|(base, cand)| group_value(field, base, cand) == Some(value.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            grouped.insert(format!("{field}:{value}"), summarize_pairs(&group_pairs));
+        }
+    }
+    grouped
+}
+
+fn group_value<'a>(
+    field: &str,
+    base: &'a EvalObservation,
+    cand: &'a EvalObservation,
+) -> Option<&'a str> {
+    match field {
+        "eval_type" => Some(cand.eval_type.as_str()),
+        _ => cand
+            .metadata
+            .group_value(field)
+            .or_else(|| base.metadata.group_value(field)),
+    }
+}
+
+fn summarize_pairs(pairs: &[(EvalObservation, EvalObservation)]) -> EvalComparisonGroup {
     let paired_items = pairs.len();
     let baseline_successes = pairs.iter().filter(|(base, _)| base.success).count();
     let candidate_successes = pairs.iter().filter(|(_, cand)| cand.success).count();
@@ -980,29 +1294,32 @@ pub fn compare_runs(baseline: &EvalRun, candidate: &EvalRun) -> EvalComparison {
         .iter()
         .filter(|(base, cand)| base.success && !cand.success)
         .count();
+    let baseline_success_rate = rate(baseline_successes, paired_items);
+    let candidate_success_rate = rate(candidate_successes, paired_items);
+    let success_rate_delta = candidate_success_rate - baseline_success_rate;
 
     let mut metric_names = HashSet::new();
-    for (base, cand) in &pairs {
+    for (base, cand) in pairs {
         metric_names.extend(base.scores.keys().cloned());
         metric_names.extend(cand.scores.keys().cloned());
     }
     let mut metric_deltas = BTreeMap::new();
     for name in metric_names {
-        let deltas: Vec<f64> = pairs
+        let deltas = pairs
             .iter()
             .filter_map(|(base, cand)| Some(cand.scores.get(&name)? - base.scores.get(&name)?))
-            .collect();
+            .collect::<Vec<_>>();
         if deltas.is_empty() {
             continue;
         }
-        let baseline_values: Vec<f64> = pairs
+        let baseline_values = pairs
             .iter()
             .filter_map(|(base, _)| base.scores.get(&name).copied())
-            .collect();
-        let candidate_values: Vec<f64> = pairs
+            .collect::<Vec<_>>();
+        let candidate_values = pairs
             .iter()
             .filter_map(|(_, cand)| cand.scores.get(&name).copied())
-            .collect();
+            .collect::<Vec<_>>();
         let (low, high) = bootstrap_ci95(&deltas);
         metric_deltas.insert(
             name,
@@ -1016,27 +1333,40 @@ pub fn compare_runs(baseline: &EvalRun, candidate: &EvalRun) -> EvalComparison {
         );
     }
 
-    EvalComparison {
-        baseline_condition: baseline.condition,
-        candidate_condition: candidate.condition,
+    let token_delta = candidate_total_tokens as i64 - baseline_total_tokens as i64;
+    EvalComparisonGroup {
         paired_items,
-        baseline_profile: baseline.profile,
-        candidate_profile: candidate.profile,
-        baseline_success_rate: rate(baseline_successes, paired_items),
-        candidate_success_rate: rate(candidate_successes, paired_items),
-        success_rate_delta: rate(candidate_successes, paired_items)
-            - rate(baseline_successes, paired_items),
+        baseline_success_rate,
+        candidate_success_rate,
+        success_rate_delta,
         mcnemar_b: b,
         mcnemar_c: c,
         mcnemar_p_value: mcnemar_exact_p_value(b, c),
         baseline_total_tokens,
         candidate_total_tokens,
-        token_delta: candidate_total_tokens as i64 - baseline_total_tokens as i64,
+        token_delta,
         baseline_mean_duration_ms,
         candidate_mean_duration_ms,
         duration_delta_ms: candidate_mean_duration_ms - baseline_mean_duration_ms,
+        cost_adjusted_success_delta_per_1k_tokens: cost_adjusted_success_delta(
+            success_rate_delta,
+            baseline_total_tokens,
+            candidate_total_tokens,
+        ),
         metric_deltas,
     }
+}
+
+fn cost_adjusted_success_delta(
+    success_rate_delta: f64,
+    baseline_total_tokens: u64,
+    candidate_total_tokens: u64,
+) -> f64 {
+    let added_tokens = candidate_total_tokens.saturating_sub(baseline_total_tokens);
+    if added_tokens == 0 {
+        return success_rate_delta;
+    }
+    success_rate_delta / (added_tokens as f64 / 1_000.0)
 }
 
 pub fn evaluate_gate(comparison: &EvalComparison, policy: &EvalGatePolicy) -> EvalGateResult {
@@ -1161,13 +1491,14 @@ pub fn comparison_text(comparison: &EvalComparison) -> String {
             comparison.mcnemar_p_value
         ),
         format!(
-            "tokens: {} -> {} ({:+}), mean duration: {:.1}ms -> {:.1}ms ({:+.1}ms)",
+            "tokens: {} -> {} ({:+}), mean duration: {:.1}ms -> {:.1}ms ({:+.1}ms), cost-adjusted delta/1k tokens: {:+.4}",
             comparison.baseline_total_tokens,
             comparison.candidate_total_tokens,
             comparison.token_delta,
             comparison.baseline_mean_duration_ms,
             comparison.candidate_mean_duration_ms,
-            comparison.duration_delta_ms
+            comparison.duration_delta_ms,
+            comparison.cost_adjusted_success_delta_per_1k_tokens
         ),
     ];
     for (name, delta) in &comparison.metric_deltas {
@@ -1180,7 +1511,116 @@ pub fn comparison_text(comparison: &EvalComparison) -> String {
             delta.ci95_high
         ));
     }
+    if !comparison.groups.is_empty() {
+        lines.push("groups:".to_string());
+        for (name, group) in &comparison.groups {
+            lines.push(format!(
+                "- {name}: {} pair(s), success {:.1}% -> {:.1}% ({:+.1} pp), tokens {} -> {} ({:+})",
+                group.paired_items,
+                group.baseline_success_rate * 100.0,
+                group.candidate_success_rate * 100.0,
+                group.success_rate_delta * 100.0,
+                group.baseline_total_tokens,
+                group.candidate_total_tokens,
+                group.token_delta
+            ));
+        }
+    }
     lines.join("\n")
+}
+
+pub fn comparison_markdown(comparison: &EvalComparison) -> String {
+    let mut lines = vec![
+        "# Memory Eval Comparison".to_string(),
+        String::new(),
+        format!(
+            "**Candidate:** `{}` / `{}`",
+            comparison.candidate_condition, comparison.candidate_profile
+        ),
+        format!(
+            "**Baseline:** `{}` / `{}`",
+            comparison.baseline_condition, comparison.baseline_profile
+        ),
+        String::new(),
+        "## Summary".to_string(),
+        String::new(),
+        "| Metric | Baseline | Candidate | Delta |".to_string(),
+        "| --- | ---: | ---: | ---: |".to_string(),
+        format!(
+            "| Success rate | {:.1}% | {:.1}% | {:+.1} pp |",
+            comparison.baseline_success_rate * 100.0,
+            comparison.candidate_success_rate * 100.0,
+            comparison.success_rate_delta * 100.0
+        ),
+        format!(
+            "| Total tokens | {} | {} | {:+} |",
+            comparison.baseline_total_tokens,
+            comparison.candidate_total_tokens,
+            comparison.token_delta
+        ),
+        format!(
+            "| Mean duration | {:.1} ms | {:.1} ms | {:+.1} ms |",
+            comparison.baseline_mean_duration_ms,
+            comparison.candidate_mean_duration_ms,
+            comparison.duration_delta_ms
+        ),
+        format!(
+            "| Cost-adjusted success delta / 1k added tokens |  |  | {:+.4} |",
+            comparison.cost_adjusted_success_delta_per_1k_tokens
+        ),
+        format!(
+            "| McNemar p-value |  |  | {:.4} |",
+            comparison.mcnemar_p_value
+        ),
+        String::new(),
+        "## Metric Deltas".to_string(),
+        String::new(),
+    ];
+    push_metric_table(&mut lines, &comparison.metric_deltas);
+    if !comparison.groups.is_empty() {
+        lines.extend([
+            String::new(),
+            "## Groups".to_string(),
+            String::new(),
+            "| Group | Pairs | Baseline success | Candidate success | Delta | Token delta | Cost-adjusted delta / 1k |".to_string(),
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |".to_string(),
+        ]);
+        for (name, group) in &comparison.groups {
+            lines.push(format!(
+                "| `{}` | {} | {:.1}% | {:.1}% | {:+.1} pp | {:+} | {:+.4} |",
+                name,
+                group.paired_items,
+                group.baseline_success_rate * 100.0,
+                group.candidate_success_rate * 100.0,
+                group.success_rate_delta * 100.0,
+                group.token_delta,
+                group.cost_adjusted_success_delta_per_1k_tokens
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push("## Interpretation".to_string());
+    lines.push(String::new());
+    lines.push(
+        "Treat positive full-memory deltas as evidence only when paired items, grouped reasoning modes, and deterministic checks all point in the same direction. Token deltas describe the price paid for that improvement."
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+fn push_metric_table(lines: &mut Vec<String>, metric_deltas: &BTreeMap<String, MetricDelta>) {
+    if metric_deltas.is_empty() {
+        lines.push("No paired metric deltas were available.".to_string());
+        return;
+    }
+    lines.push("| Metric | Baseline | Candidate | Delta | 95% CI |".to_string());
+    lines.push("| --- | ---: | ---: | ---: | ---: |".to_string());
+    for (name, delta) in metric_deltas {
+        lines.push(format!(
+            "| `{}` | {:.3} | {:.3} | {:+.3} | {:+.3}..{:+.3} |",
+            name, delta.baseline_mean, delta.candidate_mean, delta.mean_delta, delta.ci95_low, delta.ci95_high
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -1229,6 +1669,88 @@ mod tests {
     }
 
     #[test]
+    fn retrieval_scoring_requires_expected_tags_and_files() {
+        let item = RetrievalQaItem {
+            id: "tag-file".to_string(),
+            metadata: EvalItemMetadata::default(),
+            project: None,
+            question: "What changed?".to_string(),
+            top_k: 8,
+            expected_memory_ids: Vec::new(),
+            expected_tags: vec!["graph".to_string()],
+            expected_files: vec!["crates/mem-search/src/lib.rs".to_string()],
+        };
+        let response = QueryResponse {
+            answer: String::new(),
+            confidence: 1.0,
+            results: vec![mem_api::QueryResult {
+                memory_id: Uuid::new_v4(),
+                summary: "Graph retrieval".to_string(),
+                memory_type: mem_api::MemoryType::Reference,
+                score: 1.0,
+                snippet: "graph".to_string(),
+                match_kind: mem_api::QueryMatchKind::Lexical,
+                score_explanation: Vec::new(),
+                debug: mem_api::QueryResultDebug::default(),
+                tags: vec!["graph".to_string()],
+                sources: vec![mem_api::QuerySource {
+                    task_id: None,
+                    file_path: Some("crates/mem-search/src/lib.rs".to_string()),
+                    source_kind: mem_api::SourceKind::File,
+                    excerpt: None,
+                }],
+                graph_connections: Vec::new(),
+            }],
+            insufficient_evidence: false,
+            answer_generation: mem_api::QueryAnswerGeneration::default(),
+            answer_citations: Vec::new(),
+            diagnostics: mem_api::QueryDiagnostics::default(),
+        };
+
+        let result = score_retrieval_qa(&item, EvalCondition::FullMemory, &response);
+
+        assert!(result.success);
+        assert_eq!(result.scores["tag_recall_at_k"], 1.0);
+        assert_eq!(result.scores["file_recall_at_k"], 1.0);
+    }
+
+    #[test]
+    fn comparison_groups_sequence_steps_by_reasoning_mode() {
+        let baseline = EvalRun {
+            suite: "s".to_string(),
+            project: "p".to_string(),
+            condition: EvalCondition::NoMemory,
+            profile: EvalProfile::Offline,
+            run_group_id: Uuid::new_v4(),
+            repeat_index: 0,
+            suite_checksum: None,
+            fixture_checksum: None,
+            config_fingerprint: None,
+            dry_run: false,
+            created_at: Utc::now(),
+            git_head: None,
+            service_version: None,
+            results: vec![sequence_result(false, "deductive")],
+        };
+        let candidate = EvalRun {
+            condition: EvalCondition::FullMemory,
+            results: vec![sequence_result(true, "deductive")],
+            ..baseline.clone()
+        };
+
+        let comparison = compare_runs(&baseline, &candidate);
+
+        assert_eq!(comparison.paired_items, 2);
+        let group = comparison
+            .groups
+            .get("reasoning_mode:deductive")
+            .expect("reasoning group");
+        assert_eq!(group.paired_items, 1);
+        assert_eq!(group.success_rate_delta, 1.0);
+        assert!(comparison_markdown(&comparison).contains("Cost-adjusted"));
+    }
+
+    #[test]
     fn gate_reports_failed_policy_reasons() {
         let comparison = EvalComparison {
             baseline_condition: EvalCondition::NoMemory,
@@ -1248,6 +1770,7 @@ mod tests {
             baseline_mean_duration_ms: 10.0,
             candidate_mean_duration_ms: 12.0,
             duration_delta_ms: 2.0,
+            cost_adjusted_success_delta_per_1k_tokens: 0.0,
             metric_deltas: BTreeMap::from([(
                 "recall_at_k".to_string(),
                 MetricDelta {
@@ -1258,6 +1781,7 @@ mod tests {
                     ci95_high: 0.1,
                 },
             )]),
+            groups: BTreeMap::new(),
         };
 
         let gate = evaluate_gate(
@@ -1279,6 +1803,7 @@ mod tests {
     fn plain_llm_grounded_answer_scores_assertions_and_tokens() {
         let item = GroundedAnswerItem {
             id: "plain-answer".to_string(),
+            metadata: EvalItemMetadata::default(),
             project: None,
             question: "How are tokens reported?".to_string(),
             top_k: 8,
@@ -1317,6 +1842,7 @@ mod tests {
     fn resume_text_quality_preserves_full_token_usage() {
         let item = ResumeQualityItem {
             id: "resume".to_string(),
+            metadata: EvalItemMetadata::default(),
             project: None,
             prompt: String::new(),
             required_topics: vec!["memory".to_string()],
@@ -1382,6 +1908,7 @@ mod tests {
     fn agent_build_task_scores_deterministic_checks() {
         let item = AgentBuildTaskItem {
             id: "app".to_string(),
+            metadata: EvalItemMetadata::default(),
             project: Some("memory".to_string()),
             prompt: "Build it".to_string(),
             fixture: "fixtures/app".to_string(),
@@ -1420,6 +1947,7 @@ mod tests {
                 token_usage: None,
                 duration_ms: Some(10),
                 notes: Vec::new(),
+                sub_results: Vec::new(),
                 skipped: false,
             },
         );
@@ -1435,6 +1963,7 @@ mod tests {
             item_id: id.to_string(),
             eval_type: "retrieval_qa".to_string(),
             condition: EvalCondition::FullMemory,
+            metadata: EvalItemMetadata::default(),
             success,
             skipped: false,
             scores: BTreeMap::from([("recall_at_k".to_string(), recall)]),
@@ -1442,6 +1971,40 @@ mod tests {
             token_usage: None,
             answer: None,
             notes: Vec::new(),
+            sub_results: Vec::new(),
+        }
+    }
+
+    fn sequence_result(success: bool, reasoning_mode: &str) -> EvalItemResult {
+        EvalItemResult {
+            item_id: "sequence".to_string(),
+            eval_type: "agent_build_sequence".to_string(),
+            condition: EvalCondition::FullMemory,
+            metadata: EvalItemMetadata::default(),
+            success,
+            skipped: false,
+            scores: BTreeMap::from([("total_score".to_string(), if success { 1.0 } else { 0.0 })]),
+            duration_ms: None,
+            token_usage: None,
+            answer: None,
+            notes: Vec::new(),
+            sub_results: vec![EvalSubResult {
+                id: "step".to_string(),
+                eval_type: "agent_build_sequence_step".to_string(),
+                metadata: EvalItemMetadata {
+                    reasoning_mode: Some(reasoning_mode.to_string()),
+                    ..EvalItemMetadata::default()
+                },
+                success,
+                skipped: false,
+                scores: BTreeMap::from([(
+                    "total_score".to_string(),
+                    if success { 1.0 } else { 0.0 },
+                )]),
+                duration_ms: None,
+                token_usage: None,
+                notes: Vec::new(),
+            }],
         }
     }
 }

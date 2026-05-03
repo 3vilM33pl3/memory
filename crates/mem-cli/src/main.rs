@@ -6,7 +6,6 @@ mod tui;
 mod wizard;
 mod writer_identity;
 
-#[cfg(target_os = "macos")]
 use std::collections::BTreeMap;
 #[cfg(unix)]
 use std::os::unix::{fs::PermissionsExt, net::UnixStream};
@@ -216,6 +215,7 @@ Examples:
   memory eval run --suite evals/examples/app-build-smoke --condition no-memory --condition full-memory --profile offline --text
   memory eval run --suite evals/examples/memory-smoke --condition full-memory --repeat 5
   memory eval compare --baseline target/memory-evals/run-a.json --candidate target/memory-evals/run-b.json --text
+  memory eval compare --baseline 'target/memory-evals/*no-memory*.json' --candidate 'target/memory-evals/*full-memory*.json' --out target/memory-evals/comparison.json
   memory eval gate --comparison target/memory-evals/comparison.json --policy evals/gates/research-v1.toml
   memory eval report --comparison target/memory-evals/comparison.json --text
 
@@ -251,12 +251,12 @@ See also:
 
 const EVAL_COMPARE_AFTER_HELP: &str = "\
 Agent notes:
-  Compares two run JSON files pairwise by item id and reports success deltas plus statistical summaries.
+  Compares run JSON files pairwise by item id, repeat, and sequence step, then reports success deltas plus statistical summaries.
   Use --out to preserve comparison JSON for reports or releases.
 
 Examples:
   memory eval compare --baseline target/memory-evals/no-memory.json --candidate target/memory-evals/full-memory.json --text
-  memory eval compare --baseline a.json --candidate b.json --out target/memory-evals/comparison.json
+  memory eval compare --baseline 'target/memory-evals/*no-memory*.json' --candidate 'target/memory-evals/*full-memory*.json' --out target/memory-evals/comparison.json
 
 See also:
   docs/user/cli/eval.md";
@@ -267,6 +267,7 @@ Agent notes:
 
 Examples:
   memory eval report --comparison target/memory-evals/comparison.json --text
+  memory eval report --comparison target/memory-evals/comparison.json --markdown --out target/memory-evals/report.md
   memory eval report --comparison target/memory-evals/comparison.json
 
 See also:
@@ -1676,12 +1677,12 @@ struct EvalRunArgs {
 
 #[derive(Debug, Args)]
 struct EvalCompareArgs {
-    /// Baseline run JSON file.
+    /// Baseline run JSON file or glob. Repeat for multiple run artifacts.
     #[arg(long)]
-    baseline: PathBuf,
-    /// Candidate run JSON file.
+    baseline: Vec<PathBuf>,
+    /// Candidate run JSON file or glob. Repeat for multiple run artifacts.
     #[arg(long)]
-    candidate: PathBuf,
+    candidate: Vec<PathBuf>,
     /// Optional path to write comparison JSON.
     #[arg(long)]
     out: Option<PathBuf>,
@@ -1695,6 +1696,12 @@ struct EvalReportArgs {
     /// Comparison JSON file from memory eval compare.
     #[arg(long)]
     comparison: PathBuf,
+    /// Optional file to write the rendered report.
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// Emit a Markdown report instead of comparison JSON.
+    #[arg(long)]
+    markdown: bool,
     /// Emit a human-readable text view instead of JSON.
     #[arg(long)]
     text: bool,
@@ -8241,9 +8248,9 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
             }
         }
         EvalCommand::Compare(args) => {
-            let baseline = mem_eval::load_run(&args.baseline)?;
-            let candidate = mem_eval::load_run(&args.candidate)?;
-            let comparison = mem_eval::compare_runs(&baseline, &candidate);
+            let baseline = load_eval_runs_from_patterns(&args.baseline)?;
+            let candidate = load_eval_runs_from_patterns(&args.candidate)?;
+            let comparison = mem_eval::compare_run_sets(&baseline, &candidate);
             if let Some(path) = args.out {
                 mem_eval::write_json(&path, &comparison)?;
             }
@@ -8259,10 +8266,21 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
                     .with_context(|| format!("read {}", args.comparison.display()))?,
             )
             .with_context(|| format!("parse {}", args.comparison.display()))?;
-            if args.text {
-                println!("{}", mem_eval::comparison_text(&comparison));
+            let rendered = if args.markdown {
+                mem_eval::comparison_markdown(&comparison)
+            } else if args.text {
+                mem_eval::comparison_text(&comparison)
             } else {
-                println!("{}", serde_json::to_string_pretty(&comparison)?);
+                serde_json::to_string_pretty(&comparison)?
+            };
+            if let Some(path) = args.out {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)
+                        .with_context(|| format!("create {}", parent.display()))?;
+                }
+                fs::write(&path, rendered).with_context(|| format!("write {}", path.display()))?;
+            } else {
+                println!("{rendered}");
             }
         }
         EvalCommand::Gate(args) => {
@@ -8433,6 +8451,81 @@ async fn run_eval_suite(
     })
 }
 
+fn load_eval_runs_from_patterns(patterns: &[PathBuf]) -> Result<Vec<mem_eval::EvalRun>> {
+    if patterns.is_empty() {
+        anyhow::bail!("at least one eval run path is required");
+    }
+    let mut paths = Vec::new();
+    for pattern in patterns {
+        let pattern_text = pattern.to_string_lossy();
+        if pattern_text.contains('*') || pattern_text.contains('?') {
+            paths.extend(expand_eval_run_pattern(pattern)?);
+        } else {
+            paths.push(pattern.clone());
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        anyhow::bail!("eval run pattern(s) matched no files");
+    }
+    paths
+        .iter()
+        .map(|path| mem_eval::load_run(path))
+        .collect::<Result<Vec<_>>>()
+}
+
+fn expand_eval_run_pattern(pattern: &Path) -> Result<Vec<PathBuf>> {
+    let file_pattern = pattern
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow::anyhow!("invalid eval run glob `{}`", pattern.display()))?;
+    let dir = pattern.parent().filter(|value| !value.as_os_str().is_empty());
+    let dir = dir.unwrap_or_else(|| Path::new("."));
+    let mut matches = Vec::new();
+    for entry in fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
+        let entry = entry.with_context(|| format!("read entry in {}", dir.display()))?;
+        let path = entry.path();
+        if path.is_file()
+            && path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| wildcard_match(file_pattern, name))
+        {
+            matches.push(path);
+        }
+    }
+    Ok(matches)
+}
+
+fn wildcard_match(pattern: &str, value: &str) -> bool {
+    let pattern = pattern.as_bytes();
+    let value = value.as_bytes();
+    let (mut p, mut v) = (0usize, 0usize);
+    let mut star = None;
+    let mut star_value = 0usize;
+    while v < value.len() {
+        if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == value[v]) {
+            p += 1;
+            v += 1;
+        } else if p < pattern.len() && pattern[p] == b'*' {
+            star = Some(p);
+            p += 1;
+            star_value = v;
+        } else if let Some(star_index) = star {
+            p = star_index + 1;
+            star_value += 1;
+            v = star_value;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == b'*' {
+        p += 1;
+    }
+    p == pattern.len()
+}
+
 fn no_memory_retrieval_result(
     item: &mem_eval::RetrievalQaItem,
     condition: mem_eval::EvalCondition,
@@ -8446,6 +8539,7 @@ fn no_memory_retrieval_result(
         item_id: item.id.clone(),
         eval_type: "retrieval_qa".to_string(),
         condition,
+        metadata: item.metadata.clone(),
         success: item.expected_memory_ids.is_empty(),
         skipped: false,
         scores,
@@ -8453,6 +8547,7 @@ fn no_memory_retrieval_result(
         token_usage: None,
         answer: None,
         notes: vec!["no-memory condition has no memory retrieval channel".to_string()],
+        sub_results: Vec::new(),
     }
 }
 
@@ -8770,6 +8865,7 @@ fn run_agent_build_eval_item(
                     "dry-run: validated fixture and command templates without execution"
                         .to_string(),
                 ],
+                sub_results: Vec::new(),
                 skipped: true,
             },
         ));
@@ -8946,6 +9042,7 @@ fn run_agent_build_eval_item(
             token_usage: codex_token_usage_from_run_dir(&run_dir)?,
             duration_ms: Some(started.elapsed().as_millis() as u64),
             notes,
+            sub_results: Vec::new(),
             skipped: false,
         },
     ))
@@ -9009,6 +9106,7 @@ fn run_agent_build_sequence_eval_item(
                     "dry-run: validated sequence fixture and command templates without execution"
                         .to_string(),
                 ],
+                sub_results: Vec::new(),
                 skipped: true,
             },
         ));
@@ -9073,8 +9171,10 @@ fn run_agent_build_sequence_eval_item(
     let mut token_usage = TokenUsage::default();
     let mut saw_token_usage = false;
     let mut step_summaries = Vec::new();
+    let mut sub_results = Vec::new();
 
     for (index, step) in item.steps.iter().enumerate() {
+        let step_started = Instant::now();
         let step_label = format!("{:02}-{}", index + 1, sanitize_filename(&step.id));
         let step_dir = steps_dir.join(&step_label);
         fs::create_dir_all(&step_dir).with_context(|| format!("create {}", step_dir.display()))?;
@@ -9194,8 +9294,76 @@ fn run_agent_build_sequence_eval_item(
             && step_forbidden_absent == step.forbidden_files.len()
             && step_content_passed == step.required_content.len()
             && memory_evidence.ok;
+        let mut step_scores = BTreeMap::new();
+        step_scores.insert(
+            "agent_exit_code".to_string(),
+            agent_output.exit_code.unwrap_or(-1) as f64,
+        );
+        step_scores.insert(
+            "score_commands_passed".to_string(),
+            step_score_exit_codes
+                .iter()
+                .filter(|code| **code == Some(0))
+                .count() as f64,
+        );
+        step_scores.insert(
+            "score_commands_total".to_string(),
+            step_score_exit_codes.len() as f64,
+        );
+        step_scores.insert(
+            "required_files_present".to_string(),
+            step_required_present as f64,
+        );
+        step_scores.insert(
+            "required_files_total".to_string(),
+            step.required_files.len() as f64,
+        );
+        step_scores.insert(
+            "forbidden_files_absent".to_string(),
+            step_forbidden_absent as f64,
+        );
+        step_scores.insert(
+            "forbidden_files_total".to_string(),
+            step.forbidden_files.len() as f64,
+        );
+        step_scores.insert(
+            "content_assertions_passed".to_string(),
+            step_content_passed as f64,
+        );
+        step_scores.insert(
+            "content_assertions_total".to_string(),
+            step.required_content.len() as f64,
+        );
+        step_scores.insert(
+            "memory_queries_required".to_string(),
+            memory_evidence.required as f64,
+        );
+        step_scores.insert(
+            "memory_queries_verified".to_string(),
+            memory_evidence.verified as f64,
+        );
+        step_scores.insert(
+            "memory_evidence_ok".to_string(),
+            if memory_evidence.ok { 1.0 } else { 0.0 },
+        );
+        step_scores.insert(
+            "total_score".to_string(),
+            if step_success { 1.0 } else { 0.0 },
+        );
+        sub_results.push(mem_eval::EvalSubResult {
+            id: step.id.clone(),
+            eval_type: "agent_build_sequence_step".to_string(),
+            metadata: step.metadata.clone(),
+            success: step_success,
+            skipped: false,
+            scores: step_scores,
+            duration_ms: Some(step_started.elapsed().as_millis() as u64),
+            token_usage: step_token_usage.clone(),
+            notes: memory_evidence.notes.clone(),
+        });
         step_summaries.push(serde_json::json!({
             "id": step.id,
+            "metadata": step.metadata,
             "success": step_success,
             "agent_exit_code": agent_output.exit_code,
             "score_exit_codes": step_score_exit_codes,
@@ -9266,6 +9434,7 @@ fn run_agent_build_sequence_eval_item(
             token_usage: saw_token_usage.then_some(token_usage),
             duration_ms: Some(started.elapsed().as_millis() as u64),
             notes,
+            sub_results,
             skipped: false,
         },
     ))
@@ -9282,6 +9451,7 @@ fn sequence_step_as_task(
 ) -> mem_eval::AgentBuildTaskItem {
     mem_eval::AgentBuildTaskItem {
         id: step.id.clone(),
+        metadata: step.metadata.clone(),
         project: item.project.clone(),
         prompt: step.prompt.clone(),
         fixture: item.fixture.clone(),
