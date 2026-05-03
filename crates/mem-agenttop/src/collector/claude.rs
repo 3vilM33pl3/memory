@@ -1,5 +1,7 @@
 use super::process::{self, ProcInfo};
-use crate::model::{AgentSession, ChildProcess, SessionFile, SessionStatus, SubAgent};
+use crate::model::{
+    AgentSession, ChildProcess, LightweightAgentSession, SessionFile, SessionStatus, SubAgent,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -482,6 +484,52 @@ impl ClaudeCollector {
 
         (file_count, line_count)
     }
+}
+
+pub fn collect_lightweight_sessions(
+    process_info: &HashMap<u32, ProcInfo>,
+) -> Vec<LightweightAgentSession> {
+    let base = std::env::var("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join(".claude"));
+    let sessions_dir = base.join("sessions");
+    let Ok(entries) = fs::read_dir(&sessions_dir) else {
+        return Vec::new();
+    };
+
+    let mut sessions = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(session) = serde_json::from_str::<SessionFile>(&content) else {
+            continue;
+        };
+        let Some(proc_cmd) = process_info
+            .get(&session.pid)
+            .map(|proc| proc.command.as_str())
+        else {
+            continue;
+        };
+        if proc_cmd.contains("--print") {
+            continue;
+        }
+        if !(process::cmd_has_binary(proc_cmd, "claude") || is_claude_versioned_binary(proc_cmd)) {
+            continue;
+        }
+        sessions.push(LightweightAgentSession {
+            agent_cli: "claude",
+            pid: session.pid,
+            session_id: session.session_id,
+            cwd: session.cwd,
+            started_at: session.started_at,
+        });
+    }
+    sessions
 }
 
 impl super::AgentCollector for ClaudeCollector {

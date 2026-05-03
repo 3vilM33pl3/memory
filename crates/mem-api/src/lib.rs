@@ -2955,6 +2955,8 @@ pub struct AutomationConfig {
     #[serde(default = "default_poll_interval")]
     #[serde(with = "humantime_serde")]
     pub poll_interval: Duration,
+    #[serde(default = "default_file_events")]
+    pub file_events: bool,
     #[serde(default = "default_capture_idle_threshold", alias = "idle_threshold")]
     #[serde(with = "humantime_serde")]
     pub capture_idle_threshold: Duration,
@@ -3041,6 +3043,7 @@ impl Default for AutomationConfig {
             mode: AutomationMode::Suggest,
             repo_root: None,
             poll_interval: default_poll_interval(),
+            file_events: default_file_events(),
             capture_idle_threshold: default_capture_idle_threshold(),
             min_changed_files: default_min_changed_files(),
             require_passing_test: false,
@@ -3067,6 +3070,10 @@ fn default_cluster_discovery_multicast_addr() -> String {
 
 fn default_cluster_announce_interval() -> Duration {
     Duration::from_secs(5)
+}
+
+fn default_file_events() -> bool {
+    true
 }
 
 fn default_cluster_peer_ttl() -> Duration {
@@ -3130,7 +3137,7 @@ fn default_llm_max_output_tokens() -> u32 {
 }
 
 fn default_poll_interval() -> Duration {
-    Duration::from_secs(10)
+    Duration::from_secs(60)
 }
 
 fn default_capture_idle_threshold() -> Duration {

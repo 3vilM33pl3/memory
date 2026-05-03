@@ -47,7 +47,10 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::{ApiClient, SourceKindString, enable_relay_discovery_and_restart_backend, resume};
+use crate::{
+    ApiClient, SourceKindString, TuiRestartNotice, enable_relay_discovery_and_restart_backend,
+    load_tui_restart_notice, resume,
+};
 
 const STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -89,7 +92,12 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
             .take()
             .expect("agent_wake_rx present on fresh App"),
     );
-    start_manager_status_worker(app.background_tx.clone(), app.profile);
+    start_manager_status_worker(
+        app.background_tx.clone(),
+        app.profile,
+        app.startup_at,
+        app.versions.mem_cli.clone(),
+    );
     start_embedding_backends_worker(
         api.clone(),
         app.project.clone(),
@@ -261,12 +269,18 @@ fn start_embedding_backends_worker(
     });
 }
 
-fn start_manager_status_worker(tx: mpsc::UnboundedSender<BackgroundEvent>, profile: Profile) {
+fn start_manager_status_worker(
+    tx: mpsc::UnboundedSender<BackgroundEvent>,
+    profile: Profile,
+    startup_at: DateTime<Utc>,
+    running_version: String,
+) {
     std::thread::spawn(move || {
         loop {
             if tx
                 .send(BackgroundEvent::ManagerStatusLoaded {
                     status: Some(load_manager_footer_status(profile)),
+                    restart_notice: load_tui_restart_notice(startup_at, &running_version),
                 })
                 .is_err()
             {
@@ -378,6 +392,7 @@ struct App {
     replacement_selected_index: usize,
     review_table_state: TableState,
     versions: ToolVersions,
+    startup_at: DateTime<Utc>,
     ui_status: UiStatus,
     status_message: String,
     health_ok: bool,
@@ -386,6 +401,7 @@ struct App {
     service_health_state: Option<String>,
     service_database_state: Option<String>,
     manager_status: Option<ManagerFooterStatus>,
+    restart_notice: Option<TuiRestartNotice>,
     stream_connecting: bool,
     relay_discovery_enabled: bool,
     profile: Profile,
@@ -438,6 +454,7 @@ enum UiStatus {
     Loading,
     Busy,
     Ready,
+    Restart,
     Error,
 }
 
@@ -447,6 +464,10 @@ struct ManagerFooterStatus {
     tracked_sessions: usize,
     warning_count: usize,
     mode: Option<ManagerMode>,
+    runtime_mode: Option<String>,
+    last_reconcile_reason: Option<String>,
+    event_count: u64,
+    fallback_scan_count: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -465,6 +486,14 @@ enum ManagerMode {
 
 #[derive(Debug, Default, Deserialize)]
 struct ManagerStateFile {
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    last_reconcile_reason: String,
+    #[serde(default)]
+    event_count: u64,
+    #[serde(default)]
+    fallback_scan_count: u64,
     #[serde(default)]
     sessions: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
@@ -515,6 +544,7 @@ enum BackgroundEvent {
     },
     ManagerStatusLoaded {
         status: Option<ManagerFooterStatus>,
+        restart_notice: Option<TuiRestartNotice>,
     },
     ActivitiesLoaded {
         response: Box<Result<mem_api::ActivityListResponse, String>>,
@@ -648,6 +678,7 @@ impl App {
             replacement_selected_index: 0,
             review_table_state,
             versions,
+            startup_at: Utc::now(),
             ui_status: UiStatus::Loading,
             status_message: "Loading project data...".to_string(),
             health_ok: false,
@@ -656,6 +687,7 @@ impl App {
             service_health_state: None,
             service_database_state: None,
             manager_status: None,
+            restart_notice: None,
             stream_connecting: false,
             relay_discovery_enabled,
             profile,
@@ -1119,8 +1151,24 @@ impl App {
                     self.agent_error = Some(error);
                 }
             },
-            BackgroundEvent::ManagerStatusLoaded { status } => {
+            BackgroundEvent::ManagerStatusLoaded {
+                status,
+                restart_notice,
+            } => {
                 self.manager_status = status;
+                let had_restart_notice = self.restart_notice.is_some();
+                self.restart_notice = restart_notice;
+                if let Some(notice) = &self.restart_notice {
+                    self.ui_status = UiStatus::Restart;
+                    self.status_message = format!(
+                        "Memory Layer was updated to v{}; restart the TUI to load the installed binary. Marker: {}",
+                        notice.version,
+                        notice.marker_path.display()
+                    );
+                } else if had_restart_notice && matches!(self.ui_status, UiStatus::Restart) {
+                    self.ui_status = UiStatus::Ready;
+                    self.status_message = "TUI restart marker cleared.".to_string();
+                }
             }
             BackgroundEvent::ActivitiesLoaded { response } => {
                 self.activity_loading = false;
@@ -7301,19 +7349,27 @@ fn service_span(value: &str) -> Span<'static> {
 }
 
 fn tui_status_label(app: &App) -> &'static str {
+    if app.restart_notice.is_some() {
+        return "restart";
+    }
     match app.ui_status {
         UiStatus::Loading => "loading",
         UiStatus::Busy => "busy",
         UiStatus::Ready => "ready",
+        UiStatus::Restart => "restart",
         UiStatus::Error => "error",
     }
 }
 
 fn tui_status_color(app: &App) -> Color {
+    if app.restart_notice.is_some() {
+        return Theme::DANGER;
+    }
     match app.ui_status {
         UiStatus::Loading => Theme::ACCENT,
         UiStatus::Busy => Theme::ACCENT_STRONG,
         UiStatus::Ready => Theme::SUCCESS,
+        UiStatus::Restart => Theme::DANGER,
         UiStatus::Error => Theme::DANGER,
     }
 }
@@ -7399,6 +7455,12 @@ fn manager_status_detail(app: &App) -> Option<String> {
             ManagerMode::Foreground => "manual".to_string(),
         });
     }
+    if let Some(runtime_mode) = &status.runtime_mode {
+        parts.push(runtime_mode.clone());
+    }
+    if let Some(reason) = &status.last_reconcile_reason {
+        parts.push(format!("last {reason}"));
+    }
     parts.push(format!(
         "{} session{}",
         status.tracked_sessions,
@@ -7410,6 +7472,12 @@ fn manager_status_detail(app: &App) -> Option<String> {
     ));
     if status.warning_count > 0 {
         parts.push(format!("{} warn", status.warning_count));
+    }
+    if status.event_count > 0 || status.fallback_scan_count > 0 {
+        parts.push(format!(
+            "{} events, {} fallback",
+            status.event_count, status.fallback_scan_count
+        ));
     }
     Some(parts.join(", "))
 }
@@ -7786,6 +7854,20 @@ fn load_manager_footer_status(profile: Profile) -> ManagerFooterStatus {
         .as_ref()
         .map(|state| state.warnings.len())
         .unwrap_or(0);
+    let runtime_mode = state_file
+        .as_ref()
+        .and_then(|state| (!state.mode.is_empty()).then(|| state.mode.clone()));
+    let last_reconcile_reason = state_file.as_ref().and_then(|state| {
+        (!state.last_reconcile_reason.is_empty()).then(|| state.last_reconcile_reason.clone())
+    });
+    let event_count = state_file
+        .as_ref()
+        .map(|state| state.event_count)
+        .unwrap_or(0);
+    let fallback_scan_count = state_file
+        .as_ref()
+        .map(|state| state.fallback_scan_count)
+        .unwrap_or(0);
     let state = derive_manager_state(
         unit_installed,
         unit_enabled,
@@ -7805,6 +7887,10 @@ fn load_manager_footer_status(profile: Profile) -> ManagerFooterStatus {
         tracked_sessions,
         warning_count,
         mode,
+        runtime_mode,
+        last_reconcile_reason,
+        event_count,
+        fallback_scan_count,
     }
 }
 
@@ -8005,8 +8091,10 @@ mod tests {
         format_timestamp_timeline, latest_plan_display, manager_status_detail,
         manager_status_label, memory_detail_max_scroll, normalized_percent, query_input_display,
         remaining_bar_cells, render_markdown_lines, service_status_detail, service_status_label,
-        should_attempt_stream_reconnect, watcher_bar_status_label,
+        should_attempt_stream_reconnect, tui_status_color, tui_status_label,
+        watcher_bar_status_label,
     };
+    use crate::TuiRestartNotice;
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
         ActivityDetails, ActivityEvent, ActivityKind, MemoryEmbeddingSpace, MemoryEntryResponse,
@@ -8348,12 +8436,19 @@ mod tests {
             tracked_sessions: 2,
             warning_count: 1,
             mode: Some(super::ManagerMode::Foreground),
+            runtime_mode: Some("event-driven".to_string()),
+            last_reconcile_reason: Some("session-file-event".to_string()),
+            event_count: 3,
+            fallback_scan_count: 1,
         });
 
         assert_eq!(manager_status_label(&app), "active");
         assert_eq!(
             manager_status_detail(&app),
-            Some("manual, 2 sessions, 1 warn".to_string())
+            Some(
+                "manual, event-driven, last session-file-event, 2 sessions, 1 warn, 3 events, 1 fallback"
+                    .to_string()
+            )
         );
     }
 
@@ -8392,6 +8487,20 @@ mod tests {
         assert_eq!(app.overview.database_status, "up");
         assert_eq!(app.ui_status, UiStatus::Ready);
         assert!(app.status_message.contains("backend health is unchanged"));
+    }
+
+    #[test]
+    fn tui_restart_notice_forces_red_restart_status() {
+        let mut app = new_test_app();
+        app.ui_status = UiStatus::Ready;
+        app.restart_notice = Some(TuiRestartNotice {
+            marker_path: PathBuf::from("/tmp/tui-restart-required.json"),
+            version: "0.9.0".to_string(),
+            reason: "install-or-upgrade".to_string(),
+        });
+
+        assert_eq!(tui_status_label(&app), "restart");
+        assert_eq!(tui_status_color(&app), Theme::DANGER);
     }
 
     #[test]

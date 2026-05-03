@@ -29,6 +29,7 @@ Preview the service action without changing the machine:
 memory service enable --dry-run
 memory service disable --dry-run
 memory service ensure-api-token --rotate-placeholder --dry-run
+memory service restart-all --dry-run --json
 ```
 
 This command also provisions the shared service API token automatically if it is missing or still set to the old development placeholder.
@@ -45,6 +46,16 @@ Rotate an old placeholder token manually:
 memory service ensure-api-token --rotate-placeholder
 ```
 
+Restart active services after an install or upgrade:
+
+```bash
+memory service restart-all --mark-tui-restart --json
+```
+
+`restart-all` restarts only services that are already active or loaded. It does not start services that the user intentionally stopped. On Linux it checks the system backend service and active user watcher services. When run as root during a package install, it also checks logged-in user systemd sessions under `/run/user/*`. On macOS it checks loaded Memory Layer LaunchAgents.
+
+Installers pass `--mark-tui-restart` so a TUI that is already open can show `restart` in red in the bottom status bar. Restarting the TUI is still a user action; the installer does not kill the running terminal UI.
+
 Health checks from the client side:
 
 ```bash
@@ -60,10 +71,10 @@ On Linux, the packaged service is usually managed with:
 
 ```bash
 sudo systemctl enable --now memory-layer.service
-sudo systemctl restart memory-layer.service
+memory service restart-all --mark-tui-restart
 ```
 
-Use the system service directly for restart operations during upgrades.
+Use `systemctl` directly only when debugging a specific unit.
 
 ## Development And Source Use
 

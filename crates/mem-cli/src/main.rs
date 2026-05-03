@@ -21,7 +21,7 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
-use mem_agenttop::{AgentSession, AgentTop, SessionStatus};
+use mem_agenttop::LightweightAgentSession;
 use mem_api::{
     ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
     CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
@@ -191,6 +191,19 @@ Agent notes:
 
 Examples:
   memory service status
+
+See also:
+  docs/user/cli/service.md";
+
+const SERVICE_RESTART_ALL_AFTER_HELP: &str = "\
+Agent notes:
+  Restarts Memory Layer services that are already active or loaded after a package install or upgrade.
+  Does not start intentionally stopped services. Use --dry-run --json before changing service state from automation.
+  Use --mark-tui-restart from installers so running TUIs can show a red restart status.
+
+Examples:
+  memory service restart-all --dry-run --json
+  memory service restart-all --mark-tui-restart --json
 
 See also:
   docs/user/cli/service.md";
@@ -1116,6 +1129,8 @@ enum ServiceCommand {
     Disable(ServiceLifecycleArgs),
     #[command(about = "Show the current packaged service status.", after_help = SERVICE_STATUS_AFTER_HELP)]
     Status,
+    #[command(about = "Restart active Memory Layer services after an install or upgrade.", after_help = SERVICE_RESTART_ALL_AFTER_HELP)]
+    RestartAll(ServiceRestartAllArgs),
     #[command(about = "Provision or rotate the shared service API token.", after_help = SERVICE_TOKEN_AFTER_HELP)]
     EnsureApiToken(ServiceEnsureApiTokenArgs),
 }
@@ -1125,6 +1140,19 @@ struct ServiceLifecycleArgs {
     /// Preview the service manager actions without changing service state.
     #[arg(long)]
     dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ServiceRestartAllArgs {
+    /// Preview active service discovery and restart actions without changing service state.
+    #[arg(long)]
+    dry_run: bool,
+    /// Emit the restart report as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Write a TUI restart marker after restart planning/execution.
+    #[arg(long)]
+    mark_tui_restart: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2166,6 +2194,14 @@ async fn main() -> Result<()> {
                     }
                 }
                 ServiceCommand::Status => println!("{}", backend_service_status(&config_path)?),
+                ServiceCommand::RestartAll(args) => {
+                    let report = restart_all_memory_services(args.dry_run, args.mark_tui_restart)?;
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else {
+                        println!("{}", report.summary());
+                    }
+                }
                 ServiceCommand::EnsureApiToken(args) => {
                     let _ = args.shared;
                     let result = if args.dry_run {
@@ -5371,6 +5407,495 @@ fn backend_service_status(config_path: &Path) -> Result<String> {
     }
 }
 
+const TUI_RESTART_MARKER_FILE: &str = "tui-restart-required.json";
+#[cfg(not(target_os = "macos"))]
+const LINUX_GLOBAL_TUI_RESTART_MARKER: &str = "/var/lib/memory-layer/tui-restart-required.json";
+#[cfg(target_os = "macos")]
+const MACOS_GLOBAL_TUI_RESTART_MARKER: &str =
+    "/usr/local/var/memory-layer/tui-restart-required.json";
+
+#[derive(Debug, Clone, Serialize)]
+struct ServiceRestartReport {
+    dry_run: bool,
+    marked_tui_restart: bool,
+    marker_paths: Vec<String>,
+    operations: Vec<ServiceRestartOperation>,
+}
+
+impl ServiceRestartReport {
+    fn summary(&self) -> String {
+        let mut lines = vec![format!(
+            "Memory Layer service restart{}:",
+            if self.dry_run { " dry run" } else { "" }
+        )];
+        for operation in &self.operations {
+            lines.push(format!(
+                "- {} [{}]: {}{}",
+                operation.name,
+                operation.manager,
+                operation.action,
+                operation
+                    .message
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .map(|value| format!(" ({value})"))
+                    .unwrap_or_default()
+            ));
+        }
+        if self.marked_tui_restart {
+            lines.push(format!(
+                "TUI restart marker written: {}",
+                self.marker_paths.join(", ")
+            ));
+        }
+        lines.join("\n")
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ServiceRestartOperation {
+    name: String,
+    manager: String,
+    active: bool,
+    action: String,
+    success: bool,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct TuiRestartMarker {
+    pub(crate) version: String,
+    pub(crate) marked_at: DateTime<Utc>,
+    pub(crate) reason: String,
+    pub(crate) binary_path: String,
+    pub(crate) restarted_services: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TuiRestartNotice {
+    pub(crate) marker_path: PathBuf,
+    pub(crate) version: String,
+    pub(crate) reason: String,
+}
+
+fn restart_all_memory_services(
+    dry_run: bool,
+    mark_tui_restart: bool,
+) -> Result<ServiceRestartReport> {
+    let mut operations = Vec::new();
+    restart_platform_services(dry_run, &mut operations)?;
+    let restarted_services = operations
+        .iter()
+        .filter(|operation| {
+            operation.active
+                && (operation.success || dry_run)
+                && (operation.action == "restart" || operation.action == "would-restart")
+        })
+        .map(|operation| operation.name.clone())
+        .collect::<Vec<_>>();
+    let marker_paths = if mark_tui_restart && !dry_run {
+        write_tui_restart_marker("install-or-upgrade", restarted_services)?
+    } else {
+        Vec::new()
+    };
+    Ok(ServiceRestartReport {
+        dry_run,
+        marked_tui_restart: mark_tui_restart && !dry_run && !marker_paths.is_empty(),
+        marker_paths: marker_paths
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+        operations,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restart_platform_services(
+    dry_run: bool,
+    operations: &mut Vec<ServiceRestartOperation>,
+) -> Result<()> {
+    for unit in ["memory-layer.service", "memory-watch.service"] {
+        restart_systemd_system_unit_if_active(unit, dry_run, operations);
+    }
+    for scope in active_memory_user_unit_scopes() {
+        for unit in &scope.units {
+            restart_systemd_user_unit_if_active(&scope, unit, dry_run, operations);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn restart_platform_services(
+    dry_run: bool,
+    operations: &mut Vec<ServiceRestartOperation>,
+) -> Result<()> {
+    for label in active_launch_agent_labels()? {
+        restart_launch_agent_if_loaded(&label, dry_run, operations);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restart_systemd_system_unit_if_active(
+    unit: &str,
+    dry_run: bool,
+    operations: &mut Vec<ServiceRestartOperation>,
+) {
+    let active = run_systemctl_system(["is-active", "--quiet", unit]).is_ok();
+    if !active {
+        operations.push(ServiceRestartOperation {
+            name: unit.to_string(),
+            manager: "systemd-system".to_string(),
+            active,
+            action: "skip-inactive".to_string(),
+            success: true,
+            message: None,
+        });
+        return;
+    }
+    if dry_run {
+        operations.push(ServiceRestartOperation {
+            name: unit.to_string(),
+            manager: "systemd-system".to_string(),
+            active,
+            action: "would-restart".to_string(),
+            success: true,
+            message: None,
+        });
+        return;
+    }
+    let result = run_systemctl_system(["restart", unit]);
+    operations.push(ServiceRestartOperation {
+        name: unit.to_string(),
+        manager: "systemd-system".to_string(),
+        active,
+        action: "restart".to_string(),
+        success: result.is_ok(),
+        message: result.err().map(|error| error.to_string()),
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Debug, Clone)]
+struct SystemdUserScope {
+    manager_label: String,
+    username: Option<String>,
+    runtime_dir: Option<PathBuf>,
+    units: Vec<String>,
+}
+
+#[cfg(not(target_os = "macos"))]
+fn active_memory_user_unit_scopes() -> Vec<SystemdUserScope> {
+    if running_as_root() {
+        let scopes = active_logged_in_user_memory_unit_scopes();
+        if !scopes.is_empty() {
+            return scopes;
+        }
+    }
+    active_current_user_memory_units()
+        .into_iter()
+        .next()
+        .map(|units| SystemdUserScope {
+            manager_label: "systemd-user".to_string(),
+            username: None,
+            runtime_dir: None,
+            units,
+        })
+        .into_iter()
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn running_as_root() -> bool {
+    ProcessCommand::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == "0")
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn active_logged_in_user_memory_unit_scopes() -> Vec<SystemdUserScope> {
+    let Ok(entries) = fs::read_dir("/run/user") else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let runtime_dir = entry.path();
+            let uid = runtime_dir.file_name()?.to_str()?.to_string();
+            let username = username_for_uid(&uid)?;
+            let units = active_user_memory_units_for(&username, Some(&runtime_dir));
+            (!units.is_empty()).then_some(SystemdUserScope {
+                manager_label: format!("systemd-user:{username}"),
+                username: Some(username),
+                runtime_dir: Some(runtime_dir),
+                units,
+            })
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn username_for_uid(uid: &str) -> Option<String> {
+    let output = ProcessCommand::new("getent")
+        .args(["passwd", uid])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split(':')
+        .next()
+        .map(str::to_string)
+        .filter(|value| !value.is_empty())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn active_current_user_memory_units() -> Option<Vec<String>> {
+    let units = active_user_memory_units_for("", None);
+    (!units.is_empty()).then_some(units)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn active_user_memory_units_for(username: &str, runtime_dir: Option<&Path>) -> Vec<String> {
+    let mut command = if let Some(runtime_dir) = runtime_dir {
+        let mut command = ProcessCommand::new("runuser");
+        command
+            .args(["-u", username, "--", "env"])
+            .arg(format!("XDG_RUNTIME_DIR={}", runtime_dir.display()))
+            .args([
+                "systemctl",
+                "--user",
+                "list-units",
+                "--type=service",
+                "--state=active",
+                "--no-legend",
+                "memory-watch*.service",
+            ]);
+        command
+    } else {
+        let mut command = ProcessCommand::new("systemctl");
+        command.args([
+            "--user",
+            "list-units",
+            "--type=service",
+            "--state=active",
+            "--no-legend",
+            "memory-watch*.service",
+        ]);
+        command
+    };
+    let output = command.output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    parse_systemd_unit_names(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn parse_systemd_unit_names(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|unit| unit.starts_with("memory-watch") && unit.ends_with(".service"))
+        .map(ToString::to_string)
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restart_systemd_user_unit_if_active(
+    scope: &SystemdUserScope,
+    unit: &str,
+    dry_run: bool,
+    operations: &mut Vec<ServiceRestartOperation>,
+) {
+    if dry_run {
+        operations.push(ServiceRestartOperation {
+            name: unit.to_string(),
+            manager: scope.manager_label.clone(),
+            active: true,
+            action: "would-restart".to_string(),
+            success: true,
+            message: None,
+        });
+        return;
+    }
+    let result = if let (Some(username), Some(runtime_dir)) = (&scope.username, &scope.runtime_dir)
+    {
+        run_systemctl_user_for(username, runtime_dir, ["restart", unit])
+    } else {
+        run_systemctl_user(["restart", unit])
+    };
+    operations.push(ServiceRestartOperation {
+        name: unit.to_string(),
+        manager: scope.manager_label.clone(),
+        active: true,
+        action: "restart".to_string(),
+        success: result.is_ok(),
+        message: result.err().map(|error| error.to_string()),
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn active_launch_agent_labels() -> Result<Vec<String>> {
+    let mut labels = vec![
+        backend_launch_agent_label().to_string(),
+        watch_manager_launch_agent_label().to_string(),
+    ];
+    if let Some(dir) = platform::user_launch_agents_dir() {
+        if dir.is_dir() {
+            for entry in fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))? {
+                let path = entry?.path();
+                let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+                    continue;
+                };
+                if file_name.starts_with("com.memory-layer.memory-watch")
+                    && file_name.ends_with(".plist")
+                {
+                    labels.push(file_name.trim_end_matches(".plist").to_string());
+                }
+            }
+        }
+    }
+    labels.sort();
+    labels.dedup();
+    Ok(labels)
+}
+
+#[cfg(target_os = "macos")]
+fn restart_launch_agent_if_loaded(
+    label: &str,
+    dry_run: bool,
+    operations: &mut Vec<ServiceRestartOperation>,
+) {
+    let status = launch_agent_status(label).unwrap_or_default();
+    if !status.loaded {
+        operations.push(ServiceRestartOperation {
+            name: label.to_string(),
+            manager: "launchctl".to_string(),
+            active: false,
+            action: "skip-unloaded".to_string(),
+            success: true,
+            message: None,
+        });
+        return;
+    }
+    if dry_run {
+        operations.push(ServiceRestartOperation {
+            name: label.to_string(),
+            manager: "launchctl".to_string(),
+            active: true,
+            action: "would-restart".to_string(),
+            success: true,
+            message: None,
+        });
+        return;
+    }
+    let target = format!(
+        "{}/{}",
+        launchctl_domain_target().unwrap_or_else(|_| "gui/unknown".to_string()),
+        label
+    );
+    let result = run_launchctl(["kickstart", "-k", &target]);
+    operations.push(ServiceRestartOperation {
+        name: label.to_string(),
+        manager: "launchctl".to_string(),
+        active: true,
+        action: "restart".to_string(),
+        success: result.is_ok(),
+        message: result.err().map(|error| error.to_string()),
+    });
+}
+
+pub(crate) fn tui_restart_marker_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(dir) = platform::preferred_user_state_dir() {
+        paths.push(dir.join(TUI_RESTART_MARKER_FILE));
+    }
+    #[cfg(not(target_os = "macos"))]
+    paths.push(PathBuf::from(LINUX_GLOBAL_TUI_RESTART_MARKER));
+    #[cfg(target_os = "macos")]
+    paths.push(PathBuf::from(MACOS_GLOBAL_TUI_RESTART_MARKER));
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn write_tui_restart_marker(reason: &str, restarted_services: Vec<String>) -> Result<Vec<PathBuf>> {
+    let marker = TuiRestartMarker {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        marked_at: Utc::now(),
+        reason: reason.to_string(),
+        binary_path: memory_binary_path()
+            .unwrap_or_else(|_| PathBuf::from("memory"))
+            .display()
+            .to_string(),
+        restarted_services,
+    };
+    let contents = serde_json::to_vec_pretty(&marker)?;
+    let mut written = Vec::new();
+    let mut last_error: Option<anyhow::Error> = None;
+    for path in tui_restart_marker_paths() {
+        if let Some(parent) = path.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            last_error = Some(error.into());
+            continue;
+        }
+        match fs::write(&path, &contents) {
+            Ok(()) => written.push(path),
+            Err(error) => last_error = Some(error.into()),
+        }
+    }
+    if written.is_empty() {
+        if let Some(error) = last_error {
+            return Err(error).context("write TUI restart marker");
+        }
+    }
+    Ok(written)
+}
+
+pub(crate) fn load_tui_restart_notice(
+    startup_at: DateTime<Utc>,
+    running_version: &str,
+) -> Option<TuiRestartNotice> {
+    newest_tui_restart_notice(startup_at, running_version, tui_restart_marker_paths())
+}
+
+pub(crate) fn newest_tui_restart_notice(
+    startup_at: DateTime<Utc>,
+    running_version: &str,
+    marker_paths: Vec<PathBuf>,
+) -> Option<TuiRestartNotice> {
+    marker_paths
+        .into_iter()
+        .filter_map(|path| {
+            let contents = fs::read_to_string(&path).ok()?;
+            let marker: TuiRestartMarker = serde_json::from_str(&contents).ok()?;
+            let newer_than_tui = marker.marked_at > startup_at;
+            let different_version = marker.version.trim() != running_version.trim();
+            (newer_than_tui || different_version).then_some(TuiRestartNotice {
+                marker_path: path,
+                version: marker.version,
+                reason: marker.reason,
+            })
+        })
+        .max_by_key(|notice| {
+            fs::read_to_string(&notice.marker_path)
+                .ok()
+                .and_then(|contents| serde_json::from_str::<TuiRestartMarker>(&contents).ok())
+                .map(|marker| marker.marked_at)
+        })
+}
+
 async fn wait_for_backend_health(config_path: &Path) -> Result<serde_json::Value> {
     let config = AppConfig::load_from_path(Some(config_path.to_path_buf()))
         .context("reload config after backend startup")?;
@@ -5670,19 +6195,33 @@ fn watch_service_status(repo_root: &Path, project: &str) -> Result<String> {
 
 #[cfg(not(target_os = "macos"))]
 const WATCH_MANAGER_UNIT_NAME: &str = "memory-watch-manager.service";
-const WATCH_MANAGER_POLL_INTERVAL_SECONDS: u64 = 2;
+const WATCH_MANAGER_EVENT_DEBOUNCE_MS: u64 = 500;
+const WATCH_MANAGER_FALLBACK_SCAN_SECONDS: u64 = 30;
+const WATCH_MANAGER_HEALTH_SCAN_SECONDS: u64 = 60;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 struct WatcherManagerState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    last_reconcile_reason: String,
+    #[serde(default)]
+    last_reconcile_duration_ms: u128,
+    #[serde(default)]
+    event_count: u64,
+    #[serde(default)]
+    fallback_scan_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lock_owner_pid: Option<u32>,
     #[serde(default)]
     sessions: std::collections::BTreeMap<String, ManagedWatcherSession>,
     #[serde(default)]
     warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ManagedWatcherSession {
     unit_name: String,
     project: String,
@@ -5694,12 +6233,13 @@ struct ManagedWatcherSession {
 }
 
 async fn run_watcher_manager(config: AppConfig, config_path: Option<PathBuf>) -> Result<()> {
+    let _lock = WatcherManagerLock::acquire(config.profile)?;
     let version = config.profile.display_version(env!("CARGO_PKG_VERSION"));
     eprintln!(
-        "watcher manager v{version} starting (profile={profile}, service={service_addr}, poll={poll}s)",
+        "watcher manager v{version} starting (profile={profile}, service={service_addr}, mode=event-driven, fallback={fallback}s)",
         profile = config.profile,
         service_addr = config.service.bind_addr,
-        poll = WATCH_MANAGER_POLL_INTERVAL_SECONDS,
+        fallback = WATCH_MANAGER_FALLBACK_SCAN_SECONDS,
     );
     if let Some(path) = config.resolved_config_path.as_deref() {
         eprintln!("  config: {}", path.display());
@@ -5713,30 +6253,102 @@ async fn run_watcher_manager(config: AppConfig, config_path: Option<PathBuf>) ->
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "unknown".to_string())
     );
-    reconcile_watcher_manager(&config, config_path.as_deref()).await?;
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-        WATCH_MANAGER_POLL_INTERVAL_SECONDS,
+    let mut event_rx = match start_watcher_manager_event_source() {
+        Ok(rx) => Some(rx),
+        Err(error) => {
+            eprintln!(
+                "watcher manager session file events unavailable; using fallback scans only: {error}"
+            );
+            None
+        }
+    };
+    reconcile_watcher_manager(&config, config_path.as_deref(), "startup", true, 0, 0).await?;
+    let mut debounce: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
+    let mut fallback = tokio::time::interval(std::time::Duration::from_secs(
+        WATCH_MANAGER_FALLBACK_SCAN_SECONDS,
     ));
+    fallback.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    fallback.tick().await;
+    let mut health = tokio::time::interval(std::time::Duration::from_secs(
+        WATCH_MANAGER_HEALTH_SCAN_SECONDS,
+    ));
+    health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    health.tick().await;
+    let mut event_count = 0u64;
+    let mut fallback_scan_count = 0u64;
     loop {
-        interval.tick().await;
-        if let Err(error) = reconcile_watcher_manager(&config, config_path.as_deref()).await {
-            eprintln!("watcher manager reconcile failed: {error}");
+        tokio::select! {
+            Some(_) = async {
+                match event_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            }, if event_rx.is_some() => {
+                event_count = event_count.saturating_add(1);
+                debounce = Some(Box::pin(tokio::time::sleep(std::time::Duration::from_millis(
+                    WATCH_MANAGER_EVENT_DEBOUNCE_MS,
+                ))));
+            }
+            _ = async {
+                if let Some(delay) = debounce.as_mut() {
+                    delay.as_mut().await;
+                }
+            }, if debounce.is_some() => {
+                debounce = None;
+                if let Err(error) = reconcile_watcher_manager(
+                    &config,
+                    config_path.as_deref(),
+                    "session-file-event",
+                    false,
+                    event_count,
+                    fallback_scan_count,
+                ).await {
+                    eprintln!("watcher manager reconcile failed: {error}");
+                }
+            }
+            _ = fallback.tick() => {
+                fallback_scan_count = fallback_scan_count.saturating_add(1);
+                if let Err(error) = reconcile_watcher_manager(
+                    &config,
+                    config_path.as_deref(),
+                    "fallback-scan",
+                    false,
+                    event_count,
+                    fallback_scan_count,
+                ).await {
+                    eprintln!("watcher manager reconcile failed: {error}");
+                }
+            }
+            _ = health.tick() => {
+                if let Err(error) = reconcile_watcher_manager(
+                    &config,
+                    config_path.as_deref(),
+                    "health-scan",
+                    true,
+                    event_count,
+                    fallback_scan_count,
+                ).await {
+                    eprintln!("watcher manager reconcile failed: {error}");
+                }
+            }
         }
     }
 }
 
-async fn reconcile_watcher_manager(config: &AppConfig, config_path: Option<&Path>) -> Result<()> {
+async fn reconcile_watcher_manager(
+    config: &AppConfig,
+    config_path: Option<&Path>,
+    reason: &str,
+    verify_units: bool,
+    event_count: u64,
+    fallback_scan_count: u64,
+) -> Result<()> {
+    let started = Instant::now();
     let mut state = load_watcher_manager_state(config.profile)?;
-    state.updated_at = Some(Utc::now());
+    let previous_state = state.clone();
     state.warnings.clear();
 
-    let mut top = AgentTop::new();
-    let snapshot = top.collect_snapshot();
-    let sessions = snapshot
-        .sessions
-        .into_iter()
-        .filter(is_live_agent_session)
-        .collect::<Vec<_>>();
+    let sessions = mem_agenttop::collect_lightweight_agent_sessions();
     let mut seen = std::collections::BTreeSet::new();
 
     for session in sessions {
@@ -5766,12 +6378,15 @@ async fn reconcile_watcher_manager(config: &AppConfig, config_path: Option<&Path
         }
 
         let unit_name = managed_watch_service_name(&session.session_id);
-        if should_start_agent_watcher(
-            state.sessions.contains_key(&session.session_id),
-            managed_watch_service_loaded(&session.session_id),
-            managed_watch_service_running(&session.session_id),
-        ) {
-            if managed_watch_service_loaded(&session.session_id) {
+        let tracked = state.sessions.contains_key(&session.session_id);
+        let mut unit_loaded = tracked;
+        let mut unit_running = tracked;
+        if !tracked || verify_units {
+            unit_loaded = managed_watch_service_loaded(&session.session_id);
+            unit_running = managed_watch_service_running(&session.session_id);
+        }
+        if should_start_agent_watcher(tracked, unit_loaded, unit_running) {
+            if unit_loaded {
                 let _ = stop_managed_watch_service(&session.session_id);
             }
             start_managed_agent_watcher(&repo_root, &project, &session, config_path)?;
@@ -5813,12 +6428,15 @@ async fn reconcile_watcher_manager(config: &AppConfig, config_path: Option<&Path
         }
     }
 
-    save_watcher_manager_state(config.profile, &state)?;
+    state.updated_at = Some(Utc::now());
+    state.mode = "event-driven".to_string();
+    state.last_reconcile_reason = reason.to_string();
+    state.last_reconcile_duration_ms = started.elapsed().as_millis();
+    state.event_count = event_count;
+    state.fallback_scan_count = fallback_scan_count;
+    state.lock_owner_pid = Some(std::process::id());
+    save_watcher_manager_state_if_changed(config.profile, &previous_state, &state)?;
     Ok(())
-}
-
-fn is_live_agent_session(session: &AgentSession) -> bool {
-    matches!(session.agent_cli, "codex" | "claude") && session.status != SessionStatus::Done
 }
 
 fn resolve_agent_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
@@ -5916,8 +6534,7 @@ fn ensure_agent_watch_repo_config(repo_root: &Path) -> Result<()> {
         "repo_root".to_string(),
         toml::Value::String(repo_root.display().to_string()),
     );
-    fs::write(&path, toml::to_string_pretty(&value)?)
-        .with_context(|| format!("write {}", path.display()))?;
+    write_file_if_changed(&path, toml::to_string_pretty(&value)?.as_bytes())?;
     Ok(())
 }
 
@@ -5993,7 +6610,7 @@ fn managed_watch_service_running(session_id: &str) -> bool {
 fn start_managed_agent_watcher(
     repo_root: &Path,
     project: &str,
-    session: &AgentSession,
+    session: &LightweightAgentSession,
     config_path: Option<&Path>,
 ) -> Result<()> {
     let started_at = DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
@@ -6104,6 +6721,32 @@ fn save_watcher_manager_state(profile: Profile, state: &WatcherManagerState) -> 
         .with_context(|| format!("write {}", path.display()))
 }
 
+fn save_watcher_manager_state_if_changed(
+    profile: Profile,
+    previous: &WatcherManagerState,
+    next: &WatcherManagerState,
+) -> Result<()> {
+    let mut comparable_previous = previous.clone();
+    let mut comparable_next = next.clone();
+    comparable_previous.updated_at = None;
+    comparable_next.updated_at = None;
+    comparable_previous.last_reconcile_duration_ms = 0;
+    comparable_next.last_reconcile_duration_ms = 0;
+    if comparable_previous == comparable_next {
+        return Ok(());
+    }
+    save_watcher_manager_state(profile, next)
+}
+
+fn write_file_if_changed(path: &Path, next: &[u8]) -> Result<()> {
+    if let Ok(current) = fs::read(path)
+        && current == next
+    {
+        return Ok(());
+    }
+    fs::write(path, next).with_context(|| format!("write {}", path.display()))
+}
+
 fn clear_watcher_manager_state(profile: Profile) -> Result<()> {
     let path = watcher_manager_state_path(profile)?;
     if path.exists() {
@@ -6120,6 +6763,93 @@ fn watcher_manager_state_path(profile: Profile) -> Result<PathBuf> {
     Ok(platform::preferred_user_state_dir()
         .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
         .join(filename))
+}
+
+fn watcher_manager_lock_path(profile: Profile) -> Result<PathBuf> {
+    Ok(watcher_manager_state_path(profile)?.with_extension("lock"))
+}
+
+struct WatcherManagerLock {
+    path: PathBuf,
+}
+
+impl WatcherManagerLock {
+    fn acquire(profile: Profile) -> Result<Self> {
+        let path = watcher_manager_lock_path(profile)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        let pid = std::process::id();
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                writeln!(file, "{pid}")?;
+                Ok(Self { path })
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                let owner = fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u32>().ok());
+                if let Some(owner) = owner
+                    && process_is_alive(owner)
+                {
+                    anyhow::bail!(
+                        "watcher manager is already running with pid {owner}; stop it before starting another manager"
+                    );
+                }
+                let _ = fs::remove_file(&path);
+                Self::acquire(profile)
+            }
+            Err(error) => Err(error).with_context(|| format!("create {}", path.display())),
+        }
+    }
+}
+
+impl Drop for WatcherManagerLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    ProcessCommand::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn start_watcher_manager_event_source() -> Result<tokio::sync::mpsc::UnboundedReceiver<()>> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+        if result.is_ok() {
+            let _ = tx.send(());
+        }
+    })
+    .context("create watcher manager filesystem watcher")?;
+
+    for dir in watcher_manager_session_dirs() {
+        if dir.is_dir() {
+            notify::Watcher::watch(&mut watcher, &dir, notify::RecursiveMode::Recursive)
+                .with_context(|| format!("watch {}", dir.display()))?;
+        }
+    }
+
+    std::mem::forget(watcher);
+    Ok(rx)
+}
+
+fn watcher_manager_session_dirs() -> Vec<PathBuf> {
+    let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let mut dirs = vec![home.join(".codex").join("sessions")];
+    let claude_base = env::var("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home.join(".claude"));
+    dirs.push(claude_base.join("sessions"));
+    dirs
 }
 
 fn enable_watch_manager_service(config_path: &Path) -> Result<String> {
@@ -6262,6 +6992,26 @@ fn watch_manager_service_status(profile: Profile) -> Result<String> {
     } else {
         format!("- warnings: {}", state.warnings.join(" | "))
     };
+    let runtime_lines = format!(
+        "- mode: {}\n- last reconcile reason: {}\n- last reconcile duration: {} ms\n- event count: {}\n- fallback scans: {}\n- lock owner pid: {}",
+        if state.mode.is_empty() {
+            "unknown"
+        } else {
+            state.mode.as_str()
+        },
+        if state.last_reconcile_reason.is_empty() {
+            "n/a"
+        } else {
+            state.last_reconcile_reason.as_str()
+        },
+        state.last_reconcile_duration_ms,
+        state.event_count,
+        state.fallback_scan_count,
+        state
+            .lock_owner_pid
+            .map(|pid| pid.to_string())
+            .unwrap_or_else(|| "n/a".to_string())
+    );
 
     #[cfg(target_os = "macos")]
     {
@@ -6269,7 +7019,7 @@ fn watch_manager_service_status(profile: Profile) -> Result<String> {
         let label = watch_manager_launch_agent_label();
         let status = launch_agent_status(label)?;
         return Ok(format!(
-            "Watcher manager service:\n- label: {}\n- plist: {}\n- installed: {}\n- loaded: {}\n- running: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n\nInspect with:\n- launchctl print {}/{}\n- memory watcher manager status",
+            "Watcher manager service:\n- label: {}\n- plist: {}\n- installed: {}\n- loaded: {}\n- running: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n{}\n\nInspect with:\n- launchctl print {}/{}\n- memory watcher manager status",
             label,
             plist_path.display(),
             yes_no(plist_path.exists()),
@@ -6280,6 +7030,7 @@ fn watch_manager_service_status(profile: Profile) -> Result<String> {
                 .updated_at
                 .map(|value| value.to_rfc3339())
                 .unwrap_or_else(|| "n/a".to_string()),
+            runtime_lines,
             warning_lines,
             launchctl_domain_target()?,
             label
@@ -6292,7 +7043,7 @@ fn watch_manager_service_status(profile: Profile) -> Result<String> {
         let is_enabled = run_systemctl_user(["is-enabled", WATCH_MANAGER_UNIT_NAME]).is_ok();
         let is_active = run_systemctl_user(["is-active", WATCH_MANAGER_UNIT_NAME]).is_ok();
         Ok(format!(
-            "Watcher manager service:\n- unit: {}\n- installed: {}\n- enabled: {}\n- active: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n\nInspect with:\n- systemctl --user status {}\n- memory watcher manager status",
+            "Watcher manager service:\n- unit: {}\n- installed: {}\n- enabled: {}\n- active: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n{}\n\nInspect with:\n- systemctl --user status {}\n- memory watcher manager status",
             unit_path.display(),
             yes_no(unit_path.exists()),
             yes_no(is_enabled),
@@ -6302,6 +7053,7 @@ fn watch_manager_service_status(profile: Profile) -> Result<String> {
                 .updated_at
                 .map(|value| value.to_rfc3339())
                 .unwrap_or_else(|| "n/a".to_string()),
+            runtime_lines,
             warning_lines,
             WATCH_MANAGER_UNIT_NAME
         ))
@@ -6898,6 +7650,39 @@ fn run_systemctl_user<const N: usize>(args: [&str; N]) -> Result<()> {
 }
 
 #[cfg(not(target_os = "macos"))]
+fn run_systemctl_user_for<const N: usize>(
+    username: &str,
+    runtime_dir: &Path,
+    args: [&str; N],
+) -> Result<()> {
+    let output = ProcessCommand::new("runuser")
+        .args(["-u", username, "--", "env"])
+        .arg(format!("XDG_RUNTIME_DIR={}", runtime_dir.display()))
+        .arg("systemctl")
+        .arg("--user")
+        .args(args)
+        .output()
+        .with_context(|| format!("run systemctl --user {} for {}", args.join(" "), username))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    anyhow::bail!(
+        "systemctl --user {} for {} failed: {}{}{}",
+        args.join(" "),
+        username,
+        stderr.trim(),
+        if stderr.trim().is_empty() || stdout.trim().is_empty() {
+            ""
+        } else {
+            " | "
+        },
+        stdout.trim()
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
 fn shell_escape_path(value: &Path) -> String {
     shell_escape_str(&value.display().to_string())
 }
@@ -7065,7 +7850,8 @@ fn render_repo_config(repo_root: &Path) -> String {
 enabled = false
 mode = "suggest"
 repo_root = "{repo_root}"
-poll_interval = "10s"
+file_events = true
+poll_interval = "60s"
 idle_threshold = "5m"
 min_changed_files = 2
 require_passing_test = false
@@ -12039,18 +12825,20 @@ mod tests {
 
     use super::{
         Cli, DEV_API_TOKEN, EvalRunContext, PlanExecutionFinishReport, RememberArgs,
-        SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, WatcherCommand, WatcherManagerArgs,
-        WatcherManagerCommand, agent_build_prompt, build_finish_execution_implementation_request,
-        build_graph_activity_request, build_plan_execution_finish_report,
-        build_plan_execution_request, build_remember_request, build_task_start_request,
-        chat_completion_content, derive_plan_thread_key, derive_plan_title,
-        durable_plan_source_path, ensure_checkbox_plan, ensure_direct_llm_eval_config,
-        ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
-        mask_database_url, parse_memory_type_arg, parse_no_memory_grounded_answer,
-        parse_plan_checkboxes, render_agent_project_config, render_claude_md_memory_section,
-        repair_repo_bootstrap, resolve_project_slug, resolve_repo_root, resolve_writer_identity,
-        root_gitignore_contains_mem, shared_env_lookup, token_usage_from_chat_body,
-        watcher_command_requires_config_load, write_headers,
+        SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, TuiRestartMarker, WatcherCommand,
+        WatcherManagerArgs, WatcherManagerCommand, agent_build_prompt,
+        build_finish_execution_implementation_request, build_graph_activity_request,
+        build_plan_execution_finish_report, build_plan_execution_request, build_remember_request,
+        build_task_start_request, chat_completion_content, derive_plan_thread_key,
+        derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
+        ensure_direct_llm_eval_config, ensure_shared_service_api_token, initialize_repo,
+        is_placeholder_database_url, mask_database_url, newest_tui_restart_notice,
+        parse_memory_type_arg, parse_no_memory_grounded_answer, parse_plan_checkboxes,
+        render_agent_project_config, render_claude_md_memory_section, repair_repo_bootstrap,
+        resolve_project_slug, resolve_repo_root, resolve_writer_identity,
+        root_gitignore_contains_mem, shared_env_lookup, should_start_agent_watcher,
+        token_usage_from_chat_body, watcher_command_requires_config_load, write_file_if_changed,
+        write_headers,
     };
     use mem_api::AppConfig;
 
@@ -12069,7 +12857,7 @@ mod tests {
     };
 
     #[cfg(not(target_os = "macos"))]
-    use super::{render_watch_unit, watch_unit_name};
+    use super::{parse_systemd_unit_names, render_watch_unit, watch_unit_name};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -12198,6 +12986,9 @@ mod tests {
         let output = rendered_help(&["memory", "service", "--help"]);
         assert!(output.contains("Manage the Memory Layer backend service"));
         assert!(output.contains("Run the backend service in the foreground"));
+        assert!(
+            output.contains("Restart active Memory Layer services after an install or upgrade")
+        );
         assert!(output.contains("Agent notes:"));
         assert!(output.contains("browser web UI"));
         assert!(output.contains("127.0.0.1:4250"));
@@ -12234,6 +13025,64 @@ mod tests {
         assert!(output.contains("Use before answering project-specific questions"));
         assert!(output.contains("insufficient_evidence"));
         assert!(output.contains("docs/user/cli/query.md"));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn systemd_unit_parser_finds_memory_watch_services() {
+        let units = parse_systemd_unit_names(
+            "memory-watch-manager.service loaded active running Manager\n\
+             memory-watch-codex-abc.service loaded active running Watcher\n\
+             ssh.service loaded active running SSH\n",
+        );
+
+        assert_eq!(
+            units,
+            vec![
+                "memory-watch-manager.service".to_string(),
+                "memory-watch-codex-abc.service".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn restart_notice_detects_newer_or_different_marker() {
+        let dir =
+            std::env::temp_dir().join(format!("memory-tui-restart-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let marker_path = dir.join("tui-restart-required.json");
+        let startup_at = chrono::Utc::now();
+        let marker = TuiRestartMarker {
+            version: "9.9.9".to_string(),
+            marked_at: startup_at - chrono::Duration::seconds(30),
+            reason: "install-or-upgrade".to_string(),
+            binary_path: "memory".to_string(),
+            restarted_services: vec!["memory-layer.service".to_string()],
+        };
+        fs::write(&marker_path, serde_json::to_string(&marker).unwrap()).unwrap();
+
+        let notice =
+            newest_tui_restart_notice(startup_at, "0.1.0", vec![marker_path.clone()]).unwrap();
+
+        assert_eq!(notice.marker_path, marker_path);
+        assert_eq!(notice.version, "9.9.9");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn packaging_hooks_restart_services_and_mark_tui_restart() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let postinst = fs::read_to_string(workspace.join("packaging/debian/postinst")).unwrap();
+        let pkg = fs::read_to_string(workspace.join("packaging/build-pkg.sh")).unwrap();
+        let formula = fs::read_to_string(workspace.join("Formula/memory-layer.rb")).unwrap();
+
+        for contents in [postinst, pkg, formula] {
+            assert!(contents.contains("service restart-all"));
+            assert!(contents.contains("--mark-tui-restart"));
+        }
     }
 
     #[test]
@@ -13202,34 +14051,12 @@ mod tests {
     fn managed_watch_launch_agent_uses_agent_metadata() {
         let repo_root = unique_temp_dir("mem-managed-watch-launch-agent");
         fs::create_dir_all(&repo_root).unwrap();
-        let session = AgentSession {
+        let session = LightweightAgentSession {
             agent_cli: "codex",
             pid: 42,
             session_id: "session-123".to_string(),
             cwd: repo_root.display().to_string(),
-            project_name: "homelab".to_string(),
             started_at: Utc::now().timestamp_millis() as u64,
-            status: AgentSessionStatus::Waiting,
-            model: "gpt-5.4".to_string(),
-            context_percent: 0.0,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_cache_read: 0,
-            total_cache_create: 0,
-            turn_count: 0,
-            current_tasks: Vec::new(),
-            mem_mb: 0,
-            version: "test".to_string(),
-            git_branch: "main".to_string(),
-            git_added: 0,
-            git_modified: 0,
-            token_history: Vec::new(),
-            subagents: Vec::new(),
-            mem_file_count: 0,
-            mem_line_count: 0,
-            children: Vec::new(),
-            initial_prompt: String::new(),
-            first_assistant_text: String::new(),
         };
         let plist = render_managed_watch_launch_agent(
             &repo_root,
@@ -13402,6 +14229,30 @@ mod tests {
         };
 
         assert!(ensure_direct_llm_eval_config(&config).is_ok());
+    }
+
+    #[test]
+    fn watcher_manager_start_check_uses_cached_tracked_state() {
+        assert!(!should_start_agent_watcher(true, true, true));
+        assert!(should_start_agent_watcher(false, true, true));
+        assert!(should_start_agent_watcher(true, false, true));
+        assert!(should_start_agent_watcher(true, true, false));
+    }
+
+    #[test]
+    fn write_file_if_changed_skips_identical_content() {
+        let dir = unique_temp_dir("mem-write-if-changed");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        write_file_if_changed(&path, b"same").unwrap();
+        let first_modified = fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        write_file_if_changed(&path, b"same").unwrap();
+        let second_modified = fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(first_modified, second_modified);
+        write_file_if_changed(&path, b"different").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "different");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn test_app_config() -> AppConfig {

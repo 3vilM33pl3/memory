@@ -21,6 +21,12 @@ class MemoryLayer < Formula
     pkgshare.install "web/dist" => "web"
   end
 
+  def post_install
+    system bin/"memory", "service", "restart-all", "--mark-tui-restart", "--json"
+  rescue
+    opoo "Memory Layer installed, but automatic service restart failed. Run `memory service restart-all`."
+  end
+
   def caveats
     <<~EOS
       Shared config:

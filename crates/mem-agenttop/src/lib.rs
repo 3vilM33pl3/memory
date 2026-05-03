@@ -5,7 +5,10 @@ use chrono::{DateTime, Utc};
 
 // Adapted from graykode/abtop (MIT) to provide structured agent/session data
 // for Memory Layer's native TUI.
-pub use model::{AgentSession, ChildProcess, OrphanPort, RateLimitInfo, SessionStatus, SubAgent};
+pub use model::{
+    AgentSession, ChildProcess, LightweightAgentSession, OrphanPort, RateLimitInfo, SessionStatus,
+    SubAgent,
+};
 
 #[derive(Debug, Clone)]
 pub struct AgentSnapshot {
@@ -34,6 +37,10 @@ impl AgentTop {
             rate_limits: self.collector.agent_rate_limits(),
         }
     }
+}
+
+pub fn collect_lightweight_agent_sessions() -> Vec<LightweightAgentSession> {
+    collector::collect_lightweight_sessions()
 }
 
 impl Default for AgentTop {

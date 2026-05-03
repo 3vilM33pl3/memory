@@ -83,6 +83,15 @@ pub struct AgentSession {
     pub first_assistant_text: String,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct LightweightAgentSession {
+    pub agent_cli: &'static str,
+    pub pid: u32,
+    pub session_id: String,
+    pub cwd: String,
+    pub started_at: u64,
+}
+
 impl AgentSession {
     pub fn total_tokens(&self) -> u64 {
         self.total_input_tokens

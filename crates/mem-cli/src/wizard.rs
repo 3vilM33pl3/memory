@@ -1704,7 +1704,7 @@ fn write_global_config(draft: &WizardDraft) -> Result<()> {
 
 fn render_global_config(draft: &WizardDraft) -> String {
     format!(
-        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\n# service API token is provisioned automatically into memory-layer.env\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[cluster]\nenabled = {}\n# advertise_addr = \"192.168.1.50:4040\"\n# discovery_multicast_addr = \"239.255.42.99:4042\"\n# announce_interval = \"5s\"\n# peer_ttl = \"15s\"\n# priority = 100\n\n# Optional shared writer label. If omitted, Memory Layer derives a writer id automatically.\n# [writer]\n# id = \"codex-cli-main\"\n# name = \"Codex CLI\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[embeddings]\nprovider = \"openai\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\npoll_interval = \"10s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
+        "# Shared Memory Layer defaults and secrets.\n# Repo-local overrides should live in .mem/config.toml inside each project.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\n# service API token is provisioned automatically into memory-layer.env\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[cluster]\nenabled = {}\n# advertise_addr = \"192.168.1.50:4040\"\n# discovery_multicast_addr = \"239.255.42.99:4042\"\n# announce_interval = \"5s\"\n# peer_ttl = \"15s\"\n# priority = 100\n\n# Optional shared writer label. If omitted, Memory Layer derives a writer id automatically.\n# [writer]\n# id = \"codex-cli-main\"\n# name = \"Codex CLI\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n[embeddings]\nprovider = \"openai\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\nfile_events = true\npoll_interval = \"60s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
         default_shared_capnp_unix_socket(),
         draft.database_url,
         draft.relay_discovery_enabled.is_yes(),
@@ -1741,7 +1741,7 @@ fn render_local_repo_config(repo_root: &Path, draft: &WizardDraft) -> String {
         ));
     }
     content.push_str(&format!(
-        "[automation]\nenabled = {}\nmode = \"{}\"\nrepo_root = \"{}\"\npoll_interval = \"{}\"\ncapture_idle_threshold = \"{}\"\nmin_changed_files = {}\nrequire_passing_test = {}\ncurate_after_captures = {}\ncurate_on_explicit_flush = {}\nignored_paths = [{}]\naudit_log_path = \"{}/.mem/runtime/automation.log\"\nstate_file_path = \"{}/.mem/runtime/automation-state.json\"\n",
+        "[automation]\nenabled = {}\nmode = \"{}\"\nrepo_root = \"{}\"\nfile_events = true\npoll_interval = \"{}\"\ncapture_idle_threshold = \"{}\"\nmin_changed_files = {}\nrequire_passing_test = {}\ncurate_after_captures = {}\ncurate_on_explicit_flush = {}\nignored_paths = [{}]\naudit_log_path = \"{}/.mem/runtime/automation.log\"\nstate_file_path = \"{}/.mem/runtime/automation-state.json\"\n",
         draft.automation_enabled.is_yes(),
         automation_mode_label(&draft.automation_mode),
         repo_root.display(),
@@ -1981,8 +1981,8 @@ fn field_description(field: FieldKey) -> &'static str {
             captures immediately without a prompt. Only matters if Automation enabled is Yes."
         }
         FieldKey::AutomationPollInterval => {
-            "How often the watcher checks for changes. \
-            Duration string (e.g. 10s, 1m). Shorter = lower capture latency + more CPU."
+            "Fallback scan interval for the event-driven watcher. \
+            Duration string (e.g. 60s, 5m). File events provide normal low-latency captures."
         }
         FieldKey::AutomationCaptureIdleThreshold => {
             "How long the repo must stay idle before \
@@ -2349,7 +2349,7 @@ mod tests {
             apply_repo_setup: super::ToggleChoice::Yes,
             automation_enabled: super::ToggleChoice::No,
             automation_mode: AutomationMode::Suggest,
-            automation_poll_interval: "10s".to_string(),
+            automation_poll_interval: "60s".to_string(),
             automation_capture_idle_threshold: "10m".to_string(),
             automation_min_changed_files: "2".to_string(),
             automation_require_passing_test: super::ToggleChoice::No,
@@ -2391,7 +2391,7 @@ mod tests {
             apply_repo_setup: super::ToggleChoice::No,
             automation_enabled: super::ToggleChoice::No,
             automation_mode: AutomationMode::Suggest,
-            automation_poll_interval: "10s".to_string(),
+            automation_poll_interval: "60s".to_string(),
             automation_capture_idle_threshold: "10m".to_string(),
             automation_min_changed_files: "2".to_string(),
             automation_require_passing_test: super::ToggleChoice::No,
@@ -2463,7 +2463,7 @@ mod tests {
             apply_repo_setup: super::ToggleChoice::No,
             automation_enabled: super::ToggleChoice::No,
             automation_mode: AutomationMode::Suggest,
-            automation_poll_interval: "10s".to_string(),
+            automation_poll_interval: "60s".to_string(),
             automation_capture_idle_threshold: "10m".to_string(),
             automation_min_changed_files: "2".to_string(),
             automation_require_passing_test: super::ToggleChoice::No,

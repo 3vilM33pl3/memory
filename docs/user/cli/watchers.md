@@ -27,6 +27,18 @@ That installs a persistent user manager service:
 
 The manager detects live Codex sessions, bootstraps git repos if needed, and starts one watcher per Codex session.
 
+The manager is event-driven. It watches agent session directories for Codex/Claude changes and only reconciles after a debounced session event, with a slow fallback scan for missed events. A singleton lock prevents accidentally running two managers at the same time.
+
+Project watchers are also event-driven by default. They watch the repository, debounce file changes, and then run one `git status --porcelain` pass for the burst. `poll_interval` is now the fallback safety scan interval, not the primary loop. New configs use:
+
+```toml
+[automation]
+file_events = true
+poll_interval = "60s"
+```
+
+If filesystem watching is unavailable, the watcher logs a warning and falls back to polling.
+
 Legacy per-project service-managed watchers can still be installed with:
 
 ```bash
@@ -96,6 +108,8 @@ Check watcher manager status:
 ```bash
 memory watcher manager status
 ```
+
+The status output includes the manager mode, last reconcile reason, event count, fallback scan count, and lock owner PID. If another manager is already running, `memory watcher manager run` exits with the active PID instead of starting a duplicate.
 
 Enable a legacy service-managed watcher:
 

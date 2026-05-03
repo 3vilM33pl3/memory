@@ -66,6 +66,18 @@ if [[ ! -f "$APP_SUPPORT/memory-layer.toml" && -f "$SHARE/memory-layer.toml.exam
   echo "Installed example config to $APP_SUPPORT/memory-layer.toml"
 fi
 
+if command -v /usr/local/bin/memory >/dev/null 2>&1; then
+  CONSOLE_USER="$(stat -f %Su /dev/console 2>/dev/null || true)"
+  if [[ -n "$CONSOLE_USER" && "$CONSOLE_USER" != "root" ]]; then
+    CONSOLE_UID="$(id -u "$CONSOLE_USER" 2>/dev/null || true)"
+    if [[ -n "$CONSOLE_UID" ]]; then
+      launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/local/bin/memory service restart-all --mark-tui-restart --json || true
+    fi
+  else
+    /usr/local/bin/memory service restart-all --mark-tui-restart --json || true
+  fi
+fi
+
 echo ""
 echo "Memory Layer $PACKAGE_VERSION installed. Get started:"
 echo "  memory wizard --global"

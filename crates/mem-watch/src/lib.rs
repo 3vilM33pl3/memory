@@ -127,7 +127,13 @@ pub async fn save_state(state: &AutomationState, config: &AutomationConfig) -> R
     let repo_root = PathBuf::from(&state.repo_root);
     let path = state_path(config, &repo_root);
     ensure_runtime_dir(&repo_root).await?;
-    tokio::fs::write(path, serde_json::to_vec_pretty(state)?)
+    let next = serde_json::to_vec_pretty(state)?;
+    if let Ok(current) = tokio::fs::read(&path).await
+        && current == next
+    {
+        return Ok(());
+    }
+    tokio::fs::write(path, next)
         .await
         .context("write automation state")?;
     Ok(())
@@ -180,10 +186,7 @@ pub fn detect_changed_files(repo_root: &Path, ignored_paths: &[String]) -> Resul
         } else {
             path.to_string()
         };
-        if ignored_paths
-            .iter()
-            .any(|ignored| normalized.starts_with(ignored))
-        {
+        if path_is_ignored(&normalized, ignored_paths) {
             continue;
         }
         files.insert(normalized);
@@ -209,11 +212,7 @@ pub fn update_session_from_repo(
         merged.insert(file);
     }
     for file in changed_files {
-        if !automation
-            .ignored_paths
-            .iter()
-            .any(|ignored| file.starts_with(ignored))
-        {
+        if !path_is_ignored(&file, &automation.ignored_paths) {
             merged.insert(file);
         }
     }
@@ -225,6 +224,12 @@ pub fn update_session_from_repo(
         state.current_session.last_activity_at = Some(now);
     }
     state.current_session.fingerprint = Some(next_fingerprint);
+}
+
+pub fn path_is_ignored(path: &str, ignored_paths: &[String]) -> bool {
+    ignored_paths
+        .iter()
+        .any(|ignored| path.starts_with(ignored))
 }
 
 pub fn should_capture(
@@ -817,6 +822,14 @@ mod tests {
         let notes = derive_notes(&["src/main.rs".to_string(), "docs/notes.md".to_string()]);
         assert_eq!(notes.len(), 1);
         assert!(notes[0].contains("src"));
+    }
+
+    #[test]
+    fn ignored_paths_match_prefixes() {
+        let ignored = vec![".git/".to_string(), "target/".to_string()];
+        assert!(path_is_ignored("target/debug/memory", &ignored));
+        assert!(path_is_ignored(".git/index", &ignored));
+        assert!(!path_is_ignored("src/main.rs", &ignored));
     }
 
     #[test]
