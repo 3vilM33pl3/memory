@@ -142,6 +142,20 @@ state, so the run tests continuity across a realistic product build rather than
 isolated prompt answers. Use `docker compose -f evals/docker/app-build-sequence/compose.yml down -v`
 before a clean rerun if you want to reset the database volume.
 
+When you want the strongest checked-in benchmark for whether Memory improves
+agent behavior, use the Memory improvement suite:
+
+```bash
+MEMORY_EVAL_REPEAT=5 \
+docker compose -f evals/docker/memory-improvement/compose.yml run --rm eval
+```
+
+It combines retrieval, grounded answers, get-up-to-speed briefings, and a
+20-step coding-continuity task. Each item is tagged as deductive, inductive, or
+abductive, so you can see what kind of reasoning Memory helped. The suite also
+uses hidden seeded memories, which means the no-memory condition cannot pass by
+reading the fixture files.
+
 ## Step 4: Run A Paired Evaluation
 
 For useful evidence, compare a baseline against a Memory-backed condition:
@@ -204,6 +218,25 @@ The comparison is paired by item id. That means each item is compared against
 itself under both conditions, which is much stronger than comparing unrelated
 aggregate scores.
 
+For repeated runs, compare globs instead of one file at a time:
+
+```bash
+memory eval compare \
+  --baseline 'target/memory-evals/*no-memory*.json' \
+  --candidate 'target/memory-evals/*full-memory*.json' \
+  --out target/memory-evals/comparison.json \
+  --text
+```
+
+Create a readable report:
+
+```bash
+memory eval report \
+  --comparison target/memory-evals/comparison.json \
+  --markdown \
+  --out target/memory-evals/report.md
+```
+
 ## Step 6: Read The Result
 
 Begin with these fields:
@@ -212,9 +245,12 @@ Begin with these fields:
 - McNemar p-value: whether pass/fail changes look meaningful for paired items
 - confidence interval: uncertainty around numeric metric deltas
 - recall metrics: whether expected memories were retrieved
+- tag/file recall: whether retrieval found the intended tags and source files
 - forbidden hits: whether answers included claims they should avoid
 - token delta: extra or saved provider tokens
 - latency delta: extra or saved time
+- grouped deltas: whether Memory helped retrieval, resume, coding continuity,
+  and each reasoning mode separately
 
 A good result is not just "full-memory won once". Prefer a result where the
 candidate improves quality, the confidence interval is not obviously weak, and

@@ -8490,7 +8490,9 @@ fn expand_eval_run_pattern(pattern: &Path) -> Result<Vec<PathBuf>> {
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| anyhow::anyhow!("invalid eval run glob `{}`", pattern.display()))?;
-    let dir = pattern.parent().filter(|value| !value.as_os_str().is_empty());
+    let dir = pattern
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty());
     let dir = dir.unwrap_or_else(|| Path::new("."));
     let mut matches = Vec::new();
     for entry in fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
@@ -8547,11 +8549,19 @@ fn no_memory_retrieval_result(
     scores.insert("citation_precision".to_string(), 1.0);
     scores.insert(
         "tag_recall_at_k".to_string(),
-        if item.expected_tags.is_empty() { 1.0 } else { 0.0 },
+        if item.expected_tags.is_empty() {
+            1.0
+        } else {
+            0.0
+        },
     );
     scores.insert(
         "file_recall_at_k".to_string(),
-        if item.expected_files.is_empty() { 1.0 } else { 0.0 },
+        if item.expected_files.is_empty() {
+            1.0
+        } else {
+            0.0
+        },
     );
     mem_eval::EvalItemResult {
         item_id: item.id.clone(),
@@ -8705,10 +8715,9 @@ async fn add_llm_judge_scores(
     }
     result.notes.extend(notes);
     if let Some(usage) = response.token_usage {
-        result.scores.insert(
-            "judge_total_tokens".to_string(),
-            usage.total_tokens as f64,
-        );
+        result
+            .scores
+            .insert("judge_total_tokens".to_string(), usage.total_tokens as f64);
     }
     Ok(())
 }
@@ -12265,6 +12274,7 @@ mod tests {
     fn agent_build_prompt_adds_memory_questions_for_memory_conditions() {
         let item = mem_eval::AgentBuildTaskItem {
             id: "build".to_string(),
+            metadata: mem_eval::EvalItemMetadata::default(),
             project: Some("memory".to_string()),
             prompt: "Build the app.".to_string(),
             fixture: "fixtures/app".to_string(),
@@ -12287,6 +12297,7 @@ mod tests {
             memory_command: "/tmp/memory".to_string(),
             memory_base_url: "http://127.0.0.1:4250".to_string(),
             memory_config_path: Some(PathBuf::from(".mem/config.toml")),
+            llm_judge: false,
         };
 
         let prompt = agent_build_prompt(&item, mem_eval::EvalCondition::FullMemory, &context);
@@ -12301,6 +12312,7 @@ mod tests {
     fn agent_build_prompt_forbids_memory_for_no_memory_condition() {
         let item = mem_eval::AgentBuildTaskItem {
             id: "build".to_string(),
+            metadata: mem_eval::EvalItemMetadata::default(),
             project: Some("memory".to_string()),
             prompt: "Build the app.".to_string(),
             fixture: "fixtures/app".to_string(),
@@ -12323,6 +12335,7 @@ mod tests {
             memory_command: "/tmp/memory".to_string(),
             memory_base_url: "http://127.0.0.1:4250".to_string(),
             memory_config_path: None,
+            llm_judge: false,
         };
 
         let prompt = agent_build_prompt(&item, mem_eval::EvalCondition::NoMemory, &context);
@@ -12350,6 +12363,7 @@ mod tests {
         .unwrap();
         let item = mem_eval::AgentBuildTaskItem {
             id: "build".to_string(),
+            metadata: mem_eval::EvalItemMetadata::default(),
             project: Some("memory".to_string()),
             prompt: "Build the app.".to_string(),
             fixture: "fixtures/app".to_string(),
@@ -12383,6 +12397,7 @@ mod tests {
         fs::write(workspace.join("memory-evidence.md"), "query").unwrap();
         let item = mem_eval::AgentBuildTaskItem {
             id: "build".to_string(),
+            metadata: mem_eval::EvalItemMetadata::default(),
             project: Some("memory".to_string()),
             prompt: "Build the app.".to_string(),
             fixture: "fixtures/app".to_string(),

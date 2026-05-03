@@ -33,6 +33,7 @@ For the full isolation contract, default ports, override flags, and troubleshoot
 - [Embeddings and Search](architecture/embeddings-and-search.md)
 - [Hidden Memory Daemon](architecture/hidden-memory-daemon.md)
 - [Automated Evaluation](evaluation.md)
+- [Memory Improvement Benchmark](evaluation-memory-improvement.md)
 
 ## Implementation Material
 

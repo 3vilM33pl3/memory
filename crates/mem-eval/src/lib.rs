@@ -1064,9 +1064,13 @@ fn retrieval_scores(
     );
     scores.insert(
         "tag_recall_at_k".to_string(),
-        expected_value_recall(expected_tags, response.results.iter().flat_map(|result| {
-            result.tags.iter().map(|tag| normalize_expected_value(tag))
-        })),
+        expected_value_recall(
+            expected_tags,
+            response
+                .results
+                .iter()
+                .flat_map(|result| result.tags.iter().map(|tag| normalize_expected_value(tag))),
+        ),
     );
     scores.insert(
         "file_recall_at_k".to_string(),
@@ -1077,9 +1081,12 @@ fn retrieval_scores(
                     .sources
                     .iter()
                     .filter_map(|source| source.file_path.as_deref())
-                    .chain(result.graph_connections.iter().map(|connection| {
-                        connection.file_path.as_str()
-                    }))
+                    .chain(
+                        result
+                            .graph_connections
+                            .iter()
+                            .map(|connection| connection.file_path.as_str()),
+                    )
                     .map(normalize_expected_value)
             }),
         ),
@@ -1114,7 +1121,10 @@ fn retrieval_success(scores: &BTreeMap<String, f64>) -> bool {
 }
 
 pub fn compare_runs(baseline: &EvalRun, candidate: &EvalRun) -> EvalComparison {
-    compare_run_sets(std::slice::from_ref(baseline), std::slice::from_ref(candidate))
+    compare_run_sets(
+        std::slice::from_ref(baseline),
+        std::slice::from_ref(candidate),
+    )
 }
 
 pub fn compare_run_sets(baselines: &[EvalRun], candidates: &[EvalRun]) -> EvalComparison {
@@ -1618,7 +1628,12 @@ fn push_metric_table(lines: &mut Vec<String>, metric_deltas: &BTreeMap<String, M
     for (name, delta) in metric_deltas {
         lines.push(format!(
             "| `{}` | {:.3} | {:.3} | {:+.3} | {:+.3}..{:+.3} |",
-            name, delta.baseline_mean, delta.candidate_mean, delta.mean_delta, delta.ci95_low, delta.ci95_high
+            name,
+            delta.baseline_mean,
+            delta.candidate_mean,
+            delta.mean_delta,
+            delta.ci95_low,
+            delta.ci95_high
         ));
     }
 }

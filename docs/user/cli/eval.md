@@ -45,6 +45,20 @@ Each JSONL row is one eval item. Supported `eval_type` values are:
 - `agent_build_task`: copies a fixture project, runs a noninteractive agent command, then scores the resulting workspace with deterministic checks.
 - `agent_build_sequence`: copies one fixture project, runs a sequence of agent prompts against the same workspace, then scores every step and the final accumulated result.
 
+Every item may also include optional benchmark metadata:
+
+```json
+{
+  "reasoning_mode": "deductive",
+  "memory_capability": "retrieval",
+  "difficulty": "medium",
+  "claim": "Memory retrieves explicit project rules."
+}
+```
+
+`memory eval compare` groups results by `eval_type`, `reasoning_mode`, and
+`memory_capability` when those fields are present.
+
 `agent_build_task` rows are for app/website build simulations. They use a
 workspace copy under `target/memory-evals/build-runs/`, so the source fixture is
 never edited. Minimal fields:
@@ -219,6 +233,25 @@ asks Codex to add dependency-free browser functionality. The previous
 `evals/fixtures/app-build-sequence-codex-v1/` so later follow-up tests can reuse
 the exact prior outputs instead of depending on local `target/` artifacts.
 
+Run the Memory improvement benchmark when you want stronger evidence that
+Memory changes agent behavior, not only harness integration:
+
+```bash
+MEMORY_EVAL_REPEAT=5 \
+docker compose -f evals/docker/memory-improvement/compose.yml run --rm eval
+```
+
+That suite combines retrieval, grounded answers, resume quality, and a 20-step
+Codex continuity task. It seeds hidden benchmark memories, maps items to
+deductive, inductive, and abductive reasoning modes, verifies Memory helper
+queries, captures token usage, and supports optional hybrid judging:
+
+```bash
+MEMORY_EVAL_LLM_JUDGE=1 \
+MEMORY_EVAL_REPEAT=5 \
+docker compose -f evals/docker/memory-improvement/compose.yml run --rm eval
+```
+
 Run paired conditions:
 
 ```bash
@@ -266,6 +299,25 @@ memory eval compare \
   --text
 ```
 
+Compare repeated run artifacts with globs:
+
+```bash
+memory eval compare \
+  --baseline 'target/memory-evals/*no-memory*.json' \
+  --candidate 'target/memory-evals/*full-memory*.json' \
+  --out target/memory-evals/comparison.json \
+  --text
+```
+
+Render a Markdown report:
+
+```bash
+memory eval report \
+  --comparison target/memory-evals/comparison.json \
+  --markdown \
+  --out target/memory-evals/report.md
+```
+
 Gate a comparison before release:
 
 ```bash
@@ -277,21 +329,30 @@ memory eval gate \
 
 ## Metrics
 
-Retrieval items report Recall@k, MRR, nDCG, citation precision, semantic
-candidate counts, and graph candidate counts. Grounded-answer and resume items
-report assertion/topic recall and forbidden-hit counts. Comparisons are paired
-by item id and include success-rate deltas, McNemar p-values, and bootstrap
-confidence intervals for numeric metric deltas.
+Retrieval items report Recall@k, MRR, nDCG, citation precision, tag recall,
+file recall, semantic candidate counts, and graph candidate counts. If a
+`retrieval_qa` item declares `expected_tags` or `expected_files`, those
+expectations affect success; they are not just documentation. Grounded-answer
+and resume items report assertion/topic recall and forbidden-hit counts.
+Comparisons are paired by item id, repeat index, and sequence sub-result id,
+then include success-rate deltas, McNemar p-values, bootstrap confidence
+intervals for numeric metric deltas, grouped summaries, token deltas, and
+cost-adjusted success deltas.
 
 Agent build tasks report agent exit code, setup command pass count, score
 command pass count, required/forbidden file checks, required content checks,
 `total_score`, and duration. Raw command output and the copied workspace are
 stored beside the run artifacts so failed builds can be inspected.
 
-Agent build sequences report the same fields aggregated across steps, plus a
-`steps/` artifact directory with each step's prompt, command output,
-Memory-query evidence, Codex JSONL events, normalized token usage, and
-step-level summary.
+Agent build sequences report the same fields aggregated across steps, plus
+machine-readable step sub-results in the run JSON. They also write a `steps/`
+artifact directory with each step's prompt, command output, Memory-query
+evidence, Codex JSONL events, normalized token usage, and step-level summary.
+
+When `--llm-judge` is passed, answer-like items also receive diagnostic judge
+metrics: `judge_evidence_use`, `judge_reasoning_quality`, `judge_consistency`,
+and `judge_maintainability`. These scores are extra evidence only;
+deterministic checks still decide pass/fail.
 
 Run artifacts include `run_group_id`, `repeat_index`, `suite_checksum`,
 `fixture_checksum`, `duration_ms`, and provider token usage when the underlying
