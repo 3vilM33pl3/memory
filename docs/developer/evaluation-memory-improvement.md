@@ -104,8 +104,13 @@ intervals, and preserve every run artifact.
 
 ## Recorded Runs
 
+- [2026-05-03 partial Docker run](evaluation-runs/2026-05-03-memory-improvement-v1-partial-r0.md):
+  latest local one-repeat diagnostic run with LLM judge enabled. It confirms
+  retrieval and grounded-answer improvements, but does not supersede the
+  five-repeat report because the coding-continuity Memory evidence path still
+  fails.
 - [2026-05-03 full Docker run](evaluation-runs/2026-05-03-memory-improvement-v1-full.md):
-  latest valid five-repeat run with LLM judge enabled. This report supersedes
+  valid five-repeat run with LLM judge enabled. This report supersedes
   earlier same-day local artifacts that included non-benchmark
   agent-management overhead and must not be used for token-cost or quality
   claims.
