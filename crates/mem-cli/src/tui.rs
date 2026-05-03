@@ -156,6 +156,12 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
                         }
                     }
                 }
+                BackgroundEvent::ProjectRefreshLoaded(result) => {
+                    let loaded_memories = app.apply_project_refresh(*result);
+                    if loaded_memories {
+                        app.fetch_selected_detail(&api, stream.as_mut()).await;
+                    }
+                }
                 other => app.apply_background_event(other),
             }
         }
@@ -8388,6 +8394,44 @@ mod tests {
         assert_eq!(
             app.backend_connection_state,
             BackendConnectionState::Unavailable
+        );
+    }
+
+    #[test]
+    fn project_refresh_selects_first_memory_for_detail_loading() {
+        let mut app = new_test_app();
+        let updated_at = Utc.with_ymd_and_hms(2026, 5, 3, 18, 0, 0).unwrap();
+        let first = test_project_memory_list_item("First memory", MemoryType::Project, updated_at);
+        let first_id = first.id;
+        let second =
+            test_project_memory_list_item("Second memory", MemoryType::Implementation, updated_at);
+
+        let loaded = app.apply_project_refresh(ProjectRefreshResult {
+            mode: RefreshMode::Startup,
+            health: Ok(serde_json::json!({
+                "status": "ok",
+                "database": "up",
+                "role": "primary",
+                "version": "0.8.2"
+            })),
+            overview: Ok(empty_overview("memory".to_string())),
+            memories: Ok(ProjectMemoriesResponse {
+                project: "memory".to_string(),
+                total: 2,
+                items: vec![first, second],
+            }),
+            proposals: Ok(ReplacementProposalListResponse {
+                project: "memory".to_string(),
+                proposals: Vec::new(),
+            }),
+        });
+
+        assert!(loaded);
+        assert_eq!(app.selected_index, 0);
+        assert_eq!(app.table_state.selected(), Some(0));
+        assert_eq!(
+            app.filtered_memories.first().map(|item| item.id),
+            Some(first_id)
         );
     }
 
