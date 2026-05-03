@@ -47,7 +47,10 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::{ApiClient, SourceKindString, enable_relay_discovery_and_restart_backend, resume};
+use crate::{
+    ApiClient, SourceKindString, TuiRestartNotice, enable_relay_discovery_and_restart_backend,
+    load_tui_restart_notice, resume,
+};
 
 const STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -89,7 +92,12 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
             .take()
             .expect("agent_wake_rx present on fresh App"),
     );
-    start_manager_status_worker(app.background_tx.clone(), app.profile);
+    start_manager_status_worker(
+        app.background_tx.clone(),
+        app.profile,
+        app.startup_at,
+        app.versions.mem_cli.clone(),
+    );
     start_embedding_backends_worker(
         api.clone(),
         app.project.clone(),
@@ -261,12 +269,18 @@ fn start_embedding_backends_worker(
     });
 }
 
-fn start_manager_status_worker(tx: mpsc::UnboundedSender<BackgroundEvent>, profile: Profile) {
+fn start_manager_status_worker(
+    tx: mpsc::UnboundedSender<BackgroundEvent>,
+    profile: Profile,
+    startup_at: DateTime<Utc>,
+    running_version: String,
+) {
     std::thread::spawn(move || {
         loop {
             if tx
                 .send(BackgroundEvent::ManagerStatusLoaded {
                     status: Some(load_manager_footer_status(profile)),
+                    restart_notice: load_tui_restart_notice(startup_at, &running_version),
                 })
                 .is_err()
             {
@@ -378,6 +392,7 @@ struct App {
     replacement_selected_index: usize,
     review_table_state: TableState,
     versions: ToolVersions,
+    startup_at: DateTime<Utc>,
     ui_status: UiStatus,
     status_message: String,
     health_ok: bool,
@@ -386,6 +401,7 @@ struct App {
     service_health_state: Option<String>,
     service_database_state: Option<String>,
     manager_status: Option<ManagerFooterStatus>,
+    restart_notice: Option<TuiRestartNotice>,
     stream_connecting: bool,
     relay_discovery_enabled: bool,
     profile: Profile,
@@ -438,6 +454,7 @@ enum UiStatus {
     Loading,
     Busy,
     Ready,
+    Restart,
     Error,
 }
 
@@ -527,6 +544,7 @@ enum BackgroundEvent {
     },
     ManagerStatusLoaded {
         status: Option<ManagerFooterStatus>,
+        restart_notice: Option<TuiRestartNotice>,
     },
     ActivitiesLoaded {
         response: Box<Result<mem_api::ActivityListResponse, String>>,
@@ -660,6 +678,7 @@ impl App {
             replacement_selected_index: 0,
             review_table_state,
             versions,
+            startup_at: Utc::now(),
             ui_status: UiStatus::Loading,
             status_message: "Loading project data...".to_string(),
             health_ok: false,
@@ -668,6 +687,7 @@ impl App {
             service_health_state: None,
             service_database_state: None,
             manager_status: None,
+            restart_notice: None,
             stream_connecting: false,
             relay_discovery_enabled,
             profile,
@@ -1131,8 +1151,24 @@ impl App {
                     self.agent_error = Some(error);
                 }
             },
-            BackgroundEvent::ManagerStatusLoaded { status } => {
+            BackgroundEvent::ManagerStatusLoaded {
+                status,
+                restart_notice,
+            } => {
                 self.manager_status = status;
+                let had_restart_notice = self.restart_notice.is_some();
+                self.restart_notice = restart_notice;
+                if let Some(notice) = &self.restart_notice {
+                    self.ui_status = UiStatus::Restart;
+                    self.status_message = format!(
+                        "Memory Layer was updated to v{}; restart the TUI to load the installed binary. Marker: {}",
+                        notice.version,
+                        notice.marker_path.display()
+                    );
+                } else if had_restart_notice && matches!(self.ui_status, UiStatus::Restart) {
+                    self.ui_status = UiStatus::Ready;
+                    self.status_message = "TUI restart marker cleared.".to_string();
+                }
             }
             BackgroundEvent::ActivitiesLoaded { response } => {
                 self.activity_loading = false;
@@ -7313,19 +7349,27 @@ fn service_span(value: &str) -> Span<'static> {
 }
 
 fn tui_status_label(app: &App) -> &'static str {
+    if app.restart_notice.is_some() {
+        return "restart";
+    }
     match app.ui_status {
         UiStatus::Loading => "loading",
         UiStatus::Busy => "busy",
         UiStatus::Ready => "ready",
+        UiStatus::Restart => "restart",
         UiStatus::Error => "error",
     }
 }
 
 fn tui_status_color(app: &App) -> Color {
+    if app.restart_notice.is_some() {
+        return Theme::DANGER;
+    }
     match app.ui_status {
         UiStatus::Loading => Theme::ACCENT,
         UiStatus::Busy => Theme::ACCENT_STRONG,
         UiStatus::Ready => Theme::SUCCESS,
+        UiStatus::Restart => Theme::DANGER,
         UiStatus::Error => Theme::DANGER,
     }
 }
@@ -8047,8 +8091,10 @@ mod tests {
         format_timestamp_timeline, latest_plan_display, manager_status_detail,
         manager_status_label, memory_detail_max_scroll, normalized_percent, query_input_display,
         remaining_bar_cells, render_markdown_lines, service_status_detail, service_status_label,
-        should_attempt_stream_reconnect, watcher_bar_status_label,
+        should_attempt_stream_reconnect, tui_status_color, tui_status_label,
+        watcher_bar_status_label,
     };
+    use crate::TuiRestartNotice;
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
         ActivityDetails, ActivityEvent, ActivityKind, MemoryEmbeddingSpace, MemoryEntryResponse,
@@ -8441,6 +8487,20 @@ mod tests {
         assert_eq!(app.overview.database_status, "up");
         assert_eq!(app.ui_status, UiStatus::Ready);
         assert!(app.status_message.contains("backend health is unchanged"));
+    }
+
+    #[test]
+    fn tui_restart_notice_forces_red_restart_status() {
+        let mut app = new_test_app();
+        app.ui_status = UiStatus::Ready;
+        app.restart_notice = Some(TuiRestartNotice {
+            marker_path: PathBuf::from("/tmp/tui-restart-required.json"),
+            version: "0.9.0".to_string(),
+            reason: "install-or-upgrade".to_string(),
+        });
+
+        assert_eq!(tui_status_label(&app), "restart");
+        assert_eq!(tui_status_color(&app), Theme::DANGER);
     }
 
     #[test]

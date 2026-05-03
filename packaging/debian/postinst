@@ -6,8 +6,6 @@ install -d -o memory-layer -g memory-layer /etc/memory-layer /var/lib/memory-lay
 token_result="$(/usr/bin/memory --config /etc/memory-layer/memory-layer.toml service ensure-api-token --rotate-placeholder --json)"
 systemctl daemon-reload || true
 if printf '%s' "$token_result" | grep -q '"changed":[[:space:]]*true'; then
-    if systemctl is-active --quiet memory-layer.service; then
-        systemctl restart memory-layer.service || true
-    fi
     echo "Memory Layer rotated the shared service API token; restart any user-scoped watcher services so they pick up the new token."
 fi
+/usr/bin/memory service restart-all --mark-tui-restart --json || true
