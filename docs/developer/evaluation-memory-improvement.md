@@ -101,3 +101,11 @@ affect success, step-level sequence scoring, and token-aware reporting.
 It is still not publication-grade proof by itself. For external claims, grow the
 suite with more held-out items, run enough repeats for stable confidence
 intervals, and preserve every run artifact.
+
+## Recorded Runs
+
+- [2026-05-03 full Docker run](evaluation-runs/2026-05-03-memory-improvement-v1-full.md):
+  latest valid five-repeat run with LLM judge enabled. This report supersedes
+  earlier same-day local artifacts that included non-benchmark
+  agent-management overhead and must not be used for token-cost or quality
+  claims.
