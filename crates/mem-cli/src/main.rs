@@ -245,6 +245,7 @@ Examples:
   memory eval run --suite evals/examples/memory-smoke --condition full-memory --dry-run
   memory eval run --suite evals/examples/app-build-smoke --condition no-memory --condition full-memory --profile offline --text
   memory eval run --suite evals/examples/memory-smoke --condition no-memory --condition full-memory --repeat 5
+  memory eval run --suite evals/suites/memory-improvement-v1 --condition no-memory --condition full-memory --llm-judge --repeat 5
 
 See also:
   docs/user/cli/eval.md";
@@ -1664,6 +1665,9 @@ struct EvalRunArgs {
     /// Preserve raw answers/transcripts in artifacts. Currently metadata-only; answers are always kept.
     #[arg(long)]
     write_transcripts: bool,
+    /// Add LLM judge scores for answer-like items. Deterministic checks still decide success.
+    #[arg(long)]
+    llm_judge: bool,
     /// Fail when the suite manifest is not marked reviewed.
     #[arg(long)]
     fail_on_unreviewed_labels: bool,
@@ -8182,6 +8186,7 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
                         memory_command: eval_memory_command(),
                         memory_base_url: service_url(&api.config, ""),
                         memory_config_path: eval_memory_config_path(cwd),
+                        llm_judge: args.llm_judge,
                     };
                     let run = run_eval_suite(&suite, &project, *condition, context, api).await?;
                     total_tokens += run
@@ -8226,6 +8231,7 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
                 "profile": profile,
                 "repeat": repeat,
                 "write_transcripts": args.write_transcripts,
+                "llm_judge": args.llm_judge,
                 "total_tokens": total_tokens,
                 "runs": runs,
             });
@@ -8322,6 +8328,7 @@ struct EvalRunContext {
     memory_command: String,
     memory_base_url: String,
     memory_config_path: Option<PathBuf>,
+    llm_judge: bool,
 }
 
 async fn run_eval_suite(
@@ -8430,6 +8437,9 @@ async fn run_eval_suite(
             result
                 .notes
                 .push("retrieval mode was explicitly requested for eval isolation".to_string());
+        }
+        if context.llm_judge && context.profile == mem_eval::EvalProfile::Llm {
+            add_llm_judge_scores(api, item, &mut result).await?;
         }
         results.push(result);
     }
@@ -8606,6 +8616,118 @@ struct NoMemoryGroundedAnswerPayload {
     answer: String,
     #[serde(default)]
     confidence: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EvalJudgePayload {
+    #[serde(default)]
+    evidence_use: Option<f64>,
+    #[serde(default)]
+    reasoning_quality: Option<f64>,
+    #[serde(default)]
+    consistency: Option<f64>,
+    #[serde(default)]
+    maintainability: Option<f64>,
+    #[serde(default)]
+    notes: Option<String>,
+}
+
+async fn add_llm_judge_scores(
+    api: &ApiClient,
+    item: &mem_eval::EvalItem,
+    result: &mut mem_eval::EvalItemResult,
+) -> Result<()> {
+    if !matches!(
+        item,
+        mem_eval::EvalItem::GroundedAnswer(_) | mem_eval::EvalItem::ResumeQuality(_)
+    ) {
+        return Ok(());
+    }
+    let Some(answer) = result.answer.as_deref() else {
+        return Ok(());
+    };
+    let prompt = format!(
+        "Eval item id: {}\nEval type: {}\nReasoning mode: {}\nMemory capability: {}\n\nAnswer or briefing:\n{}",
+        result.item_id,
+        result.eval_type,
+        result
+            .metadata
+            .reasoning_mode
+            .as_deref()
+            .unwrap_or("unspecified"),
+        result
+            .metadata
+            .memory_capability
+            .as_deref()
+            .unwrap_or("unspecified"),
+        answer
+    );
+    let response = run_direct_llm_eval(
+        api,
+        "You are an eval judge. Return strict JSON with numeric 0..1 keys: evidence_use, reasoning_quality, consistency, maintainability, and a short notes string. Score only the supplied answer, not whether you personally know the facts.",
+        &prompt,
+        api.config.llm.max_output_tokens.min(700),
+    )
+    .await?;
+    let (judge, mut notes) = parse_eval_judge_payload(&response.content);
+    if let Some(value) = judge.evidence_use {
+        result
+            .scores
+            .insert("judge_evidence_use".to_string(), value.clamp(0.0, 1.0));
+    }
+    if let Some(value) = judge.reasoning_quality {
+        result
+            .scores
+            .insert("judge_reasoning_quality".to_string(), value.clamp(0.0, 1.0));
+    }
+    if let Some(value) = judge.consistency {
+        result
+            .scores
+            .insert("judge_consistency".to_string(), value.clamp(0.0, 1.0));
+    }
+    if let Some(value) = judge.maintainability {
+        result
+            .scores
+            .insert("judge_maintainability".to_string(), value.clamp(0.0, 1.0));
+    }
+    if let Some(note) = judge.notes.filter(|note| !note.trim().is_empty()) {
+        notes.push(format!("llm_judge: {}", note.trim()));
+    }
+    result.notes.extend(notes);
+    if let Some(usage) = response.token_usage {
+        result.scores.insert(
+            "judge_total_tokens".to_string(),
+            usage.total_tokens as f64,
+        );
+    }
+    Ok(())
+}
+
+fn parse_eval_judge_payload(content: &str) -> (EvalJudgePayload, Vec<String>) {
+    let trimmed = content.trim();
+    let json = trimmed
+        .strip_prefix("```json")
+        .and_then(|value| value.strip_suffix("```"))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("```")
+                .and_then(|value| value.strip_suffix("```"))
+        })
+        .map(str::trim)
+        .unwrap_or(trimmed);
+    match serde_json::from_str::<EvalJudgePayload>(json) {
+        Ok(payload) => (payload, vec!["llm_judge: scored answer".to_string()]),
+        Err(_) => (
+            EvalJudgePayload {
+                evidence_use: None,
+                reasoning_quality: None,
+                consistency: None,
+                maintainability: None,
+                notes: None,
+            },
+            vec!["llm_judge: response was not strict judge JSON".to_string()],
+        ),
+    }
 }
 
 async fn run_no_memory_grounded_answer_eval_item(
