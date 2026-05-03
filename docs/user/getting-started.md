@@ -5,6 +5,7 @@ This guide is written for someone who just wants Memory Layer working with as li
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
+- [Agent Install Prompt](#agent-install-prompt)
 - [Fast Install: Debian](#fast-install-debian)
 - [Fast Install: macOS](#fast-install-macos)
 - [What The Wizard Will Ask For](#what-the-wizard-will-ask-for)
@@ -30,6 +31,54 @@ Before you install or run the wizard, have these ready:
 - `go` on `PATH` if you plan to use the repo-local Memory Layer skills through `go run`
 
 You do not need to invent a Memory Layer service token yourself for normal installs. Setup generates a machine-local token automatically in `memory-layer.env`, and local write-capable tools use that token to authenticate to `mem-service`.
+
+## Agent Install Prompt
+
+Give this prompt to an agent when you want it to install Memory Layer for you:
+
+````
+# Install Memory Layer
+
+You are installing Memory Layer for me. Work in the terminal, explain before using sudo, and stop before destructive changes.
+
+## Goal
+
+Install Memory Layer completely on this machine and configure it for the project I choose.
+
+## Rules
+
+- Detect whether this is Linux/Debian-style or macOS.
+- Do not invent secrets.
+- Ask me for the PostgreSQL connection string if one is not already configured.
+- Ask me for optional LLM or embedding API keys only if I want scan or semantic retrieval.
+- Make sure PostgreSQL has pgvector available before enabling semantic retrieval.
+- Make sure Go is available on PATH so repo-local Memory Layer skills can run.
+- Run health checks before saying the install is done.
+
+## Linux / Debian path
+
+1. Download the latest Memory Layer `.deb` from GitHub Releases.
+2. Install it with `sudo dpkg -i memory-layer_<version>_amd64.deb`.
+3. Run `memory wizard --global` and configure the shared database and optional LLM/embedding settings.
+4. Go to my target project directory.
+5. Run `memory wizard` for repo-local setup.
+6. Start the backend with `sudo systemctl enable --now memory-layer.service`.
+7. Run `memory doctor`, `memory health`, and then open `memory tui`.
+
+## macOS path
+
+1. Run `brew tap 3vilM33pl3/memory https://github.com/3vilM33pl3/memory`.
+2. Run `brew install 3vilM33pl3/memory/memory-layer`.
+3. Run `memory wizard --global` and configure the shared database and optional LLM/embedding settings.
+4. Go to my target project directory.
+5. Run `memory wizard` for repo-local setup.
+6. Start the backend with `memory service enable`.
+7. Run `memory doctor`, `memory health`, and then open `memory tui`.
+
+## Finish
+
+Report what was installed, where the config files are, whether the service is healthy, and what I should run next.
+````
 
 ## Fast Install: Debian
 
