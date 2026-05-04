@@ -26,7 +26,8 @@ This guide is written for someone who just wants Memory Layer working with as li
 
 Before you install or run the wizard, have these ready:
 
-- a PostgreSQL connection string for a database Memory Layer can own
+- a PostgreSQL database that already exists and that Memory Layer can own
+- a PostgreSQL connection string for that database
 - optional: an OpenAI-compatible API key if you want `memory scan`
 - PostgreSQL with `pgvector` installed and `CREATE EXTENSION vector` enabled in the Memory Layer database
 - `go` on `PATH` if you plan to use the repo-local Memory Layer skills through `go run`
@@ -35,7 +36,7 @@ You do not need to invent a Memory Layer service token yourself for normal insta
 
 ## PostgreSQL Requirement
 
-Memory Layer stores durable memories in PostgreSQL. The backend cannot become healthy until the database URL points at a reachable PostgreSQL database. Semantic retrieval and current embedding migrations also require pgvector.
+Memory Layer stores durable memories in PostgreSQL. The backend cannot become healthy until the database URL points at a reachable PostgreSQL database that already exists. `memory wizard --global` writes the URL into config; it does not create the PostgreSQL database for you. Semantic retrieval and current embedding migrations also require pgvector.
 
 There are two pgvector steps, and both matter:
 
@@ -55,7 +56,7 @@ postgres://memory_layer:<password>@127.0.0.1:5432/memory_layer
 Use this path when you already have PostgreSQL, including a hosted provider:
 
 1. Confirm the provider or server supports pgvector.
-2. Create a dedicated database and user, or ask your database admin for a URL.
+2. Create a dedicated database and user, or ask your database admin for a URL to an existing database.
 3. From the machine that will run Memory Layer, verify connectivity:
 
 ```bash
@@ -90,7 +91,7 @@ sudo apt-get install -y postgresql-16-pgvector
 
 If your server is a different major version, replace `16` with that version. If the package is unavailable from your OS repositories, install it from the PostgreSQL Global Development Group packages or follow the upstream pgvector installation instructions.
 
-Create a dedicated user and database:
+Create a dedicated user and database before running `memory wizard --global`:
 
 ```bash
 sudo -u postgres createuser --pwprompt memory_layer
@@ -115,7 +116,7 @@ brew install postgresql@16 pgvector
 brew services start postgresql@16
 ```
 
-Create a dedicated user and database:
+Create a dedicated user and database before running `memory wizard --global`:
 
 ```bash
 createuser --pwprompt memory_layer
@@ -212,7 +213,7 @@ Report what was installed, where the config files are, whether the service is he
 sudo dpkg -i memory-layer_<version>_amd64.deb
 ```
 
-3. Prepare PostgreSQL using the [PostgreSQL Requirement](#postgresql-requirement) section. Do not continue until these commands work:
+3. Create the PostgreSQL database and prepare pgvector using the [PostgreSQL Requirement](#postgresql-requirement) section. Do not continue until these commands work:
 
 ```bash
 psql "$DATABASE_URL" -c "SELECT 1;"
@@ -272,7 +273,7 @@ If you specifically want the latest unreleased `main` branch:
 brew install --HEAD 3vilM33pl3/memory/memory-layer
 ```
 
-2. Prepare PostgreSQL using the [PostgreSQL Requirement](#postgresql-requirement) section. Do not continue until these commands work:
+2. Create the PostgreSQL database and prepare pgvector using the [PostgreSQL Requirement](#postgresql-requirement) section. Do not continue until these commands work:
 
 ```bash
 psql "$DATABASE_URL" -c "SELECT 1;"

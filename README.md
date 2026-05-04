@@ -56,7 +56,7 @@ Read the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md), the
 
 The fastest path is:
 
-1. Prepare a PostgreSQL database and enable the `vector` extension in that database.
+1. Create a PostgreSQL database for Memory Layer and enable the `vector` extension in that database.
 2. Install the package.
 3. Run `memory wizard --global` once per machine and enter the database URL.
 4. Run `memory wizard` inside each repository.
@@ -70,7 +70,21 @@ Example database URL:
 postgres://memory_layer:<password>@127.0.0.1:5432/memory_layer
 ```
 
-Before running the wizard, verify the database from the same machine:
+If you are running PostgreSQL locally, create a dedicated database and user first:
+
+```bash
+sudo -u postgres createuser --pwprompt memory_layer
+sudo -u postgres createdb --owner=memory_layer memory_layer
+```
+
+On macOS/Homebrew PostgreSQL, the same commands usually run without `sudo -u postgres`:
+
+```bash
+createuser --pwprompt memory_layer
+createdb --owner=memory_layer memory_layer
+```
+
+Before running the wizard, verify that the database exists and is reachable from the same machine:
 
 ```bash
 export DATABASE_URL='postgres://memory_layer:<password>@127.0.0.1:5432/memory_layer'
