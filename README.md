@@ -59,10 +59,11 @@ The fastest path is:
 1. Create a PostgreSQL database for Memory Layer and enable the `vector` extension in that database.
 2. Install the package.
 3. Run `memory wizard --global` once per machine and enter the database URL.
-4. Run `memory wizard` inside each repository.
-5. Let Memory Layer auto-derive a writer identity, or set `writer.id` only if you want a custom shared label.
-6. Start `memory service run` or enable the packaged service.
-7. Open the TUI or web UI.
+4. Make sure your project is a git repository.
+5. Run `memory wizard` inside each repository.
+6. Let Memory Layer auto-derive a writer identity, or set `writer.id` only if you want a custom shared label.
+7. Start `memory service run` or enable the packaged service.
+8. Open the TUI or web UI.
 
 Example database URL:
 
@@ -91,6 +92,15 @@ export DATABASE_URL='postgres://memory_layer:<password>@127.0.0.1:5432/memory_la
 psql "$DATABASE_URL" -c "SELECT 1;"
 psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
 psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+```
+
+If your project is not a git repository yet, initialize it before running the repo-local wizard:
+
+```bash
+cd /path/to/your-project
+git init
+git add .
+git commit -m "Initial commit"
 ```
 
 Debian:
@@ -188,6 +198,44 @@ GitHub Releases: https://github.com/3vilM33pl3/memory/releases
 ## Finish
 
 Report what was installed, where the config files are, whether the service is healthy, and what I should run next.
+````
+
+### Agent Git Init Prompt
+
+Give this separate prompt to an agent when you want it to initialize git for a project before Memory Layer setup:
+
+````
+# Initialize Git Repository
+
+You are initializing git for my project so Memory Layer can use repository context safely.
+
+## Goal
+
+Make the target project a clean git repository with an initial commit if it is not already one.
+
+## Rules
+
+- Work in the target project directory I give you.
+- Do not delete files.
+- Do not overwrite an existing git repository.
+- If `.git` already exists, report the current branch and status instead of reinitializing.
+- If there are secrets, large generated files, build outputs, dependency folders, or local config files, stop and ask before committing them.
+- Create or update `.gitignore` only for obvious local/generated files such as `target/`, `node_modules/`, `.env`, `.DS_Store`, and editor caches.
+- Show me `git status --short` before the first commit.
+
+## Steps
+
+1. Run `git status --short` to check whether this is already a repository.
+2. If it is not a repository, run `git init`.
+3. Review existing files and create a conservative `.gitignore` if needed.
+4. Run `git add .`.
+5. Run `git status --short` and stop if anything looks unsafe to commit.
+6. Create the first commit with `git commit -m "Initial commit"`.
+7. Report the branch name, commit hash, and any files intentionally ignored.
+
+## Finish
+
+After git is initialized, continue Memory Layer setup from the quickstart with `memory wizard` inside this repository.
 ````
 
 Key docs after setup:

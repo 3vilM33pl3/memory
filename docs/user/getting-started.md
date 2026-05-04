@@ -7,6 +7,7 @@ This guide is written for someone who just wants Memory Layer working with as li
 - [Prerequisites](#prerequisites)
 - [PostgreSQL Requirement](#postgresql-requirement)
 - [Agent Install Prompt](#agent-install-prompt)
+- [Agent Git Init Prompt](#agent-git-init-prompt)
 - [Fast Install: Debian](#fast-install-debian)
 - [Fast Install: macOS](#fast-install-macos)
 - [What The Wizard Will Ask For](#what-the-wizard-will-ask-for)
@@ -28,6 +29,7 @@ Before you install or run the wizard, have these ready:
 
 - a PostgreSQL database that already exists and that Memory Layer can own
 - a PostgreSQL connection string for that database
+- a git repository for the project you want Memory Layer to manage
 - optional: an OpenAI-compatible API key if you want `memory scan`
 - PostgreSQL with `pgvector` installed and `CREATE EXTENSION vector` enabled in the Memory Layer database
 - `go` on `PATH` if you plan to use the repo-local Memory Layer skills through `go run`
@@ -207,6 +209,44 @@ GitHub Releases: https://github.com/3vilM33pl3/memory/releases
 Report what was installed, where the config files are, whether the service is healthy, and what I should run next.
 ````
 
+## Agent Git Init Prompt
+
+Give this separate prompt to an agent when you want it to initialize git for a project before Memory Layer setup:
+
+````
+# Initialize Git Repository
+
+You are initializing git for my project so Memory Layer can use repository context safely.
+
+## Goal
+
+Make the target project a clean git repository with an initial commit if it is not already one.
+
+## Rules
+
+- Work in the target project directory I give you.
+- Do not delete files.
+- Do not overwrite an existing git repository.
+- If `.git` already exists, report the current branch and status instead of reinitializing.
+- If there are secrets, large generated files, build outputs, dependency folders, or local config files, stop and ask before committing them.
+- Create or update `.gitignore` only for obvious local/generated files such as `target/`, `node_modules/`, `.env`, `.DS_Store`, and editor caches.
+- Show me `git status --short` before the first commit.
+
+## Steps
+
+1. Run `git status --short` to check whether this is already a repository.
+2. If it is not a repository, run `git init`.
+3. Review existing files and create a conservative `.gitignore` if needed.
+4. Run `git add .`.
+5. Run `git status --short` and stop if anything looks unsafe to commit.
+6. Create the first commit with `git commit -m "Initial commit"`.
+7. Report the branch name, commit hash, and any files intentionally ignored.
+
+## Finish
+
+After git is initialized, continue Memory Layer setup from the quickstart with `memory wizard` inside this repository.
+````
+
 ## Fast Install: Debian
 
 1. Download the latest `.deb` package from the GitHub Releases page.
@@ -237,7 +277,15 @@ This is where you set the shared database URL. The shared service API token is p
 cd /path/to/your-project
 ```
 
-6. Run the repo-local setup wizard:
+6. Make sure the project is a git repository. If it is not, initialize it first:
+
+```bash
+git init
+git add .
+git commit -m "Initial commit"
+```
+
+7. Run the repo-local setup wizard:
 
 ```bash
 memory wizard
@@ -247,13 +295,13 @@ The repo-local skill bundle that `memory wizard` installs uses a shared Go helpe
 
 Most mutating `memory` commands also support `--dry-run`, so you can preview setup, write, indexing, bundle, and checkpoint operations before they touch local files, services, or backend state.
 
-7. Start the backend service:
+8. Start the backend service:
 
 ```bash
 sudo systemctl enable --now memory-layer.service
 ```
 
-8. Verify the setup and open the UI you prefer:
+9. Verify the setup and open the UI you prefer:
 
 ```bash
 memory doctor
@@ -295,7 +343,15 @@ memory wizard --global
 cd /path/to/your-project
 ```
 
-5. Run the repo-local setup wizard:
+5. Make sure the project is a git repository. If it is not, initialize it first:
+
+```bash
+git init
+git add .
+git commit -m "Initial commit"
+```
+
+6. Run the repo-local setup wizard:
 
 ```bash
 memory wizard
@@ -303,13 +359,13 @@ memory wizard
 
 The repo-local skill bundle that `memory wizard` installs uses a shared Go helper under `.agents/skills/memory-layer/scripts/`, so agent-driven skill usage in that repository requires `go` to be available on `PATH`.
 
-6. Start the backend LaunchAgent:
+7. Start the backend LaunchAgent:
 
 ```bash
 memory service enable
 ```
 
-7. Verify the setup and open the TUI:
+8. Verify the setup and open the TUI:
 
 ```bash
 memory doctor
