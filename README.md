@@ -56,12 +56,28 @@ Read the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md), the
 
 The fastest path is:
 
-1. Install the package.
-2. Run `memory wizard --global` once per machine.
-3. Run `memory wizard` inside each repository.
-4. Let Memory Layer auto-derive a writer identity, or set `writer.id` only if you want a custom shared label.
-5. Start `memory service run` or enable the packaged service.
-6. Open the TUI or web UI.
+1. Prepare a PostgreSQL database and enable the `vector` extension in that database.
+2. Install the package.
+3. Run `memory wizard --global` once per machine and enter the database URL.
+4. Run `memory wizard` inside each repository.
+5. Let Memory Layer auto-derive a writer identity, or set `writer.id` only if you want a custom shared label.
+6. Start `memory service run` or enable the packaged service.
+7. Open the TUI or web UI.
+
+Example database URL:
+
+```text
+postgres://memory_layer:<password>@127.0.0.1:5432/memory_layer
+```
+
+Before running the wizard, verify the database from the same machine:
+
+```bash
+export DATABASE_URL='postgres://memory_layer:<password>@127.0.0.1:5432/memory_layer'
+psql "$DATABASE_URL" -c "SELECT 1;"
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+```
 
 Debian:
 
@@ -111,9 +127,12 @@ Install Memory Layer completely on this machine and configure it for the project
 
 - Detect whether this is Linux/Debian-style or macOS.
 - Do not invent secrets.
-- Ask me for the PostgreSQL connection string if one is not already configured.
+- PostgreSQL is required. Before running `memory wizard --global`, find an existing database URL or ask me whether to use an existing/hosted PostgreSQL database or create a local one.
+- If creating a local PostgreSQL database, create a dedicated database and user named `memory_layer` unless I ask for different names.
+- Do not invent the database password; ask me for it or generate one only after confirming that is OK.
+- Make sure the PostgreSQL server has pgvector installed and that the target database has `CREATE EXTENSION IF NOT EXISTS vector;` applied.
+- Verify PostgreSQL with `psql "$DATABASE_URL" -c "SELECT 1;"` and verify pgvector with `psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"` before configuring Memory Layer.
 - Ask me for optional LLM or embedding API keys only if I want scan or semantic retrieval.
-- Make sure PostgreSQL has pgvector available before enabling semantic retrieval.
 - Make sure Go is available on PATH so repo-local Memory Layer skills can run.
 - Run health checks before saying the install is done.
 
@@ -121,21 +140,33 @@ Install Memory Layer completely on this machine and configure it for the project
 
 1. Download the latest Memory Layer `.deb` from GitHub Releases.
 2. Install it with `sudo dpkg -i memory-layer_<version>_amd64.deb`.
-3. Run `memory wizard --global` and configure the shared database and optional LLM/embedding settings.
-4. Go to my target project directory.
-5. Run `memory wizard` for repo-local setup.
-6. Start the backend with `sudo systemctl enable --now memory-layer.service`.
-7. Run `memory doctor`, `memory health`, and then open `memory tui`.
+3. Prepare PostgreSQL before configuring Memory Layer:
+   - If using a hosted/existing database, verify that it accepts connections from this machine and supports pgvector.
+   - If creating a local database, install PostgreSQL and the matching pgvector package for the server major version, for example `postgresql-16-pgvector` when the server is PostgreSQL 16.
+   - Create or receive a database URL such as `postgres://memory_layer:<password>@127.0.0.1:5432/memory_layer`.
+   - Run `psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"`.
+   - Run `psql "$DATABASE_URL" -c "SELECT 1;"` and `psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"`.
+4. Run `memory wizard --global` and configure the verified database URL and optional LLM/embedding settings.
+5. Go to my target project directory.
+6. Run `memory wizard` for repo-local setup.
+7. Start the backend with `sudo systemctl enable --now memory-layer.service`.
+8. Run `memory doctor`, `memory health`, and then open `memory tui`.
 
 ## macOS path
 
 1. Run `brew tap 3vilM33pl3/memory https://github.com/3vilM33pl3/memory`.
 2. Run `brew install 3vilM33pl3/memory/memory-layer`.
-3. Run `memory wizard --global` and configure the shared database and optional LLM/embedding settings.
-4. Go to my target project directory.
-5. Run `memory wizard` for repo-local setup.
-6. Start the backend with `memory service enable`.
-7. Run `memory doctor`, `memory health`, and then open `memory tui`.
+3. Prepare PostgreSQL before configuring Memory Layer:
+   - If using a hosted/existing database, verify that it accepts connections from this machine and supports pgvector.
+   - If creating a local database, use Homebrew PostgreSQL and pgvector, then create a dedicated `memory_layer` database and user.
+   - Create or receive a database URL such as `postgres://memory_layer:<password>@127.0.0.1:5432/memory_layer`.
+   - Run `psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"`.
+   - Run `psql "$DATABASE_URL" -c "SELECT 1;"` and `psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"`.
+4. Run `memory wizard --global` and configure the verified database URL and optional LLM/embedding settings.
+5. Go to my target project directory.
+6. Run `memory wizard` for repo-local setup.
+7. Start the backend with `memory service enable`.
+8. Run `memory doctor`, `memory health`, and then open `memory tui`.
 
 ## Finish
 

@@ -48,7 +48,9 @@ Typical remediation paths are:
 - unexpected writer identity
   - set `[writer].id` or `MEMORY_LAYER_WRITER_ID` if you want a custom stable label instead of the auto-derived default
 - missing `pgvector`
-  - install the PostgreSQL package for your server version and enable the `vector` extension
+  - install pgvector on the PostgreSQL server, then enable `vector` in the specific Memory Layer database with `CREATE EXTENSION IF NOT EXISTS vector;`
+  - verify the same database URL Memory Layer uses with `psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"`
+  - see [Getting Started: PostgreSQL Requirement](../getting-started.md#postgresql-requirement) for local Debian, local macOS, and hosted PostgreSQL examples
 - repo not initialized
   - run `memory wizard` or `memory init`
 - backend unreachable

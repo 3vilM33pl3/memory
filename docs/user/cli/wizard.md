@@ -17,6 +17,16 @@ Use `wizard` to bootstrap Memory Layer configuration either globally for the mac
 - optional shared `writer.id`
 - optional LLM settings, including local Ollama via `provider = "ollama"`
 
+`database.url` must point at a reachable PostgreSQL database before the backend can become healthy. The target database should already have pgvector enabled:
+
+```bash
+psql "$DATABASE_URL" -c "SELECT 1;"
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+```
+
+For local and hosted database setup examples, see [Getting Started: PostgreSQL Requirement](../getting-started.md#postgresql-requirement).
+
 The shared service API token is usually generated automatically into the adjacent `memory-layer.env` file. The wizard only needs an explicit token value if you want to override that generated token.
 If you leave `writer.id` unset, Memory Layer derives a stable writer identity automatically at runtime.
 
