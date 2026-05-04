@@ -137,6 +137,9 @@ You are installing Memory Layer for me. Work in the terminal, explain before usi
 
 Install Memory Layer completely on this machine and configure it for the project I choose.
 
+Repository: https://github.com/3vilM33pl3/memory
+GitHub Releases: https://github.com/3vilM33pl3/memory/releases
+
 ## Rules
 
 - Detect whether this is Linux/Debian-style or macOS.
@@ -152,7 +155,7 @@ Install Memory Layer completely on this machine and configure it for the project
 
 ## Linux / Debian path
 
-1. Download the latest Memory Layer `.deb` from GitHub Releases.
+1. Download the latest Memory Layer `.deb` from https://github.com/3vilM33pl3/memory/releases.
 2. Install it with `sudo dpkg -i memory-layer_<version>_amd64.deb`.
 3. Prepare PostgreSQL before configuring Memory Layer:
    - If using a hosted/existing database, verify that it accepts connections from this machine and supports pgvector.
