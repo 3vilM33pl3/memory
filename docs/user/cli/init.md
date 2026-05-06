@@ -19,6 +19,8 @@ memory init --dry-run
 - installs or refreshes the bundled repo-local Memory Layer skills
 - can preview the planned file writes with `--dry-run`
 
+The installed skill bundle includes focused workflows for project setup, query/resume, plan execution, direct task starts, and completed-work remembering.
+
 ## Notes
 
 - prefer [`memory wizard`](wizard.md) for the normal guided setup flow

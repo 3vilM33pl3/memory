@@ -6,8 +6,10 @@ This page explains the current repo-local Memory Layer skill bundle. The canonic
 
 The focused skills that sit beside it are:
 
+- [`.agents/skills/memory-project-init/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-project-init/SKILL.md)
 - [`.agents/skills/memory-query-resume/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-query-resume/SKILL.md)
 - [`.agents/skills/memory-plan-execution/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-plan-execution/SKILL.md)
+- [`.agents/skills/memory-direct-task-start/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-direct-task-start/SKILL.md)
 - [`.agents/skills/memory-remember/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-remember/SKILL.md)
 
 Use this page to understand how the bundle is intended to behave without reading every raw skill file line by line.
@@ -35,7 +37,9 @@ The bundle as a whole tells the agent when to:
 
 - query project memory before answering repo-specific questions
 - use `resume` to get back into flow after an interruption
+- initialise or refresh repo-local Memory Layer setup for a project
 - save the approved plan and checkpoint when a planning phase turns into approved execution
+- save a task memory when direct implementation starts without an approved plan
 - remember meaningful completed work automatically
 - remember distilled code and codebase explanations after answering explanation requests
 
@@ -45,13 +49,15 @@ The umbrella skill handles broad or mixed memory turns. The focused skills handl
 
 The current live bundle workflow is:
 
-1. `memory-query-resume` handles query-first answers and interruption recovery.
-2. `memory-plan-execution` handles execution start and plan-completion verification.
-3. `memory-remember` handles post-task remembering once work is actually complete.
-4. Code explanation turns query memory first, inspect relevant code or docs, answer, then remember the distilled reusable explanation when it is durable.
-5. The umbrella `memory-layer` skill keeps the shared invariants and covers mixed or ambiguous memory turns.
-6. Prefer insufficient evidence over unsupported conclusions.
-7. Never invent provenance.
+1. `memory-project-init` handles repo-local setup and refreshes for target projects.
+2. `memory-query-resume` handles query-first answers and interruption recovery.
+3. `memory-plan-execution` handles execution start and plan-completion verification.
+4. `memory-direct-task-start` records direct no-plan implementation starts.
+5. `memory-remember` handles post-task remembering once work is actually complete.
+6. Code explanation turns query memory first, inspect relevant code or docs, answer, then remember the distilled reusable explanation when it is durable.
+7. The umbrella `memory-layer` skill keeps the shared invariants and covers mixed or ambiguous memory turns.
+8. Prefer insufficient evidence over unsupported conclusions.
+9. Never invent provenance.
 
 The important change is that the bundle is no longer centered on one broad skill or on a manual `memory capture task -> curate-memory` sequence for normal work. The preferred path is now a focused workflow plus `remember-task`, which captures and curates in one step.
 
@@ -92,7 +98,9 @@ Older documentation in this repo focused on:
 The current skill bundle has moved beyond that. It now also covers:
 
 - interruption recovery with `resume`
+- repo-local project setup with preview-first `memory wizard`
 - plan-to-execution checkpointing with approved-plan capture
+- direct no-plan task-start recording
 - strict plan-completion verification before the agent may conclude plan-backed work
 - automatic post-task remembering with `remember-task`
 - explanation memory capture for durable code, module, architecture, and codebase explanations

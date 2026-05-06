@@ -39,9 +39,11 @@ The architecture is split into five parts:
 ### Skill
 
 The repo-local Memory Layer skill bundle in `.agents/skills/` tells Codex when to:
+- initialise or refresh Memory Layer setup for a target project
 - query memory before answering project-specific questions
 - resume after interruptions
 - save approved plans before execution
+- save direct task starts when implementation begins without an approved plan
 - verify plan-backed work before claiming completion
 - remember meaningful work
 

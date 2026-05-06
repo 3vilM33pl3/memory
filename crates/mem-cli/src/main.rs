@@ -7755,8 +7755,10 @@ fn watcher_command_requires_config_load(command: &WatcherCommand) -> bool {
 
 const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-layer",
+    "memory-project-init",
     "memory-query-resume",
     "memory-plan-execution",
+    "memory-direct-task-start",
     "memory-remember",
 ];
 
@@ -13884,7 +13886,17 @@ mod tests {
         );
         assert!(
             repo_root
+                .join(".agents/skills/memory-project-init/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
                 .join(".agents/skills/memory-plan-execution/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-direct-task-start/SKILL.md")
                 .is_file()
         );
         assert!(
@@ -13965,6 +13977,26 @@ mod tests {
                 .join(".agents/skills/memory-query-resume/SKILL.md")
                 .is_file()
         );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-project-init/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-plan-execution/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-direct-task-start/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-remember/SKILL.md")
+                .is_file()
+        );
         assert!(root_gitignore_contains_mem(&repo_root).unwrap());
 
         let _ = fs::remove_dir_all(repo_root);
@@ -13993,7 +14025,17 @@ mod tests {
         );
         assert!(
             repo_root
+                .join(".agents/skills/memory-project-init/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
                 .join(".agents/skills/memory-plan-execution/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-direct-task-start/SKILL.md")
                 .is_file()
         );
         assert!(

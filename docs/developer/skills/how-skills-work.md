@@ -57,6 +57,7 @@ At runtime, a skill is selected when either:
 
 For the `memory-layer` skill, those matches are things like:
 
+- initializing or refreshing repo-local Memory Layer setup for a project
 - project-specific questions about this repo
 - asking what changed or what is known already
 - storing durable project knowledge
@@ -99,8 +100,10 @@ There are three important memory-skill copies in this repository:
    - `.agents/skills/`
    - the umbrella skill is `.agents/skills/memory-layer/`
    - the focused skills are:
+     - `.agents/skills/memory-project-init/`
      - `.agents/skills/memory-query-resume/`
      - `.agents/skills/memory-plan-execution/`
+     - `.agents/skills/memory-direct-task-start/`
      - `.agents/skills/memory-remember/`
    - this bundle is what the agent uses in this repository
 2. packaged template
