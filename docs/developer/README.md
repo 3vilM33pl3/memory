@@ -39,6 +39,7 @@ For the full isolation contract, default ports, override flags, and troubleshoot
 
 ## Implementation Material
 
+- [Weekend Report: 2026-05-02 to 2026-05-03](weekend-report-2026-05-02-to-2026-05-03.md)
 - [Implementation Plans](plans/README.md)
 - [Skills And Agent Material](skills/README.md)
 - [How Skills Work](skills/how-skills-work.md)

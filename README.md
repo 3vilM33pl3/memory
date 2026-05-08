@@ -371,6 +371,7 @@ Project-local customization now has two layers:
 ### Developer Docs
 
 - [Developer Documentation Index](docs/developer/README.md)
+- [Weekend Report: 2026-05-02 to 2026-05-03](docs/developer/weekend-report-2026-05-02-to-2026-05-03.md)
 - [Dev Stack vs Installed Stack](docs/developer/dev-stack.md)
 - [How Skills Work](docs/developer/skills/how-skills-work.md)
 - [Architecture Overview](docs/developer/architecture/overview.md)
