@@ -5547,7 +5547,7 @@ fn collect_error_items(app: &App) -> Vec<ErrorItem> {
             }
         }
     }
-    items.sort_by(|left, right| right.when.cmp(&left.when));
+    items.sort_by_key(|item| std::cmp::Reverse(item.when));
     items
 }
 

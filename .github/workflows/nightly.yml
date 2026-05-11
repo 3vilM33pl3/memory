@@ -41,6 +41,8 @@ jobs:
 
       - name: Offline evaluation smoke
         run: cargo run --locked --bin memory -- eval run --suite evals/examples/memory-smoke --condition full-memory --profile offline --dry-run
+        env:
+          MEMORY_LAYER_PROFILE: prod
 
       - name: Debian package smoke
         run: ./packaging/build-deb.sh
