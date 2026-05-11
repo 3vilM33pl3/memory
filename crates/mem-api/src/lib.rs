@@ -618,6 +618,8 @@ pub struct CurateResponse {
     pub replacements: Vec<AppliedMemoryReplacement>,
     #[serde(default)]
     pub dry_run: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<DiagnosticInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1117,6 +1119,42 @@ pub enum ActivityKind {
     Archive,
     DeleteMemory,
     Briefing,
+    Diagnostic,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticSeverity {
+    Info,
+    Warning,
+    #[default]
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DiagnosticInfo {
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub component: String,
+    #[serde(default)]
+    pub operation: String,
+    #[serde(default)]
+    pub severity: DiagnosticSeverity,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doctor_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1277,6 +1315,9 @@ pub enum ActivityDetails {
     DeleteMemory {
         deleted: bool,
         summary: String,
+    },
+    Diagnostic {
+        diagnostic: DiagnosticInfo,
     },
 }
 

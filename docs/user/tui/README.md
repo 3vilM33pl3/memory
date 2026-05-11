@@ -10,6 +10,7 @@ Memory Layer's TUI is the fastest way to browse project memory, ask cited questi
 - Agents and Watchers show live distributed agent state, token pressure, context usage, rate limits, heartbeats, and recovery behavior.
 - Embeddings shows every configured backend and per-project coverage so model switching is visible instead of hidden in config files.
 - Activity and Resume turn persisted operations into get-up-to-speed context for new or returning agents.
+- Errors turns backend, provider, watcher, and TUI failures into actionable diagnostics with fix hints.
 - Memories and Review keep the durable knowledge base readable and maintainable.
 
 ## Layout
@@ -38,6 +39,8 @@ Shared navigation:
   - Ask a question against project memory and inspect the ranked results.
 - [Activity Tab](activity.md)
   - Review persisted activity history and generate get-up-to-speed briefings for new or returning agents.
+- [Errors Tab](errors.md)
+  - Inspect persisted diagnostics and session-local TUI errors with explanations and suggested fixes.
 - [Project Tab](project.md)
   - Inspect project-level health, counts, embedding state, recent activity, and automation status.
 - [Review Tab](review.md)
@@ -54,6 +57,7 @@ Shared navigation:
 - If you want to inspect or filter stored memory, open [Memories Tab](memories.md).
 - If you want to ask a question directly, open [Query Tab](query.md).
 - If you want a new-agent briefing or persisted operational history, open [Activity Tab](activity.md).
+- If the bottom bar shows errors or a provider/backend operation failed, open [Errors Tab](errors.md).
 - If you want to watch active coding-agent sessions across projects, open [Agents Tab](agents.md).
 - If you want high-level health or recent operational activity, open [Project Tab](project.md); for pending-proposal review, open [Review Tab](review.md).
 - If you want watcher liveness and watchdog status, open [Watchers Tab](watchers.md).
@@ -68,6 +72,7 @@ Shared navigation:
 | Agents | ![Agents tab](../../img/tui/agents-tab.png) |
 | Query | ![Query tab](../../img/tui/query-tab.png) |
 | Activity | ![Activity tab](../../img/tui/activity-tab.png) |
+| Errors | Diagnostics, provider failures, watcher problems, and session-local TUI errors with fix hints. |
 | Project | ![Project tab](../../img/tui/project-tab.png) |
 | Review | ![Review tab](../../img/tui/review-tab.png) |
 | Watchers | ![Watchers tab](../../img/tui/watchers-tab.png) |

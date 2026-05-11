@@ -31,26 +31,26 @@ use mem_api::{
     ActivateEmbeddingBackendRequest, ActivityDetails, ActivityEvent, ActivityKind,
     ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
     CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
-    CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, EmbeddingBackendInfo,
-    EmbeddingBackendsResponse, GraphActivityRequest, MemoryEntryResponse, MemoryHistoryResponse,
-    MemorySourceRecord, PlanActivityAction, PlanActivityRequest, ProjectCommitsResponse,
-    ProjectMemoriesResponse, ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation,
-    ProjectMemoryBundleManifest, ProjectMemoryBundlePreview, ProjectMemoryBundleSource,
-    ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
-    ProjectMemoryListItem, ProjectOverviewResponse, PruneEmbeddingsRequest,
-    PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryAnswerCitation,
-    QueryAnswerGeneration, QueryAnswerMethod, QueryAnswerMode, QueryGraphConnection, QueryRequest,
-    QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
-    RelatedMemorySummary, ReplacementPolicy, ReplacementPolicyRequest, ReplacementPolicyResponse,
-    ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
-    ResumeCheckpoint, ResumeRequest, ResumeResponse, ScanActivityRequest,
-    SetEmbeddingCreationRequest, SourceKind, StatsResponse, StreamRequest, StreamResponse,
-    TokenUsage, TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse, ValidationError,
-    WatcherHealth, WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary,
-    WatcherRestartRequest, WatcherRestartResponse, WatcherUnregisterRequest,
-    effective_llm_base_url, is_supported_llm_provider, llm_max_output_tokens_field,
-    llm_requires_api_key, load_repo_replacement_policy, read_capnp_text_frame,
-    repo_agent_settings_path, resolve_llm_api_key, write_capnp_text_frame,
+    CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, DiagnosticInfo, DiagnosticSeverity,
+    EmbeddingBackendInfo, EmbeddingBackendsResponse, GraphActivityRequest, MemoryEntryResponse,
+    MemoryHistoryResponse, MemorySourceRecord, PlanActivityAction, PlanActivityRequest,
+    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
+    ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
+    ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
+    ProjectMemoryImportResponse, ProjectMemoryListItem, ProjectOverviewResponse,
+    PruneEmbeddingsRequest, PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse,
+    QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod, QueryAnswerMode,
+    QueryGraphConnection, QueryRequest, QueryResponse, ReembedRequest, ReembedResponse,
+    ReindexRequest, ReindexResponse, RelatedMemorySummary, ReplacementPolicy,
+    ReplacementPolicyRequest, ReplacementPolicyResponse, ReplacementProposalListResponse,
+    ReplacementProposalResolutionResponse, ResumeAction, ResumeCheckpoint, ResumeRequest,
+    ResumeResponse, ScanActivityRequest, SetEmbeddingCreationRequest, SourceKind, StatsResponse,
+    StreamRequest, StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest,
+    UpToSpeedResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
+    WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
+    WatcherUnregisterRequest, effective_llm_base_url, is_supported_llm_provider,
+    llm_max_output_tokens_field, llm_requires_api_key, load_repo_replacement_policy,
+    read_capnp_text_frame, repo_agent_settings_path, resolve_llm_api_key, write_capnp_text_frame,
 };
 use mem_curate::{
     approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
@@ -2105,6 +2105,8 @@ async fn query(
             Ok(Json(response))
         }
         Err(error) => {
+            let diagnostic =
+                classify_anyhow_diagnostic(&error, "search", "query", DiagnosticSeverity::Error);
             notify_project_changed(
                 &state,
                 request.project.clone(),
@@ -2129,7 +2131,11 @@ async fn query(
                     error: Some(error.to_string()),
                 }),
             );
-            Err(ApiError::io(error))
+            notify_project_diagnostic(&state, request.project.clone(), diagnostic.clone());
+            Err(ApiError::diagnostic(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                diagnostic,
+            ))
         }
     }
 }
@@ -2432,7 +2438,7 @@ async fn curate_memory(
         ));
     }
     let project = request.project.clone();
-    let response = if request.dry_run {
+    let mut response = if request.dry_run {
         preview_curate(state.pool()?, &request)
             .await
             .map_err(ApiError::sql)?
@@ -2446,7 +2452,7 @@ async fn curate_memory(
     }
     let embedders = state.embedders.read().await;
     if !embedders.is_empty() {
-        if request.raw_capture_id.is_some() {
+        let rebuild_result = if request.raw_capture_id.is_some() {
             rebuild_memory_chunks_for_automatic_creation(
                 state.pool()?,
                 &request.project,
@@ -2457,7 +2463,6 @@ async fn curate_memory(
                     .load(Ordering::Relaxed),
             )
             .await
-            .map_err(ApiError::io)?;
         } else {
             rebuild_chunks_for_automatic_creation(
                 state.pool()?,
@@ -2468,7 +2473,16 @@ async fn curate_memory(
                     .load(Ordering::Relaxed),
             )
             .await
-            .map_err(ApiError::io)?;
+        };
+        if let Err(error) = rebuild_result {
+            let diagnostic = classify_anyhow_diagnostic(
+                &error,
+                "embeddings",
+                "automatic_embedding_creation",
+                DiagnosticSeverity::Warning,
+            );
+            notify_project_diagnostic(&state, request.project.clone(), diagnostic.clone());
+            response.warnings.push(diagnostic);
         }
     }
     notify_project_changed(
@@ -2551,7 +2565,17 @@ async fn reindex(
             request.backend.as_deref(),
         )
         .await
-        .map_err(ApiError::io)?
+        .map_err(|error| {
+            ApiError::diagnostic(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                classify_anyhow_diagnostic(
+                    &error,
+                    "embeddings",
+                    "reindex",
+                    DiagnosticSeverity::Error,
+                ),
+            )
+        })?
     };
     if request.dry_run {
         return Ok(Json(ReindexResponse {
@@ -2645,7 +2669,17 @@ async fn reembed(
             request.backend.as_deref(),
         )
         .await
-        .map_err(ApiError::io)?
+        .map_err(|error| {
+            ApiError::diagnostic(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                classify_anyhow_diagnostic(
+                    &error,
+                    "embeddings",
+                    "reembed",
+                    DiagnosticSeverity::Error,
+                ),
+            )
+        })?
     };
     if request.dry_run {
         return Ok(Json(ReembedResponse {
@@ -2715,7 +2749,17 @@ async fn prune_embeddings(
     } else {
         prune_project_embeddings(state.pool()?, &request.project, &embedders)
             .await
-            .map_err(ApiError::io)?
+            .map_err(|error| {
+                ApiError::diagnostic(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    classify_anyhow_diagnostic(
+                        &error,
+                        "embeddings",
+                        "prune_embeddings",
+                        DiagnosticSeverity::Error,
+                    ),
+                )
+            })?
     };
     if request.dry_run {
         return Ok(Json(PruneEmbeddingsResponse {
@@ -4771,6 +4815,9 @@ fn infer_current_thread(
                 "Recent work changed the active memory set for the project."
             }
             ActivityKind::Briefing => "Recent work generated a get-up-to-speed briefing.",
+            ActivityKind::Diagnostic => {
+                "Recent work recorded an operational diagnostic that may need attention."
+            }
             ActivityKind::Checkpoint => "",
         };
         if !thread.is_empty() {
@@ -5611,6 +5658,7 @@ fn parse_activity_kind(value: &str) -> ActivityKind {
         "archive" => ActivityKind::Archive,
         "delete_memory" => ActivityKind::DeleteMemory,
         "briefing" => ActivityKind::Briefing,
+        "diagnostic" => ActivityKind::Diagnostic,
         _ => ActivityKind::Query,
     }
 }
@@ -6133,6 +6181,17 @@ fn notify_project_changed(
     );
 }
 
+fn notify_project_diagnostic(state: &AppState, project: String, diagnostic: DiagnosticInfo) {
+    notify_project_changed(
+        state,
+        project,
+        None,
+        ActivityKind::Diagnostic,
+        diagnostic.message.clone(),
+        Some(ActivityDetails::Diagnostic { diagnostic }),
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn notify_project_changed_with_metadata(
     state: &AppState,
@@ -6235,6 +6294,7 @@ fn activity_kind_label(kind: &ActivityKind) -> &'static str {
         ActivityKind::Archive => "archive",
         ActivityKind::DeleteMemory => "delete_memory",
         ActivityKind::Briefing => "briefing",
+        ActivityKind::Diagnostic => "diagnostic",
     }
 }
 
@@ -7278,6 +7338,7 @@ fn is_local_browser_request(headers: &HeaderMap, bind_addr: &str) -> bool {
 struct ApiError {
     status: StatusCode,
     message: String,
+    diagnostic: Option<DiagnosticInfo>,
 }
 
 impl ApiError {
@@ -7285,6 +7346,7 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: error.to_string(),
+            diagnostic: None,
         }
     }
 
@@ -7292,6 +7354,7 @@ impl ApiError {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: message.to_string(),
+            diagnostic: None,
         }
     }
 
@@ -7299,6 +7362,7 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: message.to_string(),
+            diagnostic: None,
         }
     }
 
@@ -7306,6 +7370,7 @@ impl ApiError {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: message.to_string(),
+            diagnostic: None,
         }
     }
 
@@ -7313,37 +7378,194 @@ impl ApiError {
         Self {
             status,
             message: message.into(),
+            diagnostic: None,
         }
     }
 
     fn sql(error: sqlx::Error) -> Self {
+        let message = error.to_string();
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: error.to_string(),
+            diagnostic: Some(classify_diagnostic(
+                &message,
+                "database",
+                "sql_request",
+                DiagnosticSeverity::Error,
+            )),
+            message,
         }
     }
 
     fn io(error: anyhow::Error) -> Self {
-        let mut message = error.to_string();
-        for cause in error.chain().skip(1) {
-            message.push_str(": ");
-            message.push_str(&cause.to_string());
-        }
+        let message = anyhow_error_message(&error);
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
+            diagnostic: Some(classify_diagnostic(
+                &message,
+                "service",
+                "request",
+                DiagnosticSeverity::Error,
+            )),
             message,
+        }
+    }
+
+    fn diagnostic(status: StatusCode, diagnostic: DiagnosticInfo) -> Self {
+        Self {
+            status,
+            message: diagnostic.message.clone(),
+            diagnostic: Some(diagnostic),
         }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(serde_json::json!({
+        let body = if let Some(diagnostic) = self.diagnostic {
+            serde_json::json!({
+                "error": self.message,
+                "code": diagnostic.code,
+                "source": diagnostic.source,
+                "component": diagnostic.component,
+                "operation": diagnostic.operation,
+                "severity": diagnostic.severity,
+                "explanation": diagnostic.explanation,
+                "fix_hint": diagnostic.fix_hint,
+                "doctor_hint": diagnostic.doctor_hint,
+                "command_hint": diagnostic.command_hint,
+                "diagnostic": diagnostic
+            })
+        } else {
+            serde_json::json!({
                 "error": self.message
-            })),
-        )
-            .into_response()
+            })
+        };
+        (self.status, Json(body)).into_response()
     }
+}
+
+fn anyhow_error_message(error: &anyhow::Error) -> String {
+    let mut message = error.to_string();
+    for cause in error.chain().skip(1) {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+    }
+    message
+}
+
+fn classify_anyhow_diagnostic(
+    error: &anyhow::Error,
+    component: &str,
+    operation: &str,
+    severity: DiagnosticSeverity,
+) -> DiagnosticInfo {
+    classify_diagnostic(&anyhow_error_message(error), component, operation, severity)
+}
+
+fn classify_diagnostic(
+    raw_error: &str,
+    component: &str,
+    operation: &str,
+    severity: DiagnosticSeverity,
+) -> DiagnosticInfo {
+    let lower = raw_error.to_lowercase();
+    let mut diagnostic = DiagnosticInfo {
+        code: "internal_error".to_string(),
+        source: "service".to_string(),
+        component: component.to_string(),
+        operation: operation.to_string(),
+        severity,
+        message: raw_error.to_string(),
+        raw_error: Some(raw_error.to_string()),
+        explanation: Some("Memory Layer hit an internal operation failure.".to_string()),
+        fix_hint: Some(
+            "Run `memory doctor` and inspect the service log for the recorded diagnostic."
+                .to_string(),
+        ),
+        doctor_hint: Some("memory doctor".to_string()),
+        command_hint: None,
+    };
+
+    if lower.contains("insufficient_quota") || (lower.contains("429") && lower.contains("quota")) {
+        diagnostic.code = if component == "llm" {
+            "llm_quota_exceeded".to_string()
+        } else {
+            "embedding_quota_exceeded".to_string()
+        };
+        diagnostic.source = "provider".to_string();
+        diagnostic.message = if component == "llm" {
+            "The configured LLM provider rejected the request because quota or billing is exhausted."
+        } else {
+            "The configured embedding provider rejected the request because quota or billing is exhausted."
+        }
+        .to_string();
+        diagnostic.explanation = Some(
+            "The memory write can succeed while follow-up provider work, such as answer generation or embedding creation, fails at the provider boundary."
+                .to_string(),
+        );
+        diagnostic.fix_hint = Some(
+            "Restore provider quota/billing or disable automatic creation for the failing backend until quota is available."
+                .to_string(),
+        );
+        diagnostic.command_hint = Some("memory embeddings list".to_string());
+        return diagnostic;
+    }
+
+    if lower.contains("401")
+        || lower.contains("unauthorized")
+        || lower.contains("invalid api token")
+    {
+        diagnostic.code = "auth_invalid_token".to_string();
+        diagnostic.source = "configuration".to_string();
+        diagnostic.message =
+            "Authentication failed because the configured API token was rejected.".to_string();
+        diagnostic.explanation = Some(
+            "A client, watcher, manager, or provider used a token that the receiver did not accept."
+                .to_string(),
+        );
+        diagnostic.fix_hint = Some(
+            "Refresh the Memory Layer token/configuration and restart the affected component."
+                .to_string(),
+        );
+        diagnostic.command_hint = Some("memory doctor".to_string());
+        return diagnostic;
+    }
+
+    if lower.contains("pgvector")
+        || lower.contains("extension 'vector'")
+        || lower.contains("type \"vector\"")
+    {
+        diagnostic.code = "database_pgvector_missing".to_string();
+        diagnostic.source = "database".to_string();
+        diagnostic.component = "database".to_string();
+        diagnostic.message =
+            "PostgreSQL is missing the pgvector extension required for embeddings.".to_string();
+        diagnostic.explanation = Some(
+            "Semantic search stores vectors in PostgreSQL using pgvector; migrations cannot complete without it."
+                .to_string(),
+        );
+        diagnostic.fix_hint = Some(
+            "Install pgvector for PostgreSQL and run `CREATE EXTENSION IF NOT EXISTS vector;` in the memory database."
+                .to_string(),
+        );
+        diagnostic.command_hint = Some("memory doctor".to_string());
+        return diagnostic;
+    }
+
+    if lower.contains("migration") || lower.contains("database") || lower.contains("sql") {
+        diagnostic.code = "database_operation_failed".to_string();
+        diagnostic.source = "database".to_string();
+        diagnostic.component = "database".to_string();
+        diagnostic.message = "A database operation failed.".to_string();
+        diagnostic.explanation = Some(
+            "The request reached PostgreSQL but failed during a query or migration step."
+                .to_string(),
+        );
+        diagnostic.fix_hint = Some(
+            "Run `memory doctor`, verify the configured database URL, and inspect migrations."
+                .to_string(),
+        );
+    }
+
+    diagnostic
 }

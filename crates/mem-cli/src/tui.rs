@@ -23,13 +23,13 @@ use mem_agenttop::{
     SessionStatus as AgentSessionStatus,
 };
 use mem_api::{
-    ActivityDetails, ActivityEvent, ActivityKind, MemoryEntryResponse, MemoryStatus, MemoryType,
-    NamedCount, PlanActivityAction, Profile, ProjectMemoriesResponse, ProjectMemoryListItem,
-    ProjectOverviewResponse, QueryAnswerMethod, QueryFilters, QueryMatchKind, QueryRequest,
-    QueryResponse, QueryResult, ReplacementPolicy, ReplacementProposalListResponse,
-    ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest, ResumeResponse, StreamRequest,
-    StreamResponse, UpToSpeedRequest, UpToSpeedResponse, WatcherHealth,
-    load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
+    ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
+    MemoryEntryResponse, MemoryStatus, MemoryType, NamedCount, PlanActivityAction, Profile,
+    ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse, QueryAnswerMethod,
+    QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, ReplacementPolicy,
+    ReplacementProposalListResponse, ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest,
+    ResumeResponse, StreamRequest, StreamResponse, UpToSpeedRequest, UpToSpeedResponse,
+    WatcherHealth, load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
     write_capnp_text_frame,
 };
 use mem_platform::preferred_user_state_dir;
@@ -386,6 +386,9 @@ struct App {
     activity_loading: bool,
     activity_error: Option<String>,
     activity_detail_scroll: u16,
+    errors_selected_index: usize,
+    errors_table_state: TableState,
+    errors_detail_scroll: u16,
     up_to_speed_response: Option<UpToSpeedResponse>,
     up_to_speed_loading: bool,
     up_to_speed_error: Option<String>,
@@ -621,6 +624,8 @@ impl App {
         agent_table_state.select(Some(0));
         let mut activity_table_state = TableState::default();
         activity_table_state.select(Some(0));
+        let mut errors_table_state = TableState::default();
+        errors_table_state.select(Some(0));
         let (agent_wake_tx, agent_wake_rx) = std_mpsc::channel();
         let (embeddings_wake_tx, embeddings_wake_rx) = std_mpsc::channel();
         let mut embeddings_table_state = TableState::default();
@@ -672,6 +677,9 @@ impl App {
             activity_loading: false,
             activity_error: None,
             activity_detail_scroll: 0,
+            errors_selected_index: 0,
+            errors_table_state,
+            errors_detail_scroll: 0,
             up_to_speed_response: None,
             up_to_speed_loading: false,
             up_to_speed_error: None,
@@ -1506,6 +1514,7 @@ impl App {
             KeyCode::Char('r')
                 if key.modifiers.is_empty()
                     && self.active_tab != TabKind::Activity
+                    && self.active_tab != TabKind::Errors
                     && self.active_tab != TabKind::Embeddings =>
             {
                 self.refresh(api, RefreshMode::Full).await
@@ -1566,6 +1575,24 @@ impl App {
             }
             KeyCode::Char('r') if self.active_tab == TabKind::Activity => {
                 self.request_activities(api);
+            }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Errors => {
+                self.move_error_selection(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Errors => {
+                self.move_error_selection(-1);
+            }
+            KeyCode::Char('r') if self.active_tab == TabKind::Errors => {
+                self.request_activities(api);
+            }
+            KeyCode::PageDown if self.active_tab == TabKind::Errors => {
+                self.errors_detail_scroll = self.errors_detail_scroll.saturating_add(8);
+            }
+            KeyCode::PageUp if self.active_tab == TabKind::Errors => {
+                self.errors_detail_scroll = self.errors_detail_scroll.saturating_sub(8);
+            }
+            KeyCode::Home if self.active_tab == TabKind::Errors => {
+                self.errors_detail_scroll = 0;
             }
             KeyCode::Char('g') if self.active_tab == TabKind::Activity => {
                 self.request_up_to_speed(api, false);
@@ -2442,6 +2469,22 @@ impl App {
         }
     }
 
+    fn move_error_selection(&mut self, delta: isize) {
+        let len = collect_error_items(self).len();
+        if len == 0 {
+            self.errors_selected_index = 0;
+            self.errors_table_state.select(None);
+            return;
+        }
+        let next = (self.errors_selected_index as isize + delta)
+            .clamp(0, len.saturating_sub(1) as isize) as usize;
+        if next != self.errors_selected_index {
+            self.errors_selected_index = next;
+            self.errors_table_state.select(Some(next));
+            self.errors_detail_scroll = 0;
+        }
+    }
+
     fn select_replacement_proposal(&mut self, delta: isize) {
         let len = self.replacement_proposals.len();
         if len == 0 {
@@ -2738,6 +2781,7 @@ enum TabKind {
     Agents,
     Query,
     Activity,
+    Errors,
     Project,
     Review,
     Watchers,
@@ -2745,11 +2789,12 @@ enum TabKind {
     Resume,
 }
 
-const VISIBLE_TABS: [TabKind; 9] = [
+const VISIBLE_TABS: [TabKind; 10] = [
     TabKind::Memories,
     TabKind::Agents,
     TabKind::Query,
     TabKind::Activity,
+    TabKind::Errors,
     TabKind::Project,
     TabKind::Review,
     TabKind::Watchers,
@@ -2764,6 +2809,7 @@ impl TabKind {
             Self::Agents => "Agents",
             Self::Query => "Query",
             Self::Activity => "Activity",
+            Self::Errors => "Errors",
             Self::Project => "Project",
             Self::Review => "Review",
             Self::Watchers => "Watchers",
@@ -2777,7 +2823,8 @@ impl TabKind {
             Self::Memories => Self::Agents,
             Self::Agents => Self::Query,
             Self::Query => Self::Activity,
-            Self::Activity => Self::Project,
+            Self::Activity => Self::Errors,
+            Self::Errors => Self::Project,
             Self::Project => Self::Review,
             Self::Review => Self::Watchers,
             Self::Watchers => Self::Embeddings,
@@ -2792,7 +2839,8 @@ impl TabKind {
             Self::Agents => Self::Memories,
             Self::Query => Self::Agents,
             Self::Activity => Self::Query,
-            Self::Project => Self::Activity,
+            Self::Errors => Self::Activity,
+            Self::Project => Self::Errors,
             Self::Review => Self::Project,
             Self::Watchers => Self::Review,
             Self::Embeddings => Self::Watchers,
@@ -2806,11 +2854,12 @@ impl TabKind {
             Self::Agents => 1,
             Self::Query => 2,
             Self::Activity => 3,
-            Self::Project => 4,
-            Self::Review => 5,
-            Self::Watchers => 6,
-            Self::Embeddings => 7,
-            Self::Resume => 8,
+            Self::Errors => 4,
+            Self::Project => 5,
+            Self::Review => 6,
+            Self::Watchers => 7,
+            Self::Embeddings => 8,
+            Self::Resume => 9,
         }
     }
 }
@@ -3102,6 +3151,18 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             accent_span("move "),
             Span::styled("j/k PgUp/PgDn", Style::default().fg(Theme::TEXT)),
         ],
+        TabKind::Errors => vec![
+            accent_span("refresh "),
+            Span::styled("r  ", Style::default().fg(Theme::TEXT)),
+            accent_span("move "),
+            Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+            accent_span("detail "),
+            Span::styled("PgUp/PgDn Home  ", Style::default().fg(Theme::TEXT)),
+            Span::styled(
+                "persisted backend diagnostics plus session-local TUI errors",
+                Style::default().fg(Theme::MUTED),
+            ),
+        ],
         TabKind::Project => vec![
             accent_span("scroll "),
             Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
@@ -3179,6 +3240,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             TabKind::Agents => draw_agents_tab(frame, app, chunks[2]),
             TabKind::Query => draw_query_tab(frame, app, chunks[2]),
             TabKind::Activity => draw_activity_tab(frame, app, chunks[2]),
+            TabKind::Errors => draw_errors_tab(frame, app, chunks[2]),
             TabKind::Project => draw_project_tab(frame, app, chunks[2]),
             TabKind::Review => draw_review_tab(frame, app, chunks[2]),
             TabKind::Watchers => draw_watchers_tab(frame, app, chunks[2]),
@@ -3223,7 +3285,7 @@ fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect)
             &app.versions.mem_cli,
             tui_status_label(app),
             tui_status_color(app),
-            None,
+            tui_status_detail(app),
         ))
         .style(Style::default().bg(Theme::PANEL_ALT)),
         sections[0],
@@ -5298,6 +5360,379 @@ fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(detail, chunks[1]);
 }
 
+#[derive(Clone)]
+struct ErrorItem {
+    when: Option<DateTime<Utc>>,
+    diagnostic: DiagnosticInfo,
+}
+
+fn draw_errors_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let items = collect_error_items(app);
+    let selected_index = app.errors_selected_index.min(items.len().saturating_sub(1));
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
+        .split(area);
+
+    let header = Row::new(["When", "Sev", "Source", "Component", "Summary"]).style(
+        Style::default()
+            .fg(Theme::ACCENT_STRONG)
+            .bg(Theme::PANEL_ALT)
+            .add_modifier(Modifier::BOLD),
+    );
+    let rows = items.iter().map(error_row);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(16),
+            Constraint::Length(7),
+            Constraint::Length(12),
+            Constraint::Length(13),
+            Constraint::Percentage(100),
+        ],
+    )
+    .column_spacing(1)
+    .header(header)
+    .row_highlight_style(
+        Style::default()
+            .fg(Theme::SELECTION_FG)
+            .bg(Theme::SELECTION_BG)
+            .add_modifier(Modifier::BOLD),
+    )
+    .block(themed_block(format!("Errors ({})", items.len())));
+    let mut state = app.errors_table_state.clone();
+    if items.is_empty() {
+        state.select(None);
+    } else {
+        state.select(Some(selected_index));
+    }
+    frame.render_stateful_widget(table, chunks[0], &mut state);
+
+    let lines = if let Some(item) = items.get(selected_index) {
+        error_detail_lines(item)
+    } else {
+        vec![
+            Line::from(Span::styled(
+                "No diagnostics recorded for this project or TUI session.",
+                Style::default().fg(Theme::SUCCESS),
+            )),
+            Line::from(Span::styled(
+                "Provider errors, query failures, watcher failures, and TUI connection errors will appear here with fix hints.",
+                Style::default().fg(Theme::MUTED),
+            )),
+        ]
+    };
+    let detail = Paragraph::new(lines)
+        .scroll((app.errors_detail_scroll, 0))
+        .style(Style::default().bg(Theme::PANEL))
+        .wrap(Wrap { trim: false })
+        .block(themed_block(format!(
+            "Error Detail (scroll {})",
+            app.errors_detail_scroll
+        )));
+    frame.render_widget(detail, chunks[1]);
+}
+
+fn collect_error_items(app: &App) -> Vec<ErrorItem> {
+    let mut items = Vec::new();
+    if !app.health_ok {
+        items.push(ErrorItem {
+            when: Some(Utc::now()),
+            diagnostic: session_diagnostic(
+                "backend_unavailable",
+                "tui",
+                "service",
+                "health",
+                "Memory Layer backend is unavailable.",
+                Some("The TUI cannot reach the service yet or the service health check is failing."),
+                Some("Start the service or run `memory doctor` to inspect configuration and database connectivity."),
+            ),
+        });
+    }
+    for (code, component, operation, message) in [
+        ("query_failed", "tui", "query", app.query_error.as_ref()),
+        ("agents_failed", "tui", "agents", app.agent_error.as_ref()),
+        ("resume_failed", "tui", "resume", app.resume_error.as_ref()),
+        (
+            "activity_failed",
+            "tui",
+            "activity",
+            app.activity_error.as_ref(),
+        ),
+        (
+            "briefing_failed",
+            "tui",
+            "up_to_speed",
+            app.up_to_speed_error.as_ref(),
+        ),
+        (
+            "embeddings_failed",
+            "tui",
+            "embeddings",
+            app.embedding_backends_error.as_ref(),
+        ),
+    ] {
+        if let Some(message) = message {
+            items.push(ErrorItem {
+                when: Some(Utc::now()),
+                diagnostic: session_diagnostic(
+                    code,
+                    "tui",
+                    component,
+                    operation,
+                    message,
+                    Some("This error was observed locally by the current TUI session."),
+                    Some("Refresh the tab, then run `memory doctor` if the problem persists."),
+                ),
+            });
+        }
+    }
+    for entry in &app.activity_events {
+        if let ActivityEntry::Backend(event) = entry {
+            match &event.details {
+                Some(ActivityDetails::Diagnostic { diagnostic }) => items.push(ErrorItem {
+                    when: Some(event.recorded_at),
+                    diagnostic: diagnostic.clone(),
+                }),
+                Some(ActivityDetails::Query {
+                    error: Some(error), ..
+                }) => {
+                    items.push(ErrorItem {
+                        when: Some(event.recorded_at),
+                        diagnostic: session_diagnostic(
+                            "query_error",
+                            event.source.as_deref().unwrap_or("service"),
+                            "query",
+                            "query",
+                            error,
+                            Some("A persisted project query failed."),
+                            Some("Open the query/activity detail and run `memory doctor` if this repeats."),
+                        ),
+                    });
+                }
+                Some(ActivityDetails::WatcherHealth {
+                    health,
+                    message,
+                    watcher_id,
+                    ..
+                }) if matches!(
+                    health,
+                    WatcherHealth::Failed | WatcherHealth::Stale | WatcherHealth::Restarting
+                ) =>
+                {
+                    items.push(ErrorItem {
+                        when: Some(event.recorded_at),
+                        diagnostic: session_diagnostic(
+                            "watcher_health",
+                            event.source.as_deref().unwrap_or("watcher"),
+                            "watcher",
+                            "heartbeat",
+                            message.as_deref().unwrap_or(&event.summary),
+                            Some("A watcher reported unhealthy or restarting state."),
+                            Some(&format!(
+                                "Inspect watcher `{watcher_id}` with `memory watcher list` or run `memory doctor`."
+                            )),
+                        ),
+                    });
+                }
+                _ if matches!(event.kind, ActivityKind::QueryError) => items.push(ErrorItem {
+                    when: Some(event.recorded_at),
+                    diagnostic: session_diagnostic(
+                        "query_error",
+                        event.source.as_deref().unwrap_or("service"),
+                        "query",
+                        "query",
+                        &event.summary,
+                        Some("A persisted project query failed."),
+                        Some("Open the activity detail and run `memory doctor` if this repeats."),
+                    ),
+                }),
+                _ => {}
+            }
+        }
+    }
+    items.sort_by(|left, right| right.when.cmp(&left.when));
+    items
+}
+
+fn session_diagnostic(
+    code: &str,
+    source: &str,
+    component: &str,
+    operation: &str,
+    message: &str,
+    explanation: Option<&str>,
+    fix_hint: Option<&str>,
+) -> DiagnosticInfo {
+    DiagnosticInfo {
+        code: code.to_string(),
+        source: source.to_string(),
+        component: component.to_string(),
+        operation: operation.to_string(),
+        severity: DiagnosticSeverity::Error,
+        message: message.to_string(),
+        raw_error: Some(message.to_string()),
+        explanation: explanation.map(str::to_string),
+        fix_hint: fix_hint.map(str::to_string),
+        doctor_hint: Some("memory doctor".to_string()),
+        command_hint: Some("memory doctor".to_string()),
+    }
+}
+
+fn error_count(app: &App) -> usize {
+    collect_error_items(app).len()
+}
+
+fn error_row(item: &ErrorItem) -> Row<'static> {
+    Row::new(vec![
+        Cell::from(Span::styled(
+            item.when
+                .map(format_timestamp_short)
+                .unwrap_or_else(|| "-".to_string()),
+            Style::default().fg(Theme::TEXT),
+        )),
+        Cell::from(Span::styled(
+            diagnostic_severity_label(&item.diagnostic.severity),
+            Style::default().fg(diagnostic_severity_color(&item.diagnostic.severity)),
+        )),
+        Cell::from(Span::styled(
+            non_empty_or(&item.diagnostic.source, "unknown"),
+            Style::default().fg(Theme::MUTED),
+        )),
+        Cell::from(Span::styled(
+            non_empty_or(&item.diagnostic.component, "unknown"),
+            Style::default().fg(Theme::ACCENT),
+        )),
+        Cell::from(Span::styled(
+            item.diagnostic.message.clone(),
+            Style::default().fg(Theme::TEXT),
+        )),
+    ])
+}
+
+fn error_detail_lines(item: &ErrorItem) -> Vec<Line<'static>> {
+    let diagnostic = &item.diagnostic;
+    let mut lines = vec![
+        Line::from(vec![
+            label_span("When: "),
+            Span::styled(
+                item.when
+                    .map(format_timestamp_full)
+                    .unwrap_or_else(|| "session-local".to_string()),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Severity: "),
+            Span::styled(
+                diagnostic_severity_label(&diagnostic.severity),
+                Style::default()
+                    .fg(diagnostic_severity_color(&diagnostic.severity))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Code: "),
+            Span::styled(
+                non_empty_or(&diagnostic.code, "unknown"),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Source: "),
+            Span::styled(
+                non_empty_or(&diagnostic.source, "unknown"),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Component: "),
+            Span::styled(
+                non_empty_or(&diagnostic.component, "unknown"),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Operation: "),
+            Span::styled(
+                non_empty_or(&diagnostic.operation, "unknown"),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![section_span("Summary")]),
+        Line::from(Span::styled(
+            diagnostic.message.clone(),
+            Style::default().fg(Theme::TEXT),
+        )),
+    ];
+    if let Some(explanation) = &diagnostic.explanation {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("Explanation")]));
+        lines.push(Line::from(Span::styled(
+            explanation.clone(),
+            Style::default().fg(Theme::TEXT),
+        )));
+    }
+    if let Some(fix_hint) = &diagnostic.fix_hint {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("How To Fix")]));
+        lines.push(Line::from(Span::styled(
+            fix_hint.clone(),
+            Style::default().fg(Theme::SUCCESS),
+        )));
+    }
+    if diagnostic.doctor_hint.is_some() || diagnostic.command_hint.is_some() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("Commands")]));
+        if let Some(command) = &diagnostic.doctor_hint {
+            lines.push(Line::from(vec![
+                label_span("Doctor: "),
+                Span::styled(command.clone(), Style::default().fg(Theme::ACCENT_STRONG)),
+            ]));
+        }
+        if let Some(command) = &diagnostic.command_hint {
+            lines.push(Line::from(vec![
+                label_span("Related: "),
+                Span::styled(command.clone(), Style::default().fg(Theme::ACCENT_STRONG)),
+            ]));
+        }
+    }
+    if let Some(raw_error) = &diagnostic.raw_error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![section_span("Raw Error")]));
+        for line in raw_error.lines().take(12) {
+            lines.push(Line::from(Span::styled(
+                line.to_string(),
+                Style::default().fg(Theme::MUTED),
+            )));
+        }
+    }
+    lines
+}
+
+fn diagnostic_severity_label(severity: &DiagnosticSeverity) -> &'static str {
+    match severity {
+        DiagnosticSeverity::Info => "info",
+        DiagnosticSeverity::Warning => "warn",
+        DiagnosticSeverity::Error => "error",
+    }
+}
+
+fn diagnostic_severity_color(severity: &DiagnosticSeverity) -> Color {
+    match severity {
+        DiagnosticSeverity::Info => Theme::ACCENT,
+        DiagnosticSeverity::Warning => Theme::WARNING,
+        DiagnosticSeverity::Error => Theme::DANGER,
+    }
+}
+
+fn non_empty_or(value: &str, fallback: &str) -> String {
+    if value.trim().is_empty() {
+        fallback.to_string()
+    } else {
+        value.to_string()
+    }
+}
+
 fn activity_briefing_lines(app: &App) -> Vec<Line<'static>> {
     if app.up_to_speed_loading {
         return vec![Line::from(Span::styled(
@@ -6535,6 +6970,12 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                 lines.push(activity_kv_line("Deleted", deleted.to_string()));
                 lines.push(activity_kv_line("Deleted summary", summary.clone()));
             }
+            ActivityDetails::Diagnostic { diagnostic } => {
+                lines.extend(error_detail_lines(&ErrorItem {
+                    when: Some(event.recorded_at),
+                    diagnostic: diagnostic.clone(),
+                }));
+            }
             ActivityDetails::WatcherHealth {
                 watcher_id,
                 hostname,
@@ -7227,6 +7668,7 @@ fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
         ActivityKind::DeleteMemory => ("delete", Theme::DANGER),
         ActivityKind::Briefing => ("briefing", Theme::SUCCESS),
         ActivityKind::WatcherHealth => ("watcher-health", Theme::WARNING),
+        ActivityKind::Diagnostic => ("diagnostic", Theme::DANGER),
     };
     Span::styled(
         label,
@@ -7378,6 +7820,11 @@ fn tui_status_color(app: &App) -> Color {
         UiStatus::Restart => Theme::DANGER,
         UiStatus::Error => Theme::DANGER,
     }
+}
+
+fn tui_status_detail(app: &App) -> Option<String> {
+    let count = error_count(app);
+    (count > 0).then(|| format!("{count} error{}", if count == 1 { "" } else { "s" }))
 }
 
 fn service_status_label(app: &App) -> &'static str {
@@ -8122,23 +8569,24 @@ mod tests {
         AgentSnapshot, App, BackendConnectionState, BackgroundEvent, ManagerState, MemoriesFocus,
         ProjectRefreshResult, RefreshMode, TabKind, Theme, ToolVersions, UiStatus,
         activity_duration, activity_tokens, backend_activity_detail_lines,
-        build_memory_detail_lines, context_gradient_color, current_query_display,
-        derive_manager_state, empty_overview, filled_bar_cells, format_context_percent,
-        format_epoch_reset_time, format_query_citation_numbers, format_timestamp,
-        format_timestamp_full, format_timestamp_medium, format_timestamp_short,
+        build_memory_detail_lines, collect_error_items, context_gradient_color,
+        current_query_display, derive_manager_state, empty_overview, filled_bar_cells,
+        format_context_percent, format_epoch_reset_time, format_query_citation_numbers,
+        format_timestamp, format_timestamp_full, format_timestamp_medium, format_timestamp_short,
         format_timestamp_timeline, latest_plan_display, manager_service_enabled,
         manager_service_running, manager_status_detail, manager_status_label, manager_unit_path,
         memory_detail_max_scroll, normalized_percent, query_input_display, remaining_bar_cells,
         render_markdown_lines, service_status_detail, service_status_label,
-        should_attempt_stream_reconnect, tui_status_color, tui_status_label,
+        should_attempt_stream_reconnect, tui_status_color, tui_status_detail, tui_status_label,
         watcher_bar_status_label,
     };
     use crate::TuiRestartNotice;
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
-        ActivityDetails, ActivityEvent, ActivityKind, MemoryEmbeddingSpace, MemoryEntryResponse,
-        MemoryStatus, MemoryType, Profile, ProjectMemoriesResponse, QueryFilters, QueryRequest,
-        ReplacementProposalListResponse, TokenUsage, WatcherPresenceSummary,
+        ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
+        MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType, Profile,
+        ProjectMemoriesResponse, QueryFilters, QueryRequest, ReplacementProposalListResponse,
+        TokenUsage, WatcherPresenceSummary,
     };
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
@@ -8793,18 +9241,21 @@ mod tests {
         assert_eq!(TabKind::Agents.index(), 1);
         assert_eq!(TabKind::Query.index(), 2);
         assert_eq!(TabKind::Activity.index(), 3);
-        assert_eq!(TabKind::Project.index(), 4);
-        assert_eq!(TabKind::Review.index(), 5);
-        assert_eq!(TabKind::Watchers.index(), 6);
-        assert_eq!(TabKind::Embeddings.index(), 7);
-        assert_eq!(TabKind::Resume.index(), 8);
+        assert_eq!(TabKind::Errors.index(), 4);
+        assert_eq!(TabKind::Project.index(), 5);
+        assert_eq!(TabKind::Review.index(), 6);
+        assert_eq!(TabKind::Watchers.index(), 7);
+        assert_eq!(TabKind::Embeddings.index(), 8);
+        assert_eq!(TabKind::Resume.index(), 9);
 
         assert_eq!(TabKind::Memories.prev(), TabKind::Resume);
         assert_eq!(TabKind::Memories.next(), TabKind::Agents);
         assert_eq!(TabKind::Query.next(), TabKind::Activity);
         assert_eq!(TabKind::Activity.prev(), TabKind::Query);
-        assert_eq!(TabKind::Activity.next(), TabKind::Project);
-        assert_eq!(TabKind::Project.prev(), TabKind::Activity);
+        assert_eq!(TabKind::Activity.next(), TabKind::Errors);
+        assert_eq!(TabKind::Errors.prev(), TabKind::Activity);
+        assert_eq!(TabKind::Errors.next(), TabKind::Project);
+        assert_eq!(TabKind::Project.prev(), TabKind::Errors);
         assert_eq!(TabKind::Project.next(), TabKind::Review);
         assert_eq!(TabKind::Review.prev(), TabKind::Project);
         assert_eq!(TabKind::Review.next(), TabKind::Watchers);
@@ -8850,6 +9301,48 @@ mod tests {
         assert_eq!(app.activity_events.len(), 1);
         assert_eq!(activity_tokens(&app.activity_events[0]), "1.4k");
         assert_eq!(activity_duration(&app.activity_events[0]), "42");
+    }
+
+    #[test]
+    fn errors_tab_collects_persisted_diagnostics() {
+        let mut app = new_test_app();
+        app.health_ok = true;
+        app.record_backend_activity(ActivityEvent {
+            id: Uuid::new_v4(),
+            recorded_at: Utc::now(),
+            project: "memory".to_string(),
+            kind: ActivityKind::Diagnostic,
+            memory_id: None,
+            summary: "embedding quota exceeded".to_string(),
+            details: Some(ActivityDetails::Diagnostic {
+                diagnostic: DiagnosticInfo {
+                    code: "embedding_quota_exceeded".to_string(),
+                    source: "provider".to_string(),
+                    component: "embeddings".to_string(),
+                    operation: "automatic_embedding_creation".to_string(),
+                    severity: DiagnosticSeverity::Warning,
+                    message: "embedding quota exceeded".to_string(),
+                    raw_error: Some("429 insufficient_quota".to_string()),
+                    explanation: Some("provider quota was exhausted".to_string()),
+                    fix_hint: Some("restore quota or disable automatic creation".to_string()),
+                    doctor_hint: Some("memory doctor".to_string()),
+                    command_hint: Some("memory embeddings list".to_string()),
+                },
+            }),
+            actor_id: None,
+            actor_name: None,
+            source: Some("service".to_string()),
+            operation_id: None,
+            duration_ms: None,
+            provider: None,
+            model: None,
+            token_usage: None,
+        });
+
+        let items = collect_error_items(&app);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].diagnostic.code, "embedding_quota_exceeded");
+        assert_eq!(tui_status_detail(&app), Some("1 error".to_string()));
     }
 
     #[test]

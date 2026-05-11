@@ -274,6 +274,7 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
         proposal_count,
         replacements,
         dry_run: false,
+        warnings: Vec::new(),
     })
 }
 
@@ -357,6 +358,7 @@ pub async fn preview_curate(
         proposal_count,
         replacements: Vec::new(),
         dry_run: true,
+        warnings: Vec::new(),
     })
 }
 

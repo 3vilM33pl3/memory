@@ -8770,7 +8770,7 @@ async fn get_json<T: serde::de::DeserializeOwned>(response: reqwest::Response) -
     let status = response.status();
     let body = response.text().await?;
     if !status.is_success() {
-        anyhow::bail!("{status} {body}");
+        anyhow::bail!("{}", format_api_error(status, &body));
     }
     Ok(serde_json::from_str(&body)?)
 }
@@ -8779,10 +8779,35 @@ async fn print_json_response(response: reqwest::Response) -> Result<()> {
     let status = response.status();
     let body = response.text().await?;
     if !status.is_success() {
-        anyhow::bail!("{status} {body}");
+        anyhow::bail!("{}", format_api_error(status, &body));
     }
     println!("{body}");
     Ok(())
+}
+
+fn format_api_error(status: reqwest::StatusCode, body: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return format!("{status} {body}");
+    };
+    let mut parts = vec![format!(
+        "{status} {}",
+        value
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(body)
+    )];
+    for (label, key) in [
+        ("code", "code"),
+        ("explanation", "explanation"),
+        ("fix", "fix_hint"),
+        ("doctor", "doctor_hint"),
+        ("command", "command_hint"),
+    ] {
+        if let Some(text) = value.get(key).and_then(serde_json::Value::as_str) {
+            parts.push(format!("{label}: {text}"));
+        }
+    }
+    parts.join("\n")
 }
 
 fn print_embedding_backends(payload: &mem_api::EmbeddingBackendsResponse) {
@@ -11409,6 +11434,7 @@ fn activity_kind_text(kind: &mem_api::ActivityKind) -> &'static str {
         mem_api::ActivityKind::Archive => "archive",
         mem_api::ActivityKind::DeleteMemory => "delete",
         mem_api::ActivityKind::Briefing => "briefing",
+        mem_api::ActivityKind::Diagnostic => "diagnostic",
     }
 }
 
