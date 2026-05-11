@@ -40,7 +40,15 @@ jobs:
           npm --prefix web run build
 
       - name: Offline evaluation smoke
-        run: cargo run --locked --bin memory -- eval run --suite evals/examples/memory-smoke --condition full-memory --profile offline --dry-run
+        run: |
+          cp memory-layer.toml.example "$RUNNER_TEMP/memory-layer.toml"
+          cargo run --locked --bin memory -- \
+            --config "$RUNNER_TEMP/memory-layer.toml" \
+            eval run \
+            --suite evals/examples/memory-smoke \
+            --condition full-memory \
+            --profile offline \
+            --dry-run
         env:
           MEMORY_LAYER_PROFILE: prod
 
