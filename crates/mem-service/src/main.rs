@@ -7338,7 +7338,7 @@ fn is_local_browser_request(headers: &HeaderMap, bind_addr: &str) -> bool {
 struct ApiError {
     status: StatusCode,
     message: String,
-    diagnostic: Option<DiagnosticInfo>,
+    diagnostic: Option<Box<DiagnosticInfo>>,
 }
 
 impl ApiError {
@@ -7386,12 +7386,12 @@ impl ApiError {
         let message = error.to_string();
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            diagnostic: Some(classify_diagnostic(
+            diagnostic: Some(Box::new(classify_diagnostic(
                 &message,
                 "database",
                 "sql_request",
                 DiagnosticSeverity::Error,
-            )),
+            ))),
             message,
         }
     }
@@ -7400,12 +7400,12 @@ impl ApiError {
         let message = anyhow_error_message(&error);
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            diagnostic: Some(classify_diagnostic(
+            diagnostic: Some(Box::new(classify_diagnostic(
                 &message,
                 "service",
                 "request",
                 DiagnosticSeverity::Error,
-            )),
+            ))),
             message,
         }
     }
@@ -7414,7 +7414,7 @@ impl ApiError {
         Self {
             status,
             message: diagnostic.message.clone(),
-            diagnostic: Some(diagnostic),
+            diagnostic: Some(Box::new(diagnostic)),
         }
     }
 }

@@ -1,0 +1,53 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Nightly Quality Sweep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Rust validation
+        run: |
+          cargo fmt --check
+          cargo test --workspace --all-targets --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Web validation
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build
+
+      - name: Offline evaluation smoke
+        run: cargo run --locked --bin memory -- eval run --suite evals/examples/memory-smoke --condition full-memory --profile offline --dry-run
+
+      - name: Debian package smoke
+        run: ./packaging/build-deb.sh
+
+      - name: Dependency audit reports
+        continue-on-error: true
+        run: |
+          npm --prefix web audit --audit-level=high
+          cargo install cargo-audit --locked
+          cargo audit

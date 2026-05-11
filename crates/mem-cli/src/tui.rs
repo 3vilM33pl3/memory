@@ -5511,15 +5511,11 @@ fn collect_error_items(app: &App) -> Vec<ErrorItem> {
                     });
                 }
                 Some(ActivityDetails::WatcherHealth {
-                    health,
+                    health: WatcherHealth::Failed | WatcherHealth::Stale | WatcherHealth::Restarting,
                     message,
                     watcher_id,
                     ..
-                }) if matches!(
-                    health,
-                    WatcherHealth::Failed | WatcherHealth::Stale | WatcherHealth::Restarting
-                ) =>
-                {
+                }) => {
                     items.push(ErrorItem {
                         when: Some(event.recorded_at),
                         diagnostic: session_diagnostic(

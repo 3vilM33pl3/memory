@@ -5880,10 +5880,10 @@ fn write_tui_restart_marker(reason: &str, restarted_services: Vec<String>) -> Re
             Err(error) => last_error = Some(error.into()),
         }
     }
-    if written.is_empty() {
-        if let Some(error) = last_error {
-            return Err(error).context("write TUI restart marker");
-        }
+    if written.is_empty()
+        && let Some(error) = last_error
+    {
+        return Err(error).context("write TUI restart marker");
     }
     Ok(written)
 }

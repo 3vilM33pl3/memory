@@ -35,6 +35,7 @@ For the full isolation contract, default ports, override flags, and troubleshoot
 - [Error Messaging And Diagnostics](error-messaging.md)
 - [Automated Evaluation](evaluation.md)
 - [Memory Improvement Benchmark](evaluation-memory-improvement.md)
+- [GitHub Actions](github-actions.md)
 
 ## Implementation Material
 

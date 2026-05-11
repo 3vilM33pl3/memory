@@ -1,0 +1,126 @@
+name: Agent Task
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: "Tracking ID, for example Linear issue ID or short feature ID"
+        required: true
+        type: string
+      branch_slug:
+        description: "Short branch slug, for example add-github-actions"
+        required: true
+        type: string
+      title:
+        description: "Draft PR title"
+        required: true
+        type: string
+      prompt:
+        description: "Implementation prompt for the agent"
+        required: true
+        type: string
+      model:
+        description: "Codex model"
+        required: false
+        default: "gpt-5.4"
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: agent-task-${{ inputs.task_id }}-${{ inputs.branch_slug }}
+  cancel-in-progress: false
+
+jobs:
+  feature-agent:
+    name: Feature Agent
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ github.token }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g @openai/codex
+
+      - name: Prepare branch
+        id: branch
+        run: |
+          set -euo pipefail
+          task_id="$(printf '%s' "${{ inputs.task_id }}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-' | sed 's/^-//;s/-$//')"
+          slug="$(printf '%s' "${{ inputs.branch_slug }}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-' | sed 's/^-//;s/-$//')"
+          if [ -z "$task_id" ] || [ -z "$slug" ]; then
+            echo "task_id and branch_slug must contain at least one alphanumeric character after sanitizing" >&2
+            exit 1
+          fi
+          branch="agent/${task_id}/${slug}"
+          git checkout -b "$branch"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Run Codex feature agent
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TASK_ID: ${{ inputs.task_id }}
+          TASK_PROMPT: ${{ inputs.prompt }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "OPENAI_API_KEY Actions secret is required for agent task runs" >&2
+            exit 1
+          fi
+
+          cat > "$RUNNER_TEMP/agent-task.md" <<EOF
+          Task ID: ${TASK_ID}
+
+          ${TASK_PROMPT}
+
+          Constraints:
+          - Make focused, reviewable changes.
+          - Keep unrelated files untouched.
+          - Run focused validation where practical.
+          - Leave a concise implementation summary in agent-task-summary.md.
+          EOF
+
+          codex exec \
+            --model "${{ inputs.model }}" \
+            --sandbox workspace-write \
+            --ask-for-approval never \
+            --output-last-message "$RUNNER_TEMP/agent-task-summary.md" \
+            "Implement the task described in $RUNNER_TEMP/agent-task.md."
+
+      - name: Push branch and open draft PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+            echo "Agent produced no file changes; no PR will be opened."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Feat: ${{ inputs.title }}"
+          git push --set-upstream origin "$BRANCH"
+
+          body="Automated feature-agent run for \`${{ inputs.task_id }}\`."
+          if [ -s "$RUNNER_TEMP/agent-task-summary.md" ]; then
+            body="$(cat "$RUNNER_TEMP/agent-task-summary.md")"
+          fi
+          gh pr create \
+            --draft \
+            --base main \
+            --head "$BRANCH" \
+            --title "${{ inputs.title }}" \
+            --body "$body"

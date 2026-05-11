@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build And Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Validate release versions
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          cargo_version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
+          web_version="$(node -p "require('./web/package.json').version")"
+          lock_web_version="$(node -p "require('./web/package-lock.json').version")"
+          lock_mem_cli_version="$(awk '
+            $0 == "name = \"mem-cli\"" { found = 1; next }
+            found && /^version = / { gsub(/"/, "", $3); print $3; exit }
+          ' Cargo.lock)"
+
+          test "$cargo_version" = "$version"
+          test "$web_version" = "$version"
+          test "$lock_web_version" = "$version"
+          test "$lock_mem_cli_version" = "$version"
+
+      - name: Run release validation
+        run: |
+          cargo fmt --check
+          cargo test --workspace --all-targets --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Build Debian package
+        run: ./packaging/build-deb.sh
+
+      - name: Generate checksums and notes
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          deb="target/debian/memory-layer_${version}_amd64.deb"
+          sha256sum "$deb" > "target/debian/memory-layer_${version}_amd64.deb.sha256"
+
+          previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          {
+            echo "## Memory Layer ${GITHUB_REF_NAME}"
+            echo
+            echo "### Changes"
+            if [ -n "$previous_tag" ]; then
+              git log --pretty=format:"- %s" "${previous_tag}..${GITHUB_REF_NAME}"
+            else
+              git log --pretty=format:"- %s" -20 "${GITHUB_REF_NAME}"
+            fi
+            echo
+            echo
+            echo "### Package"
+            echo "- Debian package: \`memory-layer_${version}_amd64.deb\`"
+            echo "- SHA256: \`$(cut -d' ' -f1 "target/debian/memory-layer_${version}_amd64.deb.sha256")\`"
+          } > release-notes.md
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "target/debian/memory-layer_${version}_amd64.deb" \
+            "target/debian/memory-layer_${version}_amd64.deb.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "Memory Layer ${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md

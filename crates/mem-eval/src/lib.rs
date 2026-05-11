@@ -666,16 +666,16 @@ pub fn score_resume_quality(
     condition: EvalCondition,
     response: &ResumeResponse,
 ) -> EvalItemResult {
-    score_briefing(
-        &item.id,
-        "resume_quality",
+    score_briefing(BriefingScoreInput {
+        item_id: &item.id,
+        eval_type: "resume_quality",
         condition,
-        &response.briefing,
-        &item.required_topics,
-        &item.forbidden_topics,
-        None,
-        item.metadata.clone(),
-    )
+        briefing: &response.briefing,
+        required_topics: &item.required_topics,
+        forbidden_topics: &item.forbidden_topics,
+        tokens: None,
+        metadata: item.metadata.clone(),
+    })
 }
 
 pub fn score_up_to_speed_quality(
@@ -683,59 +683,63 @@ pub fn score_up_to_speed_quality(
     condition: EvalCondition,
     response: &UpToSpeedResponse,
 ) -> EvalItemResult {
-    score_briefing(
-        &item.id,
-        "resume_quality",
+    score_briefing(BriefingScoreInput {
+        item_id: &item.id,
+        eval_type: "resume_quality",
         condition,
-        &response.briefing,
-        &item.required_topics,
-        &item.forbidden_topics,
-        Some(response.token_usage.total_tokens),
-        item.metadata.clone(),
-    )
+        briefing: &response.briefing,
+        required_topics: &item.required_topics,
+        forbidden_topics: &item.forbidden_topics,
+        tokens: Some(response.token_usage.total_tokens),
+        metadata: item.metadata.clone(),
+    })
 }
 
-fn score_briefing(
-    item_id: &str,
-    eval_type: &str,
+struct BriefingScoreInput<'a> {
+    item_id: &'a str,
+    eval_type: &'a str,
     condition: EvalCondition,
-    briefing: &str,
-    required_topics: &[String],
-    forbidden_topics: &[String],
+    briefing: &'a str,
+    required_topics: &'a [String],
+    forbidden_topics: &'a [String],
     tokens: Option<u64>,
     metadata: EvalItemMetadata,
-) -> EvalItemResult {
-    let text = briefing.to_lowercase();
-    let topic_hits = required_topics
+}
+
+fn score_briefing(input: BriefingScoreInput<'_>) -> EvalItemResult {
+    let text = input.briefing.to_lowercase();
+    let topic_hits = input
+        .required_topics
         .iter()
         .filter(|value| text.contains(&value.to_lowercase()))
         .count();
-    let forbidden_hits = forbidden_topics
+    let forbidden_hits = input
+        .forbidden_topics
         .iter()
         .filter(|value| text.contains(&value.to_lowercase()))
         .count();
-    let topic_recall = if required_topics.is_empty() {
+    let topic_recall = if input.required_topics.is_empty() {
         1.0
     } else {
-        topic_hits as f64 / required_topics.len() as f64
+        topic_hits as f64 / input.required_topics.len() as f64
     };
     let mut scores = BTreeMap::new();
     scores.insert("topic_recall".to_string(), topic_recall);
     scores.insert("forbidden_hits".to_string(), forbidden_hits as f64);
     EvalItemResult {
-        item_id: item_id.to_string(),
-        eval_type: eval_type.to_string(),
-        condition,
-        metadata,
+        item_id: input.item_id.to_string(),
+        eval_type: input.eval_type.to_string(),
+        condition: input.condition,
+        metadata: input.metadata,
         success: topic_recall >= 1.0 && forbidden_hits == 0,
         skipped: false,
         scores,
         duration_ms: None,
-        token_usage: tokens.map(|total_tokens| TokenUsage {
+        token_usage: input.tokens.map(|total_tokens| TokenUsage {
             total_tokens,
             ..TokenUsage::default()
         }),
-        answer: Some(briefing.to_string()),
+        answer: Some(input.briefing.to_string()),
         notes: Vec::new(),
         sub_results: Vec::new(),
     }
@@ -749,16 +753,16 @@ pub fn score_resume_text_quality(
     token_usage: Option<TokenUsage>,
     mut notes: Vec<String>,
 ) -> EvalItemResult {
-    let mut result = score_briefing(
-        &item.id,
-        "resume_quality",
+    let mut result = score_briefing(BriefingScoreInput {
+        item_id: &item.id,
+        eval_type: "resume_quality",
         condition,
-        &briefing,
-        &item.required_topics,
-        &item.forbidden_topics,
-        None,
-        item.metadata.clone(),
-    );
+        briefing: &briefing,
+        required_topics: &item.required_topics,
+        forbidden_topics: &item.forbidden_topics,
+        tokens: None,
+        metadata: item.metadata.clone(),
+    });
     result.duration_ms = duration_ms;
     result.token_usage = token_usage;
     result.answer = Some(briefing);
