@@ -7847,10 +7847,10 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
 }
 
 fn load_manager_footer_status(profile: Profile) -> ManagerFooterStatus {
-    let unit_installed = manager_unit_path().is_some_and(|path| path.exists());
-    let unit_enabled = manager_service_enabled();
-    let unit_active = manager_service_running();
-    let foreground_active = foreground_manager_process_running();
+    let unit_installed = manager_unit_path(profile).is_some_and(|path| path.exists());
+    let unit_enabled = manager_service_enabled(profile);
+    let unit_active = manager_service_running(profile);
+    let foreground_active = foreground_manager_process_running(profile);
     let state_file = load_manager_state_file(profile);
     let tracked_sessions = state_file
         .as_ref()
@@ -7879,7 +7879,7 @@ fn load_manager_footer_status(profile: Profile) -> ManagerFooterStatus {
         unit_enabled,
         unit_active,
         foreground_active,
-        state_file.is_some() || manager_unit_path().is_some(),
+        state_file.is_some() || manager_unit_path(profile).is_some(),
     );
     let mode = if unit_active {
         Some(ManagerMode::Service)
@@ -7918,7 +7918,7 @@ fn derive_manager_state(
     }
 }
 
-fn foreground_manager_process_running() -> bool {
+fn foreground_manager_process_running(profile: Profile) -> bool {
     #[cfg(target_os = "macos")]
     let output = ProcessCommand::new("ps")
         .args(["-ww", "-axo", "pid=,command="])
@@ -7950,14 +7950,34 @@ fn foreground_manager_process_running() -> bool {
             continue;
         }
         let command = parts.collect::<Vec<_>>().join(" ");
-        if command.contains(" watcher manager run")
-            || command.ends_with("watcher manager run")
-            || command.contains("watcher manager run ")
-        {
+        if command_is_manager_for_profile(&command, profile) {
             return true;
         }
     }
     false
+}
+
+fn command_is_manager_for_profile(command: &str, profile: Profile) -> bool {
+    if !(command.contains(" watcher manager run")
+        || command.ends_with("watcher manager run")
+        || command.contains("watcher manager run "))
+    {
+        return false;
+    }
+    match profile {
+        Profile::Prod => !command_looks_dev_stack(command),
+        Profile::Dev => command_looks_dev_stack(command),
+    }
+}
+
+fn command_looks_dev_stack(command: &str) -> bool {
+    command.contains("target/debug/memory")
+        || command.contains("target/release/memory")
+        || command.contains("MEMORY_LAYER_PROFILE=dev")
+        || command.contains("MEMORY_LAYER_PROFILE=\"dev\"")
+        || command.contains("MEMORY_LAYER_PROFILE='dev'")
+        || command.contains("config.dev.toml")
+        || command.contains("/.mem/runtime/dev/")
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -7978,7 +7998,11 @@ fn linux_manager_unit_path() -> Option<PathBuf> {
     )
 }
 
-fn manager_unit_path() -> Option<PathBuf> {
+fn manager_unit_path(profile: Profile) -> Option<PathBuf> {
+    if profile == Profile::Dev {
+        return None;
+    }
+
     #[cfg(target_os = "macos")]
     {
         mem_platform::watch_manager_launch_agent_path()
@@ -8009,7 +8033,11 @@ fn systemctl_user_check(action: &str, unit: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn manager_service_enabled() -> bool {
+fn manager_service_enabled(profile: Profile) -> bool {
+    if profile == Profile::Dev {
+        return false;
+    }
+
     #[cfg(target_os = "macos")]
     {
         let Some(path) = mem_platform::watch_manager_launch_agent_path() else {
@@ -8024,7 +8052,11 @@ fn manager_service_enabled() -> bool {
     }
 }
 
-fn manager_service_running() -> bool {
+fn manager_service_running(profile: Profile) -> bool {
+    if profile == Profile::Dev {
+        return false;
+    }
+
     #[cfg(target_os = "macos")]
     {
         let Some(label) = Some(mem_platform::watch_manager_launch_agent_label()) else {
@@ -8094,9 +8126,10 @@ mod tests {
         derive_manager_state, empty_overview, filled_bar_cells, format_context_percent,
         format_epoch_reset_time, format_query_citation_numbers, format_timestamp,
         format_timestamp_full, format_timestamp_medium, format_timestamp_short,
-        format_timestamp_timeline, latest_plan_display, manager_status_detail,
-        manager_status_label, memory_detail_max_scroll, normalized_percent, query_input_display,
-        remaining_bar_cells, render_markdown_lines, service_status_detail, service_status_label,
+        format_timestamp_timeline, latest_plan_display, manager_service_enabled,
+        manager_service_running, manager_status_detail, manager_status_label, manager_unit_path,
+        memory_detail_max_scroll, normalized_percent, query_input_display, remaining_bar_cells,
+        render_markdown_lines, service_status_detail, service_status_label,
         should_attempt_stream_reconnect, tui_status_color, tui_status_label,
         watcher_bar_status_label,
     };
@@ -8457,6 +8490,30 @@ mod tests {
             derive_manager_state(false, false, false, false, false),
             ManagerState::Error
         );
+    }
+
+    #[test]
+    fn dev_manager_status_ignores_installed_service_probe() {
+        assert_eq!(manager_unit_path(Profile::Dev), None);
+        assert!(!manager_service_enabled(Profile::Dev));
+        assert!(!manager_service_running(Profile::Dev));
+    }
+
+    #[test]
+    fn manager_process_detection_is_profile_scoped() {
+        let prod = "/home/user/.local/bin/memory --config /home/user/.config/memory-layer/memory-layer.toml watcher manager run";
+        let dev = "/home/user/project/target/debug/memory watcher manager run";
+        let explicit_dev =
+            "MEMORY_LAYER_PROFILE=dev /home/user/.local/bin/memory watcher manager run";
+
+        assert!(super::command_is_manager_for_profile(prod, Profile::Prod));
+        assert!(!super::command_is_manager_for_profile(prod, Profile::Dev));
+        assert!(super::command_is_manager_for_profile(dev, Profile::Dev));
+        assert!(!super::command_is_manager_for_profile(dev, Profile::Prod));
+        assert!(super::command_is_manager_for_profile(
+            explicit_dev,
+            Profile::Dev
+        ));
     }
 
     #[test]
