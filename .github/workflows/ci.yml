@@ -140,7 +140,7 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: ./packaging/build-deb.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: memory-layer-deb
           path: target/debian/*.deb
