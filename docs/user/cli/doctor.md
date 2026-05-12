@@ -21,7 +21,7 @@ Use `doctor` when Memory Layer is installed but something is not working the way
 - Ollama reachability and missing local LLM models when `[llm].provider = "ollama"`
 - missing `pgvector`
 - project bootstrap problems such as missing `.mem` files
-- repo-local Memory skill versions and missing/outdated skill files
+- repo-local Memory skill-bundle version and missing/outdated skill files
 - repo-local service or watcher configuration issues
 
 The exact output is meant to be actionable, not just descriptive.

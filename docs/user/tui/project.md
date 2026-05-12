@@ -10,7 +10,7 @@ The `Project` tab is the high-level health and maintenance dashboard for the cur
 - the latest approved plan memory, including its `plan-thread` key when present
 - recent-memory timing and confidence breakdowns
 - embedding and automation status
-- Memory CLI/service/watcher versions and repo-local Memory skill versions
+- Memory CLI/service/watcher versions and repo-local Memory skill-bundle status
 - top tags and top files
 - replacement-policy status and pending-proposal count (the review queue itself lives in the [Review](review.md) tab)
 - a compact watcher summary

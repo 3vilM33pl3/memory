@@ -85,7 +85,7 @@ In practice, changes to the live repo-local `SKILL.md` are picked up the next ti
 
 - initialize a repo-local memory skill bundle during bootstrap
 - copy the packaged or repo-local `skill-template` into `.agents/skills/`
-- compare per-skill versions and refresh repo-local skills with `memory upgrade`
+- compare the shared skill-bundle version and refresh repo-local skills with `memory upgrade`
 - provide the command surface the skill scripts call
 
 `memory` does not:
@@ -122,7 +122,7 @@ During repo bootstrap, `memory` copies the skill template into:
 
 - `.agents/skills/`
 
-Each Memory-owned skill has a canonical `version` in its `SKILL.md` frontmatter. `memory doctor` compares the project-local skill versions with the installed template and reports drift through `workflow.project_skills`.
+Each Memory-owned skill has a canonical `version` in its `SKILL.md` frontmatter. All bundled Memory skills use the same version as the Memory package. `memory doctor` compares the project-local skill bundle version with the installed template and reports drift through `workflow.project_skills`.
 
 Package upgrades update the installed template, not every project checkout. To update an existing repo-local bundle, run:
 

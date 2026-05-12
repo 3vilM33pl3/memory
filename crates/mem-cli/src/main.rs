@@ -3885,11 +3885,6 @@ async fn run_doctor(
         .as_ref()
         .map(|report| report.inventory.clone())
         .unwrap_or_else(|| project_skill_inventory(repo_root, false));
-    let skill_issue_count = skill_inventory
-        .skills
-        .iter()
-        .filter(|skill| skill.status != SkillVersionStatus::UpToDate)
-        .count();
     let skill_fix_applied = skill_upgrade_fix.as_ref().is_some_and(|upgrade| {
         upgrade
             .inventory
@@ -3899,18 +3894,20 @@ async fn run_doctor(
     });
     report.push(doctor_check(
         "workflow.project_skills",
-        if skill_issue_count == 0 {
-            DoctorStatus::Ok
-        } else {
-            DoctorStatus::Warn
+        match skill_inventory.status {
+            SkillBundleStatus::Ok => DoctorStatus::Ok,
+            SkillBundleStatus::Warn => DoctorStatus::Warn,
+            SkillBundleStatus::Error => DoctorStatus::Fail,
         },
-        if skill_issue_count == 0 {
-            "Repo-local Memory skills match the installed template versions."
-        } else {
-            "Repo-local Memory skills need attention."
+        match skill_inventory.status {
+            SkillBundleStatus::Ok => {
+                "Repo-local Memory skill bundle matches the installed template version."
+            }
+            SkillBundleStatus::Warn => "Repo-local Memory skill bundle needs attention.",
+            SkillBundleStatus::Error => "Repo-local Memory skill bundle could not be evaluated.",
         },
         Some(format_skill_inventory_summary(&skill_inventory)),
-        if skill_issue_count == 0 {
+        if skill_inventory.status == SkillBundleStatus::Ok {
             None
         } else {
             Some("Run `memory upgrade --dry-run`, then `memory upgrade`.".to_string())
@@ -7862,6 +7859,24 @@ pub(crate) enum SkillVersionStatus {
     TemplateMissing,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SkillBundleStatus {
+    Ok,
+    Warn,
+    Error,
+}
+
+impl SkillBundleStatus {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Warn => "warn",
+            Self::Error => "error",
+        }
+    }
+}
+
 impl SkillVersionStatus {
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -7912,6 +7927,9 @@ pub(crate) struct SkillInventoryReport {
     pub(crate) project_root: String,
     pub(crate) project_skill_root: String,
     pub(crate) template_root: Option<String>,
+    pub(crate) bundle_version: String,
+    pub(crate) status: SkillBundleStatus,
+    pub(crate) summary: String,
     pub(crate) skills: Vec<SkillVersionInfo>,
 }
 
@@ -7941,7 +7959,7 @@ fn project_skill_inventory_with_template(
     force: bool,
 ) -> SkillInventoryReport {
     let skill_root = repo_root.join(".agents").join("skills");
-    let skills = MEMORY_SKILL_NAMES
+    let skills: Vec<_> = MEMORY_SKILL_NAMES
         .iter()
         .map(|name| {
             let project_path = skill_root.join(name);
@@ -7949,12 +7967,48 @@ fn project_skill_inventory_with_template(
             skill_version_info(name, &project_path, template_path.as_deref(), force)
         })
         .collect();
+    let (status, summary) = skill_bundle_status(&skills);
 
     SkillInventoryReport {
         project_root: repo_root.display().to_string(),
         project_skill_root: skill_root.display().to_string(),
         template_root: template_root.map(|path| path.display().to_string()),
+        bundle_version: env!("CARGO_PKG_VERSION").to_string(),
+        status,
+        summary,
         skills,
+    }
+}
+
+fn skill_bundle_status(skills: &[SkillVersionInfo]) -> (SkillBundleStatus, String) {
+    let error_count = skills
+        .iter()
+        .filter(|skill| skill.status == SkillVersionStatus::TemplateMissing)
+        .count();
+    let warn_count = skills
+        .iter()
+        .filter(|skill| {
+            !matches!(
+                skill.status,
+                SkillVersionStatus::UpToDate | SkillVersionStatus::TemplateMissing
+            )
+        })
+        .count();
+    if error_count > 0 {
+        (
+            SkillBundleStatus::Error,
+            format!("{error_count} skill template(s) missing"),
+        )
+    } else if warn_count > 0 {
+        (
+            SkillBundleStatus::Warn,
+            format!("{warn_count} project skill(s) need upgrade"),
+        )
+    } else {
+        (
+            SkillBundleStatus::Ok,
+            "all project skills match the installed template".to_string(),
+        )
     }
 }
 
@@ -8252,6 +8306,12 @@ fn print_skill_upgrade_report(report: &SkillUpgradeReport) {
     if let Some(backup_root) = &report.backup_root {
         println!("Backup: {backup_root}");
     }
+    println!(
+        "Bundle: v{} {} ({})",
+        report.inventory.bundle_version,
+        report.inventory.status.label(),
+        report.inventory.summary
+    );
     println!();
     for skill in &report.inventory.skills {
         let project_version = skill.project_version.as_deref().unwrap_or("n/a");
@@ -8294,7 +8354,12 @@ fn format_skill_inventory_summary(inventory: &SkillInventoryReport) -> String {
         })
         .collect::<Vec<_>>()
         .join("; ");
-    format!("template={template}; {skills}")
+    format!(
+        "bundle=v{} status={} summary={}; template={template}; {skills}",
+        inventory.bundle_version,
+        inventory.status.label(),
+        inventory.summary
+    )
 }
 
 fn copy_directory_tree(src: &Path, dest: &Path) -> Result<()> {
@@ -13412,9 +13477,9 @@ mod tests {
 
     use super::{
         Cli, DEV_API_TOKEN, EvalRunContext, PlanExecutionFinishReport, RememberArgs,
-        SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, SkillUpgradeAction, SkillVersionStatus,
-        TuiRestartMarker, WatcherCommand, WatcherManagerArgs, WatcherManagerCommand,
-        agent_build_prompt, build_finish_execution_implementation_request,
+        SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, SkillBundleStatus, SkillUpgradeAction,
+        SkillVersionStatus, TuiRestartMarker, WatcherCommand, WatcherManagerArgs,
+        WatcherManagerCommand, agent_build_prompt, build_finish_execution_implementation_request,
         build_graph_activity_request, build_plan_execution_finish_report,
         build_plan_execution_request, build_remember_request, build_task_start_request,
         chat_completion_content, derive_plan_thread_key, derive_plan_title,
@@ -14988,6 +15053,9 @@ mod tests {
         assert_eq!(inventory.skills[1].action, SkillUpgradeAction::Skip);
         assert_eq!(inventory.skills[2].status, SkillVersionStatus::Missing);
         assert_eq!(inventory.skills[2].action, SkillUpgradeAction::Install);
+        assert_eq!(inventory.bundle_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(inventory.status, SkillBundleStatus::Warn);
+        assert!(inventory.summary.contains("project skill(s) need upgrade"));
 
         let _ = fs::remove_dir_all(repo);
     }
@@ -15013,6 +15081,8 @@ mod tests {
 
         assert!(report.dry_run);
         assert_eq!(report.backup_root, None);
+        assert_eq!(report.inventory.bundle_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(report.inventory.status, SkillBundleStatus::Warn);
         assert_eq!(fs::read_to_string(&first_skill).unwrap(), before);
 
         let _ = fs::remove_dir_all(repo);
@@ -15049,6 +15119,30 @@ mod tests {
                 .join("SKILL.md")
                 .is_file()
         );
+        assert_eq!(report.inventory.status, SkillBundleStatus::Warn);
+
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn skill_inventory_reports_ok_for_matching_bundle_version() {
+        let repo = unique_temp_dir("mem-skill-bundle-ok");
+        let project_root = repo.join("project");
+        let template_root = repo.join("memory-layer/skill-template");
+        for name in super::MEMORY_SKILL_NAMES {
+            write_test_skill(&template_root.join(name), env!("CARGO_PKG_VERSION"));
+            write_test_skill(
+                &project_root.join(".agents/skills").join(name),
+                env!("CARGO_PKG_VERSION"),
+            );
+        }
+
+        let inventory =
+            project_skill_inventory_with_template(&project_root, Some(template_root), false);
+
+        assert_eq!(inventory.bundle_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(inventory.status, SkillBundleStatus::Ok);
+        assert!(inventory.summary.contains("all project skills match"));
 
         let _ = fs::remove_dir_all(repo);
     }

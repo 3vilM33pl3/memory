@@ -16,12 +16,14 @@ memory upgrade --force
 ## What It Does
 
 - compares `.agents/skills/` against the installed `skill-template`
-- reads the canonical per-skill `version` from each `SKILL.md`
+- reads the canonical shared bundle `version` from each `SKILL.md`
 - installs missing Memory-owned skills
 - replaces outdated, unversioned, or invalid-version Memory-owned skills
 - backs up replaced skill directories under `.mem/runtime/skill-backups/<timestamp>/`
 
 By default, it does not replace a project-local skill that is newer than the installed template. Use `--force` only when you intentionally want to replace all known Memory-owned skills from the template.
+
+All bundled Memory skills should report the same version as the Memory package. The JSON output includes a top-level bundle version/status and per-skill details for troubleshooting.
 
 ## Doctor Integration
 

@@ -48,9 +48,9 @@ use tokio::{
 };
 
 use crate::{
-    ApiClient, SkillInventoryReport, SkillUpgradeAction, SkillVersionStatus, SourceKindString,
-    TuiRestartNotice, enable_relay_discovery_and_restart_backend, load_tui_restart_notice,
-    project_skill_inventory, resume,
+    ApiClient, SkillBundleStatus, SkillInventoryReport, SourceKindString, TuiRestartNotice,
+    enable_relay_discovery_and_restart_backend, load_tui_restart_notice, project_skill_inventory,
+    resume,
 };
 
 const STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -3282,10 +3282,11 @@ fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect)
     let sections = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
         ])
         .split(area);
 
@@ -3334,6 +3335,18 @@ fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect)
         ))
         .style(Style::default().bg(Theme::PANEL_ALT)),
         sections[3],
+    );
+
+    frame.render_widget(
+        Paragraph::new(component_status_line(
+            "Skills",
+            &app.skill_inventory.bundle_version,
+            app.skill_inventory.status.label(),
+            skill_bundle_status_color(app.skill_inventory.status),
+            Some(app.skill_inventory.summary.clone()),
+        ))
+        .style(Style::default().bg(Theme::PANEL_ALT)),
+        sections[4],
     );
 }
 
@@ -3940,7 +3953,18 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::TEXT),
             ),
         ),
-        skill_versions_line(app),
+        metric_line(
+            "Skill bundle",
+            Span::styled(
+                format!(
+                    "v{} {} ({})",
+                    app.skill_inventory.bundle_version,
+                    app.skill_inventory.status.label(),
+                    app.skill_inventory.summary
+                ),
+                Style::default().fg(skill_bundle_status_color(app.skill_inventory.status)),
+            ),
+        ),
         metric_line(
             "Automation",
             Span::styled(
@@ -8234,48 +8258,11 @@ fn metric_line<'a>(label: &str, value: Span<'a>) -> Line<'a> {
     ])
 }
 
-fn skill_versions_line(app: &App) -> Line<'static> {
-    let mut spans = vec![Span::styled(
-        "Project skill versions: ",
-        Style::default()
-            .fg(Theme::ACCENT_STRONG)
-            .add_modifier(Modifier::BOLD),
-    )];
-    if app.skill_inventory.skills.is_empty() {
-        spans.push(Span::styled("none", Style::default().fg(Theme::MUTED)));
-        return Line::from(spans);
-    }
-    for (index, skill) in app.skill_inventory.skills.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::styled(" / ", Style::default().fg(Theme::MUTED)));
-        }
-        spans.push(Span::styled(
-            format!(
-                "{} {}",
-                skill.name,
-                skill.project_version.as_deref().unwrap_or("n/a")
-            ),
-            Style::default().fg(skill_status_color(skill.status)),
-        ));
-        if !matches!(skill.action, SkillUpgradeAction::Skip) {
-            spans.push(Span::styled(
-                format!(" ({})", skill.status.label()),
-                Style::default().fg(Theme::WARNING),
-            ));
-        }
-    }
-    Line::from(spans)
-}
-
-fn skill_status_color(status: SkillVersionStatus) -> Color {
+fn skill_bundle_status_color(status: SkillBundleStatus) -> Color {
     match status {
-        SkillVersionStatus::UpToDate => Theme::SUCCESS,
-        SkillVersionStatus::NewerThanTemplate => Theme::WARNING,
-        SkillVersionStatus::Missing
-        | SkillVersionStatus::Outdated
-        | SkillVersionStatus::Unversioned
-        | SkillVersionStatus::InvalidVersion
-        | SkillVersionStatus::TemplateMissing => Theme::DANGER,
+        SkillBundleStatus::Ok => Theme::SUCCESS,
+        SkillBundleStatus::Warn => Theme::WARNING,
+        SkillBundleStatus::Error => Theme::DANGER,
     }
 }
 
@@ -8629,10 +8616,10 @@ mod tests {
         manager_service_running, manager_status_detail, manager_status_label, manager_unit_path,
         memory_detail_max_scroll, normalized_percent, query_input_display, remaining_bar_cells,
         render_markdown_lines, service_status_detail, service_status_label,
-        should_attempt_stream_reconnect, tui_status_color, tui_status_detail, tui_status_label,
-        watcher_bar_status_label,
+        should_attempt_stream_reconnect, skill_bundle_status_color, tui_status_color,
+        tui_status_detail, tui_status_label, watcher_bar_status_label,
     };
-    use crate::{TuiRestartNotice, project_skill_inventory};
+    use crate::{SkillBundleStatus, TuiRestartNotice, project_skill_inventory};
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
         ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
@@ -9140,6 +9127,22 @@ mod tests {
     fn context_gradient_spans_success_to_danger() {
         assert_eq!(context_gradient_color(0.0), Theme::SUCCESS);
         assert_eq!(context_gradient_color(100.0), Theme::DANGER);
+    }
+
+    #[test]
+    fn skill_bundle_status_colors_match_footer_severity() {
+        assert_eq!(
+            skill_bundle_status_color(SkillBundleStatus::Ok),
+            Theme::SUCCESS
+        );
+        assert_eq!(
+            skill_bundle_status_color(SkillBundleStatus::Warn),
+            Theme::WARNING
+        );
+        assert_eq!(
+            skill_bundle_status_color(SkillBundleStatus::Error),
+            Theme::DANGER
+        );
     }
 
     fn test_agent_session(project_name: &str, session_id: &str) -> AgentSession {
