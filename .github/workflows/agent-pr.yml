@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -70,7 +70,7 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
@@ -132,7 +132,7 @@ jobs:
           gh pr view "${{ github.event.issue.number }}" --json headRefName,baseRefName > pr.json
           echo "head_ref=$(jq -r '.headRefName' pr.json)" >> "$GITHUB_OUTPUT"
           echo "base_ref=$(jq -r '.baseRefName' pr.json)" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.pr.outputs.base_ref }}
           fetch-depth: 0
