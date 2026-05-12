@@ -33,5 +33,5 @@ capnp.workspace = true
 regex.workspace = true
 sha2.workspace = true
 zip.workspace = true
-toml_edit = "0.23"
+toml_edit = "0.25"
 libc = "0.2"
