@@ -673,6 +673,15 @@ On Debian, upgrades should preserve local edits to:
 Those files are treated as package-managed configuration files rather than being overwritten
 with package defaults on every upgrade.
 
+Package upgrades also update the installed Memory skill template. Existing project-local skills in `.agents/skills/` are refreshed explicitly so local customizations are not overwritten silently:
+
+```bash
+memory upgrade --dry-run
+memory upgrade
+```
+
+`memory doctor` reports stale or missing project skills through `workflow.project_skills`.
+
 ## Using `scan`
 
 `scan` reads a repository, sends a structured summary to the configured LLM, and writes useful durable memories back into Memory Layer.

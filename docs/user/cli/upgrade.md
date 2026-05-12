@@ -1,0 +1,35 @@
+# `memory upgrade`
+
+`memory upgrade` refreshes the repo-local Memory Layer skill bundle in the current project from the installed skill template.
+
+Use it after installing a newer Memory Layer package when `memory doctor` reports that project skills are missing, unversioned, or older than the installed template.
+
+## Common Usage
+
+```bash
+memory upgrade --dry-run
+memory upgrade --dry-run --json
+memory upgrade
+memory upgrade --force
+```
+
+## What It Does
+
+- compares `.agents/skills/` against the installed `skill-template`
+- reads the canonical per-skill `version` from each `SKILL.md`
+- installs missing Memory-owned skills
+- replaces outdated, unversioned, or invalid-version Memory-owned skills
+- backs up replaced skill directories under `.mem/runtime/skill-backups/<timestamp>/`
+
+By default, it does not replace a project-local skill that is newer than the installed template. Use `--force` only when you intentionally want to replace all known Memory-owned skills from the template.
+
+## Doctor Integration
+
+`memory doctor` includes a `workflow.project_skills` check. If the check warns, run:
+
+```bash
+memory upgrade --dry-run
+memory upgrade
+```
+
+`memory doctor --fix` may apply the safe upgrade path, but it still avoids force-replacing newer local skills.

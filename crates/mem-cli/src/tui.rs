@@ -48,8 +48,9 @@ use tokio::{
 };
 
 use crate::{
-    ApiClient, SourceKindString, TuiRestartNotice, enable_relay_discovery_and_restart_backend,
-    load_tui_restart_notice, resume,
+    ApiClient, SkillInventoryReport, SkillUpgradeAction, SkillVersionStatus, SourceKindString,
+    TuiRestartNotice, enable_relay_discovery_and_restart_backend, load_tui_restart_notice,
+    project_skill_inventory, resume,
 };
 
 const STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -321,6 +322,7 @@ fn spawn_stream_connect(
 async fn load_project_refresh(
     api: &ApiClient,
     project: String,
+    repo_root: PathBuf,
     mode: RefreshMode,
 ) -> ProjectRefreshResult {
     let health_fut = api.health();
@@ -335,6 +337,7 @@ async fn load_project_refresh(
         overview: overview.map_err(|error| error.to_string()),
         memories: memories.map_err(|error| error.to_string()),
         proposals: proposals.map_err(|error| error.to_string()),
+        skill_inventory: project_skill_inventory(&repo_root, false),
     }
 }
 
@@ -401,6 +404,7 @@ struct App {
     replacement_selected_index: usize,
     review_table_state: TableState,
     versions: ToolVersions,
+    skill_inventory: SkillInventoryReport,
     startup_at: DateTime<Utc>,
     ui_status: UiStatus,
     status_message: String,
@@ -535,6 +539,7 @@ struct ProjectRefreshResult {
     overview: Result<ProjectOverviewResponse, String>,
     memories: Result<ProjectMemoriesResponse, String>,
     proposals: Result<ReplacementProposalListResponse, String>,
+    skill_inventory: SkillInventoryReport,
 }
 
 enum BackgroundEvent {
@@ -692,6 +697,7 @@ impl App {
             replacement_selected_index: 0,
             review_table_state,
             versions,
+            skill_inventory: project_skill_inventory(&repo_root, false),
             startup_at: Utc::now(),
             ui_status: UiStatus::Loading,
             status_message: "Loading project data...".to_string(),
@@ -767,9 +773,10 @@ impl App {
         };
         let api = api.clone();
         let project = self.project.clone();
+        let repo_root = self.repo_root.clone();
         let tx = self.background_tx.clone();
         tokio::spawn(async move {
-            let result = load_project_refresh(&api, project.clone(), mode).await;
+            let result = load_project_refresh(&api, project.clone(), repo_root, mode).await;
             let _ = tx.send(BackgroundEvent::ProjectRefreshLoaded(Box::new(result)));
             if mode == RefreshMode::Startup && checkpoint.is_some() {
                 let request = ResumeRequest {
@@ -869,7 +876,8 @@ impl App {
 
     async fn refresh(&mut self, api: &ApiClient, mode: RefreshMode) {
         self.begin_refresh(mode);
-        let result = load_project_refresh(api, self.project.clone(), mode).await;
+        let result =
+            load_project_refresh(api, self.project.clone(), self.repo_root.clone(), mode).await;
         let loaded_memories = self.apply_project_refresh(result);
         if loaded_memories {
             self.fetch_selected_detail(api, None).await;
@@ -919,6 +927,8 @@ impl App {
                 };
             }
         }
+
+        self.skill_inventory = result.skill_inventory;
 
         match result.overview {
             Ok(overview) => self.overview = overview,
@@ -3930,6 +3940,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::TEXT),
             ),
         ),
+        skill_versions_line(app),
         metric_line(
             "Automation",
             Span::styled(
@@ -8223,6 +8234,51 @@ fn metric_line<'a>(label: &str, value: Span<'a>) -> Line<'a> {
     ])
 }
 
+fn skill_versions_line(app: &App) -> Line<'static> {
+    let mut spans = vec![Span::styled(
+        "Project skill versions: ",
+        Style::default()
+            .fg(Theme::ACCENT_STRONG)
+            .add_modifier(Modifier::BOLD),
+    )];
+    if app.skill_inventory.skills.is_empty() {
+        spans.push(Span::styled("none", Style::default().fg(Theme::MUTED)));
+        return Line::from(spans);
+    }
+    for (index, skill) in app.skill_inventory.skills.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(" / ", Style::default().fg(Theme::MUTED)));
+        }
+        spans.push(Span::styled(
+            format!(
+                "{} {}",
+                skill.name,
+                skill.project_version.as_deref().unwrap_or("n/a")
+            ),
+            Style::default().fg(skill_status_color(skill.status)),
+        ));
+        if !matches!(skill.action, SkillUpgradeAction::Skip) {
+            spans.push(Span::styled(
+                format!(" ({})", skill.status.label()),
+                Style::default().fg(Theme::WARNING),
+            ));
+        }
+    }
+    Line::from(spans)
+}
+
+fn skill_status_color(status: SkillVersionStatus) -> Color {
+    match status {
+        SkillVersionStatus::UpToDate => Theme::SUCCESS,
+        SkillVersionStatus::NewerThanTemplate => Theme::WARNING,
+        SkillVersionStatus::Missing
+        | SkillVersionStatus::Outdated
+        | SkillVersionStatus::Unversioned
+        | SkillVersionStatus::InvalidVersion
+        | SkillVersionStatus::TemplateMissing => Theme::DANGER,
+    }
+}
+
 fn status_message_style(app: &App) -> Style {
     let lowered = app.status_message.to_lowercase();
     let color = if lowered.contains("error") || lowered.contains("failed") {
@@ -8576,7 +8632,7 @@ mod tests {
         should_attempt_stream_reconnect, tui_status_color, tui_status_detail, tui_status_label,
         watcher_bar_status_label,
     };
-    use crate::TuiRestartNotice;
+    use crate::{TuiRestartNotice, project_skill_inventory};
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
         ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
@@ -8584,7 +8640,7 @@ mod tests {
         ProjectMemoriesResponse, QueryFilters, QueryRequest, ReplacementProposalListResponse,
         TokenUsage, WatcherPresenceSummary,
     };
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
     use uuid::Uuid;
@@ -8859,6 +8915,7 @@ mod tests {
                 project: "memory".to_string(),
                 proposals: Vec::new(),
             }),
+            skill_inventory: project_skill_inventory(Path::new("."), false),
         };
         app.apply_project_refresh(result.clone());
         assert_eq!(
@@ -8901,6 +8958,7 @@ mod tests {
                 project: "memory".to_string(),
                 proposals: Vec::new(),
             }),
+            skill_inventory: project_skill_inventory(Path::new("."), false),
         });
 
         assert!(loaded);

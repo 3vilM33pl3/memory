@@ -40,6 +40,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Embeddings Tab](tui/embeddings.md)
 - [Wizard And Bootstrap](cli/wizard.md)
 - [Init Bootstrap](cli/init.md)
+- [Skill Upgrade](cli/upgrade.md)
 - [Service Commands](cli/service.md)
 - [Doctor Diagnostics](cli/doctor.md)
 - [Health And Stats](cli/health.md)

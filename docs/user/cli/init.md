@@ -11,6 +11,7 @@ memory init
 memory init --project memory
 memory init --force
 memory init --dry-run
+memory upgrade --dry-run
 ```
 
 ## What It Does
@@ -25,3 +26,4 @@ The installed skill bundle includes focused workflows for project setup, query/r
 
 - prefer [`memory wizard`](wizard.md) for the normal guided setup flow
 - use `--force` only when you intentionally want to replace managed bootstrap files
+- after package upgrades, use [`memory upgrade`](upgrade.md) to refresh existing repo-local skill copies from the installed template

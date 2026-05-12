@@ -21,6 +21,7 @@ Use `doctor` when Memory Layer is installed but something is not working the way
 - Ollama reachability and missing local LLM models when `[llm].provider = "ollama"`
 - missing `pgvector`
 - project bootstrap problems such as missing `.mem` files
+- repo-local Memory skill versions and missing/outdated skill files
 - repo-local service or watcher configuration issues
 
 The exact output is meant to be actionable, not just descriptive.
@@ -53,6 +54,8 @@ Typical remediation paths are:
   - see [Getting Started: PostgreSQL Requirement](../getting-started.md#postgresql-requirement) for local Debian, local macOS, and hosted PostgreSQL examples
 - repo not initialized
   - run `memory wizard` or `memory init`
+- outdated or unversioned repo-local skills
+  - run `memory upgrade --dry-run`, then `memory upgrade`
 - backend unreachable
   - start the shared backend service or the local development backend
 - Ollama unreachable or model missing

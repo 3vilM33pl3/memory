@@ -110,6 +110,21 @@ Examples:
 See also:
   docs/user/cli/init.md";
 
+const UPGRADE_AFTER_HELP: &str = "\
+Agent notes:
+  Use after installing a newer Memory Layer package to refresh repo-local Memory skills.
+  Backs up replaced skill directories under .mem/runtime/skill-backups before writing.
+  Prefer --dry-run --json before applying from automation.
+
+Examples:
+  memory upgrade --dry-run
+  memory upgrade --dry-run --json
+  memory upgrade
+  memory upgrade --force
+
+See also:
+  docs/user/cli/upgrade.md";
+
 const DEV_GROUP_AFTER_HELP: &str = "\
 Agent notes:
   Use from a cargo checkout to manage the isolated dev profile.
@@ -984,6 +999,8 @@ enum Command {
     Wizard(WizardArgs),
     #[command(about = "Bootstrap a repo-local Memory Layer setup.", after_help = INIT_AFTER_HELP)]
     Init(InitArgs),
+    #[command(about = "Upgrade repo-local Memory Layer skill files.", after_help = UPGRADE_AFTER_HELP)]
+    Upgrade(UpgradeArgs),
     #[command(about = "Manage the Memory Layer backend service.", after_help = SERVICE_GROUP_AFTER_HELP)]
     Service(ServiceArgs),
     #[command(about = "Manage project watchers and watcher daemons.", after_help = WATCHER_GROUP_AFTER_HELP)]
@@ -1107,6 +1124,23 @@ struct InitArgs {
     /// Preview the files and skill bundle paths that would be written.
     #[arg(long)]
     dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Upgrade repo-local Memory Layer skill files from the installed template.",
+    after_help = UPGRADE_AFTER_HELP
+)]
+struct UpgradeArgs {
+    /// Replace all known Memory skills, including newer or same-version local copies.
+    #[arg(long)]
+    force: bool,
+    /// Preview skill changes without touching the filesystem.
+    #[arg(long)]
+    dry_run: bool,
+    /// Emit a structured JSON report.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2155,6 +2189,17 @@ async fn main() -> Result<()> {
             println!("{output}");
             return Ok(());
         }
+        Command::Upgrade(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            let report = upgrade_project_skills(&repo_root, args.force, args.dry_run)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print_skill_upgrade_report(&report);
+            }
+            return Ok(());
+        }
         Command::Dev(args) => {
             match &args.command {
                 DevCommand::Init(init_args) => {
@@ -2319,6 +2364,7 @@ async fn main() -> Result<()> {
     match command {
         Command::Wizard(_) => unreachable!("wizard is handled before config loading"),
         Command::Init(_) => unreachable!("init is handled before config loading"),
+        Command::Upgrade(_) => unreachable!("upgrade is handled before config loading"),
         Command::Dev(_) => unreachable!("dev subcommands are handled before config loading"),
         Command::Service(ServiceArgs {
             command: ServiceCommand::Run,
@@ -3828,6 +3874,48 @@ async fn run_doctor(
             Some("memory doctor --fix".to_string())
         },
         gitignore_fix_applied,
+    ));
+
+    let skill_upgrade_fix = if fix {
+        Some(upgrade_project_skills(repo_root, false, false)?)
+    } else {
+        None
+    };
+    let skill_inventory = skill_upgrade_fix
+        .as_ref()
+        .map(|report| report.inventory.clone())
+        .unwrap_or_else(|| project_skill_inventory(repo_root, false));
+    let skill_issue_count = skill_inventory
+        .skills
+        .iter()
+        .filter(|skill| skill.status != SkillVersionStatus::UpToDate)
+        .count();
+    let skill_fix_applied = skill_upgrade_fix.as_ref().is_some_and(|upgrade| {
+        upgrade
+            .inventory
+            .skills
+            .iter()
+            .any(|skill| !matches!(skill.action, SkillUpgradeAction::Skip))
+    });
+    report.push(doctor_check(
+        "workflow.project_skills",
+        if skill_issue_count == 0 {
+            DoctorStatus::Ok
+        } else {
+            DoctorStatus::Warn
+        },
+        if skill_issue_count == 0 {
+            "Repo-local Memory skills match the installed template versions."
+        } else {
+            "Repo-local Memory skills need attention."
+        },
+        Some(format_skill_inventory_summary(&skill_inventory)),
+        if skill_issue_count == 0 {
+            None
+        } else {
+            Some("Run `memory upgrade --dry-run`, then `memory upgrade`.".to_string())
+        },
+        skill_fix_applied,
     ));
 
     let config = match AppConfig::load_from_path(cli_config.clone()) {
@@ -7762,11 +7850,246 @@ const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-remember",
 ];
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SkillVersionStatus {
+    UpToDate,
+    Missing,
+    Outdated,
+    NewerThanTemplate,
+    Unversioned,
+    InvalidVersion,
+    TemplateMissing,
+}
+
+impl SkillVersionStatus {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::UpToDate => "up-to-date",
+            Self::Missing => "missing",
+            Self::Outdated => "outdated",
+            Self::NewerThanTemplate => "newer-than-template",
+            Self::Unversioned => "unversioned",
+            Self::InvalidVersion => "invalid-version",
+            Self::TemplateMissing => "template-missing",
+        }
+    }
+
+    fn needs_upgrade(self) -> bool {
+        matches!(
+            self,
+            Self::Missing | Self::Outdated | Self::Unversioned | Self::InvalidVersion
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SkillUpgradeAction {
+    Install,
+    Replace,
+    ReplaceForced,
+    Skip,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct SkillVersionInfo {
+    pub(crate) name: String,
+    pub(crate) project_path: String,
+    pub(crate) template_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) project_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) template_version: Option<String>,
+    pub(crate) status: SkillVersionStatus,
+    pub(crate) action: SkillUpgradeAction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct SkillInventoryReport {
+    pub(crate) project_root: String,
+    pub(crate) project_skill_root: String,
+    pub(crate) template_root: Option<String>,
+    pub(crate) skills: Vec<SkillVersionInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SkillUpgradeReport {
+    dry_run: bool,
+    force: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    backup_root: Option<String>,
+    inventory: SkillInventoryReport,
+}
+
 fn missing_memory_skill_dirs<'a>(skill_root: &'a Path) -> impl Iterator<Item = PathBuf> + 'a {
     MEMORY_SKILL_NAMES
         .iter()
         .map(|name| skill_root.join(name))
         .filter(|path| !path.is_dir())
+}
+
+pub(crate) fn project_skill_inventory(repo_root: &Path, force: bool) -> SkillInventoryReport {
+    project_skill_inventory_with_template(repo_root, discover_skill_template_dir(), force)
+}
+
+fn project_skill_inventory_with_template(
+    repo_root: &Path,
+    template_root: Option<PathBuf>,
+    force: bool,
+) -> SkillInventoryReport {
+    let skill_root = repo_root.join(".agents").join("skills");
+    let skills = MEMORY_SKILL_NAMES
+        .iter()
+        .map(|name| {
+            let project_path = skill_root.join(name);
+            let template_path = template_root.as_ref().map(|root| root.join(name));
+            skill_version_info(name, &project_path, template_path.as_deref(), force)
+        })
+        .collect();
+
+    SkillInventoryReport {
+        project_root: repo_root.display().to_string(),
+        project_skill_root: skill_root.display().to_string(),
+        template_root: template_root.map(|path| path.display().to_string()),
+        skills,
+    }
+}
+
+fn skill_version_info(
+    name: &str,
+    project_path: &Path,
+    template_path: Option<&Path>,
+    force: bool,
+) -> SkillVersionInfo {
+    let project_version = read_skill_version(project_path).ok().flatten();
+    let template_version = template_path.and_then(|path| read_skill_version(path).ok().flatten());
+    let template_exists = template_path.is_some_and(Path::is_dir);
+    let project_exists = project_path.is_dir();
+    let mut detail = None;
+
+    let status = if !template_exists {
+        SkillVersionStatus::TemplateMissing
+    } else if !project_exists {
+        SkillVersionStatus::Missing
+    } else if project_version.is_none() || template_version.is_none() {
+        SkillVersionStatus::Unversioned
+    } else {
+        let project_raw = project_version.as_deref().unwrap_or_default();
+        let template_raw = template_version.as_deref().unwrap_or_default();
+        match (
+            semver::Version::parse(project_raw),
+            semver::Version::parse(template_raw),
+        ) {
+            (Ok(project), Ok(template)) if project == template => SkillVersionStatus::UpToDate,
+            (Ok(project), Ok(template)) if project < template => SkillVersionStatus::Outdated,
+            (Ok(_), Ok(_)) => SkillVersionStatus::NewerThanTemplate,
+            (project_result, template_result) => {
+                let mut parts = Vec::new();
+                if let Err(error) = project_result {
+                    parts.push(format!("project version `{project_raw}`: {error}"));
+                }
+                if let Err(error) = template_result {
+                    parts.push(format!("template version `{template_raw}`: {error}"));
+                }
+                detail = Some(parts.join("; "));
+                SkillVersionStatus::InvalidVersion
+            }
+        }
+    };
+
+    let action = skill_upgrade_action(status, project_exists, force);
+
+    SkillVersionInfo {
+        name: name.to_string(),
+        project_path: project_path.display().to_string(),
+        template_path: template_path.map(|path| path.display().to_string()),
+        project_version,
+        template_version,
+        status,
+        action,
+        detail,
+    }
+}
+
+fn skill_upgrade_action(
+    status: SkillVersionStatus,
+    project_exists: bool,
+    force: bool,
+) -> SkillUpgradeAction {
+    if matches!(status, SkillVersionStatus::TemplateMissing) {
+        return SkillUpgradeAction::Skip;
+    }
+    if force && project_exists {
+        return SkillUpgradeAction::ReplaceForced;
+    }
+    if force {
+        return SkillUpgradeAction::Install;
+    }
+    if matches!(status, SkillVersionStatus::Missing) {
+        return SkillUpgradeAction::Install;
+    }
+    if status.needs_upgrade() {
+        return SkillUpgradeAction::Replace;
+    }
+    SkillUpgradeAction::Skip
+}
+
+fn read_skill_version(skill_dir: &Path) -> Result<Option<String>> {
+    let skill_md = skill_dir.join("SKILL.md");
+    if let Some(version) = read_skill_md_frontmatter_version(&skill_md)? {
+        return Ok(Some(version));
+    }
+    read_simple_yaml_version(&skill_dir.join("agents").join("openai.yaml"))
+}
+
+fn read_skill_md_frontmatter_version(path: &Path) -> Result<Option<String>> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+    };
+    let mut lines = content.lines();
+    if lines.next().map(str::trim) != Some("---") {
+        return Ok(None);
+    }
+    let mut frontmatter = Vec::new();
+    for line in lines {
+        if line.trim() == "---" {
+            return Ok(simple_yaml_value(&frontmatter, "version"));
+        }
+        frontmatter.push(line);
+    }
+    Ok(None)
+}
+
+fn read_simple_yaml_version(path: &Path) -> Result<Option<String>> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+    };
+    let lines = content.lines().collect::<Vec<_>>();
+    Ok(simple_yaml_value(&lines, "version"))
+}
+
+fn simple_yaml_value(lines: &[&str], key: &str) -> Option<String> {
+    let prefix = format!("{key}:");
+    lines.iter().find_map(|line| {
+        let trimmed = line.trim();
+        trimmed
+            .strip_prefix(&prefix)
+            .map(|value| {
+                value
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string()
+            })
+            .filter(|value| !value.is_empty())
+    })
 }
 
 fn discover_skill_template_dir() -> Option<PathBuf> {
@@ -7823,6 +8146,155 @@ fn sync_memory_skill_bundle(src_root: &Path, dest_root: &Path, force: bool) -> R
         copy_directory_tree(&src, &dest)?;
     }
     Ok(())
+}
+
+fn upgrade_project_skills(
+    repo_root: &Path,
+    force: bool,
+    dry_run: bool,
+) -> Result<SkillUpgradeReport> {
+    upgrade_project_skills_with_template(repo_root, discover_skill_template_dir(), force, dry_run)
+}
+
+fn upgrade_project_skills_with_template(
+    repo_root: &Path,
+    template_root: Option<PathBuf>,
+    force: bool,
+    dry_run: bool,
+) -> Result<SkillUpgradeReport> {
+    let inventory = project_skill_inventory_with_template(repo_root, template_root, force);
+    let backup_root = if dry_run
+        || inventory.skills.iter().all(|skill| {
+            matches!(
+                skill.action,
+                SkillUpgradeAction::Skip | SkillUpgradeAction::Install
+            )
+        }) {
+        None
+    } else {
+        Some(
+            repo_root
+                .join(".mem")
+                .join("runtime")
+                .join("skill-backups")
+                .join(Utc::now().format("%Y%m%dT%H%M%SZ").to_string()),
+        )
+    };
+
+    if !dry_run {
+        if let Some(root) = &backup_root {
+            fs::create_dir_all(root).with_context(|| format!("create {}", root.display()))?;
+        }
+        for skill in &inventory.skills {
+            match skill.action {
+                SkillUpgradeAction::Install
+                | SkillUpgradeAction::Replace
+                | SkillUpgradeAction::ReplaceForced => {
+                    let template_path = skill
+                        .template_path
+                        .as_ref()
+                        .map(PathBuf::from)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("skill template is missing for {}", skill.name)
+                        })?;
+                    let project_path = PathBuf::from(&skill.project_path);
+                    if project_path.exists() {
+                        let backup_root = backup_root.as_ref().ok_or_else(|| {
+                            anyhow::anyhow!("backup root missing while replacing {}", skill.name)
+                        })?;
+                        let backup_path = backup_root.join(&skill.name);
+                        copy_directory_tree(&project_path, &backup_path).with_context(|| {
+                            format!(
+                                "backup {} -> {}",
+                                project_path.display(),
+                                backup_path.display()
+                            )
+                        })?;
+                        fs::remove_dir_all(&project_path)
+                            .with_context(|| format!("remove {}", project_path.display()))?;
+                    }
+                    copy_directory_tree(&template_path, &project_path).with_context(|| {
+                        format!(
+                            "copy {} -> {}",
+                            template_path.display(),
+                            project_path.display()
+                        )
+                    })?;
+                }
+                SkillUpgradeAction::Skip => {}
+            }
+        }
+    }
+
+    Ok(SkillUpgradeReport {
+        dry_run,
+        force,
+        backup_root: backup_root.map(|path| path.display().to_string()),
+        inventory,
+    })
+}
+
+fn print_skill_upgrade_report(report: &SkillUpgradeReport) {
+    println!(
+        "{} repo-local Memory skills at {}",
+        if report.dry_run {
+            "Would inspect"
+        } else {
+            "Inspected"
+        },
+        report.inventory.project_skill_root
+    );
+    if let Some(template_root) = &report.inventory.template_root {
+        println!("Template: {template_root}");
+    } else {
+        println!("Template: <not found>");
+    }
+    if let Some(backup_root) = &report.backup_root {
+        println!("Backup: {backup_root}");
+    }
+    println!();
+    for skill in &report.inventory.skills {
+        let project_version = skill.project_version.as_deref().unwrap_or("n/a");
+        let template_version = skill.template_version.as_deref().unwrap_or("n/a");
+        println!(
+            "- {}: {} (project {}, template {}, action {:?})",
+            skill.name,
+            skill.status.label(),
+            project_version,
+            template_version,
+            skill.action
+        );
+        if let Some(detail) = &skill.detail {
+            println!("  detail: {detail}");
+        }
+    }
+    if report.dry_run {
+        println!(
+            "\nDry run only. Run `memory upgrade` to apply the listed install/replace actions."
+        );
+    }
+}
+
+fn format_skill_inventory_summary(inventory: &SkillInventoryReport) -> String {
+    let template = inventory
+        .template_root
+        .as_deref()
+        .unwrap_or("<template not found>");
+    let skills = inventory
+        .skills
+        .iter()
+        .map(|skill| {
+            format!(
+                "{}={} local:{} template:{}",
+                skill.name,
+                skill.status.label(),
+                skill.project_version.as_deref().unwrap_or("n/a"),
+                skill.template_version.as_deref().unwrap_or("n/a")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!("template={template}; {skills}")
 }
 
 fn copy_directory_tree(src: &Path, dest: &Path) -> Result<()> {
@@ -12940,20 +13412,22 @@ mod tests {
 
     use super::{
         Cli, DEV_API_TOKEN, EvalRunContext, PlanExecutionFinishReport, RememberArgs,
-        SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, TuiRestartMarker, WatcherCommand,
-        WatcherManagerArgs, WatcherManagerCommand, agent_build_prompt,
-        build_finish_execution_implementation_request, build_graph_activity_request,
-        build_plan_execution_finish_report, build_plan_execution_request, build_remember_request,
-        build_task_start_request, chat_completion_content, derive_plan_thread_key,
-        derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
-        ensure_direct_llm_eval_config, ensure_shared_service_api_token, initialize_repo,
-        is_placeholder_database_url, mask_database_url, newest_tui_restart_notice,
-        parse_memory_type_arg, parse_no_memory_grounded_answer, parse_plan_checkboxes,
-        render_agent_project_config, render_claude_md_memory_section, repair_repo_bootstrap,
-        resolve_project_slug, resolve_repo_root, resolve_writer_identity,
-        root_gitignore_contains_mem, shared_env_lookup, should_start_agent_watcher,
-        token_usage_from_chat_body, watcher_command_requires_config_load, write_file_if_changed,
-        write_headers,
+        SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, SkillUpgradeAction, SkillVersionStatus,
+        TuiRestartMarker, WatcherCommand, WatcherManagerArgs, WatcherManagerCommand,
+        agent_build_prompt, build_finish_execution_implementation_request,
+        build_graph_activity_request, build_plan_execution_finish_report,
+        build_plan_execution_request, build_remember_request, build_task_start_request,
+        chat_completion_content, derive_plan_thread_key, derive_plan_title,
+        durable_plan_source_path, ensure_checkbox_plan, ensure_direct_llm_eval_config,
+        ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
+        mask_database_url, newest_tui_restart_notice, parse_memory_type_arg,
+        parse_no_memory_grounded_answer, parse_plan_checkboxes,
+        project_skill_inventory_with_template, read_skill_version, render_agent_project_config,
+        render_claude_md_memory_section, repair_repo_bootstrap, resolve_project_slug,
+        resolve_repo_root, resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
+        should_start_agent_watcher, token_usage_from_chat_body,
+        upgrade_project_skills_with_template, watcher_command_requires_config_load,
+        write_file_if_changed, write_headers,
     };
     use mem_api::AppConfig;
 
@@ -14458,6 +14932,140 @@ mod tests {
             resolved_config_path: None,
             resolved_dev_overlay_path: None,
         }
+    }
+
+    #[test]
+    fn skill_version_prefers_skill_frontmatter_over_agent_hint() {
+        let repo = unique_temp_dir("mem-skill-version");
+        let skill = repo.join("skill");
+        fs::create_dir_all(skill.join("agents")).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: example\nversion: 1.2.3\ndescription: test\n---\n",
+        )
+        .unwrap();
+        fs::write(
+            skill.join("agents/openai.yaml"),
+            "name: example\nversion: 0.1.0\nentrypoint: SKILL.md\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            read_skill_version(&skill).unwrap(),
+            Some("1.2.3".to_string())
+        );
+
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn skill_inventory_marks_outdated_and_missing_skills() {
+        let repo = unique_temp_dir("mem-skill-inventory");
+        let project_root = repo.join("project");
+        let template_root = repo.join("memory-layer/skill-template");
+        for name in super::MEMORY_SKILL_NAMES {
+            write_test_skill(&template_root.join(name), "0.2.0");
+        }
+        write_test_skill(
+            &project_root
+                .join(".agents/skills")
+                .join(super::MEMORY_SKILL_NAMES[0]),
+            "0.1.0",
+        );
+        write_test_skill(
+            &project_root
+                .join(".agents/skills")
+                .join(super::MEMORY_SKILL_NAMES[1]),
+            "0.2.0",
+        );
+
+        let inventory =
+            project_skill_inventory_with_template(&project_root, Some(template_root), false);
+
+        assert_eq!(inventory.skills[0].status, SkillVersionStatus::Outdated);
+        assert_eq!(inventory.skills[0].action, SkillUpgradeAction::Replace);
+        assert_eq!(inventory.skills[1].status, SkillVersionStatus::UpToDate);
+        assert_eq!(inventory.skills[1].action, SkillUpgradeAction::Skip);
+        assert_eq!(inventory.skills[2].status, SkillVersionStatus::Missing);
+        assert_eq!(inventory.skills[2].action, SkillUpgradeAction::Install);
+
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn skill_upgrade_dry_run_does_not_replace_project_skill() {
+        let repo = unique_temp_dir("mem-skill-upgrade-dry-run");
+        let project_root = repo.join("project");
+        let template_root = repo.join("memory-layer/skill-template");
+        for name in super::MEMORY_SKILL_NAMES {
+            write_test_skill(&template_root.join(name), "0.2.0");
+            write_test_skill(&project_root.join(".agents/skills").join(name), "0.1.0");
+        }
+        let first_skill = project_root
+            .join(".agents/skills")
+            .join(super::MEMORY_SKILL_NAMES[0])
+            .join("SKILL.md");
+        let before = fs::read_to_string(&first_skill).unwrap();
+
+        let report =
+            upgrade_project_skills_with_template(&project_root, Some(template_root), false, true)
+                .unwrap();
+
+        assert!(report.dry_run);
+        assert_eq!(report.backup_root, None);
+        assert_eq!(fs::read_to_string(&first_skill).unwrap(), before);
+
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn skill_upgrade_replaces_outdated_skill_and_creates_backup() {
+        let repo = unique_temp_dir("mem-skill-upgrade");
+        let project_root = repo.join("project");
+        let template_root = repo.join("memory-layer/skill-template");
+        for name in super::MEMORY_SKILL_NAMES {
+            write_test_skill(&template_root.join(name), "0.2.0");
+            write_test_skill(&project_root.join(".agents/skills").join(name), "0.1.0");
+        }
+
+        let report =
+            upgrade_project_skills_with_template(&project_root, Some(template_root), false, false)
+                .unwrap();
+        let backup_root = report.backup_root.clone().expect("backup root");
+
+        assert!(!report.dry_run);
+        assert_eq!(
+            read_skill_version(
+                &project_root
+                    .join(".agents/skills")
+                    .join(super::MEMORY_SKILL_NAMES[0])
+            )
+            .unwrap(),
+            Some("0.2.0".to_string())
+        );
+        assert!(
+            PathBuf::from(backup_root)
+                .join(super::MEMORY_SKILL_NAMES[0])
+                .join("SKILL.md")
+                .is_file()
+        );
+
+        let _ = fs::remove_dir_all(repo);
+    }
+
+    fn write_test_skill(path: &Path, version: &str) {
+        fs::create_dir_all(path.join("agents")).unwrap();
+        let name = path.file_name().and_then(|value| value.to_str()).unwrap();
+        fs::write(
+            path.join("SKILL.md"),
+            format!("---\nname: {name}\nversion: {version}\ndescription: test\n---\n"),
+        )
+        .unwrap();
+        fs::write(
+            path.join("agents/openai.yaml"),
+            format!("name: {name}\nversion: {version}\nentrypoint: SKILL.md\n"),
+        )
+        .unwrap();
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {
