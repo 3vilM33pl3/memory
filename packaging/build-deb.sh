@@ -16,7 +16,10 @@ mkdir -p \
   "$PKG_ROOT/lib/systemd/system" \
   "$PKG_ROOT/usr/share/doc/memory-layer" \
   "$PKG_ROOT/usr/share/memory-layer/skill-template" \
-  "$PKG_ROOT/usr/share/memory-layer/web"
+  "$PKG_ROOT/usr/share/memory-layer/web" \
+  "$PKG_ROOT/usr/share/bash-completion/completions" \
+  "$PKG_ROOT/usr/share/zsh/vendor-completions" \
+  "$PKG_ROOT/usr/share/fish/vendor_completions.d"
 
 echo "Building release binaries..."
 cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin memory
@@ -25,6 +28,9 @@ npm --prefix "$ROOT_DIR/web" ci
 npm --prefix "$ROOT_DIR/web" run build
 
 install -m 0755 "$ROOT_DIR/target/release/memory" "$PKG_ROOT/usr/bin/memory"
+"$PKG_ROOT/usr/bin/memory" completion bash > "$PKG_ROOT/usr/share/bash-completion/completions/memory"
+"$PKG_ROOT/usr/bin/memory" completion zsh > "$PKG_ROOT/usr/share/zsh/vendor-completions/_memory"
+"$PKG_ROOT/usr/bin/memory" completion fish > "$PKG_ROOT/usr/share/fish/vendor_completions.d/memory.fish"
 install -m 0644 "$ROOT_DIR/packaging/debian/memory-layer.service" "$PKG_ROOT/lib/systemd/system/memory-layer.service"
 install -m 0644 "$ROOT_DIR/packaging/debian/memory-watch.service" "$PKG_ROOT/lib/systemd/system/memory-watch.service"
 install -m 0644 "$ROOT_DIR/packaging/debian/memory-layer.env" "$PKG_ROOT/etc/memory-layer/memory-layer.env"

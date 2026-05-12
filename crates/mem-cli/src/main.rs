@@ -20,7 +20,8 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap_complete::{Shell, generate};
 use mem_agenttop::LightweightAgentSession;
 use mem_api::{
     ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
@@ -971,6 +972,19 @@ Examples:
 See also:
   docs/user/tui/README.md";
 
+const COMPLETION_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only command that prints shell completion scripts to stdout.
+  Package installers normally install completions automatically; use this for manual setup or debugging.
+
+Examples:
+  memory completion bash > ~/.local/share/bash-completion/completions/memory
+  memory completion zsh > ~/.zfunc/_memory
+  memory completion fish > ~/.config/fish/completions/memory.fish
+
+See also:
+  docs/user/cli/completion.md";
+
 #[derive(Debug, Parser)]
 #[command(
     name = "memory",
@@ -1051,8 +1065,17 @@ enum Command {
     Automation(AutomationArgs),
     #[command(about = "Open the terminal UI.", after_help = TUI_AFTER_HELP)]
     Tui(TuiArgs),
+    #[command(about = "Generate shell completion scripts.", after_help = COMPLETION_AFTER_HELP)]
+    Completion(CompletionArgs),
     #[command(about = "Scaffold and inspect the dev-profile overlay.", after_help = DEV_GROUP_AFTER_HELP)]
     Dev(DevArgs),
+}
+
+#[derive(Debug, Args)]
+struct CompletionArgs {
+    /// Shell to generate completions for.
+    #[arg(value_enum)]
+    shell: Shell,
 }
 
 #[derive(Debug, Args)]
@@ -2200,6 +2223,17 @@ async fn main() -> Result<()> {
             }
             return Ok(());
         }
+        Command::Completion(args) => {
+            let mut command = Cli::command();
+            let mut output = Vec::new();
+            generate(args.shell, &mut command, "memory", &mut output);
+            if let Err(error) = io::stdout().write_all(&output)
+                && error.kind() != io::ErrorKind::BrokenPipe
+            {
+                return Err(error).context("write completion script");
+            }
+            return Ok(());
+        }
         Command::Dev(args) => {
             match &args.command {
                 DevCommand::Init(init_args) => {
@@ -2365,6 +2399,7 @@ async fn main() -> Result<()> {
         Command::Wizard(_) => unreachable!("wizard is handled before config loading"),
         Command::Init(_) => unreachable!("init is handled before config loading"),
         Command::Upgrade(_) => unreachable!("upgrade is handled before config loading"),
+        Command::Completion(_) => unreachable!("completion is handled before config loading"),
         Command::Dev(_) => unreachable!("dev subcommands are handled before config loading"),
         Command::Service(ServiceArgs {
             command: ServiceCommand::Run,
@@ -13658,6 +13693,7 @@ mod tests {
             "archive" => Some("archive.md"),
             "automation" => Some("automation.md"),
             "tui" => Some("tui.md"),
+            "completion" => Some("completion.md"),
             "dev" => Some("dev.md"),
             other => panic!("root command {other} must declare a docs mapping"),
         }
@@ -13746,6 +13782,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn rendered_completion(shell: clap_complete::Shell) -> String {
+        let mut command = Cli::command();
+        let mut output = Vec::new();
+        clap_complete::generate(shell, &mut command, "memory", &mut output);
+        String::from_utf8(output).unwrap()
+    }
+
+    #[test]
+    fn completions_include_root_and_nested_commands() {
+        let bash = rendered_completion(clap_complete::Shell::Bash);
+        assert!(bash.contains("wizard"));
+        assert!(bash.contains("completion"));
+        assert!(bash.contains("watcher"));
+        assert!(bash.contains("manager"));
+        assert!(bash.contains("--project"));
+
+        let zsh = rendered_completion(clap_complete::Shell::Zsh);
+        assert!(zsh.contains("_memory"));
+        assert!(zsh.contains("watcher"));
+        assert!(zsh.contains("manager"));
+        assert!(zsh.contains("completion"));
+
+        let fish = rendered_completion(clap_complete::Shell::Fish);
+        assert!(fish.contains("complete -c memory"));
+        assert!(fish.contains("watcher"));
+        assert!(fish.contains("manager"));
+        assert!(fish.contains("completion"));
     }
 
     #[test]
@@ -13887,6 +13952,33 @@ mod tests {
         for contents in [postinst, pkg, formula] {
             assert!(contents.contains("service restart-all"));
             assert!(contents.contains("--mark-tui-restart"));
+        }
+    }
+
+    #[test]
+    fn packaging_installs_shell_completions() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let local = fs::read_to_string(workspace.join("scripts/install-local.sh")).unwrap();
+        let deb = fs::read_to_string(workspace.join("packaging/build-deb.sh")).unwrap();
+        let pkg = fs::read_to_string(workspace.join("packaging/build-pkg.sh")).unwrap();
+        let formula = fs::read_to_string(workspace.join("Formula/memory-layer.rb")).unwrap();
+
+        for contents in [local, deb, pkg, formula] {
+            assert!(
+                contents.contains("completion\", \"bash") || contents.contains("completion bash")
+            );
+            assert!(
+                contents.contains("completion\", \"zsh") || contents.contains("completion zsh")
+            );
+            assert!(
+                contents.contains("completion\", \"fish") || contents.contains("completion fish")
+            );
+            assert!(contents.contains("bash-completion") || contents.contains("bash_completion"));
+            assert!(contents.contains("_memory"));
+            assert!(contents.contains("memory.fish"));
         }
     }
 

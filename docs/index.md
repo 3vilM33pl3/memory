@@ -50,6 +50,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 - [Embedding Operations](user/cli/embeddings.md)
 - [Watcher Health](user/cli/watchers.md)
 - [TUI Command](user/cli/tui.md)
+- [Shell Completion](user/cli/completion.md)
 - [History](user/cli/history.md), [Prune History](user/cli/prune-history.md), [Stats](user/cli/stats.md), [Dev Command](user/cli/dev.md)
 
 ## Developer Docs

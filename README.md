@@ -364,7 +364,7 @@ Project-local customization now has two layers:
 - **Use the visual workflow:** [TUI Guide](docs/user/tui/README.md), [TUI Command](docs/user/cli/tui.md), [Memories Tab](docs/user/tui/memories.md), [Query Tab](docs/user/tui/query.md), [Errors Tab](docs/user/tui/errors.md)
 - **Ask and explain:** [Query Command](docs/user/cli/query.md), [Code Graph Extraction](docs/user/cli/graph.md), [Embedding Operations](docs/user/cli/embeddings.md)
 - **Run agents and automation:** [Watcher Health](docs/user/cli/watchers.md), [Activities](docs/user/cli/activities.md), [Get Up To Speed](docs/user/cli/up-to-speed.md), [Resume Briefings](docs/user/cli/resume.md)
-- **Operate and troubleshoot:** [Service Commands](docs/user/cli/service.md), [Health](docs/user/cli/health.md), [Stats](docs/user/cli/stats.md), [Doctor Diagnostics](docs/user/cli/doctor.md)
+- **Operate and troubleshoot:** [Service Commands](docs/user/cli/service.md), [Health](docs/user/cli/health.md), [Stats](docs/user/cli/stats.md), [Doctor Diagnostics](docs/user/cli/doctor.md), [Shell Completion](docs/user/cli/completion.md)
 - **Maintain memories:** [Remember](docs/user/cli/remember.md), [Curate](docs/user/cli/curate.md), [History](docs/user/cli/history.md), [Prune History](docs/user/cli/prune-history.md), [Archive](docs/user/cli/archive.md), [Bundles](docs/user/cli/bundles.md)
 - **Measure and develop:** [Beginner Evaluation Guide](docs/user/evaluation-guide.md), [Automated Evaluation](docs/user/cli/eval.md), [Dev Stack](docs/developer/dev-stack.md), [Dev Command](docs/user/cli/dev.md)
 

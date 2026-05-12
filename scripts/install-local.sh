@@ -16,8 +16,19 @@ fi
 ENV_FILE="$CONFIG_DIR/memory-layer.env"
 SKILL_TEMPLATE_DIR="$SHARE_DIR/skill-template"
 WEB_DIR="$SHARE_DIR/web"
+COMPLETION_SHARE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+BASH_COMPLETION_DIR="$COMPLETION_SHARE_DIR/bash-completion/completions"
+ZSH_COMPLETION_DIR="$COMPLETION_SHARE_DIR/zsh/site-functions"
+FISH_COMPLETION_DIR="$COMPLETION_SHARE_DIR/fish/vendor_completions.d"
 
-mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$SKILL_TEMPLATE_DIR" "$WEB_DIR"
+mkdir -p \
+  "$BIN_DIR" \
+  "$CONFIG_DIR" \
+  "$SKILL_TEMPLATE_DIR" \
+  "$WEB_DIR" \
+  "$BASH_COMPLETION_DIR" \
+  "$ZSH_COMPLETION_DIR" \
+  "$FISH_COMPLETION_DIR"
 
 echo "Building release binaries..."
 cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin memory
@@ -26,6 +37,9 @@ npm --prefix "$ROOT_DIR/web" ci
 npm --prefix "$ROOT_DIR/web" run build
 
 install -m 0755 "$ROOT_DIR/target/release/memory" "$BIN_DIR/memory"
+"$BIN_DIR/memory" completion bash > "$BASH_COMPLETION_DIR/memory"
+"$BIN_DIR/memory" completion zsh > "$ZSH_COMPLETION_DIR/_memory"
+"$BIN_DIR/memory" completion fish > "$FISH_COMPLETION_DIR/memory.fish"
 rm -rf "$SKILL_TEMPLATE_DIR"
 mkdir -p "$SKILL_TEMPLATE_DIR"
 cp -R "$ROOT_DIR/.agents/skills/." "$SKILL_TEMPLATE_DIR/"
@@ -68,6 +82,9 @@ Installed:
   $BIN_DIR/memory
   $SKILL_TEMPLATE_DIR
   $WEB_DIR
+  $BASH_COMPLETION_DIR/memory
+  $ZSH_COMPLETION_DIR/_memory
+  $FISH_COMPLETION_DIR/memory.fish
 
 Next steps:
 1. In each repo, run:
@@ -84,5 +101,10 @@ Next steps:
    $BIN_DIR/memory tui
 7. Open the web UI:
    http://127.0.0.1:4040/
+
+Shell completion:
+  bash and fish usually pick up the installed files in a new shell.
+  For zsh, add this before compinit if needed:
+    fpath=("$ZSH_COMPLETION_DIR" \$fpath)
 
 EOF

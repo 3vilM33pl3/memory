@@ -45,6 +45,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Stats Command](cli/stats.md)
 - [Query Command](cli/query.md)
 - [TUI Command](cli/tui.md)
+- [Shell Completion](cli/completion.md)
 - [Activities Command](cli/activities.md)
 - [Get Up To Speed](cli/up-to-speed.md)
 - [Checkpoint Workflow](cli/checkpoint.md)

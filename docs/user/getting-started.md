@@ -16,6 +16,7 @@ This guide is written for someone who just wants Memory Layer working with as li
 - [Writer ID](#writer-id)
 - [Primary And Relay Services](#primary-and-relay-services)
 - [Daily Use](#daily-use)
+- [Shell Completion](#shell-completion)
 - [Optional Background Watcher](#optional-background-watcher)
 - [Upgrading An Existing Install](#upgrading-an-existing-install)
 - [Using `scan`](#using-scan)
@@ -609,6 +610,20 @@ For service management and setup diagnostics, see [Service Commands](cli/service
 For bootstrap behavior, see [Wizard And Bootstrap](cli/wizard.md).
 
 For getting back into flow after an interruption, see [Resume Briefings](cli/resume.md).
+
+## Shell Completion
+
+Package installs generate completion scripts for bash, zsh, and fish automatically. Open a new shell after installing or upgrading.
+
+For development binaries or manual setup:
+
+```bash
+memory completion bash
+memory completion zsh
+memory completion fish
+```
+
+See [Shell Completion](cli/completion.md) for install paths and shell-specific setup.
 
 ## Optional Background Watcher
 

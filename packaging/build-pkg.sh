@@ -7,6 +7,7 @@ set -euo pipefail
 # The resulting .pkg installs:
 #   /usr/local/bin/memory          (+ mem-cli symlink)
 #   /usr/local/share/memory-layer/ (web UI, skill templates, example config)
+#   /usr/local/share/*             (bash, zsh, and fish completion scripts)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="$(awk -F '"' '/^version = / { print $2; exit }' "$ROOT_DIR/Cargo.toml" 2>/dev/null || true)"
@@ -32,6 +33,9 @@ mkdir -p \
   "$PAYLOAD/usr/local/bin" \
   "$PAYLOAD/usr/local/share/memory-layer/skill-template" \
   "$PAYLOAD/usr/local/share/memory-layer/web" \
+  "$PAYLOAD/usr/local/share/bash-completion/completions" \
+  "$PAYLOAD/usr/local/share/zsh/site-functions" \
+  "$PAYLOAD/usr/local/share/fish/vendor_completions.d" \
   "$SCRIPTS"
 
 # --- Build -----------------------------------------------------------------
@@ -45,6 +49,9 @@ npm --prefix "$ROOT_DIR/web" run build
 # --- Stage payload ----------------------------------------------------------
 install -m 0755 "$ROOT_DIR/target/release/memory" "$PAYLOAD/usr/local/bin/memory"
 ln -sf memory "$PAYLOAD/usr/local/bin/mem-cli"
+"$PAYLOAD/usr/local/bin/memory" completion bash > "$PAYLOAD/usr/local/share/bash-completion/completions/memory"
+"$PAYLOAD/usr/local/bin/memory" completion zsh > "$PAYLOAD/usr/local/share/zsh/site-functions/_memory"
+"$PAYLOAD/usr/local/bin/memory" completion fish > "$PAYLOAD/usr/local/share/fish/vendor_completions.d/memory.fish"
 
 cp -R "$ROOT_DIR/.agents/skills/." "$PAYLOAD/usr/local/share/memory-layer/skill-template/"
 find "$PAYLOAD/usr/local/share/memory-layer/skill-template" -type f -name '*.sh' -exec chmod 0755 {} +

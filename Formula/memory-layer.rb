@@ -16,6 +16,9 @@ class MemoryLayer < Formula
 
     bin.install "target/release/memory"
     bin.install_symlink "memory" => "mem-cli"
+    (bash_completion/"memory").write Utils.safe_popen_read(bin/"memory", "completion", "bash")
+    (zsh_completion/"_memory").write Utils.safe_popen_read(bin/"memory", "completion", "zsh")
+    (fish_completion/"memory.fish").write Utils.safe_popen_read(bin/"memory", "completion", "fish")
     (pkgshare/"skill-template").install Dir[".agents/skills/*"]
     pkgshare.install "memory-layer.toml.example"
     pkgshare.install "web/dist" => "web"
@@ -57,5 +60,8 @@ class MemoryLayer < Formula
     assert_predicate pkgshare/"skill-template/memory-layer/SKILL.md", :exist?
     assert_predicate pkgshare/"skill-template/memory-query-resume/SKILL.md", :exist?
     assert_predicate pkgshare/"web/index.html", :exist?
+    assert_predicate bash_completion/"memory", :exist?
+    assert_predicate zsh_completion/"_memory", :exist?
+    assert_predicate fish_completion/"memory.fish", :exist?
   end
 end
