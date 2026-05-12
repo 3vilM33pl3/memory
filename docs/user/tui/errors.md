@@ -34,6 +34,7 @@ Each diagnostic can include:
 - `PgUp` / `PgDn` scrolls the detail pane
 - `Home` jumps the detail pane back to the top
 - `r` refreshes activity-backed diagnostics
+- `h` open or close detailed help for this tab
 
 ## Common Examples
 

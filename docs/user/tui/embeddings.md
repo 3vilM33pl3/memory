@@ -55,8 +55,9 @@ A healthy dual-backend setup shows equal `CHUNKS` and `MEMORIES` across both row
 | `e` | Create missing embeddings for the highlighted backend |
 | `I` | Rebuild chunks and embeddings for all configured backends |
 | `r` | Force an immediate refresh of the backend list and coverage counts |
+| `h` | Open or close detailed help for this tab |
 
-Tab movement (`Tab`, `Shift+Tab`, `l`, `h`) and the quit shortcut (`Ctrl+C`) work as on every other tab.
+Tab movement (`Tab`, `Shift+Tab`, `l`, `Left`) and the quit shortcut (`Ctrl+C`) work as on every other tab.
 
 ## How Activation Works
 

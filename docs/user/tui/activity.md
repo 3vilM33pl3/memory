@@ -34,6 +34,7 @@ The briefing is intended for agents that need to hit the ground running. It high
 - `r` refreshes persisted activity events
 - `g` generates a deterministic get-up-to-speed briefing
 - `L` generates an LLM-assisted get-up-to-speed briefing
+- `h` open or close detailed help for this tab
 
 ## Related Docs
 

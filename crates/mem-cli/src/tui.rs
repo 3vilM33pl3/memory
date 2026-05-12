@@ -400,6 +400,9 @@ struct App {
     memory_detail_scroll: u16,
     project_scroll: u16,
     watcher_scroll: u16,
+    help_open: bool,
+    help_tab: TabKind,
+    help_scroll: u16,
     replacement_policy: ReplacementPolicy,
     replacement_proposals: Vec<ReplacementProposalRecord>,
     replacement_selected_index: usize,
@@ -711,6 +714,9 @@ impl App {
             memory_detail_scroll: 0,
             project_scroll: 0,
             watcher_scroll: 0,
+            help_open: false,
+            help_tab: TabKind::Memories,
+            help_scroll: 0,
             replacement_policy: load_repo_replacement_policy(&repo_root).unwrap_or_default(),
             replacement_proposals: Vec::new(),
             replacement_selected_index: 0,
@@ -1520,6 +1526,15 @@ impl App {
 
         self.startup_resume_autoselect_pending = false;
 
+        if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
+            return Ok(true);
+        }
+
+        if self.help_open {
+            self.handle_help_key(key);
+            return Ok(false);
+        }
+
         match key.code {
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') if key.modifiers.is_empty() => {
                 self.set_active_tab(self.active_tab.next());
@@ -1535,11 +1550,14 @@ impl App {
                     self.request_resume_refresh(api, false);
                 }
             }
-            KeyCode::Left | KeyCode::Char('h') if key.modifiers.is_empty() => {
+            KeyCode::Left if key.modifiers.is_empty() => {
                 self.set_active_tab(self.active_tab.prev());
                 if self.active_tab == TabKind::Resume && !self.resume_loaded {
                     self.request_resume_refresh(api, false);
                 }
+            }
+            KeyCode::Char('h') if key.modifiers.is_empty() => {
+                self.open_help_for_active_tab();
             }
             KeyCode::Char('r')
                 if key.modifiers.is_empty()
@@ -1940,10 +1958,22 @@ impl App {
             {
                 self.toggle_selected_history(api).await;
             }
-            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => return Ok(true),
             _ => {}
         }
         Ok(false)
+    }
+
+    fn handle_help_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('h') | KeyCode::Esc if key.modifiers.is_empty() => self.close_help(),
+            KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => self.scroll_help(1),
+            KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => self.scroll_help(-1),
+            KeyCode::PageDown => self.scroll_help(8),
+            KeyCode::PageUp => self.scroll_help(-8),
+            KeyCode::Home => self.help_scroll = 0,
+            KeyCode::End => self.scroll_help_end(),
+            _ => {}
+        }
     }
 
     async fn toggle_selected_history(&mut self, api: &ApiClient) {
@@ -2814,6 +2844,43 @@ impl App {
         };
     }
 
+    fn open_help_for_active_tab(&mut self) {
+        self.help_open = true;
+        self.help_tab = self.active_tab;
+        self.help_scroll = 0;
+        self.status_message = format!(
+            "Showing {} help. Press h or Esc to return.",
+            self.help_tab.label()
+        );
+    }
+
+    fn close_help(&mut self) {
+        self.help_open = false;
+        self.help_scroll = 0;
+        self.status_message = "Help closed.".to_string();
+    }
+
+    fn scroll_help(&mut self, delta: i16) {
+        let area = current_frame_area().unwrap_or_else(default_frame_area);
+        self.scroll_help_in_area(delta, area);
+    }
+
+    fn scroll_help_in_area(&mut self, delta: i16, frame_area: Rect) {
+        let max_scroll = help_max_scroll(self.help_tab, frame_area);
+        self.help_scroll = if delta.is_negative() {
+            self.help_scroll.saturating_sub(delta.unsigned_abs())
+        } else {
+            self.help_scroll
+                .saturating_add(u16::try_from(delta).unwrap_or(0))
+        }
+        .min(max_scroll);
+    }
+
+    fn scroll_help_end(&mut self) {
+        let area = current_frame_area().unwrap_or_else(default_frame_area);
+        self.help_scroll = help_max_scroll(self.help_tab, area);
+    }
+
     fn scroll_memory_detail(&mut self, delta: i16) {
         let area = current_frame_area().unwrap_or_else(default_frame_area);
         self.scroll_memory_detail_in_area(delta, area);
@@ -3266,175 +3333,204 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         );
     frame.render_widget(tabs, chunks[0]);
 
-    let filter_bar = Paragraph::new(vec![Line::from(match app.active_tab {
-        TabKind::Resume => vec![
-            accent_span("refresh "),
-            Span::styled("r  ", Style::default().fg(Theme::TEXT)),
+    let control_line = if app.help_open {
+        Line::from(vec![
+            accent_span("back "),
+            Span::styled("h/Esc  ", Style::default().fg(Theme::TEXT)),
             accent_span("scroll "),
-            Span::styled("j/k PgUp/PgDn Home", Style::default().fg(Theme::TEXT)),
-        ],
-        TabKind::Memories => vec![
-            accent_span("search=/ "),
-            Span::styled(
-                display_filter(&app.filters.text),
-                Style::default().fg(Theme::TEXT),
-            ),
-            Span::raw("  "),
-            accent_span("tag=g "),
-            Span::styled(
-                display_filter(&app.filters.tag),
-                Style::default().fg(Theme::TEXT),
-            ),
-            Span::raw("  "),
-            accent_span("status=s "),
-            status_span(app.filters.status.label()),
-            Span::raw("  "),
-            accent_span("type=t "),
-            memory_type_span_from_label(app.filters.memory_type.label()),
-            Span::raw("  "),
-            accent_span("focus "),
-            Span::styled(
-                match app.memories_focus {
-                    MemoriesFocus::List => "list",
-                    MemoriesFocus::Detail => "detail",
-                },
-                Style::default()
-                    .fg(match app.memories_focus {
-                        MemoriesFocus::List => Theme::ACCENT,
-                        MemoriesFocus::Detail => Theme::ACCENT_STRONG,
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                match app.memories_focus {
-                    MemoriesFocus::List => {
-                        "Enter=detail  j/k=select  PgUp/PgDn/Home/End=scroll  clear=x curate=c reindex=i reembed=e archive=a delete=D history=H"
-                    }
-                    MemoriesFocus::Detail => {
-                        "Enter/Esc=list  j/k=scroll  PgUp/PgDn/Home/End=scroll  clear=x curate=c reindex=i reembed=e archive=a delete=D history=H"
-                    }
-                },
-                Style::default().fg(Theme::MUTED),
-            ),
-        ],
-        TabKind::Agents => vec![
-            accent_span("auto-refresh "),
-            Span::styled("2s  ", Style::default().fg(Theme::TEXT)),
-            accent_span("select "),
-            Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
-            accent_span("detail "),
-            Span::styled("PgUp/PgDn Home  ", Style::default().fg(Theme::TEXT)),
-            Span::styled(
-                "read-only agent/session monitor inspired by abtop",
-                Style::default().fg(Theme::MUTED),
-            ),
-        ],
-        TabKind::Query => vec![
-            accent_span("new=Enter/? "),
-            Span::styled(
-                display_filter(&current_query_display(app)),
-                Style::default().fg(Theme::TEXT),
-            ),
-            Span::raw("  "),
-            Span::styled("j/k move result", Style::default().fg(Theme::MUTED)),
-            Span::raw("  "),
-            Span::styled(
-                "Up/Down history while editing",
-                Style::default().fg(Theme::MUTED),
-            ),
-        ],
-        TabKind::Activity => vec![
-            accent_span("brief "),
-            Span::styled("g deterministic / L llm  ", Style::default().fg(Theme::TEXT)),
-            accent_span("refresh "),
-            Span::styled("r  ", Style::default().fg(Theme::TEXT)),
-            accent_span("move "),
-            Span::styled("j/k PgUp/PgDn", Style::default().fg(Theme::TEXT)),
-        ],
-        TabKind::Errors => vec![
-            accent_span("refresh "),
-            Span::styled("r  ", Style::default().fg(Theme::TEXT)),
-            accent_span("move "),
-            Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
-            accent_span("detail "),
-            Span::styled("PgUp/PgDn Home  ", Style::default().fg(Theme::TEXT)),
-            Span::styled(
-                "persisted backend diagnostics plus session-local TUI errors",
-                Style::default().fg(Theme::MUTED),
-            ),
-        ],
-        TabKind::Project => vec![
-            accent_span("scroll "),
-            Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
-            accent_span("page "),
-            Span::styled("PgUp/PgDn  ", Style::default().fg(Theme::TEXT)),
+            Span::styled("j/k PgUp/PgDn  ", Style::default().fg(Theme::TEXT)),
             accent_span("jump "),
-            Span::styled("Home", Style::default().fg(Theme::TEXT)),
-        ],
-        TabKind::Review => vec![
-            accent_span("move "),
-            Span::styled("j/k [ ]  ", Style::default().fg(Theme::TEXT)),
-            accent_span("approve "),
-            Span::styled("y  ", Style::default().fg(Theme::TEXT)),
-            accent_span("reject "),
-            Span::styled("n  ", Style::default().fg(Theme::TEXT)),
-            accent_span("policy "),
-            Span::styled("p  ", Style::default().fg(Theme::TEXT)),
-            accent_span("refresh "),
-            Span::styled("r", Style::default().fg(Theme::TEXT)),
-        ],
-        TabKind::Watchers => vec![
-            accent_span("scroll "),
-            Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
-            accent_span("page "),
-            Span::styled("PgUp/PgDn  ", Style::default().fg(Theme::TEXT)),
-            accent_span("jump "),
-            Span::styled("Home", Style::default().fg(Theme::TEXT)),
-        ],
-        TabKind::Embeddings => vec![
-            accent_span("move "),
-            Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
-            accent_span("toggle "),
-            Span::styled("Enter  ", Style::default().fg(Theme::TEXT)),
-            accent_span("create "),
-            Span::styled("c  ", Style::default().fg(Theme::TEXT)),
-            accent_span("embed "),
-            Span::styled("e  ", Style::default().fg(Theme::TEXT)),
-            accent_span("reindex "),
-            Span::styled("I  ", Style::default().fg(Theme::TEXT)),
-            accent_span("refresh "),
-            Span::styled("r", Style::default().fg(Theme::TEXT)),
-        ],
-    })])
-    .style(Style::default().bg(Theme::PANEL_ALT))
-    .block(themed_block(match &app.input_mode {
-        InputMode::Normal => "Controls",
-        InputMode::Search(value) => {
-            if value.is_empty() {
-                "Search Input"
-            } else {
-                "Search Input (editing)"
+            Span::styled("Home/End  ", Style::default().fg(Theme::TEXT)),
+            Span::styled(
+                format!("showing {} help", app.help_tab.label()),
+                Style::default().fg(Theme::MUTED),
+            ),
+        ])
+    } else {
+        let mut spans = match app.active_tab {
+            TabKind::Resume => vec![
+                accent_span("refresh "),
+                Span::styled("r  ", Style::default().fg(Theme::TEXT)),
+                accent_span("scroll "),
+                Span::styled("j/k PgUp/PgDn Home", Style::default().fg(Theme::TEXT)),
+            ],
+            TabKind::Memories => vec![
+                accent_span("search=/ "),
+                Span::styled(
+                    display_filter(&app.filters.text),
+                    Style::default().fg(Theme::TEXT),
+                ),
+                Span::raw("  "),
+                accent_span("tag=g "),
+                Span::styled(
+                    display_filter(&app.filters.tag),
+                    Style::default().fg(Theme::TEXT),
+                ),
+                Span::raw("  "),
+                accent_span("status=s "),
+                status_span(app.filters.status.label()),
+                Span::raw("  "),
+                accent_span("type=t "),
+                memory_type_span_from_label(app.filters.memory_type.label()),
+                Span::raw("  "),
+                accent_span("focus "),
+                Span::styled(
+                    match app.memories_focus {
+                        MemoriesFocus::List => "list",
+                        MemoriesFocus::Detail => "detail",
+                    },
+                    Style::default()
+                        .fg(match app.memories_focus {
+                            MemoriesFocus::List => Theme::ACCENT,
+                            MemoriesFocus::Detail => Theme::ACCENT_STRONG,
+                        })
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    match app.memories_focus {
+                        MemoriesFocus::List => {
+                            "Enter=detail  j/k=select  PgUp/PgDn/Home/End=scroll  clear=x curate=c reindex=i reembed=e archive=a delete=D history=H"
+                        }
+                        MemoriesFocus::Detail => {
+                            "Enter/Esc=list  j/k=scroll  PgUp/PgDn/Home/End=scroll  clear=x curate=c reindex=i reembed=e archive=a delete=D history=H"
+                        }
+                    },
+                    Style::default().fg(Theme::MUTED),
+                ),
+            ],
+            TabKind::Agents => vec![
+                accent_span("auto-refresh "),
+                Span::styled("2s  ", Style::default().fg(Theme::TEXT)),
+                accent_span("select "),
+                Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+                accent_span("detail "),
+                Span::styled("PgUp/PgDn Home  ", Style::default().fg(Theme::TEXT)),
+                Span::styled(
+                    "read-only agent/session monitor inspired by abtop",
+                    Style::default().fg(Theme::MUTED),
+                ),
+            ],
+            TabKind::Query => vec![
+                accent_span("new=Enter/? "),
+                Span::styled(
+                    display_filter(&current_query_display(app)),
+                    Style::default().fg(Theme::TEXT),
+                ),
+                Span::raw("  "),
+                Span::styled("j/k move result", Style::default().fg(Theme::MUTED)),
+                Span::raw("  "),
+                Span::styled(
+                    "Up/Down history while editing",
+                    Style::default().fg(Theme::MUTED),
+                ),
+            ],
+            TabKind::Activity => vec![
+                accent_span("brief "),
+                Span::styled(
+                    "g deterministic / L llm  ",
+                    Style::default().fg(Theme::TEXT),
+                ),
+                accent_span("refresh "),
+                Span::styled("r  ", Style::default().fg(Theme::TEXT)),
+                accent_span("move "),
+                Span::styled("j/k PgUp/PgDn", Style::default().fg(Theme::TEXT)),
+            ],
+            TabKind::Errors => vec![
+                accent_span("refresh "),
+                Span::styled("r  ", Style::default().fg(Theme::TEXT)),
+                accent_span("move "),
+                Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+                accent_span("detail "),
+                Span::styled("PgUp/PgDn Home  ", Style::default().fg(Theme::TEXT)),
+                Span::styled(
+                    "persisted backend diagnostics plus session-local TUI errors",
+                    Style::default().fg(Theme::MUTED),
+                ),
+            ],
+            TabKind::Project => vec![
+                accent_span("scroll "),
+                Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+                accent_span("page "),
+                Span::styled("PgUp/PgDn  ", Style::default().fg(Theme::TEXT)),
+                accent_span("jump "),
+                Span::styled("Home", Style::default().fg(Theme::TEXT)),
+            ],
+            TabKind::Review => vec![
+                accent_span("move "),
+                Span::styled("j/k [ ]  ", Style::default().fg(Theme::TEXT)),
+                accent_span("approve "),
+                Span::styled("y  ", Style::default().fg(Theme::TEXT)),
+                accent_span("reject "),
+                Span::styled("n  ", Style::default().fg(Theme::TEXT)),
+                accent_span("policy "),
+                Span::styled("p  ", Style::default().fg(Theme::TEXT)),
+                accent_span("refresh "),
+                Span::styled("r", Style::default().fg(Theme::TEXT)),
+            ],
+            TabKind::Watchers => vec![
+                accent_span("scroll "),
+                Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+                accent_span("page "),
+                Span::styled("PgUp/PgDn  ", Style::default().fg(Theme::TEXT)),
+                accent_span("jump "),
+                Span::styled("Home", Style::default().fg(Theme::TEXT)),
+            ],
+            TabKind::Embeddings => vec![
+                accent_span("move "),
+                Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+                accent_span("toggle "),
+                Span::styled("Enter  ", Style::default().fg(Theme::TEXT)),
+                accent_span("create "),
+                Span::styled("c  ", Style::default().fg(Theme::TEXT)),
+                accent_span("embed "),
+                Span::styled("e  ", Style::default().fg(Theme::TEXT)),
+                accent_span("reindex "),
+                Span::styled("I  ", Style::default().fg(Theme::TEXT)),
+                accent_span("refresh "),
+                Span::styled("r", Style::default().fg(Theme::TEXT)),
+            ],
+        };
+        spans.push(Span::raw("  "));
+        spans.push(accent_span("help "));
+        spans.push(Span::styled("h", Style::default().fg(Theme::TEXT)));
+        Line::from(spans)
+    };
+    let filter_bar = Paragraph::new(vec![control_line])
+        .style(Style::default().bg(Theme::PANEL_ALT))
+        .block(themed_block(if app.help_open {
+            "Help Controls"
+        } else {
+            match &app.input_mode {
+                InputMode::Normal => "Controls",
+                InputMode::Search(value) => {
+                    if value.is_empty() {
+                        "Search Input"
+                    } else {
+                        "Search Input (editing)"
+                    }
+                }
+                InputMode::Tag(value) => {
+                    if value.is_empty() {
+                        "Tag Filter Input"
+                    } else {
+                        "Tag Filter Input (editing)"
+                    }
+                }
+                InputMode::Query(value) => {
+                    if value.is_empty() {
+                        "Query Input"
+                    } else {
+                        "Query Input (editing)"
+                    }
+                }
             }
-        }
-        InputMode::Tag(value) => {
-            if value.is_empty() {
-                "Tag Filter Input"
-            } else {
-                "Tag Filter Input (editing)"
-            }
-        }
-        InputMode::Query(value) => {
-            if value.is_empty() {
-                "Query Input"
-            } else {
-                "Query Input (editing)"
-            }
-        }
-    }));
+        }));
     frame.render_widget(filter_bar, chunks[1]);
 
-    if app.health_ok {
+    if app.help_open {
+        draw_help_tab(frame, app, chunks[2]);
+    } else if app.health_ok {
         match app.active_tab {
             TabKind::Resume => draw_resume_tab(frame, app, chunks[2]),
             TabKind::Memories => draw_memories_tab(frame, app, chunks[2]),
@@ -3634,6 +3730,22 @@ fn draw_backend_connecting(frame: &mut ratatui::Frame<'_>, area: Rect) {
         .wrap(Wrap { trim: false })
         .block(themed_block("Backend Connection"));
     frame.render_widget(widget, area);
+}
+
+fn draw_help_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let max_scroll = help_max_scroll_in_area(app.help_tab, area);
+    let scroll = app.help_scroll.min(max_scroll);
+    let help = Paragraph::new(tab_help_lines(app.help_tab))
+        .style(Style::default().bg(Theme::PANEL))
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0))
+        .block(themed_block(format!(
+            "{} Help (scroll {}/{})",
+            app.help_tab.label(),
+            scroll,
+            max_scroll
+        )));
+    frame.render_widget(help, area);
 }
 
 fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
@@ -7613,6 +7725,293 @@ fn memory_detail_max_scroll(app: &App, frame_area: Rect) -> u16 {
         .saturating_sub(inner.height as usize) as u16
 }
 
+fn help_max_scroll(tab: TabKind, frame_area: Rect) -> u16 {
+    let root = split_root_area(frame_area);
+    help_max_scroll_in_area(tab, root[2])
+}
+
+fn help_max_scroll_in_area(tab: TabKind, area: Rect) -> u16 {
+    let block = themed_block("Help");
+    let inner = block.inner(area);
+    if inner.width == 0 || inner.height == 0 {
+        return 0;
+    }
+    wrapped_line_count(&tab_help_lines(tab), inner.width).saturating_sub(inner.height as usize)
+        as u16
+}
+
+fn tab_help_lines(tab: TabKind) -> Vec<Line<'static>> {
+    render_markdown_lines(tab_help_markdown(tab))
+}
+
+fn tab_help_markdown(tab: TabKind) -> &'static str {
+    match tab {
+        TabKind::Memories => {
+            r#"# Memories Help
+
+## Purpose
+Browse canonical project memory, inspect one entry in detail, and maintain durable knowledge.
+
+## Layout
+- Left table: filtered memories with summary, type, status, confidence, and update time.
+- Right detail: canonical text, embeddings, tags, sources, history, and related memories.
+- Focus indicator: shows whether movement keys select memories or scroll detail.
+
+## Controls
+- `j/k` or `Up/Down`: select memories or scroll detail when detail focus is active.
+- `Enter`: toggle list/detail focus. `Esc`: return to list focus.
+- `PgUp/PgDn`, `Home`, `End`: scroll or jump detail.
+- `/`: text filter. `g`: tag filter. `s`: status filter. `t`: type filter. `x`: clear filters.
+- `c`: curate. `i`: reindex chunks. `e`: re-embed active space. `a`: archive low-value memories. `Shift+D`: delete. `Shift+H`: history.
+
+## Workflows
+- Filter by type or text, select a memory, then read canonical text and sources.
+- Verify provenance before relying on a memory in implementation work.
+- Use curation and Review rather than creating duplicate memories.
+
+## Troubleshooting
+- If detail is empty, move selection or refresh project state.
+- If embeddings are missing, use `e` here or the Embeddings tab.
+"#
+        }
+        TabKind::Agents => {
+            r#"# Agents Help
+
+## Purpose
+Monitor live coding-agent sessions across projects, including process state, token pressure, context usage, rate limits, and active work.
+
+## Layout
+- Session table: detected Codex and Claude sessions, preferring the current project when possible.
+- Detail pane: model, status, transcript, ports, child processes, current task, context budget, and rate limits.
+- Auto-refresh: fast while this tab is visible, slower while hidden.
+
+## Controls
+- `j/k` or `Up/Down`: select a session.
+- `PgUp/PgDn`: scroll details. `Home`: jump to top.
+
+## Workflows
+- Check which agent owns a watcher or whether a session is active, idle, stale, or over budget.
+- Inspect context and rate-limit bars before adding more work to a busy session.
+- Use process and port details to diagnose stuck local tools.
+
+## Troubleshooting
+- If no agents appear, check transcript permissions and watcher-manager state.
+- If the wrong project is selected, restart the TUI from the intended repository.
+"#
+        }
+        TabKind::Query => {
+            r#"# Query Help
+
+## Purpose
+Ask questions against project memory and inspect the evidence, citations, timings, and graph connections behind the answer.
+
+## Layout
+- Question box: current or last submitted question.
+- Query Result: answer, confidence, citations, evidence state, match count, and timing breakdown.
+- Results/detail: ranked memories and why the selected memory matched.
+
+## Controls
+- `Enter`: start a new empty question from Query.
+- `?`: jump to Query and start a question from anywhere.
+- While editing: `Enter` submits, `Esc` cancels, `Up/Down` restores cached query history.
+- `j/k`: move through results. `Shift+D`: delete selected result memory.
+
+## Workflows
+- Compare answer citations with numbered returned memories before trusting an answer.
+- Use timing breakdown to locate slow lexical, semantic, graph, rerank, answer, or UI phases.
+- Treat graph connections as retrieval explanations; citations still point to memories.
+
+## Troubleshooting
+- If evidence is insufficient, add or curate memory and ask again.
+- If a restored history item is stale, press `Enter` to re-run it.
+"#
+        }
+        TabKind::Activity => {
+            r#"# Activity Help
+
+## Purpose
+Review persisted backend activity and generate get-up-to-speed briefings for new or returning agents.
+
+## Layout
+- Briefing panel: deterministic or LLM-generated continuity context.
+- Activity table: event time, kind, tokens, duration, and summary.
+- Detail pane: selected event metadata, including query diagnostics, graph details, token usage, or curation counts.
+
+## Controls
+- `j/k` or `Up/Down`: select activity.
+- `PgUp/PgDn`: scroll detail. `Home`: jump to top.
+- `g`: deterministic briefing. `Shift+L`: LLM briefing. `r`: refresh.
+
+## Workflows
+- Use this tab at handoff or after interruption.
+- Inspect token and duration fields to understand cost and latency.
+- Open query activities to see retrieval mode, graph behavior, and answer cost.
+
+## Troubleshooting
+- If activity is empty, perform a query, capture, curation, graph extraction, or embedding operation.
+- If LLM briefing fails, use deterministic briefing and check Errors.
+"#
+        }
+        TabKind::Errors => {
+            r#"# Errors Help
+
+## Purpose
+Inspect backend diagnostics and session-local TUI errors with explanations and suggested fixes.
+
+## Layout
+- Error table: time, severity, source, component, and summary.
+- Detail pane: explanation, fix hints, command suggestions, and raw metadata.
+- Sources include TUI, service, watcher, manager, database, and providers.
+
+## Controls
+- `j/k` or `Up/Down`: select an error.
+- `PgUp/PgDn`: scroll detail. `Home`: jump to top.
+- `r`: refresh diagnostics.
+
+## Workflows
+- Open this tab when the footer shows warnings/errors or an operation fails.
+- Prefer suggested `memory doctor` commands when shown.
+- Use source/component to route fixes to config, service, watcher, manager, provider, or database.
+
+## Troubleshooting
+- If the table is empty but the footer is red, refresh and check live connection state.
+- If provider errors repeat, verify API keys and backend readiness.
+"#
+        }
+        TabKind::Project => {
+            r#"# Project Help
+
+## Purpose
+Show high-level project health, counts, embedding/search state, recent activity, and automation status.
+
+## Layout
+- Scrollable report with memory totals, type/status breakdowns, backend health, watcher/automation state, and embedding coverage.
+- It is a dashboard for deciding which specialist tab to inspect next.
+
+## Controls
+- `j/k` or `Up/Down`: scroll.
+- `PgUp/PgDn`: page. `Home`: jump to top.
+- `r`: refresh project state outside help.
+
+## Workflows
+- Start here for a quick project health check.
+- Use counts to spot missing memory, missing embeddings, or pending curation.
+- Follow up in Memories, Activity, Errors, Watchers, or Embeddings.
+
+## Troubleshooting
+- If counts look stale, refresh after backend work completes.
+- If backend state is unavailable, check Errors and the footer.
+"#
+        }
+        TabKind::Review => {
+            r#"# Review Help
+
+## Purpose
+Review replacement proposals so duplicate or superseded memories can be approved or rejected safely.
+
+## Layout
+- Proposal list: pending replacement candidates.
+- Detail pane: target, candidate, policy, score, reasons, source overlap, and canonical text comparison.
+- Replacement policy controls how aggressively curation proposes or applies replacements.
+
+## Controls
+- `j/k`, `Up/Down`, `[` and `]`: move through proposals.
+- `PgUp/PgDn`: jump by page. `Home/End`: first/last proposal.
+- `y`: approve. `n`: reject. `p`: cycle policy. `r`: refresh.
+
+## Workflows
+- Approve only when the candidate is clearly better and provenance remains valid.
+- Reject lexical or ambiguous matches that would lose context.
+- Change policy deliberately; stricter policies reduce replacement noise.
+
+## Troubleshooting
+- No proposals means no pending candidates or conservative policy.
+- If approval fails, check Errors and refresh.
+"#
+        }
+        TabKind::Watchers => {
+            r#"# Watchers Help
+
+## Purpose
+Show project watchers, heartbeat state, agent ownership, service identity, restart attempts, and recovery behavior.
+
+## Layout
+- Scrollable watcher report.
+- Each watcher shows health, mode, repo root, watcher id, owner agent/session/pid, host service, heartbeat, and restart attempts.
+- Managed watchers belong to agent sessions; manual watchers were started directly.
+
+## Controls
+- `j/k` or `Up/Down`: scroll.
+- `PgUp/PgDn`: page. `Home`: jump to top.
+- `r`: refresh project state outside help.
+
+## Workflows
+- Use this tab when captures are not appearing or watcher health is degraded.
+- Check owner/session and stale heartbeat before restarting anything.
+- Use restart attempts to distinguish transient restarts from repeated failures.
+
+## Troubleshooting
+- If a managed watcher stays stale, check Manager footer and Errors.
+- If only manual watchers exist, start through the manager-integrated path.
+"#
+        }
+        TabKind::Embeddings => {
+            r#"# Embeddings Help
+
+## Purpose
+Inspect embedding backends, compare per-project coverage, switch semantic search, and backfill missing vectors.
+
+## Layout
+- Header: active backend, create setting, ready/not-ready counts, and operation status.
+- Table: backend name, provider, model, create flag, base URL, chunk count, and memory count.
+- `*` marks active. `!` marks a backend that did not resolve at startup.
+
+## Controls
+- `j/k` or `Up/Down`: select backend.
+- `Enter`: activate selected backend, or deactivate when selected backend is active.
+- `c`: toggle automatic embedding creation.
+- `e`: create missing embeddings for selected backend.
+- `I`: rebuild chunks and embeddings for all configured backends.
+- `r`: refresh backend list and counts.
+
+## Workflows
+- Use `e` for normal missing-embedding backfill.
+- Use `I` only when chunks need rebuilding or all backends should be refreshed.
+- Switch active backend after both spaces are populated to compare semantic retrieval.
+
+## Troubleshooting
+- If a backend has `!`, fix API key/model config and restart service.
+- If counts differ, run `e` on the lower-coverage backend.
+"#
+        }
+        TabKind::Resume => {
+            r#"# Resume Help
+
+## Purpose
+Get back into flow after interruption with checkpoint, current thread, next step, recent changes, attention items, and durable context.
+
+## Layout
+- Scrollable briefing with checkpoint metadata, current thread, next step, change summary, attention items, context memories, and recent activity.
+- Loading and error lines appear at the top.
+
+## Controls
+- `j/k` or `Up/Down`: scroll.
+- `PgUp/PgDn`: page. `Home`: jump to top.
+- `r`: refresh resume context outside help.
+
+## Workflows
+- Open this first when returning to a task or handing work to another agent.
+- Use the next-step section as the immediate continuation point.
+- Follow context references into Memories or Query for provenance.
+
+## Troubleshooting
+- If there is no checkpoint, save one before leaving future sessions.
+- If resume feels stale, refresh after recent activity or curation completes.
+"#
+        }
+    }
+}
+
 fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
     if width == 0 {
         return 0;
@@ -8914,6 +9313,7 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> Res
 #[cfg(test)]
 mod tests {
     use chrono::{Local, TimeZone, Utc};
+    use crossterm::event::{KeyCode, KeyEvent};
 
     #[cfg_attr(target_os = "macos", allow(unused_imports))]
     use super::{
@@ -8979,6 +9379,85 @@ mod tests {
             super::TypeFilter::DomainFact.next().label(),
             "documentation"
         );
+    }
+
+    #[test]
+    fn every_visible_tab_has_comprehensive_help() {
+        for tab in super::VISIBLE_TABS {
+            let help = super::tab_help_markdown(tab);
+            assert!(help.contains("# "));
+            assert!(
+                help.contains("## Purpose"),
+                "{} missing purpose",
+                tab.label()
+            );
+            assert!(help.contains("## Layout"), "{} missing layout", tab.label());
+            assert!(
+                help.contains("## Controls"),
+                "{} missing controls",
+                tab.label()
+            );
+            assert!(
+                help.contains("## Workflows"),
+                "{} missing workflows",
+                tab.label()
+            );
+            assert!(super::tab_help_lines(tab).len() > 12);
+        }
+    }
+
+    #[test]
+    fn help_open_and_close_preserve_active_tab() {
+        let mut app = new_test_app();
+        app.active_tab = TabKind::Query;
+
+        app.open_help_for_active_tab();
+        assert!(app.help_open);
+        assert_eq!(app.help_tab, TabKind::Query);
+        assert_eq!(app.active_tab, TabKind::Query);
+
+        app.handle_help_key(KeyEvent::from(KeyCode::Char('h')));
+        assert!(!app.help_open);
+        assert_eq!(app.active_tab, TabKind::Query);
+    }
+
+    #[test]
+    fn help_scroll_is_clamped_to_rendered_content() {
+        let mut app = new_test_app();
+        app.active_tab = TabKind::Embeddings;
+        app.open_help_for_active_tab();
+        let frame = ratatui::layout::Rect::new(0, 0, 100, 24);
+        let max_scroll = super::help_max_scroll(app.help_tab, frame);
+        assert!(max_scroll > 0);
+
+        app.scroll_help_in_area(500, frame);
+        assert_eq!(app.help_scroll, max_scroll);
+
+        app.scroll_help_in_area(-500, frame);
+        assert_eq!(app.help_scroll, 0);
+    }
+
+    #[test]
+    fn help_can_open_when_backend_is_unavailable() {
+        let mut app = new_test_app();
+        app.health_ok = false;
+        app.active_tab = TabKind::Errors;
+
+        app.open_help_for_active_tab();
+
+        assert!(app.help_open);
+        assert_eq!(app.help_tab, TabKind::Errors);
+    }
+
+    #[test]
+    fn h_is_no_longer_previous_tab_alias() {
+        let mut app = new_test_app();
+        app.active_tab = TabKind::Query;
+
+        app.open_help_for_active_tab();
+
+        assert_eq!(app.active_tab, TabKind::Query);
+        assert_eq!(app.help_tab, TabKind::Query);
     }
 
     #[test]

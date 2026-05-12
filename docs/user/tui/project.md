@@ -23,6 +23,7 @@ This tab is where you look when the question is about project state rather than 
 - `j/k` scroll the tab
 - `PgUp/PgDn` page through longer project summaries
 - `Home` jump back to the top
+- `h` open or close detailed help for this tab
 
 ## When To Use It
 

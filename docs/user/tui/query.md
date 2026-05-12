@@ -47,6 +47,7 @@ You can jump into query mode from anywhere in the TUI with `?`.
 - `Esc` cancel query input
 - `j/k` move through returned results
 - `r` refresh project state after backend changes
+- `h` open or close detailed help for this tab
 
 ## When To Use It
 
