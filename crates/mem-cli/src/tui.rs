@@ -361,6 +361,7 @@ struct App {
     query_history_cursor: Option<usize>,
     query_response: Option<QueryResponse>,
     query_last_duration_ms: Option<u64>,
+    query_roundtrip_timing: Option<QueryRoundtripTiming>,
     query_selected_detail: Option<MemoryEntryResponse>,
     query_selected_index: usize,
     query_table_state: TableState,
@@ -532,6 +533,13 @@ enum QueryLogOutcome {
     Error(String),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct QueryRoundtripTiming {
+    query_api_ms: u64,
+    initial_detail_ms: Option<u64>,
+    ui_ready_ms: u64,
+}
+
 #[derive(Clone)]
 struct ProjectRefreshResult {
     mode: RefreshMode,
@@ -589,7 +597,7 @@ enum BackgroundEvent {
     QueryCompleted {
         request_id: u64,
         request: QueryRequest,
-        elapsed_ms: u64,
+        timing: QueryRoundtripTiming,
         response: Box<Result<QueryResponse, String>>,
         initial_detail: Box<Option<Result<MemoryEntryResponse, String>>>,
     },
@@ -654,6 +662,7 @@ impl App {
             query_history_cursor: None,
             query_response: None,
             query_last_duration_ms: None,
+            query_roundtrip_timing: None,
             query_selected_detail: None,
             query_selected_index: 0,
             query_table_state,
@@ -1388,16 +1397,12 @@ impl App {
             BackgroundEvent::QueryCompleted {
                 request_id,
                 request,
-                elapsed_ms,
+                timing,
                 response,
                 initial_detail,
-            } => self.apply_query_completed(
-                request_id,
-                request,
-                elapsed_ms,
-                *response,
-                *initial_detail,
-            ),
+            } => {
+                self.apply_query_completed(request_id, request, timing, *response, *initial_detail)
+            }
             BackgroundEvent::QueryDetailLoaded {
                 request_id,
                 memory_id,
@@ -2197,6 +2202,7 @@ impl App {
         self.query_pending_question = Some(question.clone());
         self.query_error = None;
         self.query_selected_detail = None;
+        self.query_roundtrip_timing = None;
         self.query_detail_loading = false;
         self.status_message = format!("Searching \"{question}\"...");
         self.ui_status = UiStatus::Busy;
@@ -2213,27 +2219,36 @@ impl App {
         let api = api.clone();
         let tx = self.background_tx.clone();
         tokio::spawn(async move {
-            let started = Instant::now();
+            let total_started = Instant::now();
+            let api_started = Instant::now();
             let response = api.query(&request).await.map_err(|error| error.to_string());
-            let elapsed_ms = started.elapsed().as_millis() as u64;
+            let query_api_ms = api_started.elapsed().as_millis() as u64;
+            let mut initial_detail_ms = None;
             let initial_detail = match &response {
                 Ok(response) => {
                     if let Some(result) = response.results.first() {
-                        Some(
-                            api.memory_detail(&result.memory_id.to_string())
-                                .await
-                                .map_err(|error| error.to_string()),
-                        )
+                        let detail_started = Instant::now();
+                        let detail = api
+                            .memory_detail(&result.memory_id.to_string())
+                            .await
+                            .map_err(|error| error.to_string());
+                        initial_detail_ms = Some(detail_started.elapsed().as_millis() as u64);
+                        Some(detail)
                     } else {
                         None
                     }
                 }
                 Err(_) => None,
             };
+            let timing = QueryRoundtripTiming {
+                query_api_ms,
+                initial_detail_ms,
+                ui_ready_ms: total_started.elapsed().as_millis() as u64,
+            };
             let _ = tx.send(BackgroundEvent::QueryCompleted {
                 request_id,
                 request,
-                elapsed_ms,
+                timing,
                 response: Box::new(response),
                 initial_detail: Box::new(initial_detail),
             });
@@ -2249,6 +2264,7 @@ impl App {
             self.query_detail_loading = false;
             self.query_response = None;
             self.query_last_duration_ms = None;
+            self.query_roundtrip_timing = None;
             self.query_selected_detail = None;
             self.query_selected_index = 0;
             self.query_table_state.select(None);
@@ -2262,7 +2278,7 @@ impl App {
         &mut self,
         request_id: u64,
         request: QueryRequest,
-        elapsed_ms: u64,
+        timing: QueryRoundtripTiming,
         response: Result<QueryResponse, String>,
         initial_detail: Option<Result<MemoryEntryResponse, String>>,
     ) {
@@ -2278,12 +2294,13 @@ impl App {
             Ok(response) => {
                 self.record_query_activity(
                     request.clone(),
-                    elapsed_ms,
+                    timing.ui_ready_ms,
                     QueryLogOutcome::Success(Box::new(response.clone())),
                 );
                 self.resume_loaded = false;
                 self.query_error = None;
-                self.query_last_duration_ms = Some(elapsed_ms);
+                self.query_last_duration_ms = Some(timing.ui_ready_ms);
+                self.query_roundtrip_timing = Some(timing);
                 self.query_response = Some(response);
                 self.query_selected_index = 0;
                 if self.query_results().is_empty() {
@@ -2305,13 +2322,13 @@ impl App {
                         "{} Query returned {} memories in {} ms.",
                         self.status_message,
                         self.query_results().len(),
-                        elapsed_ms
+                        timing.ui_ready_ms
                     );
                 } else {
                     self.status_message = format!(
                         "Query returned {} memories in {} ms.",
                         self.query_results().len(),
-                        elapsed_ms
+                        timing.ui_ready_ms
                     );
                 }
                 self.ui_status = UiStatus::Ready;
@@ -2319,12 +2336,13 @@ impl App {
             Err(error) => {
                 self.record_query_activity(
                     request,
-                    elapsed_ms,
+                    timing.ui_ready_ms,
                     QueryLogOutcome::Error(error.to_string()),
                 );
                 self.resume_loaded = false;
                 self.query_response = None;
-                self.query_last_duration_ms = Some(elapsed_ms);
+                self.query_last_duration_ms = Some(timing.ui_ready_ms);
+                self.query_roundtrip_timing = Some(timing);
                 self.query_selected_detail = None;
                 self.query_table_state.select(None);
                 self.query_error = Some(error.clone());
@@ -4593,7 +4611,7 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(10),
+            Constraint::Length(13),
             Constraint::Min(12),
         ])
         .split(area);
@@ -4684,7 +4702,7 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             )),
         ]
     } else if let Some(response) = &app.query_response {
-        vec![
+        let mut lines = vec![
             Line::from(vec![
                 label_span("Question: "),
                 Span::styled(
@@ -4743,65 +4761,12 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                     Style::default().fg(Theme::TEXT),
                 ),
             ]),
-            Line::from(vec![
-                label_span("Roundtrip: "),
-                Span::styled(
-                    app.query_last_duration_ms
-                        .map(|value| format!("{value} ms"))
-                        .unwrap_or_else(|| "n/a".to_string()),
-                    Style::default().fg(Theme::TEXT),
-                ),
-                Span::raw("   "),
-                label_span("Server: "),
-                Span::styled(
-                    format!("{} ms", response.diagnostics.total_duration_ms),
-                    Style::default().fg(Theme::TEXT),
-                ),
-                Span::raw("   "),
-                label_span("Merged: "),
-                Span::styled(
-                    response.diagnostics.merged_candidates.to_string(),
-                    Style::default().fg(Theme::TEXT),
-                ),
-            ]),
-            Line::from(vec![
-                label_span("Lexical: "),
-                Span::styled(
-                    format!(
-                        "{} in {} ms",
-                        response.diagnostics.lexical_candidates,
-                        response.diagnostics.lexical_duration_ms
-                    ),
-                    Style::default().fg(Theme::TEXT),
-                ),
-                Span::raw("   "),
-                label_span("Semantic: "),
-                Span::styled(
-                    format!(
-                        "{} in {} ms",
-                        response.diagnostics.semantic_candidates,
-                        response.diagnostics.semantic_duration_ms
-                    ),
-                    Style::default().fg(Theme::TEXT),
-                ),
-                Span::raw("   "),
-                label_span("Graph: "),
-                Span::styled(
-                    format!(
-                        "{} [{}] in {} ms",
-                        response.diagnostics.graph_candidates,
-                        response.diagnostics.graph_status,
-                        response.diagnostics.graph_duration_ms
-                    ),
-                    Style::default().fg(Theme::TEXT),
-                ),
-                Span::raw("   "),
-                label_span("Rerank: "),
-                Span::styled(
-                    format!("{} ms", response.diagnostics.rerank_duration_ms),
-                    Style::default().fg(Theme::TEXT),
-                ),
-            ]),
+        ];
+        lines.extend(query_timing_breakdown_lines(
+            response,
+            app.query_roundtrip_timing,
+        ));
+        lines.extend([
             if let Some(reason) = &response.answer_generation.fallback_reason {
                 Line::from(vec![
                     label_span("Fallback: "),
@@ -4810,7 +4775,8 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             } else {
                 Line::from("")
             },
-        ]
+        ]);
+        lines
     } else {
         vec![
             Line::from(vec![
@@ -6184,6 +6150,179 @@ fn query_answer_method_span(method: &QueryAnswerMethod) -> Span<'static> {
         QueryAnswerMethod::Fallback => Theme::WARNING,
     };
     Span::styled(method.to_string(), Style::default().fg(color))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct QueryTimingBreakdown {
+    backend_reported_ms: u64,
+    transport_overhead_ms: u64,
+    retrieval_other_ms: u64,
+}
+
+fn query_timing_breakdown(
+    response: &QueryResponse,
+    timing: QueryRoundtripTiming,
+) -> QueryTimingBreakdown {
+    let diagnostics = &response.diagnostics;
+    let backend_reported_ms = diagnostics
+        .total_duration_ms
+        .saturating_add(response.answer_generation.duration_ms);
+    let retrieval_known_ms = diagnostics
+        .lexical_duration_ms
+        .saturating_add(diagnostics.semantic_duration_ms)
+        .saturating_add(diagnostics.graph_duration_ms)
+        .saturating_add(diagnostics.rerank_duration_ms);
+    QueryTimingBreakdown {
+        backend_reported_ms,
+        transport_overhead_ms: timing.query_api_ms.saturating_sub(backend_reported_ms),
+        retrieval_other_ms: diagnostics
+            .total_duration_ms
+            .saturating_sub(retrieval_known_ms),
+    }
+}
+
+fn format_query_timing(value: Option<u64>) -> String {
+    value
+        .map(|value| format!("{value} ms"))
+        .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn format_query_timing_with_percent(value: u64, total: u64) -> String {
+    if total == 0 {
+        format!("{value} ms")
+    } else {
+        let percent = value.saturating_mul(100) / total;
+        format!("{value} ms ({percent}%)")
+    }
+}
+
+fn query_timing_breakdown_lines(
+    response: &QueryResponse,
+    timing: Option<QueryRoundtripTiming>,
+) -> Vec<Line<'static>> {
+    let fallback_timing = QueryRoundtripTiming {
+        query_api_ms: response
+            .diagnostics
+            .total_duration_ms
+            .saturating_add(response.answer_generation.duration_ms),
+        initial_detail_ms: None,
+        ui_ready_ms: response
+            .diagnostics
+            .total_duration_ms
+            .saturating_add(response.answer_generation.duration_ms),
+    };
+    let timing = timing.unwrap_or(fallback_timing);
+    let breakdown = query_timing_breakdown(response, timing);
+    let retrieval_total = response.diagnostics.total_duration_ms;
+
+    vec![
+        Line::from(vec![section_span("Timing Breakdown")]),
+        Line::from(vec![
+            label_span("UI ready: "),
+            Span::styled(
+                format_query_timing(Some(timing.ui_ready_ms)),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Query API: "),
+            Span::styled(
+                format_query_timing(Some(timing.query_api_ms)),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Initial detail: "),
+            Span::styled(
+                format_query_timing(timing.initial_detail_ms),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Backend: "),
+            Span::styled(
+                format_query_timing_with_percent(breakdown.backend_reported_ms, timing.ui_ready_ms),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Retrieval: "),
+            Span::styled(
+                format_query_timing_with_percent(retrieval_total, timing.ui_ready_ms),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Answer: "),
+            Span::styled(
+                format_query_timing_with_percent(
+                    response.answer_generation.duration_ms,
+                    timing.ui_ready_ms,
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Overhead: "),
+            Span::styled(
+                format_query_timing(Some(breakdown.transport_overhead_ms)),
+                Style::default().fg(Theme::MUTED),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Lexical: "),
+            Span::styled(
+                format!(
+                    "{} candidates, {}",
+                    response.diagnostics.lexical_candidates,
+                    format_query_timing_with_percent(
+                        response.diagnostics.lexical_duration_ms,
+                        retrieval_total,
+                    )
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Semantic: "),
+            Span::styled(
+                format!(
+                    "{} [{}], {}",
+                    response.diagnostics.semantic_candidates,
+                    response.diagnostics.semantic_status,
+                    format_query_timing_with_percent(
+                        response.diagnostics.semantic_duration_ms,
+                        retrieval_total,
+                    )
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+        ]),
+        Line::from(vec![
+            label_span("Graph: "),
+            Span::styled(
+                format!(
+                    "{} [{}], {}",
+                    response.diagnostics.graph_candidates,
+                    response.diagnostics.graph_status,
+                    format_query_timing_with_percent(
+                        response.diagnostics.graph_duration_ms,
+                        retrieval_total,
+                    )
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Rerank/relation: "),
+            Span::styled(
+                format_query_timing_with_percent(
+                    response.diagnostics.rerank_duration_ms,
+                    retrieval_total,
+                ),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Other: "),
+            Span::styled(
+                format_query_timing_with_percent(breakdown.retrieval_other_ms, retrieval_total),
+                Style::default().fg(Theme::MUTED),
+            ),
+        ]),
+    ]
 }
 
 fn activity_row(item: &ActivityEntry) -> Row<'static> {
@@ -8606,26 +8745,29 @@ mod tests {
     #[cfg_attr(target_os = "macos", allow(unused_imports))]
     use super::{
         AgentSnapshot, App, BackendConnectionState, BackgroundEvent, ManagerState, MemoriesFocus,
-        ProjectRefreshResult, RefreshMode, TabKind, Theme, ToolVersions, UiStatus,
-        activity_duration, activity_tokens, backend_activity_detail_lines,
+        ProjectRefreshResult, QueryRoundtripTiming, RefreshMode, TabKind, Theme, ToolVersions,
+        UiStatus, activity_duration, activity_tokens, backend_activity_detail_lines,
         build_memory_detail_lines, collect_error_items, context_gradient_color,
         current_query_display, derive_manager_state, empty_overview, filled_bar_cells,
         format_context_percent, format_epoch_reset_time, format_query_citation_numbers,
-        format_timestamp, format_timestamp_full, format_timestamp_medium, format_timestamp_short,
-        format_timestamp_timeline, latest_plan_display, manager_service_enabled,
-        manager_service_running, manager_status_detail, manager_status_label, manager_unit_path,
-        memory_detail_max_scroll, normalized_percent, query_input_display, remaining_bar_cells,
-        render_markdown_lines, service_status_detail, service_status_label,
-        should_attempt_stream_reconnect, skill_bundle_status_color, tui_status_color,
-        tui_status_detail, tui_status_label, watcher_bar_status_label,
+        format_query_timing_with_percent, format_timestamp, format_timestamp_full,
+        format_timestamp_medium, format_timestamp_short, format_timestamp_timeline,
+        latest_plan_display, manager_service_enabled, manager_service_running,
+        manager_status_detail, manager_status_label, manager_unit_path, memory_detail_max_scroll,
+        normalized_percent, query_input_display, query_timing_breakdown,
+        query_timing_breakdown_lines, remaining_bar_cells, render_markdown_lines,
+        service_status_detail, service_status_label, should_attempt_stream_reconnect,
+        skill_bundle_status_color, tui_status_color, tui_status_detail, tui_status_label,
+        watcher_bar_status_label,
     };
     use crate::{SkillBundleStatus, TuiRestartNotice, project_skill_inventory};
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
         ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
         MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType, Profile,
-        ProjectMemoriesResponse, QueryFilters, QueryRequest, ReplacementProposalListResponse,
-        TokenUsage, WatcherPresenceSummary,
+        ProjectMemoriesResponse, QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics,
+        QueryFilters, QueryRequest, QueryResponse, ReplacementProposalListResponse, TokenUsage,
+        WatcherPresenceSummary,
     };
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
@@ -8657,6 +8799,86 @@ mod tests {
     fn query_citation_numbers_render_bracketed_result_ids() {
         assert_eq!(format_query_citation_numbers(&[]), "none");
         assert_eq!(format_query_citation_numbers(&[1, 3]), "[1] [3]");
+    }
+
+    fn test_query_response_with_timings() -> QueryResponse {
+        QueryResponse {
+            answer: "Use the selected memory. [1]".to_string(),
+            confidence: 0.82,
+            results: Vec::new(),
+            insufficient_evidence: false,
+            answer_generation: QueryAnswerGeneration {
+                method: QueryAnswerMethod::Llm,
+                cited_result_numbers: vec![1],
+                evidence_count: 1,
+                duration_ms: 80,
+                fallback_reason: None,
+                token_usage: None,
+            },
+            answer_citations: Vec::new(),
+            diagnostics: QueryDiagnostics {
+                total_duration_ms: 300,
+                lexical_duration_ms: 40,
+                semantic_duration_ms: 70,
+                graph_duration_ms: 120,
+                rerank_duration_ms: 30,
+                lexical_candidates: 11,
+                semantic_candidates: 7,
+                graph_candidates: 3,
+                semantic_status: "active_space_ok".to_string(),
+                graph_status: "active".to_string(),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn query_timing_breakdown_saturates_derived_values() {
+        let response = test_query_response_with_timings();
+        let timing = QueryRoundtripTiming {
+            query_api_ms: 360,
+            initial_detail_ms: Some(25),
+            ui_ready_ms: 390,
+        };
+
+        let breakdown = query_timing_breakdown(&response, timing);
+
+        assert_eq!(breakdown.backend_reported_ms, 380);
+        assert_eq!(breakdown.transport_overhead_ms, 0);
+        assert_eq!(breakdown.retrieval_other_ms, 40);
+    }
+
+    #[test]
+    fn query_timing_percent_formats_consistently() {
+        assert_eq!(format_query_timing_with_percent(25, 100), "25 ms (25%)");
+        assert_eq!(format_query_timing_with_percent(25, 0), "25 ms");
+    }
+
+    #[test]
+    fn query_timing_lines_render_roundtrip_and_phase_labels() {
+        let response = test_query_response_with_timings();
+        let timing = QueryRoundtripTiming {
+            query_api_ms: 420,
+            initial_detail_ms: Some(30),
+            ui_ready_ms: 455,
+        };
+
+        let rendered = query_timing_breakdown_lines(&response, Some(timing))
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Timing Breakdown"));
+        assert!(rendered.contains("UI ready"));
+        assert!(rendered.contains("Query API"));
+        assert!(rendered.contains("Initial detail"));
+        assert!(rendered.contains("Backend"));
+        assert!(rendered.contains("Answer"));
+        assert!(rendered.contains("Lexical"));
+        assert!(rendered.contains("Semantic"));
+        assert!(rendered.contains("Graph"));
+        assert!(rendered.contains("Rerank/relation"));
     }
 
     #[test]
@@ -8730,11 +8952,68 @@ mod tests {
             answer_mode: None,
         };
 
-        app.apply_query_completed(1, request, 12, Err("older query failed".to_string()), None);
+        app.apply_query_completed(
+            1,
+            request,
+            QueryRoundtripTiming {
+                query_api_ms: 12,
+                initial_detail_ms: None,
+                ui_ready_ms: 12,
+            },
+            Err("older query failed".to_string()),
+            None,
+        );
 
         assert!(app.query_loading);
         assert_eq!(app.query_pending_question.as_deref(), Some("newer query"));
         assert!(app.query_error.is_none());
+    }
+
+    #[test]
+    fn query_completion_stores_roundtrip_timing() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            "memory".to_string(),
+            PathBuf::from("/tmp/memory"),
+            ToolVersions {
+                mem_cli: "0.8.5".to_string(),
+                mem_service: "0.8.5".to_string(),
+                watch_manager: "0.8.5".to_string(),
+                memory_watch: "0.8.5".to_string(),
+            },
+            false,
+            Profile::Prod,
+            tx,
+        );
+        app.query_request_id = 1;
+        app.query_loading = true;
+        let request = QueryRequest {
+            project: "memory".to_string(),
+            query: "timing".to_string(),
+            filters: QueryFilters::default(),
+            top_k: 8,
+            min_confidence: None,
+            history: false,
+            retrieval_mode: None,
+            answer_mode: None,
+        };
+        let timing = QueryRoundtripTiming {
+            query_api_ms: 420,
+            initial_detail_ms: Some(35),
+            ui_ready_ms: 460,
+        };
+
+        app.apply_query_completed(
+            1,
+            request,
+            timing,
+            Ok(test_query_response_with_timings()),
+            None,
+        );
+
+        assert!(!app.query_loading);
+        assert_eq!(app.query_roundtrip_timing, Some(timing));
+        assert_eq!(app.query_last_duration_ms, Some(460));
     }
 
     #[test]
