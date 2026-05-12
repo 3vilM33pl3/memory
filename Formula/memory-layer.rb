@@ -16,7 +16,7 @@ class MemoryLayer < Formula
 
     bin.install "target/release/memory"
     bin.install_symlink "memory" => "mem-cli"
-    pkgshare.install ".agents/skills/memory-layer" => "skill-template"
+    (pkgshare/"skill-template").install Dir[".agents/skills/*"]
     pkgshare.install "memory-layer.toml.example"
     pkgshare.install "web/dist" => "web"
   end
@@ -54,6 +54,8 @@ class MemoryLayer < Formula
     assert_match "memory", shell_output("#{bin}/memory --help")
     assert_predicate bin/"mem-cli", :exist?
     assert_predicate pkgshare/"skill-template", :directory?
+    assert_predicate pkgshare/"skill-template/memory-layer/SKILL.md", :exist?
+    assert_predicate pkgshare/"skill-template/memory-query-resume/SKILL.md", :exist?
     assert_predicate pkgshare/"web/index.html", :exist?
   end
 end

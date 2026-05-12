@@ -22,20 +22,19 @@ It is designed for the real workflow: several agents, several projects, multiple
 
 ## Start Here
 
-- [Getting Started](user/getting-started.md)
-- [TUI Guide](user/tui/README.md)
-- [Beginner Guide To Evaluations](user/evaluation-guide.md)
-- [User Documentation Index](user/README.md)
+- [Install Memory Layer and configure your first project](user/getting-started.md)
+- [Open the terminal UI](user/tui/README.md)
+- [Ask cited questions from project memory](user/tui/query.md)
+- [Troubleshoot setup and runtime errors](user/cli/doctor.md)
 
 ## Feature Walkthroughs
 
-- [Query Tab](user/tui/query.md) and [Query Command](user/cli/query.md)
-- [Beginner Guide To Evaluations](user/evaluation-guide.md), [Automated Evaluation](user/cli/eval.md), and [Memory Improvement Evaluation](developer/evaluation-memory-improvement.md)
-- [Code Graph Extraction](user/cli/graph.md)
-- [Embeddings Tab](user/tui/embeddings.md) and [Embedding Operations](user/cli/embeddings.md)
-- [Agents Tab](user/tui/agents.md) and [Watcher Health](user/cli/watchers.md)
-- [Activity Tab](user/tui/activity.md) and [Get Up To Speed](user/cli/up-to-speed.md)
-- [Memories Tab](user/tui/memories.md) and [Review Tab](user/tui/review.md)
+- **Query and evidence:** [Query Tab](user/tui/query.md), [Query Command](user/cli/query.md), [Code Graph Extraction](user/cli/graph.md)
+- **Memory management:** [Memories Tab](user/tui/memories.md), [Review Tab](user/tui/review.md), [Memory Types Reference](developer/architecture/memory-types.md)
+- **Operations:** [Agents Tab](user/tui/agents.md), [Watcher Health](user/cli/watchers.md), [Errors Tab](user/tui/errors.md), [Doctor Diagnostics](user/cli/doctor.md)
+- **Model switching:** [Embeddings Tab](user/tui/embeddings.md), [Embedding Operations](user/cli/embeddings.md)
+- **Re-entry:** [Activity Tab](user/tui/activity.md), [Get Up To Speed](user/cli/up-to-speed.md), [Resume Briefings](user/cli/resume.md)
+- **Evaluation:** [Beginner Guide To Evaluations](user/evaluation-guide.md), [Automated Evaluation](user/cli/eval.md), [Memory Improvement Evaluation](developer/evaluation-memory-improvement.md)
 
 ## CLI Reference
 
@@ -50,6 +49,8 @@ It is designed for the real workflow: several agents, several projects, multiple
 - [Get Up To Speed](user/cli/up-to-speed.md)
 - [Embedding Operations](user/cli/embeddings.md)
 - [Watcher Health](user/cli/watchers.md)
+- [TUI Command](user/cli/tui.md)
+- [History](user/cli/history.md), [Prune History](user/cli/prune-history.md), [Stats](user/cli/stats.md), [Dev Command](user/cli/dev.md)
 
 ## Developer Docs
 

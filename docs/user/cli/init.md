@@ -20,7 +20,16 @@ memory upgrade --dry-run
 - installs or refreshes the bundled repo-local Memory Layer skills
 - can preview the planned file writes with `--dry-run`
 
-The installed skill bundle includes focused workflows for project setup, query/resume, plan execution, direct task starts, and completed-work remembering.
+The installed skill bundle includes:
+
+- `memory-layer`
+- `memory-project-init`
+- `memory-query-resume`
+- `memory-plan-execution`
+- `memory-direct-task-start`
+- `memory-remember`
+
+These are copied from the installed `skill-template` into `.agents/skills/`. The umbrella skill and shared Go helper live under `.agents/skills/memory-layer/`; focused workflow skills live beside it.
 
 ## Notes
 

@@ -349,7 +349,7 @@ The Activity and Resume views turn persisted interactions into operational histo
 
 Memory is scoped by project, typed by purpose, linked to provenance, and curated into canonical entries. The Memories and Review tabs make it possible to inspect, maintain, and approve changes to that knowledge base.
 
-![Memory Layer memories tab](docs/img/tui/overview.png)
+![Memory Layer memories tab](docs/img/tui/memories-tab.png)
 
 Project-local customization now has two layers:
 
@@ -358,35 +358,15 @@ Project-local customization now has two layers:
 
 ## Documentation
 
-### User Docs
+### Start By Task
 
-- [User Documentation Index](docs/user/README.md)
-- [Getting Started](docs/user/getting-started.md)
-- [TUI Guide](docs/user/tui/README.md)
-- [TUI Query Tab](docs/user/tui/query.md)
-- [TUI Agents Tab](docs/user/tui/agents.md)
-- [TUI Embeddings Tab](docs/user/tui/embeddings.md)
-- [Embedding Operations](docs/user/cli/embeddings.md)
-- [Memory Bundles](docs/user/cli/bundles.md)
-- [Watcher Health](docs/user/cli/watchers.md)
-- [Activities And Get Up To Speed](docs/user/cli/activities.md)
-- [Resume Briefings](docs/user/cli/resume.md)
-- [Wizard And Bootstrap](docs/user/cli/wizard.md)
-- [Init Bootstrap](docs/user/cli/init.md)
-- [Service Commands](docs/user/cli/service.md)
-- [Doctor Diagnostics](docs/user/cli/doctor.md)
-- [Health And Stats](docs/user/cli/health.md)
-- [Query Command](docs/user/cli/query.md)
-- [Code Graph Extraction](docs/user/cli/graph.md)
-- [Checkpoint Workflow](docs/user/cli/checkpoint.md)
-- [Capture Command](docs/user/cli/capture.md)
-- [Remember Command](docs/user/cli/remember.md)
-- [Curate Command](docs/user/cli/curate.md)
-- [Repository Index](docs/user/cli/repo.md)
-- [Scan Command](docs/user/cli/scan.md)
-- [Commit History](docs/user/cli/commits.md)
-- [Archive Command](docs/user/cli/archive.md)
-- [Automation Commands](docs/user/cli/automation.md)
+- **Install and first project:** [Getting Started](docs/user/getting-started.md), [Wizard And Bootstrap](docs/user/cli/wizard.md), [Init Bootstrap](docs/user/cli/init.md), [Skill Upgrade](docs/user/cli/upgrade.md)
+- **Use the visual workflow:** [TUI Guide](docs/user/tui/README.md), [TUI Command](docs/user/cli/tui.md), [Memories Tab](docs/user/tui/memories.md), [Query Tab](docs/user/tui/query.md), [Errors Tab](docs/user/tui/errors.md)
+- **Ask and explain:** [Query Command](docs/user/cli/query.md), [Code Graph Extraction](docs/user/cli/graph.md), [Embedding Operations](docs/user/cli/embeddings.md)
+- **Run agents and automation:** [Watcher Health](docs/user/cli/watchers.md), [Activities](docs/user/cli/activities.md), [Get Up To Speed](docs/user/cli/up-to-speed.md), [Resume Briefings](docs/user/cli/resume.md)
+- **Operate and troubleshoot:** [Service Commands](docs/user/cli/service.md), [Health](docs/user/cli/health.md), [Stats](docs/user/cli/stats.md), [Doctor Diagnostics](docs/user/cli/doctor.md)
+- **Maintain memories:** [Remember](docs/user/cli/remember.md), [Curate](docs/user/cli/curate.md), [History](docs/user/cli/history.md), [Prune History](docs/user/cli/prune-history.md), [Archive](docs/user/cli/archive.md), [Bundles](docs/user/cli/bundles.md)
+- **Measure and develop:** [Beginner Evaluation Guide](docs/user/evaluation-guide.md), [Automated Evaluation](docs/user/cli/eval.md), [Dev Stack](docs/developer/dev-stack.md), [Dev Command](docs/user/cli/dev.md)
 
 ### Developer Docs
 
@@ -395,6 +375,7 @@ Project-local customization now has two layers:
 - [How Skills Work](docs/developer/skills/how-skills-work.md)
 - [Architecture Overview](docs/developer/architecture/overview.md)
 - [How Memory Layer Works](docs/developer/architecture/how-it-works.md)
+- [Memory Types Reference](docs/developer/architecture/memory-types.md)
 - [Hidden Memory Daemon](docs/developer/architecture/hidden-memory-daemon.md)
 - [Refactor Baseline](docs/developer/refactor-baseline.md)
 

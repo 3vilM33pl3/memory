@@ -20,5 +20,6 @@ Shows a compact project and service summary, useful for quick inspection or scri
 
 ## Related Docs
 
+- [Stats Command](stats.md)
 - [Service Commands](service.md)
 - [Doctor Diagnostics](doctor.md)

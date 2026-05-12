@@ -143,7 +143,9 @@ The relevant logic lives in `crates/mem-cli/src/main.rs`:
 The template is discovered from installed locations such as:
 
 - `/usr/share/memory-layer/skill-template`
-- local data directories
+- `~/.local/share/memory-layer/skill-template` or `$XDG_DATA_HOME/memory-layer/skill-template` for local Linux installs
+- `/usr/local/share/memory-layer/skill-template` for the macOS `.pkg`
+- `$(brew --prefix)/share/memory-layer/skill-template` for Homebrew
 - or, during source/dev use, the repo-local `.agents/skills/`
 
 This is why the same skill can exist in three forms:

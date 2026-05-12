@@ -25,6 +25,23 @@ By default, it does not replace a project-local skill that is newer than the ins
 
 All bundled Memory skills should report the same version as the Memory package. The JSON output includes a top-level bundle version/status and per-skill details for troubleshooting.
 
+The Memory-owned skill set is:
+
+- `memory-layer`
+- `memory-project-init`
+- `memory-query-resume`
+- `memory-plan-execution`
+- `memory-direct-task-start`
+- `memory-remember`
+
+Installed template locations:
+
+- Debian package: `/usr/share/memory-layer/skill-template/`
+- local Linux install script: `~/.local/share/memory-layer/skill-template/` unless `XDG_DATA_HOME` overrides it
+- macOS `.pkg`: `/usr/local/share/memory-layer/skill-template/`
+- Homebrew: `$(brew --prefix)/share/memory-layer/skill-template/`
+- source/dev checkout: `.agents/skills/`
+
 ## Doctor Integration
 
 `memory doctor` includes a `workflow.project_skills` check. If the check warns, run:

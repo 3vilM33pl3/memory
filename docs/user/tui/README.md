@@ -72,7 +72,7 @@ Shared navigation:
 | Agents | ![Agents tab](../../img/tui/agents-tab.png) |
 | Query | ![Query tab](../../img/tui/query-tab.png) |
 | Activity | ![Activity tab](../../img/tui/activity-tab.png) |
-| Errors | Diagnostics, provider failures, watcher problems, and session-local TUI errors with fix hints. |
+| Errors | ![Errors tab](../../img/tui/errors-tab.png) |
 | Project | ![Project tab](../../img/tui/project-tab.png) |
 | Review | ![Review tab](../../img/tui/review-tab.png) |
 | Watchers | ![Watchers tab](../../img/tui/watchers-tab.png) |

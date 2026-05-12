@@ -2,6 +2,8 @@
 
 The Errors tab collects operational problems that would otherwise be hidden in service logs or short status messages.
 
+![Errors tab](../../img/tui/errors-tab.png)
+
 Use it when the bottom bar shows an error count, a provider request fails, watchers look unhealthy, queries fail, or the TUI cannot explain why a tab is empty.
 
 ## What It Shows

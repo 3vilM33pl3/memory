@@ -13621,6 +13621,133 @@ mod tests {
         assert_command_metadata(&command, "memory");
     }
 
+    fn repo_root_for_tests() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+    }
+
+    fn root_command_doc_name(command_name: &str) -> Option<&'static str> {
+        match command_name {
+            "help" => None,
+            "bundle" => Some("bundles.md"),
+            "watcher" => Some("watchers.md"),
+            "wizard" => Some("wizard.md"),
+            "init" => Some("init.md"),
+            "upgrade" => Some("upgrade.md"),
+            "service" => Some("service.md"),
+            "doctor" => Some("doctor.md"),
+            "commits" => Some("commits.md"),
+            "repo" => Some("repo.md"),
+            "graph" => Some("graph.md"),
+            "checkpoint" => Some("checkpoint.md"),
+            "resume" => Some("resume.md"),
+            "activities" => Some("activities.md"),
+            "up-to-speed" => Some("up-to-speed.md"),
+            "eval" => Some("eval.md"),
+            "query" => Some("query.md"),
+            "history" => Some("history.md"),
+            "prune-history" => Some("prune-history.md"),
+            "scan" => Some("scan.md"),
+            "capture" => Some("capture.md"),
+            "remember" => Some("remember.md"),
+            "curate" => Some("curate.md"),
+            "embeddings" => Some("embeddings.md"),
+            "health" => Some("health.md"),
+            "stats" => Some("stats.md"),
+            "archive" => Some("archive.md"),
+            "automation" => Some("automation.md"),
+            "tui" => Some("tui.md"),
+            "dev" => Some("dev.md"),
+            other => panic!("root command {other} must declare a docs mapping"),
+        }
+    }
+
+    #[test]
+    fn root_commands_have_user_cli_reference_pages() {
+        let docs_dir = repo_root_for_tests().join("docs").join("user").join("cli");
+        for command in Cli::command().get_subcommands() {
+            let Some(doc_name) = root_command_doc_name(command.get_name()) else {
+                continue;
+            };
+            assert!(
+                docs_dir.join(doc_name).is_file(),
+                "missing docs/user/cli/{doc_name} for root command {}",
+                command.get_name()
+            );
+        }
+    }
+
+    fn collect_markdown_files(root: &Path, files: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(root).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect_markdown_files(&path, files);
+            } else if path.extension().and_then(|value| value.to_str()) == Some("md") {
+                files.push(path);
+            }
+        }
+    }
+
+    fn markdown_link_targets(content: &str) -> Vec<String> {
+        let mut links = Vec::new();
+        let bytes = content.as_bytes();
+        let mut cursor = 0;
+        while let Some(open_rel) = content[cursor..].find("](") {
+            let target_start = cursor + open_rel + 2;
+            if target_start >= bytes.len() {
+                break;
+            }
+            let Some(close_rel) = content[target_start..].find(')') else {
+                break;
+            };
+            let target = &content[target_start..target_start + close_rel];
+            links.push(target.to_string());
+            cursor = target_start + close_rel + 1;
+        }
+        links
+    }
+
+    #[test]
+    fn markdown_local_links_and_images_resolve() {
+        let repo_root = repo_root_for_tests();
+        let mut markdown_files = Vec::new();
+        collect_markdown_files(&repo_root.join("docs"), &mut markdown_files);
+        markdown_files.push(repo_root.join("README.md"));
+
+        for file in markdown_files {
+            let content = fs::read_to_string(&file).unwrap();
+            assert!(
+                !content.contains("/home/olivier/"),
+                "{} contains a machine-local absolute path",
+                file.display()
+            );
+            for raw_target in markdown_link_targets(&content) {
+                let target = raw_target.trim();
+                if target.is_empty()
+                    || target.starts_with('#')
+                    || target.starts_with("http://")
+                    || target.starts_with("https://")
+                    || target.starts_with("mailto:")
+                    || target.contains("://")
+                {
+                    continue;
+                }
+                let path_part = target.split('#').next().unwrap_or_default();
+                if path_part.is_empty() {
+                    continue;
+                }
+                let resolved = file.parent().unwrap().join(path_part);
+                assert!(
+                    resolved.exists(),
+                    "{} links to missing target {}",
+                    file.display(),
+                    target
+                );
+            }
+        }
+    }
+
     #[test]
     fn root_help_includes_examples_and_docs_hint() {
         let output = rendered_help(&["memory", "--help"]);

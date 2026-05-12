@@ -21,7 +21,7 @@ WATCH_CMD = os.environ.get(
     "MEMORY_LAYER_WATCH_CMD",
     f"{ROOT / 'target' / 'debug' / 'memory'} watcher run --project {PROJECT}",
 )
-WIDTH = 184
+WIDTH = 204
 HEIGHT = 48
 OUTPUT_DIR = ROOT / "docs" / "img" / "tui"
 DEFAULT_FG = (230, 236, 245)
@@ -37,6 +37,7 @@ TAB_NAMES = [
     "Agents",
     "Query",
     "Activity",
+    "Errors",
     "Project",
     "Review",
     "Watchers",
@@ -291,6 +292,7 @@ def main() -> int:
         screenshots["query-tab.png"] = capture_pane(tui_session)
 
         screenshots["activity-tab.png"] = go_to_tab(tui_session, "Activity")
+        screenshots["errors-tab.png"] = go_to_tab(tui_session, "Errors")
         screenshots["project-tab.png"] = go_to_tab(tui_session, "Project")
         screenshots["review-tab.png"] = go_to_tab(tui_session, "Review")
         screenshots["watchers-tab.png"] = go_to_tab(tui_session, "Watchers")

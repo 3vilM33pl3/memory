@@ -2,15 +2,15 @@
 
 This page explains the current repo-local Memory Layer skill bundle. The canonical live umbrella skill is:
 
-- [`.agents/skills/memory-layer/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-layer/SKILL.md)
+- `.agents/skills/memory-layer/SKILL.md`
 
 The focused skills that sit beside it are:
 
-- [`.agents/skills/memory-project-init/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-project-init/SKILL.md)
-- [`.agents/skills/memory-query-resume/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-query-resume/SKILL.md)
-- [`.agents/skills/memory-plan-execution/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-plan-execution/SKILL.md)
-- [`.agents/skills/memory-direct-task-start/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-direct-task-start/SKILL.md)
-- [`.agents/skills/memory-remember/SKILL.md`](/home/olivier/Projects/memory/.agents/skills/memory-remember/SKILL.md)
+- `.agents/skills/memory-project-init/SKILL.md`
+- `.agents/skills/memory-query-resume/SKILL.md`
+- `.agents/skills/memory-plan-execution/SKILL.md`
+- `.agents/skills/memory-direct-task-start/SKILL.md`
+- `.agents/skills/memory-remember/SKILL.md`
 
 Use this page to understand how the bundle is intended to behave without reading every raw skill file line by line.
 

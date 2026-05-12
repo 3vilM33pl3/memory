@@ -379,6 +379,15 @@ The wizard can set up:
 - optional watcher setup
 - the repo-local memory skill bundle, which uses a shared Go helper under `.agents/skills/memory-layer/scripts/`
 
+The repo-local skill bundle contains:
+
+- `memory-layer`
+- `memory-project-init`
+- `memory-query-resume`
+- `memory-plan-execution`
+- `memory-direct-task-start`
+- `memory-remember`
+
 Important detail:
 
 - inside a repository, `memory wizard` is local-first by default
@@ -413,6 +422,19 @@ Inside each project:
 - `.mem/memory-layer.env`
 - `.mem/runtime/`
 - `.agents/memory-layer.toml`
+- `.agents/skills/`
+
+### Installed skill template
+
+`memory wizard`, `memory init`, and `memory upgrade` copy Memory-owned skills from the installed `skill-template` into the project-local `.agents/skills/` directory.
+
+Template locations:
+
+- Debian package: `/usr/share/memory-layer/skill-template/`
+- local Linux install script: `~/.local/share/memory-layer/skill-template/` unless `XDG_DATA_HOME` overrides it
+- macOS `.pkg`: `/usr/local/share/memory-layer/skill-template/`
+- Homebrew: `$(brew --prefix)/share/memory-layer/skill-template/`
+- source/dev checkout: the repo's `.agents/skills/`
 
 ## What To Put Where
 

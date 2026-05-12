@@ -49,7 +49,16 @@ At repo scope, the wizard creates:
 
 The bundled skills are created from the packaged `skill-template`, or from the repo-local template during source/dev usage.
 That repo-local bundle now uses a shared Go helper under `.agents/skills/memory-layer/scripts/`, so `go` must be available on `PATH` anywhere you expect the repo-local skills to run.
-The bundle includes focused workflows for project setup, query/resume, plan execution, direct task starts, and completed-work remembering.
+The bundle includes these Memory-owned skills:
+
+- `memory-layer`
+- `memory-project-init`
+- `memory-query-resume`
+- `memory-plan-execution`
+- `memory-direct-task-start`
+- `memory-remember`
+
+The installed template lives under `/usr/share/memory-layer/skill-template/` for Debian packages, `~/.local/share/memory-layer/skill-template/` for the local Linux install script, `/usr/local/share/memory-layer/skill-template/` for the macOS `.pkg`, `$(brew --prefix)/share/memory-layer/skill-template/` for Homebrew, and `.agents/skills/` during source/dev usage.
 
 ## Typical Usage
 
