@@ -61,6 +61,7 @@ Memory Layer currently supports these curated memory types:
 - `debugging`
 - `environment`
 - `domain_fact`
+- `documentation`
 - `task`
 - `plan`
 - `implementation`
@@ -262,6 +263,40 @@ Examples:
 
 - “SCTP message boundaries must be preserved across a single message send/receive exchange.”
 
+### `documentation`
+
+Use this for durable documentation work or documentation-system knowledge.
+
+Contains:
+
+- README, quickstart, guide, tutorial, or GitHub Pages updates
+- docs navigation and information architecture changes
+- screenshots, diagrams, and infographic updates used by documentation
+- stable instructions meant for users or agents
+
+Should not contain:
+
+- a fact merely because its provenance file is under `docs/`
+- architecture, convention, environment, or domain facts whose meaning is not documentation-specific
+- the final code behavior of a feature when that belongs in `implementation`
+
+Typical triggers:
+
+- explicit `memory remember --type documentation`
+- inferred curation when text mentions docs, documentation, README, guides, screenshots, the front page, or GitHub Pages
+- structured candidates from scan or agent workflows
+
+Important current behavior:
+
+- structured documentation candidates preserve multiline Markdown so stored guide snippets remain readable
+- documentation memories can be queried or filtered with `--type documentation`
+- documentation memories are part of durable resume context alongside architecture, convention, and environment memories
+
+Examples:
+
+- “The quickstart documents PostgreSQL database creation before wizard setup.”
+- “The README front page highlights evaluation evidence and links to the full report.”
+
 ### `task`
 
 Use this for an actionable user instruction that has entered execution without an approved plan.
@@ -461,6 +496,7 @@ Current inference behavior is intentionally simple and deterministic. Examples:
 
 - text containing `debug`, `fix`, or `bug` tends toward `debugging`
 - text mentioning decisions tends toward `decision`
+- docs, README, guide, screenshot, frontpage, or GitHub Pages language tends toward `documentation`
 - setup/config language tends toward `environment`
 - generic completed-work text now falls back to `implementation`
 
@@ -603,6 +639,9 @@ Important current special cases:
 - `implementation`
   - multiple implementation memories may exist over time
   - exact finish-execution reruns are made idempotent to avoid duplicate inserts for the same verified outcome
+- `documentation`
+  - behaves like a normal durable memory type
+  - multiline Markdown is preserved for structured documentation candidates
 
 The type is visible in:
 
@@ -626,6 +665,20 @@ The most important boundaries are:
 `task` is the start marker: what the user asked the agent to do.
 
 `implementation` is the finish marker: what was actually delivered.
+
+### `documentation` vs `implementation`
+
+Use `documentation` for:
+
+- user-facing or agent-facing docs content
+- docs navigation, screenshots, examples, or installation instructions
+- durable knowledge about how the documentation is structured
+
+Use `implementation` for:
+
+- code behavior that shipped
+- internal runtime changes
+- feature outcomes where docs were only supporting evidence
 
 ### `implementation` vs `debugging`
 
@@ -661,6 +714,14 @@ Use `architecture` for:
 Use `domain_fact` for:
 
 - facts about the problem domain that remain true even if the implementation changes
+
+### `documentation` vs `convention` or `environment`
+
+Use `documentation` when the durable fact is about the docs themselves or a docs update.
+
+Use `convention` when the fact is a team or repo practice, even if it is documented in a guide.
+
+Use `environment` when the fact is about setup, dependencies, services, or local deployment, even if the source is the quickstart.
 
 ### `plan` vs `implementation`
 

@@ -4535,6 +4535,7 @@ async fn fetch_durable_resume_context(
             item.memory_type,
             mem_api::MemoryType::Architecture
                 | mem_api::MemoryType::Convention
+                | mem_api::MemoryType::Documentation
                 | mem_api::MemoryType::Environment
         )
     });
@@ -5090,6 +5091,7 @@ fn select_resume_context(
                 | mem_api::MemoryType::Decision
                 | mem_api::MemoryType::Architecture
                 | mem_api::MemoryType::Convention
+                | mem_api::MemoryType::Documentation
                 | mem_api::MemoryType::Debugging
         ) && !selected.iter().any(|existing| existing.id == item.id)
     }) {
@@ -5107,6 +5109,7 @@ fn select_resume_context(
             mem_api::MemoryType::Decision
                 | mem_api::MemoryType::Architecture
                 | mem_api::MemoryType::Convention
+                | mem_api::MemoryType::Documentation
                 | mem_api::MemoryType::Environment
         ) && !selected.iter().any(|existing| existing.id == item.id)
     }) {

@@ -119,6 +119,7 @@ const MEMORY_TYPES: MemoryType[] = [
   "debugging",
   "environment",
   "domain_fact",
+  "documentation",
   "plan",
   "implementation",
   "user",

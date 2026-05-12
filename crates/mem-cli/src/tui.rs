@@ -3170,6 +3170,7 @@ enum TypeFilter {
     Debugging,
     Environment,
     DomainFact,
+    Documentation,
     Task,
     Plan,
     Implementation,
@@ -3185,7 +3186,8 @@ impl TypeFilter {
             Self::Incident => Self::Debugging,
             Self::Debugging => Self::Environment,
             Self::Environment => Self::DomainFact,
-            Self::DomainFact => Self::Task,
+            Self::DomainFact => Self::Documentation,
+            Self::Documentation => Self::Task,
             Self::Task => Self::Plan,
             Self::Plan => Self::Implementation,
             Self::Implementation => Self::All,
@@ -3203,6 +3205,7 @@ impl TypeFilter {
                 | (Self::Debugging, MemoryType::Debugging)
                 | (Self::Environment, MemoryType::Environment)
                 | (Self::DomainFact, MemoryType::DomainFact)
+                | (Self::Documentation, MemoryType::Documentation)
                 | (Self::Task, MemoryType::Task)
                 | (Self::Plan, MemoryType::Plan)
                 | (Self::Implementation, MemoryType::Implementation)
@@ -3219,6 +3222,7 @@ impl TypeFilter {
             Self::Debugging => "debugging",
             Self::Environment => "environment",
             Self::DomainFact => "domain_fact",
+            Self::Documentation => "documentation",
             Self::Task => "task",
             Self::Plan => "plan",
             Self::Implementation => "implementation",
@@ -8326,6 +8330,7 @@ fn memory_type_span_from_label(label: &str) -> Span<'static> {
         "debugging" => Color::Rgb(255, 170, 110),
         "environment" => Color::Rgb(190, 170, 255),
         "domain_fact" => Color::Rgb(130, 225, 220),
+        "documentation" => Color::Rgb(170, 210, 255),
         "plan" => Color::Rgb(255, 120, 200),
         "implementation" => Color::Rgb(120, 230, 140),
         "all" => Theme::TEXT,
@@ -8961,6 +8966,19 @@ mod tests {
         assert_eq!(medium, local.format("%Y-%m-%d %H:%M %Z").to_string());
         assert_eq!(short, local.format("%H:%M:%S %Z").to_string());
         assert_eq!(timeline, local.format("%m-%d %H:%M %Z").to_string());
+    }
+
+    #[test]
+    fn documentation_memory_type_filter_matches_and_labels() {
+        let filter = super::TypeFilter::Documentation;
+
+        assert!(filter.matches(&MemoryType::Documentation));
+        assert!(!filter.matches(&MemoryType::Implementation));
+        assert_eq!(filter.label(), "documentation");
+        assert_eq!(
+            super::TypeFilter::DomainFact.next().label(),
+            "documentation"
+        );
     }
 
     #[test]

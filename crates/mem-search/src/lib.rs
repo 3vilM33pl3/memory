@@ -784,6 +784,7 @@ pub fn parse_memory_type(value: &str) -> MemoryType {
         "debugging" => MemoryType::Debugging,
         "environment" => MemoryType::Environment,
         "domain_fact" => MemoryType::DomainFact,
+        "documentation" => MemoryType::Documentation,
         "task" => MemoryType::Task,
         "plan" => MemoryType::Plan,
         "implementation" => MemoryType::Implementation,
@@ -2095,8 +2096,12 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn parse_memory_type_accepts_task() {
+    fn parse_memory_type_accepts_newer_types() {
         assert_eq!(parse_memory_type("task"), MemoryType::Task);
+        assert_eq!(
+            parse_memory_type("documentation"),
+            MemoryType::Documentation
+        );
     }
 
     #[test]

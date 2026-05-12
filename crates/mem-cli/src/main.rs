@@ -12528,6 +12528,7 @@ fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
         "debugging" => Ok(mem_api::MemoryType::Debugging),
         "environment" => Ok(mem_api::MemoryType::Environment),
         "domain_fact" => Ok(mem_api::MemoryType::DomainFact),
+        "documentation" => Ok(mem_api::MemoryType::Documentation),
         "task" => Ok(mem_api::MemoryType::Task),
         "plan" => Ok(mem_api::MemoryType::Plan),
         "implementation" => Ok(mem_api::MemoryType::Implementation),
@@ -12657,6 +12658,7 @@ fn parse_memory_type_arg(value: &str) -> Result<MemoryType> {
         "debugging" => Ok(MemoryType::Debugging),
         "environment" => Ok(MemoryType::Environment),
         "domain_fact" => Ok(MemoryType::DomainFact),
+        "documentation" => Ok(MemoryType::Documentation),
         "task" => Ok(MemoryType::Task),
         "plan" => Ok(MemoryType::Plan),
         "implementation" => Ok(MemoryType::Implementation),
@@ -12666,8 +12668,8 @@ fn parse_memory_type_arg(value: &str) -> Result<MemoryType> {
         "reference" => Ok(MemoryType::Reference),
         _ => anyhow::bail!(
             "unknown memory type '{value}'; expected one of: architecture, convention, \
-             decision, incident, debugging, environment, domain_fact, task, plan, implementation, \
-             user, feedback, project, reference"
+             decision, incident, debugging, environment, domain_fact, documentation, task, plan, \
+             implementation, user, feedback, project, reference"
         ),
     }
 }
@@ -14121,10 +14123,14 @@ mod tests {
     }
 
     #[test]
-    fn task_memory_type_parses_from_cli_args() {
+    fn newer_memory_types_parse_from_cli_args() {
         assert_eq!(
             parse_memory_type_arg("task").unwrap(),
             mem_api::MemoryType::Task
+        );
+        assert_eq!(
+            parse_memory_type_arg("documentation").unwrap(),
+            mem_api::MemoryType::Documentation
         );
     }
 
