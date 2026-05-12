@@ -16,6 +16,7 @@ The tab shows both the synthesized answer and the evidence trail used to create 
 
 When LLM answering is configured, the backend answers using only the returned memories. Supported providers are `openai_compatible` and `ollama`; Ollama uses the local OpenAI-compatible endpoint without an API key by default. If the LLM is unavailable or returns invalid citations, the tab shows the deterministic fallback answer and the fallback reason.
 After you press `Enter` while editing, the query runs in the background and the tab shows a searching state until the new answer arrives. Previous results remain visible during the search so you can keep reading while waiting.
+Query history is session-local. When you use `Up` or `Down` while editing, the TUI restores both the previous question text and the cached answer, timing, returned memories, selected-memory detail, or error for that history item. Restoring a history item does not re-run the query; press `Enter` to refresh it.
 
 If graph data exists for the project, the tab shows graph status, graph candidate counts, graph timing, and per-result graph connections in the detail pane. These explain which file or symbol helped retrieve a memory; the answer still cites the returned memories rather than raw graph rows.
 
@@ -42,7 +43,7 @@ You can jump into query mode from anywhere in the TUI with `?`.
 - `Enter` on the `Query` tab starts a new empty question
 - `?` switches to the `Query` tab and starts a new empty question
 - type your question and press `Enter` to run it
-- `Up/Down` while editing walks through previous queries from this TUI session
+- `Up/Down` while editing walks through previous queries from this TUI session and restores their cached results
 - `Esc` cancel query input
 - `j/k` move through returned results
 - `r` refresh project state after backend changes

@@ -357,7 +357,7 @@ struct App {
     selected_index: usize,
     table_state: TableState,
     query_text: String,
-    query_history: Vec<String>,
+    query_history: Vec<QueryHistoryEntry>,
     query_history_cursor: Option<usize>,
     query_response: Option<QueryResponse>,
     query_last_duration_ms: Option<u64>,
@@ -531,6 +531,16 @@ struct QueryActivityEntry {
 enum QueryLogOutcome {
     Success(Box<QueryResponse>),
     Error(String),
+}
+
+#[derive(Clone)]
+struct QueryHistoryEntry {
+    question: String,
+    response: Option<QueryResponse>,
+    error: Option<String>,
+    timing: Option<QueryRoundtripTiming>,
+    initial_detail: Option<MemoryEntryResponse>,
+    running: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1990,7 +2000,6 @@ impl App {
                 match kind {
                     TextInputKind::Query => {
                         self.query_history_cursor = None;
-                        self.remember_query_history_entry();
                         self.run_query(api);
                     }
                     _ => {
@@ -2045,14 +2054,92 @@ impl App {
         }
         if self
             .query_history
-            .last()
-            .is_some_and(|previous| previous == question)
+            .iter()
+            .any(|previous| previous.question == question)
         {
             return;
         }
-        self.query_history.push(question.to_string());
+        self.query_history.push(QueryHistoryEntry {
+            question: question.to_string(),
+            response: None,
+            error: None,
+            timing: None,
+            initial_detail: None,
+            running: false,
+        });
         if self.query_history.len() > 50 {
             self.query_history.remove(0);
+        }
+    }
+
+    fn start_query_history_run(&mut self, question: &str) {
+        self.query_text = question.to_string();
+        self.remember_query_history_entry();
+        if let Some(entry) = self
+            .query_history
+            .iter_mut()
+            .find(|entry| entry.question == question)
+        {
+            entry.response = None;
+            entry.error = None;
+            entry.timing = None;
+            entry.initial_detail = None;
+            entry.running = true;
+        }
+    }
+
+    fn update_query_history_success(
+        &mut self,
+        question: &str,
+        response: &QueryResponse,
+        timing: QueryRoundtripTiming,
+        initial_detail: Option<&MemoryEntryResponse>,
+    ) {
+        if self
+            .query_history
+            .iter()
+            .all(|previous| previous.question != question)
+        {
+            self.query_text = question.to_string();
+            self.remember_query_history_entry();
+        }
+        if let Some(entry) = self
+            .query_history
+            .iter_mut()
+            .find(|entry| entry.question == question)
+        {
+            entry.response = Some(response.clone());
+            entry.error = None;
+            entry.timing = Some(timing);
+            entry.initial_detail = initial_detail.cloned();
+            entry.running = false;
+        }
+    }
+
+    fn update_query_history_error(
+        &mut self,
+        question: &str,
+        error: &str,
+        timing: QueryRoundtripTiming,
+    ) {
+        if self
+            .query_history
+            .iter()
+            .all(|previous| previous.question != question)
+        {
+            self.query_text = question.to_string();
+            self.remember_query_history_entry();
+        }
+        if let Some(entry) = self
+            .query_history
+            .iter_mut()
+            .find(|entry| entry.question == question)
+        {
+            entry.response = None;
+            entry.error = Some(error.to_string());
+            entry.timing = Some(timing);
+            entry.initial_detail = None;
+            entry.running = false;
         }
     }
 
@@ -2075,18 +2162,71 @@ impl App {
         self.query_history_cursor = next;
         match next {
             Some(index) => {
-                *buffer = self.query_history[index].clone();
-                self.status_message = format!(
-                    "Loaded query history item {}/{}.",
-                    index + 1,
-                    self.query_history.len()
-                );
+                *buffer = self.query_history[index].question.clone();
+                self.restore_query_history_entry(index);
             }
             None => {
                 buffer.clear();
+                self.clear_visible_query_state();
                 self.status_message = "Returned to a new empty query.".to_string();
             }
         }
+    }
+
+    fn clear_visible_query_state(&mut self) {
+        self.query_loading = false;
+        self.query_started_at = None;
+        self.query_pending_question = None;
+        self.query_error = None;
+        self.query_detail_loading = false;
+        self.query_response = None;
+        self.query_last_duration_ms = None;
+        self.query_roundtrip_timing = None;
+        self.query_selected_detail = None;
+        self.query_selected_index = 0;
+        self.query_table_state.select(None);
+    }
+
+    fn restore_query_history_entry(&mut self, index: usize) {
+        let Some(entry) = self.query_history.get(index).cloned() else {
+            self.clear_visible_query_state();
+            self.status_message = "Query history item is unavailable.".to_string();
+            return;
+        };
+        self.query_text = entry.question.clone();
+        self.query_loading = entry.running;
+        self.query_started_at = None;
+        self.query_pending_question = entry.running.then_some(entry.question.clone());
+        self.query_error = entry.error.clone();
+        self.query_response = entry.response.clone();
+        self.query_roundtrip_timing = entry.timing;
+        self.query_last_duration_ms = entry.timing.map(|timing| timing.ui_ready_ms);
+        self.query_selected_detail = if entry.response.is_some() {
+            entry.initial_detail.clone()
+        } else {
+            None
+        };
+        self.query_detail_loading = false;
+        self.query_selected_index = 0;
+        if self.query_results().is_empty() {
+            self.query_table_state.select(None);
+        } else {
+            self.query_table_state.select(Some(0));
+        }
+        let result_state = if entry.running {
+            "still running"
+        } else if entry.response.is_some() {
+            "with cached results"
+        } else if entry.error.is_some() {
+            "with cached error"
+        } else {
+            "without cached results"
+        };
+        self.status_message = format!(
+            "Loaded query history item {}/{} {result_state}.",
+            index + 1,
+            self.query_history.len()
+        );
     }
 
     async fn move_selection(
@@ -2197,6 +2337,7 @@ impl App {
         self.query_request_id = self.query_request_id.saturating_add(1);
         let request_id = self.query_request_id;
         let question = question.to_string();
+        self.start_query_history_run(&question);
         self.query_loading = true;
         self.query_started_at = Some(Instant::now());
         self.query_pending_question = Some(question.clone());
@@ -2283,6 +2424,18 @@ impl App {
         initial_detail: Option<Result<MemoryEntryResponse, String>>,
     ) {
         if request_id != self.query_request_id {
+            match response {
+                Ok(response) => {
+                    let initial_detail = initial_detail.and_then(Result::ok);
+                    self.update_query_history_success(
+                        &request.query,
+                        &response,
+                        timing,
+                        initial_detail.as_ref(),
+                    );
+                }
+                Err(error) => self.update_query_history_error(&request.query, &error, timing),
+            }
             return;
         }
         self.query_loading = false;
@@ -2301,15 +2454,20 @@ impl App {
                 self.query_error = None;
                 self.query_last_duration_ms = Some(timing.ui_ready_ms);
                 self.query_roundtrip_timing = Some(timing);
+                let response_for_history = response.clone();
                 self.query_response = Some(response);
                 self.query_selected_index = 0;
+                let mut loaded_initial_detail = None;
                 if self.query_results().is_empty() {
                     self.query_selected_detail = None;
                     self.query_table_state.select(None);
                 } else {
                     self.query_table_state.select(Some(0));
                     match initial_detail {
-                        Some(Ok(detail)) => self.query_selected_detail = Some(detail),
+                        Some(Ok(detail)) => {
+                            loaded_initial_detail = Some(detail.clone());
+                            self.query_selected_detail = Some(detail);
+                        }
                         Some(Err(error)) => {
                             self.query_selected_detail = None;
                             self.status_message = format!("Query detail unavailable: {error}");
@@ -2317,6 +2475,12 @@ impl App {
                         None => self.query_selected_detail = None,
                     }
                 }
+                self.update_query_history_success(
+                    &request.query,
+                    &response_for_history,
+                    timing,
+                    loaded_initial_detail.as_ref(),
+                );
                 if self.status_message.starts_with("Query detail unavailable:") {
                     self.status_message = format!(
                         "{} Query returned {} memories in {} ms.",
@@ -2335,7 +2499,7 @@ impl App {
             }
             Err(error) => {
                 self.record_query_activity(
-                    request,
+                    request.clone(),
                     timing.ui_ready_ms,
                     QueryLogOutcome::Error(error.to_string()),
                 );
@@ -2346,6 +2510,7 @@ impl App {
                 self.query_selected_detail = None;
                 self.query_table_state.select(None);
                 self.query_error = Some(error.clone());
+                self.update_query_history_error(&request.query, &error, timing);
                 self.status_message = format!("Query failed: {error}");
                 self.ui_status = UiStatus::Error;
             }
@@ -8745,8 +8910,8 @@ mod tests {
     #[cfg_attr(target_os = "macos", allow(unused_imports))]
     use super::{
         AgentSnapshot, App, BackendConnectionState, BackgroundEvent, ManagerState, MemoriesFocus,
-        ProjectRefreshResult, QueryRoundtripTiming, RefreshMode, TabKind, Theme, ToolVersions,
-        UiStatus, activity_duration, activity_tokens, backend_activity_detail_lines,
+        ProjectRefreshResult, QueryHistoryEntry, QueryRoundtripTiming, RefreshMode, TabKind, Theme,
+        ToolVersions, UiStatus, activity_duration, activity_tokens, backend_activity_detail_lines,
         build_memory_detail_lines, collect_error_items, context_gradient_color,
         current_query_display, derive_manager_state, empty_overview, filled_bar_cells,
         format_context_percent, format_epoch_reset_time, format_query_citation_numbers,
@@ -8766,8 +8931,8 @@ mod tests {
         ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
         MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType, Profile,
         ProjectMemoriesResponse, QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics,
-        QueryFilters, QueryRequest, QueryResponse, ReplacementProposalListResponse, TokenUsage,
-        WatcherPresenceSummary,
+        QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, QueryResultDebug,
+        ReplacementProposalListResponse, TokenUsage, WatcherPresenceSummary,
     };
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
@@ -8805,7 +8970,19 @@ mod tests {
         QueryResponse {
             answer: "Use the selected memory. [1]".to_string(),
             confidence: 0.82,
-            results: Vec::new(),
+            results: vec![QueryResult {
+                memory_id: Uuid::new_v4(),
+                summary: "Cached implementation memory".to_string(),
+                memory_type: MemoryType::Implementation,
+                score: 12.5,
+                snippet: "Cached result snippet".to_string(),
+                match_kind: QueryMatchKind::Hybrid,
+                score_explanation: vec!["strong cached match".to_string()],
+                debug: QueryResultDebug::default(),
+                tags: vec!["implementation".to_string()],
+                sources: Vec::new(),
+                graph_connections: Vec::new(),
+            }],
             insufficient_evidence: false,
             answer_generation: QueryAnswerGeneration {
                 method: QueryAnswerMethod::Llm,
@@ -8829,6 +9006,19 @@ mod tests {
                 graph_status: "active".to_string(),
                 ..Default::default()
             },
+        }
+    }
+
+    fn test_query_request(query: &str) -> QueryRequest {
+        QueryRequest {
+            project: "memory".to_string(),
+            query: query.to_string(),
+            filters: QueryFilters::default(),
+            top_k: 8,
+            min_confidence: None,
+            history: false,
+            retrieval_mode: None,
+            answer_mode: None,
         }
     }
 
@@ -9014,6 +9204,138 @@ mod tests {
         assert!(!app.query_loading);
         assert_eq!(app.query_roundtrip_timing, Some(timing));
         assert_eq!(app.query_last_duration_ms, Some(460));
+    }
+
+    #[test]
+    fn query_completion_stores_success_snapshot_in_history() {
+        let mut app = new_test_app();
+        app.query_request_id = 1;
+        app.query_text = "cached success".to_string();
+        app.start_query_history_run("cached success");
+        let timing = QueryRoundtripTiming {
+            query_api_ms: 210,
+            initial_detail_ms: Some(20),
+            ui_ready_ms: 235,
+        };
+        let detail = test_memory_detail("Cached canonical detail");
+
+        app.apply_query_completed(
+            1,
+            test_query_request("cached success"),
+            timing,
+            Ok(test_query_response_with_timings()),
+            Some(Ok(detail.clone())),
+        );
+
+        assert_eq!(app.query_history.len(), 1);
+        let entry = &app.query_history[0];
+        assert_eq!(entry.question, "cached success");
+        assert!(entry.response.is_some());
+        assert!(entry.error.is_none());
+        assert_eq!(entry.timing, Some(timing));
+        assert_eq!(
+            entry
+                .initial_detail
+                .as_ref()
+                .map(|detail| detail.canonical_text.as_str()),
+            Some("Cached canonical detail")
+        );
+        assert!(!entry.running);
+    }
+
+    #[test]
+    fn query_history_up_restores_cached_success_results() {
+        let mut app = new_test_app();
+        let timing = QueryRoundtripTiming {
+            query_api_ms: 210,
+            initial_detail_ms: Some(20),
+            ui_ready_ms: 235,
+        };
+        app.query_history.push(QueryHistoryEntry {
+            question: "cached success".to_string(),
+            response: Some(test_query_response_with_timings()),
+            error: None,
+            timing: Some(timing),
+            initial_detail: Some(test_memory_detail("Restored canonical detail")),
+            running: false,
+        });
+        app.clear_visible_query_state();
+
+        let mut buffer = String::new();
+        app.apply_query_history_delta(&mut buffer, -1);
+
+        assert_eq!(buffer, "cached success");
+        assert_eq!(app.query_text, "cached success");
+        assert!(app.query_response.is_some());
+        assert!(app.query_error.is_none());
+        assert_eq!(app.query_roundtrip_timing, Some(timing));
+        assert_eq!(app.query_table_state.selected(), Some(0));
+        assert_eq!(
+            app.query_selected_detail
+                .as_ref()
+                .map(|detail| detail.canonical_text.as_str()),
+            Some("Restored canonical detail")
+        );
+        assert!(app.status_message.contains("with cached results"));
+    }
+
+    #[test]
+    fn query_history_up_restores_cached_error() {
+        let mut app = new_test_app();
+        let timing = QueryRoundtripTiming {
+            query_api_ms: 90,
+            initial_detail_ms: None,
+            ui_ready_ms: 90,
+        };
+        app.query_history.push(QueryHistoryEntry {
+            question: "broken query".to_string(),
+            response: None,
+            error: Some("provider unavailable".to_string()),
+            timing: Some(timing),
+            initial_detail: Some(test_memory_detail("stale detail should not show")),
+            running: false,
+        });
+        app.query_response = Some(test_query_response_with_timings());
+
+        let mut buffer = String::new();
+        app.apply_query_history_delta(&mut buffer, -1);
+
+        assert_eq!(buffer, "broken query");
+        assert!(app.query_response.is_none());
+        assert_eq!(app.query_error.as_deref(), Some("provider unavailable"));
+        assert_eq!(app.query_roundtrip_timing, Some(timing));
+        assert!(app.query_selected_detail.is_none());
+        assert_eq!(app.query_table_state.selected(), None);
+        assert!(app.status_message.contains("with cached error"));
+    }
+
+    #[test]
+    fn query_history_down_to_empty_clears_visible_results() {
+        let mut app = new_test_app();
+        app.query_history.push(QueryHistoryEntry {
+            question: "cached success".to_string(),
+            response: Some(test_query_response_with_timings()),
+            error: None,
+            timing: Some(QueryRoundtripTiming {
+                query_api_ms: 210,
+                initial_detail_ms: Some(20),
+                ui_ready_ms: 235,
+            }),
+            initial_detail: Some(test_memory_detail("Restored canonical detail")),
+            running: false,
+        });
+        let mut buffer = String::new();
+        app.apply_query_history_delta(&mut buffer, -1);
+        assert!(app.query_response.is_some());
+
+        app.apply_query_history_delta(&mut buffer, 1);
+
+        assert_eq!(buffer, "");
+        assert!(app.query_response.is_none());
+        assert!(app.query_error.is_none());
+        assert!(app.query_roundtrip_timing.is_none());
+        assert!(app.query_selected_detail.is_none());
+        assert_eq!(app.query_table_state.selected(), None);
     }
 
     #[test]
