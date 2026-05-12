@@ -1651,8 +1651,10 @@ pub struct ReindexRequest {
     pub project: String,
     #[serde(default)]
     pub dry_run: bool,
-    /// Restrict to a single configured backend by name. `None` means
-    /// every configured backend is reindexed so all spaces stay covered.
+    /// Compatibility backfill target. `None` performs a full chunk rebuild
+    /// and populates every configured backend. `Some(name)` only fills missing
+    /// embeddings for that backend, preserving embeddings already stored for
+    /// other backend spaces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
 }

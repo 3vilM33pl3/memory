@@ -427,14 +427,15 @@ pub async fn rebuild_chunks(
     registry: &EmbeddingRegistry,
     target_backend: Option<&str>,
 ) -> Result<u64> {
-    let selected: Vec<(&str, &EmbeddingService)> = match target_backend {
-        Some(name) => registry
-            .get(name)
-            .map(|service| vec![(name, service)])
-            .ok_or_else(|| anyhow::anyhow!("unknown embedding backend: {name}"))?,
-        None => registry.iter().collect(),
-    };
+    if let Some(name) = target_backend {
+        // Chunks are shared by every embedding backend. Rebuilding chunks for a
+        // single backend would delete the shared chunk rows and cascade-delete
+        // embeddings for other backends. Treat a backend-scoped rebuild as a
+        // safe backfill of missing vectors in that backend's space instead.
+        return reembed_project_chunks(pool, project, registry, Some(name)).await;
+    }
 
+    let selected: Vec<(&str, &EmbeddingService)> = registry.iter().collect();
     rebuild_chunks_selected(pool, project, selected).await
 }
 
@@ -2091,6 +2092,7 @@ pub fn split_search_chunks(summary: &str, canonical_text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn parse_memory_type_accepts_task() {
@@ -2164,6 +2166,154 @@ mod tests {
             ActivateError::UnknownBackend(name) => assert_eq!(name, "does-not-exist"),
         }
         assert!(registry.active_name().is_none());
+    }
+
+    #[derive(Clone)]
+    struct StaticEmbeddingBackend {
+        space: EmbeddingSpace,
+        value: f32,
+    }
+
+    #[async_trait::async_trait]
+    impl EmbeddingBackend for StaticEmbeddingBackend {
+        fn space(&self) -> &EmbeddingSpace {
+            &self.space
+        }
+
+        async fn embed(&self, input: &[String], _purpose: EmbeddingPurpose) -> Result<Vec<Vector>> {
+            Ok(input
+                .iter()
+                .enumerate()
+                .map(|(index, _)| Vector::from(vec![self.value, index as f32]))
+                .collect())
+        }
+    }
+
+    fn static_embedding_service(name: &str, value: f32) -> EmbeddingService {
+        EmbeddingService {
+            backend: Arc::new(StaticEmbeddingBackend {
+                space: EmbeddingSpace::new("test", "http://127.0.0.1", name),
+                value,
+            }),
+            batch_size: 16,
+        }
+    }
+
+    fn static_registry(backends: &[(&str, f32)]) -> EmbeddingRegistry {
+        EmbeddingRegistry {
+            entries: backends
+                .iter()
+                .map(|(name, value)| EmbeddingRegistryEntry {
+                    name: (*name).to_string(),
+                    service: static_embedding_service(name, *value),
+                    create_enabled: true,
+                })
+                .collect(),
+            active: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn backend_scoped_reindex_preserves_other_backend_embeddings() {
+        let Ok(database_url) = std::env::var("MEMORY_LAYER_TEST_DATABASE_URL") else {
+            return;
+        };
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("connect test database");
+        sqlx::migrate!("../../migrations")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+
+        let slug = format!("embedding-reindex-{}", Uuid::new_v4());
+        let project_id = Uuid::new_v4();
+        let memory_id = Uuid::new_v4();
+
+        sqlx::query("DELETE FROM projects WHERE slug = $1")
+            .bind(&slug)
+            .execute(&pool)
+            .await
+            .expect("cleanup old project");
+        sqlx::query("INSERT INTO projects (id, slug, name, root_path, created_at) VALUES ($1, $2, $2, '/repo', now())")
+            .bind(project_id)
+            .bind(&slug)
+            .execute(&pool)
+            .await
+            .expect("insert project");
+        sqlx::query(
+            r#"
+            INSERT INTO memory_entries
+                (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
+                 summary, memory_type, scope, importance, confidence, status,
+                 created_at, updated_at, archived_at, search_document)
+            VALUES ($1, $2, $1, 1, FALSE, 'Persistent backend embedding coverage.',
+                    'Backend coverage summary', 'implementation', 'project', 3, 0.9,
+                    'active', now(), now(), NULL,
+                    to_tsvector('english', 'Persistent backend embedding coverage. Backend coverage summary'))
+            "#,
+        )
+        .bind(memory_id)
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("insert memory");
+
+        let first_registry = static_registry(&[("first", 1.0)]);
+        let first_space = first_registry
+            .get("first")
+            .expect("first backend")
+            .embedding_space_key();
+        rebuild_chunks(&pool, &slug, &first_registry, None)
+            .await
+            .expect("initial reindex");
+        let first_count_before = count_embeddings_for_space(&pool, memory_id, &first_space).await;
+        assert!(first_count_before > 0);
+
+        let second_registry = static_registry(&[("first", 1.0), ("second", 2.0)]);
+        let second_space = second_registry
+            .get("second")
+            .expect("second backend")
+            .embedding_space_key();
+        rebuild_chunks(&pool, &slug, &second_registry, Some("second"))
+            .await
+            .expect("backend-scoped reindex");
+
+        assert_eq!(
+            count_embeddings_for_space(&pool, memory_id, &first_space).await,
+            first_count_before,
+            "backend-scoped reindex must not delete embeddings for other spaces"
+        );
+        assert_eq!(
+            count_embeddings_for_space(&pool, memory_id, &second_space).await,
+            first_count_before,
+            "backend-scoped reindex should fill the selected backend on existing chunks"
+        );
+
+        sqlx::query("DELETE FROM projects WHERE slug = $1")
+            .bind(&slug)
+            .execute(&pool)
+            .await
+            .expect("cleanup project");
+    }
+
+    async fn count_embeddings_for_space(pool: &PgPool, memory_id: Uuid, space_key: &str) -> i64 {
+        sqlx::query(
+            r#"
+            SELECT COUNT(*) AS count
+            FROM memory_chunk_embeddings mce
+            JOIN memory_chunks mc ON mc.id = mce.chunk_id
+            WHERE mc.memory_entry_id = $1
+              AND mce.embedding_space = $2
+            "#,
+        )
+        .bind(memory_id)
+        .bind(space_key)
+        .fetch_one(pool)
+        .await
+        .expect("count embeddings")
+        .try_get::<i64, _>("count")
+        .expect("decode count")
     }
 
     #[test]

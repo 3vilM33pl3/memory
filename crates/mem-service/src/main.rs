@@ -2540,24 +2540,41 @@ async fn reindex(
             proxy_post_json(&state, "/v1/reindex", &request, true).await?,
         ));
     }
+    let embedders = state.embedders.read().await;
+    let selected_keys: Vec<String> = if let Some(name) = request.backend.as_deref() {
+        let service = embedders.get(name).ok_or_else(|| {
+            ApiError::validation(ValidationError::new(format!(
+                "unknown embedding backend: {name}"
+            )))
+        })?;
+        vec![service.embedding_space_key()]
+    } else {
+        embedders
+            .iter()
+            .map(|(_, service)| service.embedding_space_key())
+            .collect()
+    };
     let project = request.project.clone();
     let count = if request.dry_run {
-        sqlx::query(
-            r#"
-            SELECT COUNT(*) AS count
-            FROM memory_entries m
-            JOIN projects p ON p.id = m.project_id
-            WHERE p.slug = $1
-            "#,
-        )
-        .bind(&request.project)
-        .fetch_one(state.pool()?)
-        .await
-        .map_err(ApiError::sql)?
-        .try_get::<i64, _>("count")
-        .map_err(ApiError::sql)? as u64
+        if request.backend.is_some() {
+            count_missing_embedding_chunks(state.pool()?, &request.project, &selected_keys).await?
+        } else {
+            sqlx::query(
+                r#"
+                SELECT COUNT(*) AS count
+                FROM memory_entries m
+                JOIN projects p ON p.id = m.project_id
+                WHERE p.slug = $1
+                "#,
+            )
+            .bind(&request.project)
+            .fetch_one(state.pool()?)
+            .await
+            .map_err(ApiError::sql)?
+            .try_get::<i64, _>("count")
+            .map_err(ApiError::sql)? as u64
+        }
     } else {
-        let embedders = state.embedders.read().await;
         rebuild_chunks(
             state.pool()?,
             &request.project,
@@ -2633,34 +2650,11 @@ async fn reembed(
     };
     let project = request.project.clone();
     let count = if request.dry_run {
-        let mut total: i64 = 0;
-        for (_, space_key) in &selected_keys {
-            total += sqlx::query(
-                r#"
-                SELECT COUNT(*) AS count
-                FROM memory_chunks mc
-                JOIN memory_entries m ON m.id = mc.memory_entry_id
-                JOIN projects p ON p.id = m.project_id
-                LEFT JOIN memory_chunk_embeddings mce
-                  ON mce.chunk_id = mc.id
-                 AND mce.embedding_space = $2
-                WHERE p.slug = $1
-                  AND m.status = 'active'
-                  AND (
-                        mce.chunk_id IS NULL
-                        OR mce.embedding_dimension IS NULL
-                      )
-                "#,
-            )
-            .bind(&request.project)
-            .bind(space_key)
-            .fetch_one(state.pool()?)
-            .await
-            .map_err(ApiError::sql)?
-            .try_get::<i64, _>("count")
-            .map_err(ApiError::sql)?;
-        }
-        total as u64
+        let space_keys = selected_keys
+            .iter()
+            .map(|(_, space_key)| space_key.clone())
+            .collect::<Vec<_>>();
+        count_missing_embedding_chunks(state.pool()?, &request.project, &space_keys).await?
     } else {
         reembed_project_chunks(
             state.pool()?,
@@ -2701,6 +2695,42 @@ async fn reembed(
         reembedded_chunks: count,
         dry_run: false,
     }))
+}
+
+async fn count_missing_embedding_chunks(
+    pool: &PgPool,
+    project: &str,
+    space_keys: &[String],
+) -> Result<u64, ApiError> {
+    let mut total: i64 = 0;
+    for space_key in space_keys {
+        total += sqlx::query(
+            r#"
+            SELECT COUNT(*) AS count
+            FROM memory_chunks mc
+            JOIN memory_entries m ON m.id = mc.memory_entry_id
+            JOIN projects p ON p.id = m.project_id
+            LEFT JOIN memory_chunk_embeddings mce
+              ON mce.chunk_id = mc.id
+             AND mce.embedding_space = $2
+            WHERE p.slug = $1
+              AND m.status = 'active'
+              AND m.is_tombstone = FALSE
+              AND (
+                    mce.chunk_id IS NULL
+                    OR mce.embedding_dimension IS NULL
+                  )
+            "#,
+        )
+        .bind(project)
+        .bind(space_key)
+        .fetch_one(pool)
+        .await
+        .map_err(ApiError::sql)?
+        .try_get::<i64, _>("count")
+        .map_err(ApiError::sql)?;
+    }
+    Ok(total as u64)
 }
 
 async fn prune_embeddings(

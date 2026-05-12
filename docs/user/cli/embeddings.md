@@ -121,11 +121,19 @@ Build chunks and embeddings for a project:
 memory embeddings reindex --project my-project
 ```
 
-By default this populates **every** configured backend so all spaces stay in sync. Restrict to one backend with `--backend`:
+This is the heavy rebuild path. It recreates the project's shared chunks and
+then populates **every** configured backend so all spaces stay in sync.
+
+`--backend` is available for compatibility, but it is intentionally safe:
 
 ```bash
 memory embeddings reindex --project my-project --backend voyage-code
 ```
+
+With `--backend`, `reindex` does **not** delete or recreate shared chunks.
+Instead it fills missing embeddings for that backend's space, preserving
+embeddings already stored for OpenAI, Voyage, Ollama, or any other configured
+backend. Use the no-`--backend` form when you really want to rebuild chunks.
 
 Preview without writing:
 
@@ -146,6 +154,8 @@ Use `reembed` when:
 - you added a new backend to config and want to populate its space
 - an existing backend's space is only partially covered
 - you prefer not to do the full `reindex` chunk rebuild
+- you want to switch quickly between providers without paying to recompute
+  embeddings that are already present for other backends
 
 Delete embedding rows whose space isn't in any configured backend:
 

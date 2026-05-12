@@ -53,7 +53,7 @@ A healthy dual-backend setup shows equal `CHUNKS` and `MEMORIES` across both row
 | `Enter` | Toggle the highlighted backend: inactive rows become active; the active row turns embeddings off |
 | `c` | Toggle automatic embedding creation for the highlighted backend |
 | `e` | Create missing embeddings for the highlighted backend |
-| `I` | Rebuild chunks and embeddings for the highlighted backend |
+| `I` | Rebuild chunks and embeddings for all configured backends |
 | `r` | Force an immediate refresh of the backend list and coverage counts |
 
 Tab movement (`Tab`, `Shift+Tab`, `l`, `h`) and the quit shortcut (`Ctrl+C`) work as on every other tab.
@@ -81,7 +81,15 @@ Pressing `e` runs the same explicit backfill as
 `memory embeddings reembed --project <slug> --backend <selected>`. This creates
 missing embeddings for the highlighted backend and refreshes the coverage counts
 when it completes. Press `I` for the heavier rebuild path, equivalent to
-`memory embeddings reindex --project <slug> --backend <selected>`.
+`memory embeddings reindex --project <slug>`. That full rebuild recreates the
+project's chunks and then populates every configured backend so the per-backend
+counts stay comparable.
+
+Backend-scoped CLI reindexing is intentionally conservative:
+`memory embeddings reindex --project <slug> --backend <selected>` behaves like a
+safe backfill for that backend's missing vectors. It does not delete or recreate
+shared chunks, because doing that for one backend would also remove the vectors
+stored for every other backend.
 
 If toggling fails (e.g. the config file can't be written because of file permissions), the transient status line shows `Toggle failed: …` and the in-memory active stays on whatever was active before — config and registry stay in sync.
 

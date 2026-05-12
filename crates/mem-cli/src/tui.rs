@@ -1377,8 +1377,13 @@ impl App {
                 match result {
                     Ok((response, snapshot)) => {
                         self.embedding_backends_error = None;
+                        let target = if name == "all backends" {
+                            "all backends"
+                        } else {
+                            name.as_str()
+                        };
                         self.embeddings_toggle_message = Some(format!(
-                            "Reindexed {} memory entries for {name}",
+                            "Reindexed {} memory entries for {target}",
                             response.reindexed_entries
                         ));
                         let selected_index = embedding_backend_index_by_name(&snapshot, &name)
@@ -1721,17 +1726,16 @@ impl App {
                 }
             }
             KeyCode::Char('I') if self.active_tab == TabKind::Embeddings => {
-                if self.embeddings_operation.is_none()
-                    && let Some(name) = self.selected_embedding_backend_name()
-                {
-                    self.embeddings_operation = Some(format!("reindexing {name}"));
+                if self.embeddings_operation.is_none() {
+                    let name = "all backends".to_string();
+                    self.embeddings_operation = Some("reindexing all backends".to_string());
                     self.embeddings_toggle_message = None;
                     let project = self.project.clone();
                     let tx = self.background_tx.clone();
                     let api = api.clone();
                     tokio::spawn(async move {
                         let result = async {
-                            let response = api.reindex(&project, false, Some(&name)).await?;
+                            let response = api.reindex(&project, false, None).await?;
                             let snapshot = api.list_embedding_backends(Some(&project)).await?;
                             anyhow::Ok((response, snapshot))
                         }
@@ -10546,12 +10550,12 @@ mod tests {
     fn embedding_reindex_completion_updates_snapshot_and_status() {
         let mut app = new_test_app();
         app.embeddings_selected_index = 1;
-        app.embeddings_operation = Some("reindexing voyage-code".to_string());
+        app.embeddings_operation = Some("reindexing all backends".to_string());
         let mut snapshot = embeddings_test_response();
         snapshot.backends[1].project_chunk_count = Some(20);
 
         app.apply_background_event(BackgroundEvent::EmbeddingReindexCompleted {
-            name: "voyage-code".to_string(),
+            name: "all backends".to_string(),
             result: Ok((
                 mem_api::ReindexResponse {
                     reindexed_entries: 4,
@@ -10564,7 +10568,7 @@ mod tests {
         assert_eq!(app.embeddings_operation, None);
         assert_eq!(
             app.embeddings_toggle_message.as_deref(),
-            Some("Reindexed 4 memory entries for voyage-code")
+            Some("Reindexed 4 memory entries for all backends")
         );
         assert_eq!(app.embeddings_selected_index, 1);
         assert_eq!(
