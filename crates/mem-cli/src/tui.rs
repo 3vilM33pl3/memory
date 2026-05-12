@@ -1725,26 +1725,26 @@ impl App {
                     });
                 }
             }
-            KeyCode::Char('I') if self.active_tab == TabKind::Embeddings => {
-                if self.embeddings_operation.is_none() {
-                    let name = "all backends".to_string();
-                    self.embeddings_operation = Some("reindexing all backends".to_string());
-                    self.embeddings_toggle_message = None;
-                    let project = self.project.clone();
-                    let tx = self.background_tx.clone();
-                    let api = api.clone();
-                    tokio::spawn(async move {
-                        let result = async {
-                            let response = api.reindex(&project, false, None).await?;
-                            let snapshot = api.list_embedding_backends(Some(&project)).await?;
-                            anyhow::Ok((response, snapshot))
-                        }
-                        .await
-                        .map_err(|err| err.to_string());
-                        let _ =
-                            tx.send(BackgroundEvent::EmbeddingReindexCompleted { name, result });
-                    });
-                }
+            KeyCode::Char('I')
+                if self.active_tab == TabKind::Embeddings
+                    && self.embeddings_operation.is_none() =>
+            {
+                let name = "all backends".to_string();
+                self.embeddings_operation = Some("reindexing all backends".to_string());
+                self.embeddings_toggle_message = None;
+                let project = self.project.clone();
+                let tx = self.background_tx.clone();
+                let api = api.clone();
+                tokio::spawn(async move {
+                    let result = async {
+                        let response = api.reindex(&project, false, None).await?;
+                        let snapshot = api.list_embedding_backends(Some(&project)).await?;
+                        anyhow::Ok((response, snapshot))
+                    }
+                    .await
+                    .map_err(|err| err.to_string());
+                    let _ = tx.send(BackgroundEvent::EmbeddingReindexCompleted { name, result });
+                });
             }
             KeyCode::Char('r') if self.active_tab == TabKind::Embeddings => {
                 let _ = self.embeddings_wake_tx.send(());
@@ -6357,12 +6357,11 @@ fn format_query_timing(value: Option<u64>) -> String {
 }
 
 fn format_query_timing_with_percent(value: u64, total: u64) -> String {
-    if total == 0 {
-        format!("{value} ms")
-    } else {
-        let percent = value.saturating_mul(100) / total;
-        format!("{value} ms ({percent}%)")
-    }
+    value
+        .saturating_mul(100)
+        .checked_div(total)
+        .map(|percent| format!("{value} ms ({percent}%)"))
+        .unwrap_or_else(|| format!("{value} ms"))
 }
 
 fn query_timing_breakdown_lines(
