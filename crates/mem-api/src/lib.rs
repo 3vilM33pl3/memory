@@ -1122,6 +1122,7 @@ pub enum ActivityKind {
     DeleteMemory,
     Briefing,
     Diagnostic,
+    LlmAudit,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -1259,6 +1260,16 @@ pub enum ActivityDetails {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    LlmAudit {
+        operation: String,
+        request_summary: String,
+        status: String,
+        redacted: bool,
+        truncated: bool,
+        messages: Vec<LlmAuditMessage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     WatcherHealth {
         watcher_id: String,
         hostname: String,
@@ -1321,6 +1332,13 @@ pub enum ActivityDetails {
     Diagnostic {
         diagnostic: DiagnosticInfo,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmAuditMessage {
+    pub role: String,
+    pub content: String,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2187,6 +2205,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub llm: LlmConfig,
     #[serde(default)]
+    pub llm_audit: LlmAuditConfig,
+    #[serde(default)]
     pub embeddings: EmbeddingsConfig,
     #[serde(default)]
     pub cluster: ClusterConfig,
@@ -2695,6 +2715,29 @@ pub struct LlmConfig {
     pub max_output_tokens: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmAuditConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub redact: bool,
+    #[serde(default = "default_llm_audit_max_message_chars")]
+    pub max_message_chars: usize,
+    #[serde(default = "default_llm_audit_max_total_chars")]
+    pub max_total_chars: usize,
+}
+
+impl Default for LlmAuditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            redact: true,
+            max_message_chars: default_llm_audit_max_message_chars(),
+            max_total_chars: default_llm_audit_max_total_chars(),
+        }
+    }
+}
+
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
@@ -3185,6 +3228,14 @@ fn default_llm_max_output_tokens() -> u32 {
     3_000
 }
 
+fn default_llm_audit_max_message_chars() -> usize {
+    8_000
+}
+
+fn default_llm_audit_max_total_chars() -> usize {
+    32_000
+}
+
 fn default_poll_interval() -> Duration {
     Duration::from_secs(60)
 }
@@ -3309,6 +3360,65 @@ mod tests {
             "max_completion_tokens"
         );
         assert!(llm_requires_api_key(&config));
+    }
+
+    #[test]
+    fn llm_audit_config_defaults_to_safe_disabled_mode() {
+        let config: AppConfig = toml::from_str(
+            r#"
+            [service]
+            bind_addr = "127.0.0.1:4040"
+            capnp_unix_socket = "/tmp/memory-test.sock"
+            capnp_tcp_addr = "127.0.0.1:4041"
+            api_token = "token"
+            request_timeout = "30s"
+
+            [database]
+            url = "postgresql://memory"
+            "#,
+        )
+        .expect("parse config without llm_audit");
+
+        assert!(!config.llm_audit.enabled);
+        assert!(config.llm_audit.redact);
+        assert_eq!(config.llm_audit.max_message_chars, 8_000);
+        assert_eq!(config.llm_audit.max_total_chars, 32_000);
+    }
+
+    #[test]
+    fn llm_audit_activity_details_roundtrip() {
+        let details = ActivityDetails::LlmAudit {
+            operation: "query_answer".to_string(),
+            request_summary: "Question: activity".to_string(),
+            status: "success".to_string(),
+            redacted: true,
+            truncated: false,
+            messages: vec![LlmAuditMessage {
+                role: "user".to_string(),
+                content: "Question: activity".to_string(),
+                truncated: false,
+            }],
+            error: None,
+        };
+
+        let encoded = serde_json::to_value(&details).expect("serialize details");
+        assert_eq!(encoded["type"], "llm_audit");
+        let decoded: ActivityDetails =
+            serde_json::from_value(encoded).expect("deserialize details");
+
+        match decoded {
+            ActivityDetails::LlmAudit {
+                operation,
+                messages,
+                redacted,
+                ..
+            } => {
+                assert_eq!(operation, "query_answer");
+                assert!(redacted);
+                assert_eq!(messages[0].role, "user");
+            }
+            other => panic!("unexpected activity details: {other:?}"),
+        }
     }
 
     #[test]

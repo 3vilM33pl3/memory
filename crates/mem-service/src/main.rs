@@ -32,9 +32,9 @@ use mem_api::{
     ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
     CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
     CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, DiagnosticInfo, DiagnosticSeverity,
-    EmbeddingBackendInfo, EmbeddingBackendsResponse, GraphActivityRequest, MemoryEntryResponse,
-    MemoryHistoryResponse, MemorySourceRecord, PlanActivityAction, PlanActivityRequest,
-    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
+    EmbeddingBackendInfo, EmbeddingBackendsResponse, GraphActivityRequest, LlmAuditMessage,
+    MemoryEntryResponse, MemoryHistoryResponse, MemorySourceRecord, PlanActivityAction,
+    PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
     ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
     ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
     ProjectMemoryImportResponse, ProjectMemoryListItem, ProjectOverviewResponse,
@@ -4091,7 +4091,7 @@ async fn project_resume(
         &context_items,
     );
     let briefing = if request.include_llm_summary {
-        summarize_resume_with_llm(&state, &slug, &deterministic)
+        summarize_resume_with_llm(&state, &slug, "resume_summary", &deterministic)
             .await
             .unwrap_or(deterministic)
     } else {
@@ -4269,7 +4269,7 @@ async fn build_up_to_speed_response(
         &token_usage,
     );
     let briefing = if request.include_llm_summary {
-        summarize_resume_with_llm(state, slug, &deterministic)
+        summarize_resume_with_llm(state, slug, "up_to_speed_summary", &deterministic)
             .await
             .unwrap_or(deterministic)
     } else {
@@ -4849,6 +4849,9 @@ fn infer_current_thread(
             ActivityKind::Diagnostic => {
                 "Recent work recorded an operational diagnostic that may need attention."
             }
+            ActivityKind::LlmAudit => {
+                "Recent work recorded LLM audit/debug activity for service-side prompts."
+            }
             ActivityKind::Checkpoint => "",
         };
         if !thread.is_empty() {
@@ -5280,6 +5283,7 @@ fn build_up_to_speed_briefing(
 async fn summarize_resume_with_llm(
     state: &AppState,
     project: &str,
+    operation: &str,
     deterministic: &str,
 ) -> Result<String> {
     if !is_supported_llm_provider(&state.config.llm.provider)
@@ -5313,26 +5317,80 @@ async fn summarize_resume_with_llm(
         ]
     });
     request[llm_max_output_tokens_field(&state.config.llm.provider)] = serde_json::json!(600);
+    let started = std::time::Instant::now();
     let mut builder = state.http_client.post(url);
     if let Some(api_key) = api_key {
         builder = builder.bearer_auth(api_key);
     }
-    let response = builder
-        .json(&request)
-        .send()
-        .await
-        .context("send llm resume summary request")?;
+    let response = match builder.json(&request).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                project,
+                operation,
+                format!("Project: {project}"),
+                &request,
+                "error",
+                Some(&format!("send llm resume summary request: {error}")),
+                Some(started.elapsed().as_millis() as u64),
+                None,
+            );
+            return Err(error).context("send llm resume summary request");
+        }
+    };
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .context("read llm resume summary body")?;
+    let body = match response.text().await {
+        Ok(body) => body,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                project,
+                operation,
+                format!("Project: {project}"),
+                &request,
+                "error",
+                Some(&format!("read llm resume summary body: {error}")),
+                Some(started.elapsed().as_millis() as u64),
+                None,
+            );
+            return Err(error).context("read llm resume summary body");
+        }
+    };
+    let token_usage = token_usage_from_chat_body(&body);
     if !status.is_success() {
+        let error = format!("llm resume summary failed: {status} {body}");
+        emit_llm_audit_activity(
+            state,
+            project,
+            operation,
+            format!("Project: {project}"),
+            &request,
+            "error",
+            Some(&error),
+            Some(started.elapsed().as_millis() as u64),
+            token_usage,
+        );
         anyhow::bail!("llm resume summary failed: {status} {body}");
     }
-    let payload: serde_json::Value =
-        serde_json::from_str(&body).context("parse llm resume summary response")?;
-    let content = payload
+    let payload: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(payload) => payload,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                project,
+                operation,
+                format!("Project: {project}"),
+                &request,
+                "error",
+                Some(&format!("parse llm resume summary response: {error}")),
+                Some(started.elapsed().as_millis() as u64),
+                token_usage,
+            );
+            return Err(error).context("parse llm resume summary response");
+        }
+    };
+    let content = match payload
         .get("choices")
         .and_then(|choices| choices.get(0))
         .and_then(|choice| choice.get("message"))
@@ -5340,7 +5398,34 @@ async fn summarize_resume_with_llm(
         .and_then(|content| content.as_str())
         .map(str::trim)
         .filter(|content| !content.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("llm resume summary missing content"))?;
+    {
+        Some(content) => content,
+        None => {
+            emit_llm_audit_activity(
+                state,
+                project,
+                operation,
+                format!("Project: {project}"),
+                &request,
+                "error",
+                Some("llm resume summary missing content"),
+                Some(started.elapsed().as_millis() as u64),
+                token_usage,
+            );
+            anyhow::bail!("llm resume summary missing content");
+        }
+    };
+    emit_llm_audit_activity(
+        state,
+        project,
+        operation,
+        format!("Project: {project}"),
+        &request,
+        "success",
+        None,
+        Some(started.elapsed().as_millis() as u64),
+        token_usage,
+    );
     Ok(content.to_string())
 }
 
@@ -5445,25 +5530,91 @@ async fn synthesize_query_answer_with_llm(
     });
     request_body[llm_max_output_tokens_field(&state.config.llm.provider)] =
         serde_json::json!(state.config.llm.max_output_tokens.min(800));
+    let started = std::time::Instant::now();
     let mut builder = state.http_client.post(url);
     if let Some(api_key) = api_key {
         builder = builder.bearer_auth(api_key);
     }
-    let http_response = builder
-        .json(&request_body)
-        .send()
-        .await
-        .context("send llm query answer request")?;
+    let http_response = match builder.json(&request_body).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                &request.project,
+                "query_answer",
+                format!("Question: {}", summarize_query(&request.query)),
+                &request_body,
+                "error",
+                Some(&format!("send llm query answer request: {error}")),
+                Some(started.elapsed().as_millis() as u64),
+                None,
+            );
+            return Err(error).context("send llm query answer request");
+        }
+    };
     let status = http_response.status();
-    let body = http_response
-        .text()
-        .await
-        .context("read llm query answer body")?;
+    let body = match http_response.text().await {
+        Ok(body) => body,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                &request.project,
+                "query_answer",
+                format!("Question: {}", summarize_query(&request.query)),
+                &request_body,
+                "error",
+                Some(&format!("read llm query answer body: {error}")),
+                Some(started.elapsed().as_millis() as u64),
+                None,
+            );
+            return Err(error).context("read llm query answer body");
+        }
+    };
+    let token_usage = token_usage_from_chat_body(&body);
     if !status.is_success() {
+        let error = format!("llm query answer failed: {status} {body}");
+        emit_llm_audit_activity(
+            state,
+            &request.project,
+            "query_answer",
+            format!("Question: {}", summarize_query(&request.query)),
+            &request_body,
+            "error",
+            Some(&error),
+            Some(started.elapsed().as_millis() as u64),
+            token_usage,
+        );
         anyhow::bail!("llm query answer failed: {status} {body}");
     }
-    let mut answer = parse_llm_query_answer_body(&body, response)?;
-    answer.token_usage = token_usage_from_chat_body(&body);
+    let mut answer = match parse_llm_query_answer_body(&body, response) {
+        Ok(answer) => answer,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                &request.project,
+                "query_answer",
+                format!("Question: {}", summarize_query(&request.query)),
+                &request_body,
+                "error",
+                Some(&error.to_string()),
+                Some(started.elapsed().as_millis() as u64),
+                token_usage,
+            );
+            return Err(error);
+        }
+    };
+    answer.token_usage = token_usage;
+    emit_llm_audit_activity(
+        state,
+        &request.project,
+        "query_answer",
+        format!("Question: {}", summarize_query(&request.query)),
+        &request_body,
+        "success",
+        None,
+        Some(started.elapsed().as_millis() as u64),
+        answer.token_usage.clone(),
+    );
     Ok(answer)
 }
 
@@ -5692,6 +5843,7 @@ fn parse_activity_kind(value: &str) -> ActivityKind {
         "delete_memory" => ActivityKind::DeleteMemory,
         "briefing" => ActivityKind::Briefing,
         "diagnostic" => ActivityKind::Diagnostic,
+        "llm_audit" => ActivityKind::LlmAudit,
         _ => ActivityKind::Query,
     }
 }
@@ -6307,6 +6459,138 @@ fn summarize_query(query: &str) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn emit_llm_audit_activity(
+    state: &AppState,
+    project: &str,
+    operation: &str,
+    request_summary: String,
+    request_body: &serde_json::Value,
+    status: &str,
+    error: Option<&str>,
+    duration_ms: Option<u64>,
+    token_usage: Option<TokenUsage>,
+) {
+    if !state.config.llm_audit.enabled {
+        return;
+    }
+    let (messages, truncated) = llm_audit_messages_from_request(state, request_body);
+    notify_project_changed_with_metadata(
+        state,
+        project.to_string(),
+        None,
+        ActivityKind::LlmAudit,
+        format!("LLM audit: {operation} {status}"),
+        Some(ActivityDetails::LlmAudit {
+            operation: operation.to_string(),
+            request_summary,
+            status: status.to_string(),
+            redacted: state.config.llm_audit.redact,
+            truncated,
+            messages,
+            error: error.map(ToString::to_string),
+        }),
+        None,
+        None,
+        Some("llm_audit".to_string()),
+        None,
+        duration_ms,
+        Some(state.config.llm.provider.clone()),
+        Some(state.config.llm.model.clone()),
+        token_usage,
+    );
+}
+
+fn llm_audit_messages_from_request(
+    state: &AppState,
+    request_body: &serde_json::Value,
+) -> (Vec<LlmAuditMessage>, bool) {
+    let max_message_chars = state.config.llm_audit.max_message_chars.max(1);
+    let max_total_chars = state.config.llm_audit.max_total_chars.max(1);
+    let api_key = resolve_llm_api_key(&state.config.llm);
+    let mut total_chars = 0usize;
+    let mut any_truncated = false;
+    let mut messages = Vec::new();
+
+    for message in request_body
+        .get("messages")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let role = message
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let raw_content = message
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let mut content = if state.config.llm_audit.redact {
+            redact_llm_audit_content(raw_content, api_key.as_deref())
+        } else {
+            raw_content.to_string()
+        };
+        let remaining = max_total_chars.saturating_sub(total_chars);
+        let limit = max_message_chars.min(remaining).max(1);
+        let (limited, truncated) = truncate_chars(&content, limit);
+        if truncated {
+            any_truncated = true;
+        }
+        content = limited;
+        total_chars = total_chars.saturating_add(content.chars().count());
+        messages.push(LlmAuditMessage {
+            role,
+            content,
+            truncated,
+        });
+        if total_chars >= max_total_chars {
+            any_truncated = true;
+            break;
+        }
+    }
+
+    (messages, any_truncated)
+}
+
+fn redact_llm_audit_content(content: &str, explicit_secret: Option<&str>) -> String {
+    let mut redacted = content.to_string();
+    if let Some(secret) = explicit_secret
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        redacted = redacted.replace(secret, "[REDACTED]");
+    }
+    let patterns = [
+        r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{12,}",
+        r#"(?i)\b(api[_-]?key|token|password|secret)\s*[:=]\s*['"]?[^'"\s,;]+"#,
+        r"(?i)\b(postgres(?:ql)?|mysql|mongodb|redis)://([^:\s/@]+):([^@\s]+)@",
+    ];
+    for pattern in patterns {
+        if let Ok(regex) = Regex::new(pattern) {
+            redacted = match pattern {
+                p if p.contains("bearer") => regex.replace_all(&redacted, "$1[REDACTED]").into(),
+                p if p.contains("://") => {
+                    regex.replace_all(&redacted, "$1://$2:[REDACTED]@").into()
+                }
+                _ => regex.replace_all(&redacted, "$1=[REDACTED]").into(),
+            };
+        }
+    }
+    redacted
+}
+
+fn truncate_chars(content: &str, limit: usize) -> (String, bool) {
+    let mut chars = content.chars();
+    let limited = chars.by_ref().take(limit).collect::<String>();
+    if chars.next().is_some() {
+        (format!("{limited}\n[truncated]"), true)
+    } else {
+        (limited, false)
+    }
+}
+
 fn activity_kind_label(kind: &ActivityKind) -> &'static str {
     match kind {
         ActivityKind::Checkpoint => "checkpoint",
@@ -6328,6 +6612,7 @@ fn activity_kind_label(kind: &ActivityKind) -> &'static str {
         ActivityKind::DeleteMemory => "delete_memory",
         ActivityKind::Briefing => "briefing",
         ActivityKind::Diagnostic => "diagnostic",
+        ActivityKind::LlmAudit => "llm_audit",
     }
 }
 
@@ -6770,6 +7055,26 @@ fn stream_activity_response(event: ServiceEvent) -> StreamResponse {
 mod tests {
     use super::*;
     use mem_api::AutomationMode;
+
+    #[test]
+    fn llm_audit_redacts_common_secret_shapes() {
+        let content =
+            "bearer sk-live-secret-token password=hunter2 postgresql://memory:dbpass@localhost/db";
+        let redacted = redact_llm_audit_content(content, Some("sk-live-secret-token"));
+
+        assert!(!redacted.contains("sk-live-secret-token"));
+        assert!(!redacted.contains("hunter2"));
+        assert!(!redacted.contains("dbpass"));
+        assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn llm_audit_truncates_by_character_limit() {
+        let (content, truncated) = truncate_chars("abcdef", 3);
+
+        assert!(truncated);
+        assert_eq!(content, "abc\n[truncated]");
+    }
 
     fn test_presence(
         watcher_id: &str,

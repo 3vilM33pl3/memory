@@ -931,6 +931,7 @@ mod tests {
             },
             features: mem_api::FeatureFlags::default(),
             llm: mem_api::LlmConfig::default(),
+            llm_audit: mem_api::LlmAuditConfig::default(),
             embeddings: mem_api::EmbeddingsConfig::default(),
             cluster: mem_api::ClusterConfig::default(),
             writer: mem_api::WriterConfig::default(),
