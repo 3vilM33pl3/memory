@@ -12007,6 +12007,7 @@ fn activity_kind_text(kind: &mem_api::ActivityKind) -> &'static str {
         mem_api::ActivityKind::DeleteMemory => "delete",
         mem_api::ActivityKind::Briefing => "briefing",
         mem_api::ActivityKind::Diagnostic => "diagnostic",
+        mem_api::ActivityKind::LlmAudit => "llm_audit",
     }
 }
 
@@ -15213,6 +15214,7 @@ mod tests {
             },
             features: mem_api::FeatureFlags::default(),
             llm: mem_api::LlmConfig::default(),
+            llm_audit: mem_api::LlmAuditConfig::default(),
             embeddings: mem_api::EmbeddingsConfig::default(),
             cluster: mem_api::ClusterConfig::default(),
             writer: mem_api::WriterConfig::default(),

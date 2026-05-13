@@ -7339,6 +7339,41 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
                     lines.push(activity_kv_line("Error", error.clone()));
                 }
             }
+            ActivityDetails::LlmAudit {
+                operation,
+                request_summary,
+                status,
+                redacted,
+                truncated,
+                messages,
+                error,
+            } => {
+                lines.push(activity_kv_line("Operation", operation.clone()));
+                lines.push(activity_kv_line("Request", request_summary.clone()));
+                lines.push(activity_kv_line("Status", status.clone()));
+                lines.push(activity_kv_line("Redacted", redacted.to_string()));
+                lines.push(activity_kv_line("Truncated", truncated.to_string()));
+                if let Some(error) = error {
+                    lines.push(activity_kv_line("Error", error.clone()));
+                }
+                if !messages.is_empty() {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(vec![section_span("LLM Messages")]));
+                    for message in messages {
+                        lines.push(Line::from(vec![
+                            label_span(format!("Role {}: ", message.role)),
+                            Span::styled(
+                                if message.truncated {
+                                    format!("{}\n[message truncated]", message.content)
+                                } else {
+                                    message.content.clone()
+                                },
+                                Style::default().fg(Theme::TEXT),
+                            ),
+                        ]));
+                    }
+                }
+            }
             ActivityDetails::CaptureTask {
                 session_id,
                 task_id,
@@ -8410,6 +8445,7 @@ fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
         ActivityKind::Briefing => ("briefing", Theme::SUCCESS),
         ActivityKind::WatcherHealth => ("watcher-health", Theme::WARNING),
         ActivityKind::Diagnostic => ("diagnostic", Theme::DANGER),
+        ActivityKind::LlmAudit => ("llm-audit", Theme::WARNING),
     };
     Span::styled(
         label,
@@ -9337,10 +9373,10 @@ mod tests {
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
         ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
-        MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType, Profile,
-        ProjectMemoriesResponse, QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics,
-        QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, QueryResultDebug,
-        ReplacementProposalListResponse, TokenUsage, WatcherPresenceSummary,
+        LlmAuditMessage, MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType,
+        Profile, ProjectMemoriesResponse, QueryAnswerGeneration, QueryAnswerMethod,
+        QueryDiagnostics, QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult,
+        QueryResultDebug, ReplacementProposalListResponse, TokenUsage, WatcherPresenceSummary,
     };
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
@@ -10601,6 +10637,50 @@ mod tests {
 
         assert!(rendered.contains("Query: old query"));
         assert!(!rendered.contains("Graph Retrieval"));
+    }
+
+    #[test]
+    fn backend_llm_audit_activity_detail_renders_prompt_messages() {
+        let event = ActivityEvent {
+            id: Uuid::new_v4(),
+            recorded_at: Utc::now(),
+            project: "memory".to_string(),
+            kind: ActivityKind::LlmAudit,
+            memory_id: None,
+            summary: "LLM audit: query_answer success".to_string(),
+            details: Some(ActivityDetails::LlmAudit {
+                operation: "query_answer".to_string(),
+                request_summary: "Question: audit".to_string(),
+                status: "success".to_string(),
+                redacted: true,
+                truncated: false,
+                messages: vec![LlmAuditMessage {
+                    role: "user".to_string(),
+                    content: "Question: audit".to_string(),
+                    truncated: false,
+                }],
+                error: None,
+            }),
+            actor_id: None,
+            actor_name: None,
+            source: Some("llm_audit".to_string()),
+            operation_id: None,
+            duration_ms: Some(12),
+            provider: Some("openai_compatible".to_string()),
+            model: Some("gpt-test".to_string()),
+            token_usage: None,
+        };
+
+        let rendered = backend_activity_detail_lines(&event)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Kind: llm-audit"));
+        assert!(rendered.contains("Operation: query_answer"));
+        assert!(rendered.contains("LLM Messages"));
+        assert!(rendered.contains("Role user: Question: audit"));
     }
 
     #[test]
