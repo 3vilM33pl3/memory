@@ -7570,7 +7570,7 @@ fn render_watch_launch_agent(repo_root: &Path, project: &str) -> Result<String> 
 fn render_managed_watch_launch_agent(
     repo_root: &Path,
     project: &str,
-    session: &AgentSession,
+    session: &LightweightAgentSession,
     started_at: &str,
     config_path: Option<&Path>,
 ) -> Result<String> {
@@ -13535,7 +13535,7 @@ mod tests {
     use chrono::Utc;
 
     #[cfg(target_os = "macos")]
-    use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
+    use mem_agenttop::LightweightAgentSession;
 
     #[cfg(target_os = "macos")]
     use super::{
