@@ -39,7 +39,7 @@ max_message_chars = 8000
 max_total_chars = 32000
 ```
 
-Audit events are disabled by default. With `redact = true`, Memory Layer redacts common API key, bearer token, password, secret, and database URL credential patterns before storing the prompt messages.
+Audit events are disabled by default. You can also toggle audit mode from the TUI Activity tab with `A`; the TUI updates the running service immediately and persists the same config setting. With `redact = true`, Memory Layer redacts common API key, bearer token, password, secret, and database URL credential patterns before storing the prompt messages.
 
 Older events remain readable even if they were recorded before token and metadata columns existed; those fields appear as `null` or `-`.
 

@@ -5,7 +5,7 @@ use std::{
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration as StdDuration, SystemTime},
@@ -32,21 +32,22 @@ use mem_api::{
     ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
     CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
     CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, DiagnosticInfo, DiagnosticSeverity,
-    EmbeddingBackendInfo, EmbeddingBackendsResponse, GraphActivityRequest, LlmAuditMessage,
-    MemoryEntryResponse, MemoryHistoryResponse, MemorySourceRecord, PlanActivityAction,
-    PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
-    ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
-    ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
-    ProjectMemoryImportResponse, ProjectMemoryListItem, ProjectOverviewResponse,
-    PruneEmbeddingsRequest, PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse,
-    QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod, QueryAnswerMode,
-    QueryGraphConnection, QueryRequest, QueryResponse, ReembedRequest, ReembedResponse,
-    ReindexRequest, ReindexResponse, RelatedMemorySummary, ReplacementPolicy,
-    ReplacementPolicyRequest, ReplacementPolicyResponse, ReplacementProposalListResponse,
-    ReplacementProposalResolutionResponse, ResumeAction, ResumeCheckpoint, ResumeRequest,
-    ResumeResponse, ScanActivityRequest, SetEmbeddingCreationRequest, SourceKind, StatsResponse,
-    StreamRequest, StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest,
-    UpToSpeedResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
+    EmbeddingBackendInfo, EmbeddingBackendsResponse, GraphActivityRequest, LlmAuditConfig,
+    LlmAuditMessage, LlmAuditStatusResponse, MemoryEntryResponse, MemoryHistoryResponse,
+    MemorySourceRecord, PlanActivityAction, PlanActivityRequest, ProjectCommitsResponse,
+    ProjectMemoriesResponse, ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation,
+    ProjectMemoryBundleManifest, ProjectMemoryBundlePreview, ProjectMemoryBundleSource,
+    ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
+    ProjectMemoryListItem, ProjectOverviewResponse, PruneEmbeddingsRequest,
+    PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryAnswerCitation,
+    QueryAnswerGeneration, QueryAnswerMethod, QueryAnswerMode, QueryGraphConnection, QueryRequest,
+    QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
+    RelatedMemorySummary, ReplacementPolicy, ReplacementPolicyRequest, ReplacementPolicyResponse,
+    ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
+    ResumeCheckpoint, ResumeRequest, ResumeResponse, ScanActivityRequest,
+    SetEmbeddingCreationRequest, SetLlmAuditRequest, SourceKind, StatsResponse, StreamRequest,
+    StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse,
+    ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
     WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
     WatcherUnregisterRequest, effective_llm_base_url, is_supported_llm_provider,
     llm_max_output_tokens_field, llm_requires_api_key, load_repo_replacement_policy,
@@ -103,6 +104,7 @@ struct AppState {
     http_client: reqwest::Client,
     embedders: Arc<tokio::sync::RwLock<EmbeddingRegistry>>,
     automated_embedding_creation_enabled: Arc<AtomicBool>,
+    llm_audit: Arc<RwLock<LlmAuditConfig>>,
     events: broadcast::Sender<ServiceEvent>,
     recent_activity: Arc<Mutex<VecDeque<ServiceEvent>>>,
     watchers: Arc<Mutex<HashMap<String, WatcherPresence>>>,
@@ -349,6 +351,7 @@ async fn build_state(
     )));
     let automated_embedding_creation_enabled =
         Arc::new(AtomicBool::new(config.embeddings.create_enabled));
+    let llm_audit = Arc::new(RwLock::new(config.llm_audit.clone()));
 
     Ok(AppState {
         role,
@@ -359,6 +362,7 @@ async fn build_state(
         http_client,
         embedders,
         automated_embedding_creation_enabled,
+        llm_audit,
         config,
         events,
         recent_activity: Arc::new(Mutex::new(VecDeque::with_capacity(20))),
@@ -445,6 +449,10 @@ fn build_http_app(state: AppState) -> Router {
         .route(
             "/v1/embeddings/create-enabled",
             post(set_embedding_creation_enabled),
+        )
+        .route(
+            "/v1/config/llm-audit",
+            get(llm_audit_status).post(set_llm_audit_enabled),
         )
         .route("/v1/memory/{id}", get(get_memory))
         .route("/v1/memory/{id}/history", get(get_memory_history))
@@ -3146,6 +3154,121 @@ async fn persist_embedding_creation_enabled(
             ))
         })?;
     Ok(())
+}
+
+async fn llm_audit_status(
+    State(state): State<AppState>,
+) -> Result<Json<LlmAuditStatusResponse>, ApiError> {
+    if !state.is_primary() {
+        return Ok(Json(proxy_get_json(&state, "/v1/config/llm-audit").await?));
+    }
+    Ok(Json(build_llm_audit_status_response(&state)))
+}
+
+async fn set_llm_audit_enabled(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SetLlmAuditRequest>,
+) -> Result<Json<LlmAuditStatusResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/config/llm-audit", &request, true).await?,
+        ));
+    }
+
+    let previous = state
+        .llm_audit
+        .read()
+        .expect("llm audit config lock poisoned")
+        .clone();
+    let mut next = previous.clone();
+    next.enabled = request.enabled;
+    persist_llm_audit_config(&state, &next).await?;
+    {
+        let mut guard = state
+            .llm_audit
+            .write()
+            .expect("llm audit config lock poisoned");
+        *guard = next;
+    }
+
+    Ok(Json(build_llm_audit_status_response(&state)))
+}
+
+fn build_llm_audit_status_response(state: &AppState) -> LlmAuditStatusResponse {
+    let audit = state
+        .llm_audit
+        .read()
+        .expect("llm audit config lock poisoned")
+        .clone();
+    LlmAuditStatusResponse {
+        enabled: audit.enabled,
+        redacted: audit.redact,
+        max_message_chars: audit.max_message_chars,
+        max_total_chars: audit.max_total_chars,
+        profile: state.config.profile.to_string(),
+        config_path: llm_audit_config_path(&state.config).map(|path| path.display().to_string()),
+    }
+}
+
+async fn persist_llm_audit_config(
+    state: &AppState,
+    audit: &LlmAuditConfig,
+) -> Result<(), ApiError> {
+    let Some(config_path) = llm_audit_config_path(&state.config) else {
+        return Err(ApiError::status_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "cannot persist LLM audit setting: no TOML config file is resolved",
+        ));
+    };
+    let existing = tokio::fs::read_to_string(&config_path)
+        .await
+        .map_err(|err| ApiError::io(anyhow::anyhow!("read {}: {err}", config_path.display())))?;
+    let rendered = set_llm_audit_enabled_in_toml(&existing, audit.enabled)
+        .map_err(|err| ApiError::io(anyhow::anyhow!("update {}: {err}", config_path.display())))?;
+    let tmp_path = config_path.with_extension("toml.tmp");
+    tokio::fs::write(&tmp_path, rendered.as_bytes())
+        .await
+        .map_err(|err| ApiError::io(anyhow::anyhow!("write {}: {err}", tmp_path.display())))?;
+    tokio::fs::rename(&tmp_path, &config_path)
+        .await
+        .map_err(|err| {
+            ApiError::io(anyhow::anyhow!(
+                "rename {} -> {}: {err}",
+                tmp_path.display(),
+                config_path.display()
+            ))
+        })?;
+    Ok(())
+}
+
+fn llm_audit_config_path(config: &AppConfig) -> Option<PathBuf> {
+    config
+        .resolved_dev_overlay_path
+        .clone()
+        .or_else(|| config.resolved_config_path.clone())
+}
+
+fn set_llm_audit_enabled_in_toml(existing: &str, enabled: bool) -> anyhow::Result<String> {
+    let mut doc = existing.parse::<toml_edit::DocumentMut>()?;
+    if !doc.contains_key("llm_audit") {
+        doc["llm_audit"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let llm_audit = doc["llm_audit"]
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("[llm_audit] is not a table in config"))?;
+    llm_audit["enabled"] = toml_edit::value(enabled);
+    if !llm_audit.contains_key("redact") {
+        llm_audit["redact"] = toml_edit::value(true);
+    }
+    if !llm_audit.contains_key("max_message_chars") {
+        llm_audit["max_message_chars"] = toml_edit::value(8_000);
+    }
+    if !llm_audit.contains_key("max_total_chars") {
+        llm_audit["max_total_chars"] = toml_edit::value(32_000);
+    }
+    Ok(doc.to_string())
 }
 
 fn set_active_embedding_backend_in_toml(
@@ -6471,10 +6594,15 @@ fn emit_llm_audit_activity(
     duration_ms: Option<u64>,
     token_usage: Option<TokenUsage>,
 ) {
-    if !state.config.llm_audit.enabled {
+    let audit = state
+        .llm_audit
+        .read()
+        .expect("llm audit config lock poisoned")
+        .clone();
+    if !audit.enabled {
         return;
     }
-    let (messages, truncated) = llm_audit_messages_from_request(state, request_body);
+    let (messages, truncated) = llm_audit_messages_from_request(state, &audit, request_body);
     notify_project_changed_with_metadata(
         state,
         project.to_string(),
@@ -6485,7 +6613,7 @@ fn emit_llm_audit_activity(
             operation: operation.to_string(),
             request_summary,
             status: status.to_string(),
-            redacted: state.config.llm_audit.redact,
+            redacted: audit.redact,
             truncated,
             messages,
             error: error.map(ToString::to_string),
@@ -6503,10 +6631,11 @@ fn emit_llm_audit_activity(
 
 fn llm_audit_messages_from_request(
     state: &AppState,
+    audit: &LlmAuditConfig,
     request_body: &serde_json::Value,
 ) -> (Vec<LlmAuditMessage>, bool) {
-    let max_message_chars = state.config.llm_audit.max_message_chars.max(1);
-    let max_total_chars = state.config.llm_audit.max_total_chars.max(1);
+    let max_message_chars = audit.max_message_chars.max(1);
+    let max_total_chars = audit.max_total_chars.max(1);
     let api_key = resolve_llm_api_key(&state.config.llm);
     let mut total_chars = 0usize;
     let mut any_truncated = false;
@@ -6527,7 +6656,7 @@ fn llm_audit_messages_from_request(
             .get("content")
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
-        let mut content = if state.config.llm_audit.redact {
+        let mut content = if audit.redact {
             redact_llm_audit_content(raw_content, api_key.as_deref())
         } else {
             raw_content.to_string()
@@ -7177,6 +7306,38 @@ mod tests {
             .expect("enable creation toml");
 
         assert!(enabled.contains("create_enabled = true"));
+    }
+
+    #[test]
+    fn llm_audit_toml_update_creates_safe_defaults() {
+        let updated =
+            set_llm_audit_enabled_in_toml("[service]\nbind_addr = \"127.0.0.1:4040\"\n", true)
+                .expect("enable llm audit");
+
+        assert!(updated.contains("[llm_audit]"));
+        assert!(updated.contains("enabled = true"));
+        assert!(updated.contains("redact = true"));
+        assert!(updated.contains("max_message_chars = 8000"));
+        assert!(updated.contains("max_total_chars = 32000"));
+    }
+
+    #[test]
+    fn llm_audit_toml_update_preserves_existing_limits() {
+        let updated = set_llm_audit_enabled_in_toml(
+            r#"
+            [llm_audit]
+            enabled = false
+            redact = true
+            max_message_chars = 1200
+            max_total_chars = 2400
+            "#,
+            true,
+        )
+        .expect("enable llm audit");
+
+        assert!(updated.contains("enabled = true"));
+        assert!(updated.contains("max_message_chars = 1200"));
+        assert!(updated.contains("max_total_chars = 2400"));
     }
 
     #[test]

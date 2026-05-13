@@ -1778,6 +1778,22 @@ pub struct SetEmbeddingCreationRequest {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmAuditStatusResponse {
+    pub enabled: bool,
+    pub redacted: bool,
+    pub max_message_chars: usize,
+    pub max_total_chars: usize,
+    pub profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetLlmAuditRequest {
+    pub enabled: bool,
+}
+
 impl ActivateEmbeddingBackendRequest {
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.name.trim().is_empty() {

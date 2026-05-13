@@ -9150,6 +9150,35 @@ impl ApiClient {
         get_json(response).await
     }
 
+    pub(crate) async fn llm_audit_status(&self) -> Result<mem_api::LlmAuditStatusResponse> {
+        get_json(
+            self.client
+                .get(service_url(&self.config, "/v1/config/llm-audit"))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn set_llm_audit_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<mem_api::LlmAuditStatusResponse> {
+        let response = self
+            .client
+            .post(service_url(&self.config, "/v1/config/llm-audit"))
+            .headers(write_headers(&self.config)?)
+            .json(&mem_api::SetLlmAuditRequest { enabled })
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            anyhow::bail!(
+                "service does not support toggling LLM audit yet; restart or upgrade memory-service so /v1/config/llm-audit is available"
+            );
+        }
+        get_json(response).await
+    }
+
     pub(crate) async fn memory_history(
         &self,
         memory_id: &str,

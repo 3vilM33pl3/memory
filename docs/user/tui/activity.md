@@ -19,7 +19,9 @@ Activity is persisted in the backend database, so the tab is no longer limited t
 
 ## LLM Audit Mode
 
-LLM audit mode is opt-in because prompt messages can include sensitive memory content. Enable it in the service config:
+LLM audit mode is opt-in because prompt messages can include sensitive memory content. In the TUI, press `A` on the Activity tab to enable or disable it. The toggle updates the running service immediately and persists the setting to the active TOML config.
+
+You can also enable it manually in the service config:
 
 ```toml
 [llm_audit]
@@ -49,6 +51,7 @@ The briefing is intended for agents that need to hit the ground running. It high
 - `r` refreshes persisted activity events
 - `g` generates a deterministic get-up-to-speed briefing
 - `L` generates an LLM-assisted get-up-to-speed briefing
+- `A` toggles LLM audit/debug logging in the running service and persists the config
 - `h` open or close detailed help for this tab
 
 ## Related Docs

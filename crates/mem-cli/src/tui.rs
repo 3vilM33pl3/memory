@@ -24,12 +24,13 @@ use mem_agenttop::{
 };
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
-    MemoryEntryResponse, MemoryStatus, MemoryType, NamedCount, PlanActivityAction, Profile,
-    ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse, QueryAnswerMethod,
-    QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, ReplacementPolicy,
-    ReplacementProposalListResponse, ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest,
-    ResumeResponse, StreamRequest, StreamResponse, UpToSpeedRequest, UpToSpeedResponse,
-    WatcherHealth, load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
+    LlmAuditStatusResponse, MemoryEntryResponse, MemoryStatus, MemoryType, NamedCount,
+    PlanActivityAction, Profile, ProjectMemoriesResponse, ProjectMemoryListItem,
+    ProjectOverviewResponse, QueryAnswerMethod, QueryFilters, QueryMatchKind, QueryRequest,
+    QueryResponse, QueryResult, ReplacementPolicy, ReplacementProposalListResponse,
+    ReplacementProposalRecord, ResumeCheckpoint, ResumeRequest, ResumeResponse, StreamRequest,
+    StreamResponse, UpToSpeedRequest, UpToSpeedResponse, WatcherHealth,
+    load_repo_replacement_policy, read_capnp_text_frame, repo_agent_settings_path,
     write_capnp_text_frame,
 };
 use mem_platform::preferred_user_state_dir;
@@ -111,6 +112,7 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
     terminal.draw(|frame| draw(frame, &app))?;
     app.request_refresh(&api, RefreshMode::Startup);
     app.request_activities(&api);
+    app.request_llm_audit_status(&api);
     app.request_stream_connect(&api);
     let mut stream: Option<StreamSession> = None;
     let mut last_stream_connect_attempt = Instant::now();
@@ -390,6 +392,10 @@ struct App {
     activity_loading: bool,
     activity_error: Option<String>,
     activity_detail_scroll: u16,
+    llm_audit_status: Option<LlmAuditStatusResponse>,
+    llm_audit_loading: bool,
+    llm_audit_toggling: bool,
+    llm_audit_error: Option<String>,
     errors_selected_index: usize,
     errors_table_state: TableState,
     errors_detail_scroll: u16,
@@ -584,6 +590,13 @@ enum BackgroundEvent {
     ActivitiesLoaded {
         response: Box<Result<mem_api::ActivityListResponse, String>>,
     },
+    LlmAuditStatusLoaded {
+        response: Result<LlmAuditStatusResponse, String>,
+    },
+    LlmAuditToggled {
+        enabled: bool,
+        response: Result<LlmAuditStatusResponse, String>,
+    },
     UpToSpeedLoaded {
         response: Box<Result<UpToSpeedResponse, String>>,
     },
@@ -704,6 +717,10 @@ impl App {
             activity_loading: false,
             activity_error: None,
             activity_detail_scroll: 0,
+            llm_audit_status: None,
+            llm_audit_loading: false,
+            llm_audit_toggling: false,
+            llm_audit_error: None,
             errors_selected_index: 0,
             errors_table_state,
             errors_detail_scroll: 0,
@@ -869,6 +886,52 @@ impl App {
             let _ = tx.send(BackgroundEvent::ActivitiesLoaded {
                 response: Box::new(response),
             });
+        });
+    }
+
+    fn request_llm_audit_status(&mut self, api: &ApiClient) {
+        if self.llm_audit_loading {
+            return;
+        }
+        self.llm_audit_loading = true;
+        self.llm_audit_error = None;
+        self.needs_redraw = true;
+        let api = api.clone();
+        let tx = self.background_tx.clone();
+        tokio::spawn(async move {
+            let response = api
+                .llm_audit_status()
+                .await
+                .map_err(|error| error.to_string());
+            let _ = tx.send(BackgroundEvent::LlmAuditStatusLoaded { response });
+        });
+    }
+
+    fn toggle_llm_audit(&mut self, api: &ApiClient) {
+        if self.llm_audit_toggling {
+            return;
+        }
+        let enabled = !self
+            .llm_audit_status
+            .as_ref()
+            .map(|status| status.enabled)
+            .unwrap_or(false);
+        self.llm_audit_toggling = true;
+        self.llm_audit_error = None;
+        self.status_message = format!(
+            "{} LLM audit/debug logging...",
+            if enabled { "Enabling" } else { "Disabling" }
+        );
+        self.ui_status = UiStatus::Busy;
+        self.needs_redraw = true;
+        let api = api.clone();
+        let tx = self.background_tx.clone();
+        tokio::spawn(async move {
+            let response = api
+                .set_llm_audit_enabled(enabled)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = tx.send(BackgroundEvent::LlmAuditToggled { enabled, response });
         });
     }
 
@@ -1238,6 +1301,38 @@ impl App {
                     Err(error) => {
                         self.activity_error = Some(error.clone());
                         self.status_message = format!("Activities unavailable: {error}");
+                    }
+                }
+            }
+            BackgroundEvent::LlmAuditStatusLoaded { response } => {
+                self.llm_audit_loading = false;
+                match response {
+                    Ok(status) => {
+                        self.llm_audit_error = None;
+                        self.llm_audit_status = Some(status);
+                    }
+                    Err(error) => {
+                        self.llm_audit_error = Some(error.clone());
+                        self.status_message = format!("LLM audit status unavailable: {error}");
+                    }
+                }
+            }
+            BackgroundEvent::LlmAuditToggled { enabled, response } => {
+                self.llm_audit_toggling = false;
+                match response {
+                    Ok(status) => {
+                        self.llm_audit_error = None;
+                        self.llm_audit_status = Some(status);
+                        self.status_message = format!(
+                            "LLM audit/debug logging {}.",
+                            if enabled { "enabled" } else { "disabled" }
+                        );
+                        self.ui_status = UiStatus::Ready;
+                    }
+                    Err(error) => {
+                        self.llm_audit_error = Some(error.clone());
+                        self.status_message = format!("LLM audit toggle failed: {error}");
+                        self.ui_status = UiStatus::Error;
                     }
                 }
             }
@@ -1623,6 +1718,7 @@ impl App {
             }
             KeyCode::Char('r') if self.active_tab == TabKind::Activity => {
                 self.request_activities(api);
+                self.request_llm_audit_status(api);
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Errors => {
                 self.move_error_selection(1);
@@ -1649,6 +1745,11 @@ impl App {
                 if self.active_tab == TabKind::Activity && key.modifiers == KeyModifiers::SHIFT =>
             {
                 self.request_up_to_speed(api, true);
+            }
+            KeyCode::Char('A')
+                if self.active_tab == TabKind::Activity && key.modifiers == KeyModifiers::SHIFT =>
+            {
+                self.toggle_llm_audit(api);
             }
             KeyCode::PageDown if self.active_tab == TabKind::Activity => {
                 self.activity_detail_scroll = self.activity_detail_scroll.saturating_add(8);
@@ -3431,6 +3532,8 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                     "g deterministic / L llm  ",
                     Style::default().fg(Theme::TEXT),
                 ),
+                accent_span("audit "),
+                Span::styled("A  ", Style::default().fg(Theme::TEXT)),
                 accent_span("refresh "),
                 Span::styled("r  ", Style::default().fg(Theme::TEXT)),
                 accent_span("move "),
@@ -5577,10 +5680,11 @@ fn append_resume_briefing_lines(lines: &mut Vec<Line<'static>>, briefing: &str) 
 fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(9), Constraint::Min(8)])
+        .constraints([Constraint::Length(11), Constraint::Min(8)])
         .split(area);
 
-    let briefing_lines = activity_briefing_lines(app);
+    let mut briefing_lines = activity_briefing_lines(app);
+    briefing_lines.extend(llm_audit_status_lines(app));
     frame.render_widget(
         Paragraph::new(briefing_lines)
             .style(Style::default().bg(Theme::PANEL_ALT))
@@ -6071,6 +6175,74 @@ fn activity_briefing_lines(app: &App) -> Vec<Line<'static>> {
             Style::default().fg(Theme::MUTED),
         )),
     ]
+}
+
+fn llm_audit_status_lines(app: &App) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::from("")];
+    if app.llm_audit_toggling {
+        lines.push(Line::from(vec![
+            label_span("LLM audit: "),
+            Span::styled("updating...", Style::default().fg(Theme::ACCENT_STRONG)),
+            Span::styled("  A toggle", Style::default().fg(Theme::MUTED)),
+        ]));
+        return lines;
+    }
+    if app.llm_audit_loading {
+        lines.push(Line::from(vec![
+            label_span("LLM audit: "),
+            Span::styled("loading...", Style::default().fg(Theme::ACCENT)),
+        ]));
+        return lines;
+    }
+    if let Some(error) = &app.llm_audit_error {
+        lines.push(Line::from(vec![
+            label_span("LLM audit: "),
+            Span::styled("unknown", Style::default().fg(Theme::WARNING)),
+            Span::styled(format!("  {error}"), Style::default().fg(Theme::MUTED)),
+        ]));
+        lines.push(Line::from(Span::styled(
+            "Press A to retry toggling, or run memory doctor if status stays unavailable.",
+            Style::default().fg(Theme::MUTED),
+        )));
+        return lines;
+    }
+    let Some(status) = &app.llm_audit_status else {
+        lines.push(Line::from(vec![
+            label_span("LLM audit: "),
+            Span::styled("unknown", Style::default().fg(Theme::MUTED)),
+            Span::styled("  A enable", Style::default().fg(Theme::MUTED)),
+        ]));
+        return lines;
+    };
+    lines.push(Line::from(vec![
+        label_span("LLM audit: "),
+        Span::styled(
+            if status.enabled { "on" } else { "off" },
+            Style::default()
+                .fg(if status.enabled {
+                    Theme::SUCCESS
+                } else {
+                    Theme::MUTED
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(
+                "  redaction={}  profile={}  A {}",
+                if status.redacted { "on" } else { "off" },
+                status.profile,
+                if status.enabled { "disable" } else { "enable" }
+            ),
+            Style::default().fg(Theme::MUTED),
+        ),
+    ]));
+    if let Some(path) = &status.config_path {
+        lines.push(Line::from(vec![
+            label_span("Audit config: "),
+            Span::styled(path.clone(), Style::default().fg(Theme::MUTED)),
+        ]));
+    }
+    lines
 }
 
 fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'static>> {
@@ -7868,7 +8040,7 @@ Ask questions against project memory and inspect the evidence, citations, timing
 Review persisted backend activity and generate get-up-to-speed briefings for new or returning agents.
 
 ## Layout
-- Briefing panel: deterministic or LLM-generated continuity context.
+- Briefing panel: deterministic or LLM-generated continuity context plus LLM audit/debug status.
 - Activity table: event time, kind, tokens, duration, and summary.
 - Detail pane: selected event metadata, including query diagnostics, graph details, token usage, or curation counts.
 
@@ -7876,9 +8048,11 @@ Review persisted backend activity and generate get-up-to-speed briefings for new
 - `j/k` or `Up/Down`: select activity.
 - `PgUp/PgDn`: scroll detail. `Home`: jump to top.
 - `g`: deterministic briefing. `Shift+L`: LLM briefing. `r`: refresh.
+- `Shift+A`: toggle LLM audit/debug logging in the running service and persist the config.
 
 ## Workflows
 - Use this tab at handoff or after interruption.
+- Enable audit briefly when you need to inspect service-side LLM prompts, then disable it after debugging.
 - Inspect token and duration fields to understand cost and latency.
 - Open query activities to see retrieval mode, graph behavior, and answer cost.
 
@@ -9361,9 +9535,9 @@ mod tests {
         format_context_percent, format_epoch_reset_time, format_query_citation_numbers,
         format_query_timing_with_percent, format_timestamp, format_timestamp_full,
         format_timestamp_medium, format_timestamp_short, format_timestamp_timeline,
-        latest_plan_display, manager_service_enabled, manager_service_running,
-        manager_status_detail, manager_status_label, manager_unit_path, memory_detail_max_scroll,
-        normalized_percent, query_input_display, query_timing_breakdown,
+        latest_plan_display, llm_audit_status_lines, manager_service_enabled,
+        manager_service_running, manager_status_detail, manager_status_label, manager_unit_path,
+        memory_detail_max_scroll, normalized_percent, query_input_display, query_timing_breakdown,
         query_timing_breakdown_lines, remaining_bar_cells, render_markdown_lines,
         service_status_detail, service_status_label, should_attempt_stream_reconnect,
         skill_bundle_status_color, tui_status_color, tui_status_detail, tui_status_label,
@@ -9373,10 +9547,11 @@ mod tests {
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
         ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
-        LlmAuditMessage, MemoryEmbeddingSpace, MemoryEntryResponse, MemoryStatus, MemoryType,
-        Profile, ProjectMemoriesResponse, QueryAnswerGeneration, QueryAnswerMethod,
-        QueryDiagnostics, QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult,
-        QueryResultDebug, ReplacementProposalListResponse, TokenUsage, WatcherPresenceSummary,
+        LlmAuditMessage, LlmAuditStatusResponse, MemoryEmbeddingSpace, MemoryEntryResponse,
+        MemoryStatus, MemoryType, Profile, ProjectMemoriesResponse, QueryAnswerGeneration,
+        QueryAnswerMethod, QueryDiagnostics, QueryFilters, QueryMatchKind, QueryRequest,
+        QueryResponse, QueryResult, QueryResultDebug, ReplacementProposalListResponse, TokenUsage,
+        WatcherPresenceSummary,
     };
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
@@ -10495,6 +10670,70 @@ mod tests {
         assert_eq!(app.activity_events.len(), 1);
         assert_eq!(activity_tokens(&app.activity_events[0]), "1.4k");
         assert_eq!(activity_duration(&app.activity_events[0]), "42");
+    }
+
+    #[test]
+    fn llm_audit_status_lines_render_current_state() {
+        let mut app = new_test_app();
+        app.llm_audit_status = Some(LlmAuditStatusResponse {
+            enabled: true,
+            redacted: true,
+            max_message_chars: 8000,
+            max_total_chars: 32000,
+            profile: "dev".to_string(),
+            config_path: Some("/repo/.mem/config.dev.toml".to_string()),
+        });
+
+        let rendered = llm_audit_status_lines(&app)
+            .into_iter()
+            .map(|line| {
+                line.spans
+                    .into_iter()
+                    .map(|span| span.content.into_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("LLM audit: on"));
+        assert!(rendered.contains("redaction=on"));
+        assert!(rendered.contains("profile=dev"));
+        assert!(rendered.contains("A disable"));
+        assert!(rendered.contains("/repo/.mem/config.dev.toml"));
+    }
+
+    #[test]
+    fn llm_audit_toggle_event_updates_status_message() {
+        let mut app = new_test_app();
+
+        app.apply_background_event(BackgroundEvent::LlmAuditToggled {
+            enabled: true,
+            response: Ok(LlmAuditStatusResponse {
+                enabled: true,
+                redacted: true,
+                max_message_chars: 8000,
+                max_total_chars: 32000,
+                profile: "prod".to_string(),
+                config_path: Some("/config/memory-layer.toml".to_string()),
+            }),
+        });
+
+        assert!(!app.llm_audit_toggling);
+        assert!(app.llm_audit_error.is_none());
+        assert!(
+            app.llm_audit_status
+                .as_ref()
+                .is_some_and(|status| status.enabled)
+        );
+        assert_eq!(app.status_message, "LLM audit/debug logging enabled.");
+        assert_eq!(app.ui_status, UiStatus::Ready);
+    }
+
+    #[test]
+    fn activity_help_mentions_llm_audit_toggle() {
+        let help = super::tab_help_markdown(TabKind::Activity);
+        assert!(help.contains("Shift+A"));
+        assert!(help.contains("LLM audit/debug"));
     }
 
     #[test]
