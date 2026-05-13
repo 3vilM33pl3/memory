@@ -131,7 +131,7 @@ memory upgrade --dry-run
 memory upgrade
 ```
 
-`memory upgrade` backs up replaced skill directories under `.mem/runtime/skill-backups/` before copying from the template. It avoids replacing newer project-local skills unless `--force` is used.
+`memory upgrade` backs up replaced skill directories under the user-local project runtime `skill-backups/` directory before copying from the template. It avoids replacing newer project-local skills unless `--force` is used.
 
 The relevant logic lives in `crates/mem-cli/src/main.rs`:
 

@@ -85,7 +85,9 @@ impl AutomationState {
 }
 
 pub fn default_runtime_dir(repo_root: &Path) -> PathBuf {
-    repo_root.join(".memory-layer")
+    mem_api::project_paths_for_repo(repo_root)
+        .map(|paths| paths.runtime_dir())
+        .unwrap_or_else(|| repo_root.join(".memory-layer"))
 }
 
 pub fn state_path(config: &AutomationConfig, repo_root: &Path) -> PathBuf {

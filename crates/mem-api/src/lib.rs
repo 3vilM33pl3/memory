@@ -2266,8 +2266,8 @@ impl AppConfig {
             // Global config is part of the installed/prod stack; the dev
             // stack ignores it so a cargo-run service cannot silently pick
             // up the packaged machine-wide settings. Bootstrap shared
-            // values (database URL, LLM endpoints) into .mem/config.dev.toml
-            // via `memory dev init --copy-from-global`.
+            // values (database URL, LLM endpoints) into the user-local project
+            // config.dev.toml via `memory dev init --copy-from-global`.
             if profile == Profile::Prod {
                 if let Some(path) = discover_global_config_path() {
                     env_files.push(env_path_for_config(&path));
@@ -2476,12 +2476,34 @@ pub fn discover_repo_config_path() -> Option<PathBuf> {
     find_repo_config_path(&cwd)
 }
 
+pub fn project_paths_for_repo(repo_root: &Path) -> Option<mem_platform::ProjectPaths> {
+    let slug = project_slug_for_repo(repo_root);
+    mem_platform::project_paths(repo_root, &slug)
+}
+
+pub fn project_slug_for_repo(repo_root: &Path) -> String {
+    read_repo_project_slug(repo_root)
+        .or_else(|| {
+            repo_root
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| "project".to_string())
+}
+
 pub fn dev_overlay_path_for_base(base: &Path) -> Option<PathBuf> {
     base.parent().map(|parent| parent.join("config.dev.toml"))
 }
 
 pub fn discover_repo_dev_config_path() -> Option<PathBuf> {
     let cwd = env::current_dir().ok()?;
+    if let Some(repo_root) = mem_platform::discover_project_root(&cwd)
+        && let Some(paths) = project_paths_for_repo(&repo_root)
+        && paths.dev_config_path().is_file()
+    {
+        return Some(paths.dev_config_path());
+    }
     for directory in cwd.ancestors() {
         let candidate = directory.join(".mem").join("config.dev.toml");
         if candidate.is_file() {
@@ -2494,7 +2516,7 @@ pub fn discover_repo_dev_config_path() -> Option<PathBuf> {
 fn dev_overlay_missing_message(base: Option<&Path>) -> String {
     let hint = match base.and_then(Path::parent) {
         Some(dir) => format!("{}/config.dev.toml", dir.display()),
-        None => "<repo>/.mem/config.dev.toml".to_string(),
+        None => "<project config>/config.dev.toml".to_string(),
     };
     format!(
         "dev profile active but {hint} is missing. Run `memory dev init` to \
@@ -2517,6 +2539,12 @@ pub fn discover_global_config_path() -> Option<PathBuf> {
 }
 
 pub fn find_repo_config_path(start: &Path) -> Option<PathBuf> {
+    if let Some(repo_root) = mem_platform::discover_project_root(start)
+        && let Some(paths) = project_paths_for_repo(&repo_root)
+        && paths.config_path().is_file()
+    {
+        return Some(paths.config_path());
+    }
     for directory in start.ancestors() {
         let candidate = directory.join(".mem").join("config.toml");
         if candidate.is_file() {
@@ -2585,8 +2613,12 @@ pub fn repo_agent_settings_path(repo_root: &Path) -> PathBuf {
 }
 
 pub fn read_repo_project_slug(repo_root: &Path) -> Option<String> {
-    let project_path = repo_root.join(".mem").join("project.toml");
-    let content = std::fs::read_to_string(project_path).ok()?;
+    read_project_slug_from_file(&repo_root.join(".mem").join("project.toml"))
+        .or_else(|| read_project_slug_from_file(&repo_agent_settings_path(repo_root)))
+}
+
+fn read_project_slug_from_file(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -3921,6 +3953,63 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
 
         assert_eq!(find_repo_config_path(&nested).unwrap(), config_path);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn project_home_config_wins_over_legacy_repo_config() {
+        let _guard = env_lock().lock().unwrap();
+        let temp_dir = unique_temp_dir("mem-api-project-home");
+        let repo_dir = temp_dir.join("repo");
+        let config_home = temp_dir.join("config-home");
+        let state_home = temp_dir.join("state-home");
+        let cache_home = temp_dir.join("cache-home");
+        let old_config_home = env::var("XDG_CONFIG_HOME").ok();
+        let old_state_home = env::var("XDG_STATE_HOME").ok();
+        let old_cache_home = env::var("XDG_CACHE_HOME").ok();
+        fs::create_dir_all(repo_dir.join(".mem")).unwrap();
+        fs::write(
+            repo_dir.join(".mem").join("project.toml"),
+            "slug = \"demo\"\n",
+        )
+        .unwrap();
+        fs::write(
+            repo_dir.join(".mem").join("config.toml"),
+            "[automation]\nenabled = false\n",
+        )
+        .unwrap();
+
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", &config_home);
+            env::set_var("XDG_STATE_HOME", &state_home);
+            env::set_var("XDG_CACHE_HOME", &cache_home);
+        }
+        let paths = project_paths_for_repo(&repo_dir).unwrap();
+        fs::create_dir_all(&paths.config_dir).unwrap();
+        fs::write(&paths.config_path(), "[automation]\nenabled = true\n").unwrap();
+
+        assert_eq!(
+            find_repo_config_path(&repo_dir).unwrap(),
+            paths.config_path()
+        );
+
+        unsafe {
+            if let Some(value) = old_config_home {
+                env::set_var("XDG_CONFIG_HOME", value);
+            } else {
+                env::remove_var("XDG_CONFIG_HOME");
+            }
+            if let Some(value) = old_state_home {
+                env::set_var("XDG_STATE_HOME", value);
+            } else {
+                env::remove_var("XDG_STATE_HOME");
+            }
+            if let Some(value) = old_cache_home {
+                env::set_var("XDG_CACHE_HOME", value);
+            } else {
+                env::remove_var("XDG_CACHE_HOME");
+            }
+        }
         let _ = fs::remove_dir_all(temp_dir);
     }
 

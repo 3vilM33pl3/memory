@@ -1,6 +1,8 @@
-#[cfg(not(target_os = "macos"))]
-use std::path::Path;
-use std::{env, path::PathBuf, process::Command};
+use std::{
+    env, fs,
+    path::{Component, Path, PathBuf},
+    process::Command,
+};
 
 use anyhow::{Context, Result};
 
@@ -116,6 +118,193 @@ pub fn preferred_user_state_dir() -> Option<PathBuf> {
                 .join("memory-layer"),
         )
     }
+}
+
+pub fn preferred_user_cache_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = env::var("HOME").ok()?;
+        return Some(
+            PathBuf::from(home)
+                .join("Library")
+                .join("Caches")
+                .join("memory-layer"),
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+            return Some(
+                PathBuf::from(local_app_data)
+                    .join("memory-layer")
+                    .join("cache"),
+            );
+        }
+        return None;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Ok(cache_home) = env::var("XDG_CACHE_HOME") {
+            return Some(PathBuf::from(cache_home).join("memory-layer"));
+        }
+        let home = env::var("HOME").ok()?;
+        Some(PathBuf::from(home).join(".cache").join("memory-layer"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectPaths {
+    pub key: String,
+    pub config_dir: PathBuf,
+    pub state_dir: PathBuf,
+    pub cache_dir: PathBuf,
+}
+
+impl ProjectPaths {
+    pub fn config_path(&self) -> PathBuf {
+        self.config_dir.join("config.toml")
+    }
+
+    pub fn dev_config_path(&self) -> PathBuf {
+        self.config_dir.join("config.dev.toml")
+    }
+
+    pub fn env_path(&self) -> PathBuf {
+        self.config_dir.join("memory-layer.env")
+    }
+
+    pub fn project_path(&self) -> PathBuf {
+        self.config_dir.join("project.toml")
+    }
+
+    pub fn runtime_dir(&self) -> PathBuf {
+        self.state_dir.join("runtime")
+    }
+
+    pub fn cache_index_dir(&self) -> PathBuf {
+        self.cache_dir.join("index")
+    }
+}
+
+pub fn project_paths(repo_root: &Path, slug: &str) -> Option<ProjectPaths> {
+    let config_base = preferred_project_config_base_dir()?;
+    let state_base = preferred_user_state_dir()?.join("projects");
+    let cache_base = preferred_user_cache_dir()?.join("projects");
+    let key = project_storage_key(repo_root, slug);
+    Some(ProjectPaths {
+        config_dir: config_base.join(&key),
+        state_dir: state_base.join(&key),
+        cache_dir: cache_base.join(&key),
+        key,
+    })
+}
+
+pub fn preferred_project_config_base_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        return Some(macos_app_support_dir()?.join("projects"));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
+            return Some(
+                PathBuf::from(config_home)
+                    .join("memory-layer")
+                    .join("projects"),
+            );
+        }
+        let home = env::var("HOME").ok()?;
+        Some(
+            PathBuf::from(home)
+                .join(".config")
+                .join("memory-layer")
+                .join("projects"),
+        )
+    }
+}
+
+pub fn project_storage_key(repo_root: &Path, slug: &str) -> String {
+    let identity_path = git_common_dir(repo_root)
+        .or_else(|| canonicalize_lossy(repo_root))
+        .unwrap_or_else(|| repo_root.to_path_buf());
+    let hash = stable_path_hash(&identity_path);
+    format!("{}-{:016x}", sanitize_project_slug(slug), hash)
+}
+
+pub fn discover_project_root(start: &Path) -> Option<PathBuf> {
+    for directory in start.ancestors() {
+        if directory.join(".mem").join("project.toml").is_file()
+            || directory
+                .join(".agents")
+                .join("memory-layer.toml")
+                .is_file()
+            || directory.join(".git").exists()
+        {
+            return Some(directory.to_path_buf());
+        }
+    }
+    None
+}
+
+pub fn git_common_dir(repo_root: &Path) -> Option<PathBuf> {
+    let git_path = repo_root.join(".git");
+    if git_path.is_dir() {
+        return canonicalize_lossy(&git_path);
+    }
+    let content = fs::read_to_string(&git_path).ok()?;
+    let gitdir = content.trim().strip_prefix("gitdir:")?.trim();
+    let gitdir_path = PathBuf::from(gitdir);
+    let absolute = if gitdir_path.is_absolute() {
+        gitdir_path
+    } else {
+        repo_root.join(gitdir_path)
+    };
+    let canonical = canonicalize_lossy(&absolute).unwrap_or(absolute);
+    if path_has_component(&canonical, "worktrees") {
+        let mut cursor = canonical.as_path();
+        while let Some(parent) = cursor.parent() {
+            if cursor
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name == "worktrees")
+            {
+                return canonicalize_lossy(parent).or_else(|| Some(parent.to_path_buf()));
+            }
+            cursor = parent;
+        }
+    }
+    Some(canonical)
+}
+
+fn canonicalize_lossy(path: &Path) -> Option<PathBuf> {
+    path.canonicalize().ok()
+}
+
+fn stable_path_hash(path: &Path) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in path.display().to_string().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn sanitize_project_slug(value: &str) -> String {
+    let sanitized = sanitize_service_fragment(value.trim()).to_ascii_lowercase();
+    if sanitized.is_empty() {
+        "project".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn path_has_component(path: &Path, needle: &str) -> bool {
+    path.components().any(
+        |component| matches!(component, Component::Normal(value) if value.to_str() == Some(needle)),
+    )
 }
 
 pub fn default_shared_capnp_unix_socket() -> String {

@@ -99,23 +99,27 @@ Effective config is resolved in this order:
 
 1. explicit `--config <path>` if provided
 2. shared/global config
-3. repo-local `.mem/config.toml`
-4. `MEMORY_LAYER__...` environment overrides
+3. user-local project `config.toml`
+4. legacy repo-local `.mem/config.toml` if no user-local project config exists
+5. `MEMORY_LAYER__...` environment overrides
 
 Shared/global config normally lives in:
 
 - `/etc/memory-layer/memory-layer.toml` for Debian installs
 - `~/.config/memory-layer/memory-layer.toml` for local installs
 
-Repo-local overrides live in:
+Project overrides live in user-local project directories:
 
-- `.mem/config.toml`
+- Linux config: `~/.config/memory-layer/projects/<project-key>/config.toml`
+- Linux state/runtime: `~/.local/state/memory-layer/projects/<project-key>/runtime/`
+- Linux cache/indexes: `~/.cache/memory-layer/projects/<project-key>/`
 
 Secrets can come from:
 
 - `/etc/memory-layer/memory-layer.env`
 - `~/.config/memory-layer/memory-layer.env`
-- `.mem/memory-layer.env`
+- user-local project `memory-layer.env`
+- legacy `.mem/memory-layer.env`
 
 The loader in `mem-api` also normalizes some legacy config keys during deserialization so older shared configs can coexist with newer repo-local overrides.
 
@@ -125,13 +129,11 @@ The loader in `mem-api` also normalizes some legacy config keys during deseriali
 
 The repo-local bootstrap creates:
 
-- `.mem/config.toml`
 - `.mem/project.toml`
-- `.mem/runtime/`
 - `.agents/memory-layer.toml`
 - `.agents/skills/`
 
-This is deliberately repo-local because Memory Layer is project-scoped. The same backend and database may serve many repos, but each repo still needs its own slug, local overrides, and skill installation.
+Operational config, runtime state, caches, sockets, and secrets live in user-local project directories. The repo keeps only the small `.mem/project.toml` marker and agent-visible `.agents/` files. The same backend and database may serve many repos, but each repo still needs its own slug and skill installation.
 
 ## Runtime Topology
 
@@ -416,7 +418,7 @@ It:
 
 1. reads high-value repo files
 2. reads recent git history
-3. builds or reuses a local repository index under `.mem/runtime/index/`
+3. builds or reuses a local repository index under the user-local project cache
 4. runs parser-backed analyzers for enabled languages from `.agents/memory-layer.toml`
 5. builds a structured dossier from indexed evidence
 6. sends that dossier to an OpenAI-compatible model
@@ -434,7 +436,7 @@ The system exposes several layers of observability:
 - `memory doctor` for setup diagnostics
 - `GET /healthz` for backend/database health
 - project overview endpoints for counts and recent activity
-- watcher audit logs in `.mem/runtime/`
+- watcher audit logs in the user-local project runtime directory
 - contextual TUI activity summaries backed by the same event stream
 - `curation_runs` in PostgreSQL
 

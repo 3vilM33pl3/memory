@@ -219,8 +219,8 @@ Create or refresh repo-local Memory Layer configuration so agents can write, que
 - Work in the target project directory I give you.
 - Do not install the system package; this prompt is only for repo-local Memory Layer setup.
 - Do not create or reinitialize git history.
-- Do not delete existing `.mem/`, `.agents/`, or config files.
-- If `.mem/config.toml`, `.mem/project.toml`, `.agents/memory-layer.toml`, or `.agents/skills/` already exist, inspect them and preserve local customizations.
+- Do not delete existing `.mem/`, `.agents/`, or Memory Layer config files.
+- If `.mem/project.toml`, legacy `.mem/config.toml`, `.agents/memory-layer.toml`, or `.agents/skills/` already exist, inspect them and preserve local customizations.
 - Ask me before overwriting files, rotating credentials, importing history, or running a write operation that was not previewed.
 - Make sure the shared backend is configured and healthy before saying setup is done.
 - Make sure Go is available on `PATH` because repo-local Memory Layer skills use the Go helper.
@@ -228,8 +228,8 @@ Create or refresh repo-local Memory Layer configuration so agents can write, que
 ## Steps
 
 1. Run `memory health` and `memory doctor`.
-2. Run `memory wizard --dry-run` in the target project to preview repo-local setup.
-3. Run `memory wizard` to create or refresh `.mem/` and `.agents/` Memory Layer files.
+2. Run `memory wizard --dry-run` in the target project to preview setup.
+3. Run `memory wizard` to create or refresh the user-local project config, `.mem/project.toml`, and `.agents/` Memory Layer files.
 4. Run `memory doctor` again.
 5. If commit history should be available as evidence, run `memory commits sync --project <project-slug> --dry-run`, then run it for real only if the preview looks correct.
 6. If an initial scan is wanted, run `memory scan --project <project-slug> --dry-run`, then run it for real only after I approve the preview.
@@ -237,7 +237,7 @@ Create or refresh repo-local Memory Layer configuration so agents can write, que
 
 ## Finish
 
-Report which repo-local files were created or preserved, the project slug, backend health, and any follow-up actions.
+Report which project files/configs were created or preserved, the project slug, backend health, and any follow-up actions.
 ````
 
 Key docs after setup:
@@ -257,7 +257,7 @@ Most mutating `memory` commands support `--dry-run` so agents can preview writes
 
 If you are working on Memory Layer itself, you can run a development copy from a `cargo` checkout that is **fully isolated** from any packaged install on the same machine — separate ports, separate Cap'n Proto socket, separate runtime directory. The TUI shows `[dev]` in its header so you cannot mistake one for the other.
 
-The mechanism: any `memory` binary launched from `target/{debug,release}/` activates the `dev` profile, which layers `.mem/config.dev.toml` on top of `.mem/config.toml` and ignores the global config entirely. Override with `MEMORY_LAYER_PROFILE=dev|prod` when needed.
+The mechanism: any `memory` binary launched from `target/{debug,release}/` activates the `dev` profile, which layers the user-local project `config.dev.toml` on top of the user-local project `config.toml` and ignores the global config entirely. Override with `MEMORY_LAYER_PROFILE=dev|prod` when needed.
 
 ```bash
 git clone https://github.com/3vilM33pl3/memory
@@ -279,7 +279,7 @@ cargo run --bin memory -- tui                    # header reads [dev]
 | Stack | HTTP | capnp TCP | capnp Unix socket |
 | --- | --- | --- | --- |
 | Installed (Debian/Homebrew package) | `127.0.0.1:4040` | `127.0.0.1:4041` | `/tmp/memory-layer.capnp.sock` |
-| Dev (cargo-run from repo) | `127.0.0.1:4250` | `127.0.0.1:4251` | `<repo>/.mem/runtime/dev/memory-layer.capnp.sock` |
+| Dev (cargo-run from repo) | `127.0.0.1:4250` | `127.0.0.1:4251` | user-local project runtime `runtime/dev/memory-layer.capnp.sock` |
 
 For the full isolation contract, override flags, troubleshooting, and the verification recipe, see [Dev Stack vs Installed Stack](docs/developer/dev-stack.md).
 
@@ -353,7 +353,8 @@ Memory is scoped by project, typed by purpose, linked to provenance, and curated
 
 Project-local customization now has two layers:
 
-- `.mem/` for runtime overrides and generated state
+- user-local project config/state/cache directories for runtime overrides and generated state
+- `.mem/project.toml` for the small repo-local project marker
 - `.agents/memory-layer.toml` for project-owned memory behavior such as include/ignore paths and future analyzers/plugins
 
 ## Documentation
