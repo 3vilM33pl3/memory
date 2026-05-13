@@ -120,7 +120,7 @@ select {
 }
 
 .tabs {
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
   margin-bottom: 0.45rem;
 }
 
@@ -238,6 +238,11 @@ select {
 .status-connecting {
   border-color: rgba(255, 201, 107, 0.55);
   color: var(--accent-2);
+}
+
+.restart-text {
+  color: var(--danger);
+  font-weight: 700;
 }
 
 .detail-scroll {
@@ -473,6 +478,34 @@ pre {
   text-align: center;
 }
 
+.activity-briefing {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.help-panel {
+  margin-bottom: 0.45rem;
+}
+
+.help-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.help-grid p,
+.help-grid ul {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.detail-section code {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--accent-2);
+}
+
 @media (max-width: 980px) {
   .topbar,
   .panel-grid,
@@ -482,6 +515,10 @@ pre {
 
   .tabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .help-grid {
+    grid-template-columns: 1fr;
   }
 
   .project-form {

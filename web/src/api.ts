@@ -22,6 +22,10 @@ import type {
   ReplacementProposalResolutionResponse,
   ResumeResponse,
   ActivityListResponse,
+  LlmAuditStatusResponse,
+  RuntimeStatusResponse,
+  UpToSpeedRequest,
+  UpToSpeedResponse,
 } from "./types";
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -60,6 +64,39 @@ export async function getActivities(
   if (kind) params.set("kind", kind);
   return parseJson(
     await fetch(`/v1/projects/${encodeURIComponent(project)}/activities?${params.toString()}`),
+  );
+}
+
+export async function getRuntimeStatus(
+  project: string,
+  repoRoot?: string | null,
+): Promise<RuntimeStatusResponse> {
+  const params = new URLSearchParams({ project });
+  if (repoRoot) params.set("repo_root", repoRoot);
+  return parseJson(await fetch(`/v1/runtime/status?${params.toString()}`));
+}
+
+export async function getUpToSpeed(request: UpToSpeedRequest): Promise<UpToSpeedResponse> {
+  return parseJson(
+    await fetch(`/v1/projects/${encodeURIComponent(request.project)}/up-to-speed`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+}
+
+export async function getLlmAuditStatus(): Promise<LlmAuditStatusResponse> {
+  return parseJson(await fetch("/v1/config/llm-audit"));
+}
+
+export async function setLlmAuditEnabled(enabled: boolean): Promise<LlmAuditStatusResponse> {
+  return parseJson(
+    await fetch("/v1/config/llm-audit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }),
   );
 }
 

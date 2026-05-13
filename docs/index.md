@@ -24,6 +24,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 
 - [Install Memory Layer and configure your first project](user/getting-started.md)
 - [Open the terminal UI](user/tui/README.md)
+- [Use the browser UI](user/web-ui.md)
 - [Ask cited questions from project memory](user/tui/query.md)
 - [Troubleshoot setup and runtime errors](user/cli/doctor.md)
 
@@ -31,7 +32,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 
 - **Query and evidence:** [Query Tab](user/tui/query.md), [Query Command](user/cli/query.md), [Code Graph Extraction](user/cli/graph.md)
 - **Memory management:** [Memories Tab](user/tui/memories.md), [Review Tab](user/tui/review.md), [Memory Types Reference](developer/architecture/memory-types.md)
-- **Operations:** [Agents Tab](user/tui/agents.md), [Watcher Health](user/cli/watchers.md), [Errors Tab](user/tui/errors.md), [Doctor Diagnostics](user/cli/doctor.md)
+- **Operations:** [Browser UI](user/web-ui.md), [Agents Tab](user/tui/agents.md), [Watcher Health](user/cli/watchers.md), [Errors Tab](user/tui/errors.md), [Doctor Diagnostics](user/cli/doctor.md)
 - **Model switching:** [Embeddings Tab](user/tui/embeddings.md), [Embedding Operations](user/cli/embeddings.md)
 - **Re-entry:** [Activity Tab](user/tui/activity.md), [Get Up To Speed](user/cli/up-to-speed.md), [Resume Briefings](user/cli/resume.md)
 - **Evaluation:** [Beginner Guide To Evaluations](user/evaluation-guide.md), [Automated Evaluation](user/cli/eval.md), [Memory Improvement Evaluation](developer/evaluation-memory-improvement.md)
