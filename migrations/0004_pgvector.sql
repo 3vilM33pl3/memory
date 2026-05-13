@@ -8,5 +8,6 @@ ALTER TABLE memory_chunks
 ALTER TABLE memory_chunks
     ADD COLUMN IF NOT EXISTS embedding vector;
 
-CREATE INDEX IF NOT EXISTS idx_memory_chunks_embedding_hnsw
-    ON memory_chunks USING hnsw (embedding vector_cosine_ops);
+-- Fresh installs no longer rely on the legacy memory_chunks embedding index.
+-- Later migrations move embeddings into memory_chunk_embeddings, and creating
+-- an HNSW index on a dimensionless vector column fails on current pgvector.
