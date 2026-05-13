@@ -10,6 +10,7 @@ Use it when a human or agent needs to inspect what Memory Layer recently did: qu
 memory activities --project memory
 memory activities --project memory --limit 50 --text
 memory activities --project memory --kind query
+memory activities --project memory --kind llm_audit
 ```
 
 JSON is the default so agents can consume it directly. Use `--text` for a compact human-readable timeline.
@@ -24,6 +25,21 @@ JSON is the default so agents can consume it directly. Use `--text` for a compac
 - source, provider, model, actor, and operation metadata when available
 - query graph retrieval status, candidate counts, timing, and sampled graph connections when a query used graph-aware retrieval
 - graph extraction run id, analyzer/strategy versions, symbol/reference counts, graph edge counts, and reuse flags
+- `llm_audit` events, when `[llm_audit].enabled = true`, with redacted service-side LLM prompt messages and request status
+
+## LLM Audit Mode
+
+Enable audit mode in the service config when you need to debug what Memory Layer sends to an LLM:
+
+```toml
+[llm_audit]
+enabled = true
+redact = true
+max_message_chars = 8000
+max_total_chars = 32000
+```
+
+Audit events are disabled by default. With `redact = true`, Memory Layer redacts common API key, bearer token, password, secret, and database URL credential patterns before storing the prompt messages.
 
 Older events remain readable even if they were recorded before token and metadata columns existed; those fields appear as `null` or `-`.
 

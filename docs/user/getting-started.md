@@ -512,6 +512,24 @@ Run `ollama serve` and pull the models first, for example `ollama pull
 llama3.2` and `ollama pull nomic-embed-text`. `memory doctor` checks the
 local `/v1/models` endpoint and warns when the configured LLM model is missing.
 
+### LLM audit/debug mode
+
+LLM audit mode records what the service sends to configured LLMs for query
+answers, resume summaries, and get-up-to-speed summaries. It is disabled by
+default because prompts can contain memory content:
+
+```toml
+[llm_audit]
+enabled = true
+redact = true
+max_message_chars = 8000
+max_total_chars = 32000
+```
+
+With `redact = true`, Memory Layer redacts common API key, bearer token,
+password, secret, and database URL credential patterns before persisting the
+audit activity.
+
 ## Writer ID
 
 Each coding agent or tool that writes memory gets a writer ID.
