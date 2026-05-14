@@ -47,8 +47,8 @@ jobs:
           fi
 
           codex review \
+            -c "model=\"$CODEX_REVIEW_MODEL\"" \
             --base "origin/${{ github.event.pull_request.base.ref }}" \
-            --model "$CODEX_REVIEW_MODEL" \
             "Review this pull request for correctness, regressions, missing tests, security issues, release risk, and documentation drift. Prioritize actionable findings with file paths and line references. Keep the output concise and do not include praise." \
             > "$RUNNER_TEMP/codex-review.md"
       - name: Post review comment
