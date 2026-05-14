@@ -4,7 +4,7 @@ Memory Layer uses GitHub Actions for incremental validation, release publishing,
 
 ## Required Repository Secrets
 
-- `OPENAI_API_KEY`: Enables Codex review, resolver, discussion, and feature-agent workflows. If it is missing, PR review and discussion jobs post a skip message and the manually dispatched feature-agent job fails early.
+- `OPENAI_API_KEY`: Enables Codex review, resolver, discussion, and feature-agent workflows. The workflows log the Codex CLI in with `codex login --with-api-key` before running agent commands. If it is missing, PR review and discussion jobs post a skip message and the manually dispatched feature-agent job fails early.
 
 ## Optional Repository Variables
 

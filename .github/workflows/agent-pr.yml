@@ -45,6 +45,7 @@ jobs:
             printf '%s\n' 'Codex review skipped because the `OPENAI_API_KEY` Actions secret is not configured.' > "$RUNNER_TEMP/codex-review.md"
             exit 0
           fi
+          printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null
 
           # `codex review --base` uses the CLI's built-in review prompt; current
           # Codex releases reject an additional positional prompt in this mode.
@@ -96,6 +97,7 @@ jobs:
             gh pr comment "$PR_NUMBER" --body "Codex resolver skipped because the \`OPENAI_API_KEY\` Actions secret is not configured."
             exit 0
           fi
+          printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null
 
           gh pr view "$PR_NUMBER" --comments > "$RUNNER_TEMP/pr-context.txt"
           codex exec \
@@ -153,6 +155,7 @@ jobs:
             gh pr comment "$PR_NUMBER" --body "Codex discussion skipped because the \`OPENAI_API_KEY\` Actions secret is not configured."
             exit 0
           fi
+          printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null
 
           gh pr view "$PR_NUMBER" --comments --json title,body,comments,files > "$RUNNER_TEMP/pr-context.json"
           printf '%s\n' "$COMMENT_BODY" > "$RUNNER_TEMP/agent-question.txt"
