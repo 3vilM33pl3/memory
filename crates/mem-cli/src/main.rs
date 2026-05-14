@@ -5007,10 +5007,7 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
         fs::write(&project_path, render_project_metadata(project, repo_root))
             .context("write .mem/project.toml")?;
     }
-    if !local_gitignore_path.exists() {
-        fs::write(&local_gitignore_path, "*\n!.gitignore\n!project.toml\n")
-            .context("write .mem/.gitignore")?;
-    }
+    ensure_mem_gitignore(&local_gitignore_path, false)?;
     if !agent_config_path.exists() {
         if let Some(parent) = agent_config_path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
@@ -5279,8 +5276,6 @@ fn initialize_repo(
     let config_contents = render_repo_config(repo_root, &project_paths);
     let project_contents = render_project_metadata(project, repo_root);
     let agent_project_contents = render_agent_project_config(project, repo_root);
-    let mem_gitignore_contents = "*\n!.gitignore\n!project.toml\n";
-
     if !print_only {
         fs::create_dir_all(&project_paths.config_dir)
             .with_context(|| format!("create {}", project_paths.config_dir.display()))?;
@@ -5324,10 +5319,7 @@ fn initialize_repo(
             fs::write(&agent_config_path, agent_project_contents)
                 .context("write .agents/memory-layer.toml")?;
         }
-        if force || !local_gitignore_path.exists() {
-            fs::write(&local_gitignore_path, mem_gitignore_contents)
-                .context("write .mem/.gitignore")?;
-        }
+        ensure_mem_gitignore(&local_gitignore_path, force)?;
         sync_memory_skill_bundle(&skill_template_dir, &skill_root, force)?;
         ensure_claude_md_memory_section(repo_root, project)?;
     }
@@ -5341,6 +5333,31 @@ fn initialize_repo(
         &skill_root,
         print_only,
     ))
+}
+
+fn ensure_mem_gitignore(path: &Path, force: bool) -> Result<()> {
+    const CONTENTS: &str = "*\n!.gitignore\n!project.toml\n";
+    if force || !path.exists() {
+        fs::write(path, CONTENTS).context("write .mem/.gitignore")?;
+        return Ok(());
+    }
+
+    let current = fs::read_to_string(path).context("read .mem/.gitignore")?;
+    let lines: Vec<&str> = current
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    let allowed = ["*", "!.gitignore", "!project.toml"];
+    let has_safe_default = allowed
+        .into_iter()
+        .all(|required| lines.contains(&required));
+    let has_only_safe_rules = lines.iter().all(|line| allowed.contains(line));
+    if !has_safe_default || !has_only_safe_rules {
+        fs::write(path, CONTENTS).context("migrate .mem/.gitignore")?;
+    }
+
+    Ok(())
 }
 
 fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String> {
@@ -14868,6 +14885,36 @@ mod tests {
             "*\n!.gitignore\n!project.toml\n"
         );
         assert!(!root_gitignore_contains_mem(&repo_root).unwrap());
+
+        restore_env_var("XDG_CONFIG_HOME", old_config);
+        restore_env_var("XDG_STATE_HOME", old_state);
+        restore_env_var("XDG_CACHE_HOME", old_cache);
+        let _ = fs::remove_dir_all(repo_root);
+        let _ = fs::remove_dir_all(xdg_root);
+    }
+
+    #[test]
+    fn init_migrates_legacy_mem_gitignore() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let repo_root = unique_temp_dir("mem-init-gitignore");
+        let xdg_root = unique_temp_dir("mem-init-gitignore-xdg");
+        let old_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_state = std::env::var("XDG_STATE_HOME").ok();
+        let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
+            std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
+            std::env::set_var("XDG_CACHE_HOME", xdg_root.join("cache"));
+        }
+        fs::create_dir_all(repo_root.join(".mem")).unwrap();
+        fs::write(repo_root.join(".mem/.gitignore"), "runtime/\n").unwrap();
+
+        initialize_repo(&repo_root, "memory", false, false).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(repo_root.join(".mem/.gitignore")).unwrap(),
+            "*\n!.gitignore\n!project.toml\n"
+        );
 
         restore_env_var("XDG_CONFIG_HOME", old_config);
         restore_env_var("XDG_STATE_HOME", old_state);

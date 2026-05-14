@@ -2439,9 +2439,10 @@ function collectErrorItems(
       });
     }
   }
+  const fallbackTime = Date.now();
   return items.sort((left, right) => {
-    const leftTime = left.when ? Date.parse(left.when) : Date.now();
-    const rightTime = right.when ? Date.parse(right.when) : Date.now();
+    const leftTime = left.when ? Date.parse(left.when) : fallbackTime;
+    const rightTime = right.when ? Date.parse(right.when) : fallbackTime;
     return rightTime - leftTime;
   });
 }

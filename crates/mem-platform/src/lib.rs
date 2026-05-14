@@ -207,7 +207,26 @@ pub fn preferred_project_config_base_dir() -> Option<PathBuf> {
         return Some(macos_app_support_dir()?.join("projects"));
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+            return Some(
+                PathBuf::from(local_app_data)
+                    .join("memory-layer")
+                    .join("projects"),
+            );
+        }
+        if let Ok(app_data) = env::var("APPDATA") {
+            return Some(
+                PathBuf::from(app_data)
+                    .join("memory-layer")
+                    .join("projects"),
+            );
+        }
+        return None;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
             return Some(

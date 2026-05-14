@@ -2048,62 +2048,72 @@ async fn runtime_status(
         .filter(|value| !value.is_empty())
         .unwrap_or("memory")
         .to_string();
+    let repo_root = query.repo_root;
     let version = state
         .config
         .profile
         .display_version(env!("CARGO_PKG_VERSION"));
-    let watcher_summary = watcher_summary_for_project(&state.watchers, &project);
-    let manager = runtime_manager_status(&state.config.profile, &version);
-    let skills = runtime_skill_status(query.repo_root.as_deref(), &version);
-    let restart_notice = runtime_restart_notice(state.startup_at, &version);
+    let profile = state.config.profile;
+    let profile_label = profile.to_string();
+    let startup_at = state.startup_at;
+    let watchers = Arc::clone(&state.watchers);
+    let service_id = state.config.cluster.service_id.clone();
+    let is_primary = state.is_primary();
 
-    Ok(Json(RuntimeStatusResponse {
-        generated_at: chrono::Utc::now(),
-        project,
-        profile: state.config.profile.to_string(),
-        web: RuntimeComponentStatus {
-            version: version.clone(),
-            status: if restart_notice.is_some() {
-                "restart".to_string()
-            } else {
-                "ok".to_string()
-            },
-            detail: restart_notice
-                .as_ref()
-                .map(|notice| format!("restart for {}", notice.reason)),
-        },
-        service: RuntimeComponentStatus {
-            version: version.clone(),
-            status: if state.is_primary() { "ok" } else { "relay" }.to_string(),
-            detail: Some(format!(
-                "{} {}",
-                state.config.cluster.service_id,
-                if state.is_primary() {
-                    "primary"
+    let response = tokio::task::spawn_blocking(move || {
+        let watcher_summary = watcher_summary_for_project(&watchers, &project);
+        let manager = runtime_manager_status(&profile, &version);
+        let skills = runtime_skill_status(repo_root.as_deref(), &version);
+        let restart_notice = runtime_restart_notice(startup_at, &version);
+
+        RuntimeStatusResponse {
+            generated_at: chrono::Utc::now(),
+            project,
+            profile: profile_label,
+            web: RuntimeComponentStatus {
+                version: version.clone(),
+                status: if restart_notice.is_some() {
+                    "restart".to_string()
                 } else {
-                    "relay"
-                }
-            )),
-        },
-        manager,
-        watchers: RuntimeWatcherStatus {
-            version: version.clone(),
-            status: if watcher_summary.unhealthy_count == 0 {
-                "ok".to_string()
-            } else {
-                "warn".to_string()
+                    "ok".to_string()
+                },
+                detail: restart_notice
+                    .as_ref()
+                    .map(|notice| format!("restart for {}", notice.reason)),
             },
-            detail: Some(format!(
-                "{} active, {} unhealthy",
-                watcher_summary.active_count, watcher_summary.unhealthy_count
-            )),
-            active_count: watcher_summary.active_count,
-            unhealthy_count: watcher_summary.unhealthy_count,
-            stale_after_seconds: watcher_summary.stale_after_seconds,
-        },
-        skills,
-        restart_notice,
-    }))
+            service: RuntimeComponentStatus {
+                version: version.clone(),
+                status: if is_primary { "ok" } else { "relay" }.to_string(),
+                detail: Some(format!(
+                    "{} {}",
+                    service_id,
+                    if is_primary { "primary" } else { "relay" }
+                )),
+            },
+            manager,
+            watchers: RuntimeWatcherStatus {
+                version: version.clone(),
+                status: if watcher_summary.unhealthy_count == 0 {
+                    "ok".to_string()
+                } else {
+                    "warn".to_string()
+                },
+                detail: Some(format!(
+                    "{} active, {} unhealthy",
+                    watcher_summary.active_count, watcher_summary.unhealthy_count
+                )),
+                active_count: watcher_summary.active_count,
+                unhealthy_count: watcher_summary.unhealthy_count,
+                stale_after_seconds: watcher_summary.stale_after_seconds,
+            },
+            skills,
+            restart_notice,
+        }
+    })
+    .await
+    .map_err(|e| ApiError::io(anyhow::anyhow!("runtime status task failed: {e}")))?;
+
+    Ok(Json(response))
 }
 
 async fn agents_snapshot() -> Result<Json<serde_json::Value>, ApiError> {
@@ -7179,7 +7189,11 @@ fn llm_audit_messages_from_request(
             raw_content.to_string()
         };
         let remaining = max_total_chars.saturating_sub(total_chars);
-        let limit = max_message_chars.min(remaining).max(1);
+        if remaining == 0 {
+            any_truncated = true;
+            break;
+        }
+        let limit = max_message_chars.min(remaining);
         let (limited, truncated) = truncate_chars(&content, limit);
         if truncated {
             any_truncated = true;
@@ -7228,13 +7242,24 @@ fn redact_llm_audit_content(content: &str, explicit_secret: Option<&str>) -> Str
 }
 
 fn truncate_chars(content: &str, limit: usize) -> (String, bool) {
+    if limit == 0 {
+        return (String::new(), !content.is_empty());
+    }
     let mut chars = content.chars();
     let limited = chars.by_ref().take(limit).collect::<String>();
-    if chars.next().is_some() {
-        (format!("{limited}\n[truncated]"), true)
-    } else {
-        (limited, false)
+    if chars.next().is_none() {
+        return (limited, false);
     }
+
+    let suffix = "\n[truncated]";
+    let suffix_len = suffix.chars().count();
+    if limit <= suffix_len {
+        return (suffix.chars().take(limit).collect(), true);
+    }
+
+    let prefix_limit = limit - suffix_len;
+    let prefix = content.chars().take(prefix_limit).collect::<String>();
+    (format!("{prefix}{suffix}"), true)
 }
 
 fn activity_kind_label(kind: &ActivityKind) -> &'static str {
@@ -7716,10 +7741,11 @@ mod tests {
 
     #[test]
     fn llm_audit_truncates_by_character_limit() {
-        let (content, truncated) = truncate_chars("abcdef", 3);
+        let (content, truncated) = truncate_chars("abcdefghijklmnop", 15);
 
         assert!(truncated);
         assert_eq!(content, "abc\n[truncated]");
+        assert_eq!(content.chars().count(), 15);
     }
 
     fn test_presence(
