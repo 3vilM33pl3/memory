@@ -3986,7 +3986,7 @@ mod tests {
         }
         let paths = project_paths_for_repo(&repo_dir).unwrap();
         fs::create_dir_all(&paths.config_dir).unwrap();
-        fs::write(&paths.config_path(), "[automation]\nenabled = true\n").unwrap();
+        fs::write(paths.config_path(), "[automation]\nenabled = true\n").unwrap();
 
         assert_eq!(
             find_repo_config_path(&repo_dir).unwrap(),
