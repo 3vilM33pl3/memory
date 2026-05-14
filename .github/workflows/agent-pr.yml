@@ -45,11 +45,13 @@ jobs:
             printf '%s\n' 'Codex review skipped because the `OPENAI_API_KEY` Actions secret is not configured.' > "$RUNNER_TEMP/codex-review.md"
             exit 0
           fi
+          printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null
 
+          # `codex review --base` uses the CLI's built-in review prompt; current
+          # Codex releases reject an additional positional prompt in this mode.
           codex review \
+            -c "model=\"$CODEX_REVIEW_MODEL\"" \
             --base "origin/${{ github.event.pull_request.base.ref }}" \
-            --model "$CODEX_REVIEW_MODEL" \
-            "Review this pull request for correctness, regressions, missing tests, security issues, release risk, and documentation drift. Prioritize actionable findings with file paths and line references. Keep the output concise and do not include praise." \
             > "$RUNNER_TEMP/codex-review.md"
       - name: Post review comment
         env:
@@ -95,12 +97,12 @@ jobs:
             gh pr comment "$PR_NUMBER" --body "Codex resolver skipped because the \`OPENAI_API_KEY\` Actions secret is not configured."
             exit 0
           fi
+          printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null
 
           gh pr view "$PR_NUMBER" --comments > "$RUNNER_TEMP/pr-context.txt"
           codex exec \
             --model "$CODEX_RESOLVE_MODEL" \
             --sandbox workspace-write \
-            --ask-for-approval never \
             "Address actionable review comments and obvious CI failures for PR #${PR_NUMBER}. Make minimal changes, keep public behavior stable unless the PR intends otherwise, run focused validation where practical, and leave unrelated code untouched. PR context is in $RUNNER_TEMP/pr-context.txt."
 
           if git diff --quiet; then
@@ -152,13 +154,13 @@ jobs:
             gh pr comment "$PR_NUMBER" --body "Codex discussion skipped because the \`OPENAI_API_KEY\` Actions secret is not configured."
             exit 0
           fi
+          printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null
 
           gh pr view "$PR_NUMBER" --comments --json title,body,comments,files > "$RUNNER_TEMP/pr-context.json"
           printf '%s\n' "$COMMENT_BODY" > "$RUNNER_TEMP/agent-question.txt"
           codex exec \
             --model "$CODEX_DISCUSS_MODEL" \
             --sandbox read-only \
-            --ask-for-approval never \
             --output-last-message "$RUNNER_TEMP/agent-discussion.md" \
             "Answer the PR discussion request in $RUNNER_TEMP/agent-question.txt using the PR context in $RUNNER_TEMP/pr-context.json and the repository. Be concrete, cite files where useful, and do not modify files."
           gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/agent-discussion.md"

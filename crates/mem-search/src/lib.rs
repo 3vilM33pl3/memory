@@ -784,6 +784,7 @@ pub fn parse_memory_type(value: &str) -> MemoryType {
         "debugging" => MemoryType::Debugging,
         "environment" => MemoryType::Environment,
         "domain_fact" => MemoryType::DomainFact,
+        "documentation" => MemoryType::Documentation,
         "task" => MemoryType::Task,
         "plan" => MemoryType::Plan,
         "implementation" => MemoryType::Implementation,
@@ -1304,6 +1305,19 @@ async fn fetch_graph_candidates(
     intent: &QueryIntent,
     candidate_limit: i64,
 ) -> Result<GraphCandidateOutcome, sqlx::Error> {
+    let graph_like_terms = graph_like_terms(intent);
+    let path_like_terms = intent
+        .path_terms
+        .iter()
+        .map(|term| format!("%{term}%"))
+        .collect::<Vec<_>>();
+    if graph_like_terms.is_empty() && path_like_terms.is_empty() {
+        return Ok(GraphCandidateOutcome {
+            status: "no_terms".to_string(),
+            candidates: Vec::new(),
+        });
+    }
+
     let run_row = sqlx::query(
         r#"
         SELECT ger.id
@@ -1324,19 +1338,6 @@ async fn fetch_graph_candidates(
         });
     };
     let run_id: Uuid = run_row.try_get("id")?;
-
-    let graph_like_terms = graph_like_terms(intent);
-    let path_like_terms = intent
-        .path_terms
-        .iter()
-        .map(|term| format!("%{term}%"))
-        .collect::<Vec<_>>();
-    if graph_like_terms.is_empty() && path_like_terms.is_empty() {
-        return Ok(GraphCandidateOutcome {
-            status: "no_terms".to_string(),
-            candidates: Vec::new(),
-        });
-    }
 
     let memory_type_filters = request
         .filters
@@ -1582,12 +1583,43 @@ fn graph_like_terms(intent: &QueryIntent) -> Vec<String> {
         .lexical_terms
         .iter()
         .chain(intent.exact_phrases.iter())
+        .filter(|term| is_graph_search_term(term))
         .filter(|term| term.len() >= 3)
         .map(|term| format!("%{term}%"))
         .collect::<Vec<_>>();
     terms.sort();
     terms.dedup();
     terms
+}
+
+fn is_graph_search_term(term: &str) -> bool {
+    const GRAPH_STOP_TERMS: &[&str] = &[
+        "about",
+        "and",
+        "are",
+        "different",
+        "does",
+        "from",
+        "how",
+        "memory",
+        "project",
+        "query",
+        "result",
+        "results",
+        "the",
+        "type",
+        "types",
+        "what",
+        "when",
+        "where",
+        "which",
+        "why",
+        "work",
+        "works",
+        "with",
+    ];
+
+    !GRAPH_STOP_TERMS.contains(&term)
 }
 
 fn merge_candidates(
@@ -2095,8 +2127,12 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn parse_memory_type_accepts_task() {
+    fn parse_memory_type_accepts_newer_types() {
         assert_eq!(parse_memory_type("task"), MemoryType::Task);
+        assert_eq!(
+            parse_memory_type("documentation"),
+            MemoryType::Documentation
+        );
     }
 
     #[test]
@@ -2335,6 +2371,24 @@ mod tests {
                     .iter()
                     .any(|term| term.contains("config.toml"))
         );
+    }
+
+    #[test]
+    fn graph_terms_skip_broad_question_words() {
+        let intent = QueryIntent::from_query("What are the different memory types?");
+
+        assert!(graph_like_terms(&intent).is_empty());
+    }
+
+    #[test]
+    fn graph_terms_keep_code_specific_words() {
+        let intent = QueryIntent::from_query("How does MemoryType parsing work in mem-search?");
+        let terms = graph_like_terms(&intent);
+
+        assert!(terms.contains(&"%memorytype%".to_string()));
+        assert!(terms.contains(&"%parsing%".to_string()));
+        assert!(terms.contains(&"%mem-search%".to_string()));
+        assert!(!terms.contains(&"%memory%".to_string()));
     }
 
     #[test]

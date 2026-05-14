@@ -25,7 +25,8 @@ Every TUI screen uses the same four-part layout:
 Shared navigation:
 
 - `Tab`, `Right`, or `l` moves to the next tab
-- `Shift+Tab`, `Left`, or `h` moves to the previous tab
+- `Shift+Tab` or `Left` moves to the previous tab
+- `h` opens detailed help for the active tab; press `h` again or `Esc` to return
 - `r` refreshes the project state
 - `Ctrl+C` exits the TUI
 

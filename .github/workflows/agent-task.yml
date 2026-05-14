@@ -77,6 +77,7 @@ jobs:
             echo "OPENAI_API_KEY Actions secret is required for agent task runs" >&2
             exit 1
           fi
+          printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null
 
           cat > "$RUNNER_TEMP/agent-task.md" <<EOF
           Task ID: ${TASK_ID}
@@ -93,7 +94,6 @@ jobs:
           codex exec \
             --model "${{ inputs.model }}" \
             --sandbox workspace-write \
-            --ask-for-approval never \
             --output-last-message "$RUNNER_TEMP/agent-task-summary.md" \
             "Implement the task described in $RUNNER_TEMP/agent-task.md."
 

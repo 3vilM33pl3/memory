@@ -228,8 +228,8 @@ Create or refresh repo-local Memory Layer configuration so agents can write, que
 - Work in the target project directory I give you.
 - Do not install the system package; this prompt is only for repo-local Memory Layer setup.
 - Do not create or reinitialize git history.
-- Do not delete existing `.mem/`, `.agents/`, or config files.
-- If `.mem/config.toml`, `.mem/project.toml`, `.agents/memory-layer.toml`, or `.agents/skills/` already exist, inspect them and preserve local customizations.
+- Do not delete existing `.mem/`, `.agents/`, or Memory Layer config files.
+- If `.mem/project.toml`, legacy `.mem/config.toml`, `.agents/memory-layer.toml`, or `.agents/skills/` already exist, inspect them and preserve local customizations.
 - Ask me before overwriting files, rotating credentials, importing history, or running a write operation that was not previewed.
 - Make sure the shared backend is configured and healthy before saying setup is done.
 - Make sure Go is available on `PATH` because repo-local Memory Layer skills use the Go helper.
@@ -237,8 +237,8 @@ Create or refresh repo-local Memory Layer configuration so agents can write, que
 ## Steps
 
 1. Run `memory health` and `memory doctor`.
-2. Run `memory wizard --dry-run` in the target project to preview repo-local setup.
-3. Run `memory wizard` to create or refresh `.mem/` and `.agents/` Memory Layer files.
+2. Run `memory wizard --dry-run` in the target project to preview setup.
+3. Run `memory wizard` to create or refresh the user-local project config, `.mem/project.toml`, and `.agents/` Memory Layer files.
 4. Run `memory doctor` again.
 5. If commit history should be available as evidence, run `memory commits sync --project <project-slug> --dry-run`, then run it for real only if the preview looks correct.
 6. If an initial scan is wanted, run `memory scan --project <project-slug> --dry-run`, then run it for real only after I approve the preview.
@@ -376,7 +376,7 @@ The wizard can set up:
   - the shared service API token override, if you want to replace the auto-generated one
   - an optional shared `writer.id`
 - optional LLM settings for `scan`
-- repo-local `.mem/` files
+- user-local project config plus the repo-local `.mem/project.toml` marker
 - optional watcher setup
 - the repo-local memory skill bundle, which uses a shared Go helper under `.agents/skills/memory-layer/scripts/`
 
@@ -416,14 +416,20 @@ Local install:
 
 ### Per-project configuration
 
-Inside each project:
+Current installs keep operational project files in your home directory, not next to `.git`:
 
-- `.mem/config.toml`
+- Linux local config: `~/.config/memory-layer/projects/<project-key>/config.toml`
+- Linux local env: `~/.config/memory-layer/projects/<project-key>/memory-layer.env`
+- Linux local state/runtime: `~/.local/state/memory-layer/projects/<project-key>/runtime/`
+- Linux local cache/indexes: `~/.cache/memory-layer/projects/<project-key>/`
+
+Inside each project repository:
+
 - `.mem/project.toml`
-- `.mem/memory-layer.env`
-- `.mem/runtime/`
 - `.agents/memory-layer.toml`
 - `.agents/skills/`
+
+Older repositories may still have `.mem/config.toml`, `.mem/memory-layer.env`, or `.mem/runtime/`. Memory Layer reads those as legacy fallback. Run `memory doctor --fix` to copy missing legacy config/env files to the user-local project layout; it does not delete the old files.
 
 ### Installed skill template
 
@@ -511,6 +517,24 @@ model = "nomic-embed-text"
 Run `ollama serve` and pull the models first, for example `ollama pull
 llama3.2` and `ollama pull nomic-embed-text`. `memory doctor` checks the
 local `/v1/models` endpoint and warns when the configured LLM model is missing.
+
+### LLM audit/debug mode
+
+LLM audit mode records what the service sends to configured LLMs for query
+answers, resume summaries, and get-up-to-speed summaries. It is disabled by
+default because prompts can contain memory content:
+
+```toml
+[llm_audit]
+enabled = true
+redact = true
+max_message_chars = 8000
+max_total_chars = 32000
+```
+
+With `redact = true`, Memory Layer redacts common API key, bearer token,
+password, secret, and database URL credential patterns before persisting the
+audit activity.
 
 ## Writer ID
 
@@ -749,6 +773,10 @@ If `scan` fails, the two most common causes are:
 
 The browser UI is served by `mem-service` itself. In a normal install it should work automatically once the service is running.
 
+It mirrors the main TUI workflows in a browser: memories, agents, query, activity, errors, project health, review, watchers, embeddings, and resume. It also keeps web-only bundle import/export tooling under More.
+
+See the [Browser UI Guide](web-ui.md) for tab-by-tab behavior, query diagnostics, runtime status, get-up-to-speed briefings, LLM audit/debug logging, and contextual help.
+
 If you build from source, build the frontend first:
 
 ```bash
@@ -802,7 +830,7 @@ Optional watcher manager:
 cargo run --bin memory -- watcher manager run
 ```
 
-`memory dev init` without `--copy-from-global` leaves the overlay without shared credentials — fine if you want the dev stack on a different database or LLM endpoint, otherwise rerun with the flag or copy `[database]`, `[llm]`, `[embeddings]` into `.mem/config.dev.toml` by hand.
+`memory dev init` without `--copy-from-global` leaves the user-local dev overlay without shared credentials — fine if you want the dev stack on a different database or LLM endpoint, otherwise rerun with the flag or copy `[database]`, `[llm]`, `[embeddings]` into the project `config.dev.toml` by hand.
 
 The full isolation contract, default endpoint table, and troubleshooting live in [Dev Stack vs Installed Stack](../developer/dev-stack.md).
 

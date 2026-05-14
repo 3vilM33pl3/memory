@@ -22,6 +22,7 @@ Use `remember` for:
 - conventions and workflow rules
 - durable debugging lessons
 - environment facts that will matter later
+- documentation updates or docs guidance that should be easy to find later
 - verified task outcomes worth keeping
 - distilled explanations of code, files, modules, architecture paths, or the whole codebase
 
@@ -91,6 +92,17 @@ memory remember \
   --title "Document deploy convention" \
   --summary "Captured the deploy convention for later reuse." \
   --note "Production deploys are done through a systemd unit restart."
+```
+
+Store a documentation memory:
+
+```bash
+memory remember \
+  --project my-project \
+  --type documentation \
+  --title "Document PostgreSQL setup" \
+  --summary "Updated setup docs with database prerequisites." \
+  --note "The quickstart explains how to install PostgreSQL, create the memory database, and run setup before starting the service."
 ```
 
 Store a distilled code explanation after answering an explanation request:

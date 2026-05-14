@@ -53,9 +53,9 @@ It does not bypass the existing backend or write directly to PostgreSQL tables.
 
 ## Repository Index
 
-Before `scan` asks the LLM anything, it now works from a local repository index stored under:
+Before `scan` asks the LLM anything, it now works from a local repository index stored under the user-local project cache:
 
-- `.mem/runtime/index/`
+- `~/.cache/memory-layer/projects/<project-key>/index/` on Linux local installs
 
 You can manage that index directly:
 
@@ -273,9 +273,9 @@ But it does **not**:
 
 ## Scan Reports
 
-Non-dry-run scans write a local report under:
+Non-dry-run scans write a local report under the user-local project runtime directory:
 
-- `.mem/runtime/scan/`
+- `runtime/scan/`
 
 The report includes:
 
@@ -315,7 +315,8 @@ Run `ollama serve` and `ollama pull llama3.2` before scanning.
 For hosted providers, the API key must be available in:
 
 - process environment
-- `.mem/memory-layer.env`
+- user-local project `memory-layer.env`
+- legacy `.mem/memory-layer.env`
 - shared `memory-layer.env`
 
 If these are not present, `scan` fails before doing any repository work.
@@ -408,7 +409,7 @@ memory doctor
 memory scan --project my-project --dry-run
 ```
 
-If you are debugging a specific scan result, the most useful artifact is the JSON report in `.mem/runtime/scan/`.
+If you are debugging a specific scan result, the most useful artifact is the JSON report in the user-local project runtime `scan/` directory.
 
 ## Related Docs
 

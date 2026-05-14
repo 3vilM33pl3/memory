@@ -14,7 +14,7 @@ memory dev init --no-copy-from-global
 
 ## What It Creates
 
-`memory dev init` creates `.mem/config.dev.toml` and the dev runtime directory. Dev-profile binaries use separate defaults from installed packages:
+`memory dev init` creates the user-local project `config.dev.toml` and dev runtime directory. Dev-profile binaries use separate defaults from installed packages:
 
 | Stack | HTTP | Cap'n Proto TCP |
 |---|---|---|

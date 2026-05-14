@@ -19,6 +19,7 @@ This tab is specifically for watcher liveness and watchdog status, not for the h
 - `PgUp/PgDn` page through longer watcher lists
 - `Home` jump back to the top
 - `r` refresh the project snapshot if you want to force a fresh read
+- `h` open or close detailed help for this tab
 
 ## When To Use It
 

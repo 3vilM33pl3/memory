@@ -57,8 +57,9 @@ One-line legend for the keys below.
 | `n` | Reject the highlighted proposal — the candidate is discarded, the target stays |
 | `p` | Cycle the replacement policy (persists to `.agents/memory-layer.toml`) |
 | `r` | Refresh (global binding; re-fetches proposals along with the rest of the dashboard) |
+| `h` | Open or close detailed help for this tab |
 
-Tab movement (`Tab`, `Shift+Tab`, `l`, `h`) and the quit shortcut (`Ctrl+C`) work as on every other tab.
+Tab movement (`Tab`, `Shift+Tab`, `l`, `Left`) and the quit shortcut (`Ctrl+C`) work as on every other tab.
 
 ## How Approval Works
 

@@ -13,7 +13,7 @@ use mem_api::{
     CaptureTaskRequest, MemoryType, ScanActivityRequest, SourceKind, discover_global_config_path,
     discover_repo_env_path, effective_llm_base_url, is_supported_llm_provider,
     llm_max_output_tokens_field, load_repo_agent_settings, load_repo_replacement_policy,
-    resolve_llm_api_key,
+    project_paths_for_repo, resolve_llm_api_key,
 };
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
@@ -532,10 +532,9 @@ fn build_repo_index(
 }
 
 fn repo_index_path(repo_root: &Path, project: &str) -> PathBuf {
-    repo_root
-        .join(".mem")
-        .join("runtime")
-        .join("index")
+    project_paths_for_repo(repo_root)
+        .map(|paths| paths.cache_index_dir())
+        .unwrap_or_else(|| repo_root.join(".mem").join("runtime").join("index"))
         .join(format!("{project}-repo-index.json"))
 }
 
@@ -784,7 +783,7 @@ async fn analyze_dossier(
                     "Return strict JSON with keys summary and candidates.",
                     "Each candidate must be repo-specific, durable, and grounded in provenance_files and/or provenance_commits.",
                     "Do not include speculative claims, transient task notes, or generic software advice.",
-                    "memory_type must be one of architecture, convention, decision, incident, debugging, environment, domain_fact, plan.",
+                    "memory_type must be one of architecture, convention, decision, incident, debugging, environment, domain_fact, documentation, plan.",
                     "Keep candidates concise and high-signal.",
                 ]
                 .join(" "),
@@ -1051,7 +1050,7 @@ fn write_scan_report(
     candidates: &[CaptureCandidateInput],
     dry_run: bool,
 ) -> Result<PathBuf> {
-    let scan_dir = repo_root.join(".mem").join("runtime").join("scan");
+    let scan_dir = scan_report_dir(repo_root);
     fs::create_dir_all(&scan_dir).with_context(|| format!("create {}", scan_dir.display()))?;
     let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
     let file_name = if dry_run {
@@ -1076,9 +1075,15 @@ fn write_scan_report(
 }
 
 fn preview_scan_report_path(repo_root: &Path, project: &str) -> Result<PathBuf> {
-    let scan_dir = repo_root.join(".mem").join("runtime").join("scan");
+    let scan_dir = scan_report_dir(repo_root);
     let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
     Ok(scan_dir.join(format!("{project}-scan-{stamp}-dry-run.json")))
+}
+
+fn scan_report_dir(repo_root: &Path) -> PathBuf {
+    project_paths_for_repo(repo_root)
+        .map(|paths| paths.runtime_dir().join("scan"))
+        .unwrap_or_else(|| repo_root.join(".mem").join("runtime").join("scan"))
 }
 
 fn git_output<I, S>(repo_root: &Path, args: I) -> Result<String>
@@ -1210,6 +1215,7 @@ fn short_hash(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
 
     #[test]
     fn validate_candidates_dedupes_and_requires_provenance() {
@@ -1284,5 +1290,71 @@ mod tests {
         assert_eq!(coverage.docs_files, 1);
         assert_eq!(coverage.config_files, 1);
         assert_eq!(coverage.other_files, 1);
+    }
+
+    #[test]
+    fn repo_index_and_scan_reports_use_project_home_paths() {
+        let _guard = env_lock().lock().unwrap();
+        let temp_dir = unique_temp_dir("mem-scan-paths");
+        let repo_root = temp_dir.join("repo");
+        let config_home = temp_dir.join("config");
+        let state_home = temp_dir.join("state");
+        let cache_home = temp_dir.join("cache");
+        let old_config_home = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_state_home = std::env::var("XDG_STATE_HOME").ok();
+        let old_cache_home = std::env::var("XDG_CACHE_HOME").ok();
+        fs::create_dir_all(repo_root.join(".mem")).unwrap();
+        fs::write(
+            repo_root.join(".mem").join("project.toml"),
+            "slug = \"demo\"\n",
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &config_home);
+            std::env::set_var("XDG_STATE_HOME", &state_home);
+            std::env::set_var("XDG_CACHE_HOME", &cache_home);
+        }
+
+        let index_path = repo_index_path(&repo_root, "demo");
+        let report_dir = scan_report_dir(&repo_root);
+
+        assert!(index_path.starts_with(cache_home.join("memory-layer").join("projects")));
+        assert!(report_dir.starts_with(state_home.join("memory-layer").join("projects")));
+        assert!(!index_path.starts_with(repo_root.join(".mem")));
+        assert!(!report_dir.starts_with(repo_root.join(".mem")));
+
+        restore_env_var("XDG_CONFIG_HOME", old_config_home);
+        restore_env_var("XDG_STATE_HOME", old_state_home);
+        restore_env_var("XDG_CACHE_HOME", old_cache_home);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    fn restore_env_var(key: &str, value: Option<String>) {
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        if path.exists() {
+            let _ = fs::remove_dir_all(&path);
+        }
+        path
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
     }
 }

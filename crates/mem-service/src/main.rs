@@ -1,11 +1,13 @@
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
+    fs,
     io::ErrorKind,
     io::Read,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
+    process::Command as ProcessCommand,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration as StdDuration, SystemTime},
@@ -32,21 +34,22 @@ use mem_api::{
     ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
     CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
     CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, DiagnosticInfo, DiagnosticSeverity,
-    EmbeddingBackendInfo, EmbeddingBackendsResponse, GraphActivityRequest, MemoryEntryResponse,
-    MemoryHistoryResponse, MemorySourceRecord, PlanActivityAction, PlanActivityRequest,
-    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
-    ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
-    ProjectMemoryBundleSource, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
-    ProjectMemoryImportResponse, ProjectMemoryListItem, ProjectOverviewResponse,
-    PruneEmbeddingsRequest, PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse,
-    QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod, QueryAnswerMode,
-    QueryGraphConnection, QueryRequest, QueryResponse, ReembedRequest, ReembedResponse,
-    ReindexRequest, ReindexResponse, RelatedMemorySummary, ReplacementPolicy,
-    ReplacementPolicyRequest, ReplacementPolicyResponse, ReplacementProposalListResponse,
-    ReplacementProposalResolutionResponse, ResumeAction, ResumeCheckpoint, ResumeRequest,
-    ResumeResponse, ScanActivityRequest, SetEmbeddingCreationRequest, SourceKind, StatsResponse,
-    StreamRequest, StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest,
-    UpToSpeedResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
+    EmbeddingBackendInfo, EmbeddingBackendsResponse, GraphActivityRequest, LlmAuditConfig,
+    LlmAuditMessage, LlmAuditStatusResponse, MemoryEntryResponse, MemoryHistoryResponse,
+    MemorySourceRecord, PlanActivityAction, PlanActivityRequest, ProjectCommitsResponse,
+    ProjectMemoriesResponse, ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation,
+    ProjectMemoryBundleManifest, ProjectMemoryBundlePreview, ProjectMemoryBundleSource,
+    ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
+    ProjectMemoryListItem, ProjectOverviewResponse, PruneEmbeddingsRequest,
+    PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryAnswerCitation,
+    QueryAnswerGeneration, QueryAnswerMethod, QueryAnswerMode, QueryGraphConnection, QueryRequest,
+    QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
+    RelatedMemorySummary, ReplacementPolicy, ReplacementPolicyRequest, ReplacementPolicyResponse,
+    ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
+    ResumeCheckpoint, ResumeRequest, ResumeResponse, ScanActivityRequest,
+    SetEmbeddingCreationRequest, SetLlmAuditRequest, SourceKind, StatsResponse, StreamRequest,
+    StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse,
+    ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
     WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
     WatcherUnregisterRequest, effective_llm_base_url, is_supported_llm_provider,
     llm_max_output_tokens_field, llm_requires_api_key, load_repo_replacement_policy,
@@ -57,7 +60,8 @@ use mem_curate::{
     preview_curate, refresh_memory_relations, reject_replacement_proposal, store_capture,
 };
 use mem_platform::{
-    managed_watch_service_name, restart_local_watcher_service_name, watch_service_unit_name,
+    managed_watch_service_name, preferred_user_state_dir, restart_local_watcher_service_name,
+    watch_service_unit_name,
 };
 use mem_search::{
     EmbeddingRegistry, effective_embedding_base_url, parse_memory_type, parse_relation_type,
@@ -96,6 +100,7 @@ const QUERY_ACTIVITY_GRAPH_CONNECTION_LIMIT: usize = 5;
 struct AppState {
     role: ServiceRole,
     instance_id: String,
+    startup_at: chrono::DateTime<chrono::Utc>,
     pool: Option<PgPool>,
     api_token: String,
     config: AppConfig,
@@ -103,6 +108,7 @@ struct AppState {
     http_client: reqwest::Client,
     embedders: Arc<tokio::sync::RwLock<EmbeddingRegistry>>,
     automated_embedding_creation_enabled: Arc<AtomicBool>,
+    llm_audit: Arc<RwLock<LlmAuditConfig>>,
     events: broadcast::Sender<ServiceEvent>,
     recent_activity: Arc<Mutex<VecDeque<ServiceEvent>>>,
     watchers: Arc<Mutex<HashMap<String, WatcherPresence>>>,
@@ -349,16 +355,19 @@ async fn build_state(
     )));
     let automated_embedding_creation_enabled =
         Arc::new(AtomicBool::new(config.embeddings.create_enabled));
+    let llm_audit = Arc::new(RwLock::new(config.llm_audit.clone()));
 
     Ok(AppState {
         role,
         instance_id: Uuid::new_v4().to_string(),
+        startup_at: chrono::Utc::now(),
         pool,
         api_token: config.service.api_token.clone(),
         web_root: discover_web_root(&config),
         http_client,
         embedders,
         automated_embedding_creation_enabled,
+        llm_audit,
         config,
         events,
         recent_activity: Arc::new(Mutex::new(VecDeque::with_capacity(20))),
@@ -425,6 +434,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/ws", get(websocket))
         .route("/v1/admin/shutdown", post(admin_shutdown))
+        .route("/v1/runtime/status", get(runtime_status))
         .route("/v1/query", post(query))
         .route("/v1/checkpoint/activity", post(checkpoint_activity))
         .route("/v1/plan/activity", post(plan_activity))
@@ -445,6 +455,10 @@ fn build_http_app(state: AppState) -> Router {
         .route(
             "/v1/embeddings/create-enabled",
             post(set_embedding_creation_enabled),
+        )
+        .route(
+            "/v1/config/llm-audit",
+            get(llm_audit_status).post(set_llm_audit_enabled),
         )
         .route("/v1/memory/{id}", get(get_memory))
         .route("/v1/memory/{id}/history", get(get_memory_history))
@@ -1921,6 +1935,187 @@ async fn healthz(State(state): State<AppState>) -> Result<Json<serde_json::Value
     Ok(Json(health_payload(&state).await.map_err(ApiError::io)?))
 }
 
+#[derive(Debug, Deserialize)]
+struct RuntimeStatusQuery {
+    project: Option<String>,
+    repo_root: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeStatusResponse {
+    generated_at: chrono::DateTime<chrono::Utc>,
+    project: String,
+    profile: String,
+    web: RuntimeComponentStatus,
+    service: RuntimeComponentStatus,
+    manager: RuntimeManagerStatus,
+    watchers: RuntimeWatcherStatus,
+    skills: RuntimeSkillStatus,
+    restart_notice: Option<RuntimeRestartNotice>,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeComponentStatus {
+    version: String,
+    status: String,
+    detail: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeManagerStatus {
+    version: String,
+    state: String,
+    mode: Option<String>,
+    detail: Option<String>,
+    tracked_sessions: usize,
+    warning_count: usize,
+    runtime_mode: Option<String>,
+    last_reconcile_reason: Option<String>,
+    event_count: u64,
+    fallback_scan_count: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeWatcherStatus {
+    version: String,
+    status: String,
+    detail: Option<String>,
+    active_count: usize,
+    unhealthy_count: usize,
+    stale_after_seconds: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeSkillStatus {
+    bundle_version: String,
+    status: String,
+    summary: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RuntimeRestartNotice {
+    version: String,
+    reason: String,
+    marker_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManagerRuntimeStateFile {
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    last_reconcile_reason: String,
+    #[serde(default)]
+    event_count: u64,
+    #[serde(default)]
+    fallback_scan_count: u64,
+    #[serde(default)]
+    sessions: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RestartMarker {
+    version: String,
+    marked_at: chrono::DateTime<chrono::Utc>,
+    reason: String,
+}
+
+const TUI_RESTART_MARKER_FILE: &str = "tui-restart-required.json";
+#[cfg(not(target_os = "macos"))]
+const GLOBAL_TUI_RESTART_MARKER: &str = "/var/lib/memory-layer/tui-restart-required.json";
+#[cfg(target_os = "macos")]
+const GLOBAL_TUI_RESTART_MARKER: &str = "/usr/local/var/memory-layer/tui-restart-required.json";
+
+const MEMORY_SKILL_NAMES: &[&str] = &[
+    "memory-direct-task-start",
+    "memory-layer",
+    "memory-plan-execution",
+    "memory-project-init",
+    "memory-query-resume",
+    "memory-remember",
+];
+
+async fn runtime_status(
+    State(state): State<AppState>,
+    Query(query): Query<RuntimeStatusQuery>,
+) -> Result<Json<RuntimeStatusResponse>, ApiError> {
+    let project = query
+        .project
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("memory")
+        .to_string();
+    let repo_root = query.repo_root;
+    let version = state
+        .config
+        .profile
+        .display_version(env!("CARGO_PKG_VERSION"));
+    let profile = state.config.profile;
+    let profile_label = profile.to_string();
+    let startup_at = state.startup_at;
+    let watchers = Arc::clone(&state.watchers);
+    let service_id = state.config.cluster.service_id.clone();
+    let is_primary = state.is_primary();
+
+    let response = tokio::task::spawn_blocking(move || {
+        let watcher_summary = watcher_summary_for_project(&watchers, &project);
+        let manager = runtime_manager_status(&profile, &version);
+        let skills = runtime_skill_status(repo_root.as_deref(), &version);
+        let restart_notice = runtime_restart_notice(startup_at, &version);
+
+        RuntimeStatusResponse {
+            generated_at: chrono::Utc::now(),
+            project,
+            profile: profile_label,
+            web: RuntimeComponentStatus {
+                version: version.clone(),
+                status: if restart_notice.is_some() {
+                    "restart".to_string()
+                } else {
+                    "ok".to_string()
+                },
+                detail: restart_notice
+                    .as_ref()
+                    .map(|notice| format!("restart for {}", notice.reason)),
+            },
+            service: RuntimeComponentStatus {
+                version: version.clone(),
+                status: if is_primary { "ok" } else { "relay" }.to_string(),
+                detail: Some(format!(
+                    "{} {}",
+                    service_id,
+                    if is_primary { "primary" } else { "relay" }
+                )),
+            },
+            manager,
+            watchers: RuntimeWatcherStatus {
+                version: version.clone(),
+                status: if watcher_summary.unhealthy_count == 0 {
+                    "ok".to_string()
+                } else {
+                    "warn".to_string()
+                },
+                detail: Some(format!(
+                    "{} active, {} unhealthy",
+                    watcher_summary.active_count, watcher_summary.unhealthy_count
+                )),
+                active_count: watcher_summary.active_count,
+                unhealthy_count: watcher_summary.unhealthy_count,
+                stale_after_seconds: watcher_summary.stale_after_seconds,
+            },
+            skills,
+            restart_notice,
+        }
+    })
+    .await
+    .map_err(|e| ApiError::io(anyhow::anyhow!("runtime status task failed: {e}")))?;
+
+    Ok(Json(response))
+}
+
 async fn agents_snapshot() -> Result<Json<serde_json::Value>, ApiError> {
     let snapshot = tokio::task::spawn_blocking(|| {
         let mut top = mem_agenttop::AgentTop::new();
@@ -2026,6 +2221,346 @@ async fn agents_snapshot() -> Result<Json<serde_json::Value>, ApiError> {
         "orphan_ports": orphan_ports,
         "rate_limits": rate_limits,
     })))
+}
+
+fn runtime_manager_status(profile: &mem_api::Profile, version: &str) -> RuntimeManagerStatus {
+    let unit_installed = manager_unit_path(profile).is_some_and(|path| path.exists());
+    let unit_enabled = manager_service_enabled(profile);
+    let unit_active = manager_service_running(profile);
+    let foreground_active = foreground_manager_process_running(profile);
+    let state_file = load_manager_state_file(profile);
+    let tracked_sessions = state_file
+        .as_ref()
+        .map(|state| state.sessions.len())
+        .unwrap_or(0);
+    let warning_count = state_file
+        .as_ref()
+        .map(|state| state.warnings.len())
+        .unwrap_or(0);
+    let runtime_mode = state_file
+        .as_ref()
+        .and_then(|state| (!state.mode.is_empty()).then(|| state.mode.clone()));
+    let last_reconcile_reason = state_file.as_ref().and_then(|state| {
+        (!state.last_reconcile_reason.is_empty()).then(|| state.last_reconcile_reason.clone())
+    });
+    let event_count = state_file
+        .as_ref()
+        .map(|state| state.event_count)
+        .unwrap_or(0);
+    let fallback_scan_count = state_file
+        .as_ref()
+        .map(|state| state.fallback_scan_count)
+        .unwrap_or(0);
+    let state = if unit_active || foreground_active {
+        "active"
+    } else if unit_installed || unit_enabled {
+        "installed"
+    } else if state_file.is_some() || manager_unit_path(profile).is_some() {
+        "off"
+    } else {
+        "error"
+    };
+    let mode = if unit_active {
+        Some("service".to_string())
+    } else if foreground_active {
+        Some("manual".to_string())
+    } else {
+        None
+    };
+    let detail = Some(format!(
+        "{} session{}, {} warn{}",
+        tracked_sessions,
+        plural(tracked_sessions),
+        warning_count,
+        plural(warning_count)
+    ));
+
+    RuntimeManagerStatus {
+        version: version.to_string(),
+        state: state.to_string(),
+        mode,
+        detail,
+        tracked_sessions,
+        warning_count,
+        runtime_mode,
+        last_reconcile_reason,
+        event_count,
+        fallback_scan_count,
+    }
+}
+
+fn plural(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
+fn load_manager_state_file(profile: &mem_api::Profile) -> Option<ManagerRuntimeStateFile> {
+    let filename = match profile {
+        mem_api::Profile::Dev => "watcher-manager-state-dev.json",
+        mem_api::Profile::Prod => "watcher-manager-state.json",
+    };
+    let path = preferred_user_state_dir()?.join(filename);
+    let content = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn foreground_manager_process_running(profile: &mem_api::Profile) -> bool {
+    #[cfg(target_os = "macos")]
+    let output = ProcessCommand::new("ps")
+        .args(["-ww", "-axo", "pid=,command="])
+        .output();
+
+    #[cfg(not(target_os = "macos"))]
+    let output = ProcessCommand::new("ps")
+        .args(["-ww", "-eo", "pid=,command="])
+        .output();
+
+    let Ok(output) = output else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let current_pid = std::process::id().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.lines().any(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let Some(pid) = parts.next() else {
+            return false;
+        };
+        if pid == current_pid {
+            return false;
+        }
+        let command = parts.collect::<Vec<_>>().join(" ");
+        command_is_manager_for_profile(&command, profile)
+    })
+}
+
+fn command_is_manager_for_profile(command: &str, profile: &mem_api::Profile) -> bool {
+    if !(command.contains(" watcher manager run")
+        || command.ends_with("watcher manager run")
+        || command.contains("watcher manager run "))
+    {
+        return false;
+    }
+    match profile {
+        mem_api::Profile::Prod => !command_looks_dev_stack(command),
+        mem_api::Profile::Dev => command_looks_dev_stack(command),
+    }
+}
+
+fn command_looks_dev_stack(command: &str) -> bool {
+    command.contains("target/debug/memory")
+        || command.contains("target/release/memory")
+        || command.contains("MEMORY_LAYER_PROFILE=dev")
+        || command.contains("MEMORY_LAYER_PROFILE=\"dev\"")
+        || command.contains("MEMORY_LAYER_PROFILE='dev'")
+        || command.contains("config.dev.toml")
+        || command.contains("/.mem/runtime/dev/")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn linux_manager_unit_path() -> Option<PathBuf> {
+    let config_home = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|home| PathBuf::from(home).join(".config"))
+        })?;
+    Some(
+        config_home
+            .join("systemd")
+            .join("user")
+            .join("memory-watch-manager.service"),
+    )
+}
+
+fn manager_unit_path(profile: &mem_api::Profile) -> Option<PathBuf> {
+    if matches!(profile, mem_api::Profile::Dev) {
+        return None;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        mem_platform::watch_manager_launch_agent_path()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        linux_manager_unit_path()
+    }
+}
+
+fn manager_service_enabled(profile: &mem_api::Profile) -> bool {
+    if matches!(profile, mem_api::Profile::Dev) {
+        return false;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        mem_platform::watch_manager_launch_agent_path().is_some_and(|path| path.exists())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        systemctl_user_check("is-enabled", "memory-watch-manager.service")
+    }
+}
+
+fn manager_service_running(profile: &mem_api::Profile) -> bool {
+    if matches!(profile, mem_api::Profile::Dev) {
+        return false;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        launchctl_print_succeeds(mem_platform::watch_manager_launch_agent_label())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        systemctl_user_check("is-active", "memory-watch-manager.service")
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn systemctl_user_check(action: &str, unit: &str) -> bool {
+    ProcessCommand::new("systemctl")
+        .args(["--user", action, unit])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn launchctl_print_succeeds(label: &str) -> bool {
+    let Ok(output) = ProcessCommand::new("id").arg("-u").output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let target = format!("gui/{uid}/{label}");
+    ProcessCommand::new("launchctl")
+        .args(["print", &target])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn runtime_skill_status(repo_root: Option<&str>, expected_version: &str) -> RuntimeSkillStatus {
+    let Some(repo_root) = repo_root.map(str::trim).filter(|value| !value.is_empty()) else {
+        return RuntimeSkillStatus {
+            bundle_version: expected_version.to_string(),
+            status: "unknown".to_string(),
+            summary: "repo root not resolved".to_string(),
+        };
+    };
+    let root = FsPath::new(repo_root);
+    if !root.exists() {
+        return RuntimeSkillStatus {
+            bundle_version: expected_version.to_string(),
+            status: "error".to_string(),
+            summary: format!("repo root does not exist: {repo_root}"),
+        };
+    }
+    let skill_root = root.join(".agents").join("skills");
+    let mut missing = 0usize;
+    let mut outdated = 0usize;
+    for skill in MEMORY_SKILL_NAMES {
+        let path = skill_root.join(skill).join("SKILL.md");
+        let Some(version) = read_skill_version(&path) else {
+            missing += 1;
+            continue;
+        };
+        if version.trim() != expected_version.trim() {
+            outdated += 1;
+        }
+    }
+    let status = if missing == 0 && outdated == 0 {
+        "ok"
+    } else {
+        "warn"
+    };
+    let summary = if status == "ok" {
+        format!("{} skills current", MEMORY_SKILL_NAMES.len())
+    } else {
+        format!("{missing} missing, {outdated} outdated")
+    };
+    RuntimeSkillStatus {
+        bundle_version: expected_version.to_string(),
+        status: status.to_string(),
+        summary,
+    }
+}
+
+fn read_skill_version(path: &FsPath) -> Option<String> {
+    let contents = fs::read_to_string(path).ok()?;
+    contents.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("version:")
+            .map(|value| {
+                value
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string()
+            })
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn runtime_restart_notice(
+    startup_at: chrono::DateTime<chrono::Utc>,
+    running_version: &str,
+) -> Option<RuntimeRestartNotice> {
+    tui_restart_marker_paths()
+        .into_iter()
+        .filter_map(|path| {
+            let contents = fs::read_to_string(&path).ok()?;
+            let marker: RestartMarker = serde_json::from_str(&contents).ok()?;
+            if version_profile_suffix(&marker.version) != version_profile_suffix(running_version) {
+                return None;
+            }
+            let newer_than_web = marker.marked_at > startup_at;
+            let different_version = marker.version.trim() != running_version.trim();
+            (newer_than_web || different_version).then_some(RuntimeRestartNotice {
+                version: marker.version,
+                reason: marker.reason,
+                marker_path: path.display().to_string(),
+            })
+        })
+        .max_by_key(|notice| {
+            fs::read_to_string(&notice.marker_path)
+                .ok()
+                .and_then(|contents| serde_json::from_str::<RestartMarker>(&contents).ok())
+                .map(|marker| marker.marked_at)
+        })
+}
+
+fn tui_restart_marker_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(dir) = preferred_user_state_dir() {
+        paths.push(dir.join(TUI_RESTART_MARKER_FILE));
+    }
+    paths.push(PathBuf::from(GLOBAL_TUI_RESTART_MARKER));
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn version_profile_suffix(version: &str) -> &'static str {
+    if version.trim().ends_with("-dev") {
+        "dev"
+    } else {
+        "prod"
+    }
 }
 
 async fn admin_shutdown(
@@ -3148,6 +3683,121 @@ async fn persist_embedding_creation_enabled(
     Ok(())
 }
 
+async fn llm_audit_status(
+    State(state): State<AppState>,
+) -> Result<Json<LlmAuditStatusResponse>, ApiError> {
+    if !state.is_primary() {
+        return Ok(Json(proxy_get_json(&state, "/v1/config/llm-audit").await?));
+    }
+    Ok(Json(build_llm_audit_status_response(&state)))
+}
+
+async fn set_llm_audit_enabled(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SetLlmAuditRequest>,
+) -> Result<Json<LlmAuditStatusResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/config/llm-audit", &request, true).await?,
+        ));
+    }
+
+    let previous = state
+        .llm_audit
+        .read()
+        .expect("llm audit config lock poisoned")
+        .clone();
+    let mut next = previous.clone();
+    next.enabled = request.enabled;
+    persist_llm_audit_config(&state, &next).await?;
+    {
+        let mut guard = state
+            .llm_audit
+            .write()
+            .expect("llm audit config lock poisoned");
+        *guard = next;
+    }
+
+    Ok(Json(build_llm_audit_status_response(&state)))
+}
+
+fn build_llm_audit_status_response(state: &AppState) -> LlmAuditStatusResponse {
+    let audit = state
+        .llm_audit
+        .read()
+        .expect("llm audit config lock poisoned")
+        .clone();
+    LlmAuditStatusResponse {
+        enabled: audit.enabled,
+        redacted: audit.redact,
+        max_message_chars: audit.max_message_chars,
+        max_total_chars: audit.max_total_chars,
+        profile: state.config.profile.to_string(),
+        config_path: llm_audit_config_path(&state.config).map(|path| path.display().to_string()),
+    }
+}
+
+async fn persist_llm_audit_config(
+    state: &AppState,
+    audit: &LlmAuditConfig,
+) -> Result<(), ApiError> {
+    let Some(config_path) = llm_audit_config_path(&state.config) else {
+        return Err(ApiError::status_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "cannot persist LLM audit setting: no TOML config file is resolved",
+        ));
+    };
+    let existing = tokio::fs::read_to_string(&config_path)
+        .await
+        .map_err(|err| ApiError::io(anyhow::anyhow!("read {}: {err}", config_path.display())))?;
+    let rendered = set_llm_audit_enabled_in_toml(&existing, audit.enabled)
+        .map_err(|err| ApiError::io(anyhow::anyhow!("update {}: {err}", config_path.display())))?;
+    let tmp_path = config_path.with_extension("toml.tmp");
+    tokio::fs::write(&tmp_path, rendered.as_bytes())
+        .await
+        .map_err(|err| ApiError::io(anyhow::anyhow!("write {}: {err}", tmp_path.display())))?;
+    tokio::fs::rename(&tmp_path, &config_path)
+        .await
+        .map_err(|err| {
+            ApiError::io(anyhow::anyhow!(
+                "rename {} -> {}: {err}",
+                tmp_path.display(),
+                config_path.display()
+            ))
+        })?;
+    Ok(())
+}
+
+fn llm_audit_config_path(config: &AppConfig) -> Option<PathBuf> {
+    config
+        .resolved_dev_overlay_path
+        .clone()
+        .or_else(|| config.resolved_config_path.clone())
+}
+
+fn set_llm_audit_enabled_in_toml(existing: &str, enabled: bool) -> anyhow::Result<String> {
+    let mut doc = existing.parse::<toml_edit::DocumentMut>()?;
+    if !doc.contains_key("llm_audit") {
+        doc["llm_audit"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let llm_audit = doc["llm_audit"]
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("[llm_audit] is not a table in config"))?;
+    llm_audit["enabled"] = toml_edit::value(enabled);
+    if !llm_audit.contains_key("redact") {
+        llm_audit["redact"] = toml_edit::value(true);
+    }
+    if !llm_audit.contains_key("max_message_chars") {
+        llm_audit["max_message_chars"] = toml_edit::value(8_000);
+    }
+    if !llm_audit.contains_key("max_total_chars") {
+        llm_audit["max_total_chars"] = toml_edit::value(32_000);
+    }
+    Ok(doc.to_string())
+}
+
 fn set_active_embedding_backend_in_toml(
     existing: &str,
     active_name: Option<&str>,
@@ -4091,7 +4741,7 @@ async fn project_resume(
         &context_items,
     );
     let briefing = if request.include_llm_summary {
-        summarize_resume_with_llm(&state, &slug, &deterministic)
+        summarize_resume_with_llm(&state, &slug, "resume_summary", &deterministic)
             .await
             .unwrap_or(deterministic)
     } else {
@@ -4269,7 +4919,7 @@ async fn build_up_to_speed_response(
         &token_usage,
     );
     let briefing = if request.include_llm_summary {
-        summarize_resume_with_llm(state, slug, &deterministic)
+        summarize_resume_with_llm(state, slug, "up_to_speed_summary", &deterministic)
             .await
             .unwrap_or(deterministic)
     } else {
@@ -4535,6 +5185,7 @@ async fn fetch_durable_resume_context(
             item.memory_type,
             mem_api::MemoryType::Architecture
                 | mem_api::MemoryType::Convention
+                | mem_api::MemoryType::Documentation
                 | mem_api::MemoryType::Environment
         )
     });
@@ -4848,6 +5499,9 @@ fn infer_current_thread(
             ActivityKind::Diagnostic => {
                 "Recent work recorded an operational diagnostic that may need attention."
             }
+            ActivityKind::LlmAudit => {
+                "Recent work recorded LLM audit/debug activity for service-side prompts."
+            }
             ActivityKind::Checkpoint => "",
         };
         if !thread.is_empty() {
@@ -5090,6 +5744,7 @@ fn select_resume_context(
                 | mem_api::MemoryType::Decision
                 | mem_api::MemoryType::Architecture
                 | mem_api::MemoryType::Convention
+                | mem_api::MemoryType::Documentation
                 | mem_api::MemoryType::Debugging
         ) && !selected.iter().any(|existing| existing.id == item.id)
     }) {
@@ -5107,6 +5762,7 @@ fn select_resume_context(
             mem_api::MemoryType::Decision
                 | mem_api::MemoryType::Architecture
                 | mem_api::MemoryType::Convention
+                | mem_api::MemoryType::Documentation
                 | mem_api::MemoryType::Environment
         ) && !selected.iter().any(|existing| existing.id == item.id)
     }) {
@@ -5277,6 +5933,7 @@ fn build_up_to_speed_briefing(
 async fn summarize_resume_with_llm(
     state: &AppState,
     project: &str,
+    operation: &str,
     deterministic: &str,
 ) -> Result<String> {
     if !is_supported_llm_provider(&state.config.llm.provider)
@@ -5310,26 +5967,80 @@ async fn summarize_resume_with_llm(
         ]
     });
     request[llm_max_output_tokens_field(&state.config.llm.provider)] = serde_json::json!(600);
+    let started = std::time::Instant::now();
     let mut builder = state.http_client.post(url);
     if let Some(api_key) = api_key {
         builder = builder.bearer_auth(api_key);
     }
-    let response = builder
-        .json(&request)
-        .send()
-        .await
-        .context("send llm resume summary request")?;
+    let response = match builder.json(&request).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                project,
+                operation,
+                format!("Project: {project}"),
+                &request,
+                "error",
+                Some(&format!("send llm resume summary request: {error}")),
+                Some(started.elapsed().as_millis() as u64),
+                None,
+            );
+            return Err(error).context("send llm resume summary request");
+        }
+    };
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .context("read llm resume summary body")?;
+    let body = match response.text().await {
+        Ok(body) => body,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                project,
+                operation,
+                format!("Project: {project}"),
+                &request,
+                "error",
+                Some(&format!("read llm resume summary body: {error}")),
+                Some(started.elapsed().as_millis() as u64),
+                None,
+            );
+            return Err(error).context("read llm resume summary body");
+        }
+    };
+    let token_usage = token_usage_from_chat_body(&body);
     if !status.is_success() {
+        let error = format!("llm resume summary failed: {status} {body}");
+        emit_llm_audit_activity(
+            state,
+            project,
+            operation,
+            format!("Project: {project}"),
+            &request,
+            "error",
+            Some(&error),
+            Some(started.elapsed().as_millis() as u64),
+            token_usage,
+        );
         anyhow::bail!("llm resume summary failed: {status} {body}");
     }
-    let payload: serde_json::Value =
-        serde_json::from_str(&body).context("parse llm resume summary response")?;
-    let content = payload
+    let payload: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(payload) => payload,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                project,
+                operation,
+                format!("Project: {project}"),
+                &request,
+                "error",
+                Some(&format!("parse llm resume summary response: {error}")),
+                Some(started.elapsed().as_millis() as u64),
+                token_usage,
+            );
+            return Err(error).context("parse llm resume summary response");
+        }
+    };
+    let content = match payload
         .get("choices")
         .and_then(|choices| choices.get(0))
         .and_then(|choice| choice.get("message"))
@@ -5337,7 +6048,34 @@ async fn summarize_resume_with_llm(
         .and_then(|content| content.as_str())
         .map(str::trim)
         .filter(|content| !content.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("llm resume summary missing content"))?;
+    {
+        Some(content) => content,
+        None => {
+            emit_llm_audit_activity(
+                state,
+                project,
+                operation,
+                format!("Project: {project}"),
+                &request,
+                "error",
+                Some("llm resume summary missing content"),
+                Some(started.elapsed().as_millis() as u64),
+                token_usage,
+            );
+            anyhow::bail!("llm resume summary missing content");
+        }
+    };
+    emit_llm_audit_activity(
+        state,
+        project,
+        operation,
+        format!("Project: {project}"),
+        &request,
+        "success",
+        None,
+        Some(started.elapsed().as_millis() as u64),
+        token_usage,
+    );
     Ok(content.to_string())
 }
 
@@ -5442,25 +6180,91 @@ async fn synthesize_query_answer_with_llm(
     });
     request_body[llm_max_output_tokens_field(&state.config.llm.provider)] =
         serde_json::json!(state.config.llm.max_output_tokens.min(800));
+    let started = std::time::Instant::now();
     let mut builder = state.http_client.post(url);
     if let Some(api_key) = api_key {
         builder = builder.bearer_auth(api_key);
     }
-    let http_response = builder
-        .json(&request_body)
-        .send()
-        .await
-        .context("send llm query answer request")?;
+    let http_response = match builder.json(&request_body).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                &request.project,
+                "query_answer",
+                format!("Question: {}", summarize_query(&request.query)),
+                &request_body,
+                "error",
+                Some(&format!("send llm query answer request: {error}")),
+                Some(started.elapsed().as_millis() as u64),
+                None,
+            );
+            return Err(error).context("send llm query answer request");
+        }
+    };
     let status = http_response.status();
-    let body = http_response
-        .text()
-        .await
-        .context("read llm query answer body")?;
+    let body = match http_response.text().await {
+        Ok(body) => body,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                &request.project,
+                "query_answer",
+                format!("Question: {}", summarize_query(&request.query)),
+                &request_body,
+                "error",
+                Some(&format!("read llm query answer body: {error}")),
+                Some(started.elapsed().as_millis() as u64),
+                None,
+            );
+            return Err(error).context("read llm query answer body");
+        }
+    };
+    let token_usage = token_usage_from_chat_body(&body);
     if !status.is_success() {
+        let error = format!("llm query answer failed: {status} {body}");
+        emit_llm_audit_activity(
+            state,
+            &request.project,
+            "query_answer",
+            format!("Question: {}", summarize_query(&request.query)),
+            &request_body,
+            "error",
+            Some(&error),
+            Some(started.elapsed().as_millis() as u64),
+            token_usage,
+        );
         anyhow::bail!("llm query answer failed: {status} {body}");
     }
-    let mut answer = parse_llm_query_answer_body(&body, response)?;
-    answer.token_usage = token_usage_from_chat_body(&body);
+    let mut answer = match parse_llm_query_answer_body(&body, response) {
+        Ok(answer) => answer,
+        Err(error) => {
+            emit_llm_audit_activity(
+                state,
+                &request.project,
+                "query_answer",
+                format!("Question: {}", summarize_query(&request.query)),
+                &request_body,
+                "error",
+                Some(&error.to_string()),
+                Some(started.elapsed().as_millis() as u64),
+                token_usage,
+            );
+            return Err(error);
+        }
+    };
+    answer.token_usage = token_usage;
+    emit_llm_audit_activity(
+        state,
+        &request.project,
+        "query_answer",
+        format!("Question: {}", summarize_query(&request.query)),
+        &request_body,
+        "success",
+        None,
+        Some(started.elapsed().as_millis() as u64),
+        answer.token_usage.clone(),
+    );
     Ok(answer)
 }
 
@@ -5689,6 +6493,7 @@ fn parse_activity_kind(value: &str) -> ActivityKind {
         "delete_memory" => ActivityKind::DeleteMemory,
         "briefing" => ActivityKind::Briefing,
         "diagnostic" => ActivityKind::Diagnostic,
+        "llm_audit" => ActivityKind::LlmAudit,
         _ => ActivityKind::Query,
     }
 }
@@ -6304,6 +7109,159 @@ fn summarize_query(query: &str) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn emit_llm_audit_activity(
+    state: &AppState,
+    project: &str,
+    operation: &str,
+    request_summary: String,
+    request_body: &serde_json::Value,
+    status: &str,
+    error: Option<&str>,
+    duration_ms: Option<u64>,
+    token_usage: Option<TokenUsage>,
+) {
+    let audit = state
+        .llm_audit
+        .read()
+        .expect("llm audit config lock poisoned")
+        .clone();
+    if !audit.enabled {
+        return;
+    }
+    let (messages, truncated) = llm_audit_messages_from_request(state, &audit, request_body);
+    notify_project_changed_with_metadata(
+        state,
+        project.to_string(),
+        None,
+        ActivityKind::LlmAudit,
+        format!("LLM audit: {operation} {status}"),
+        Some(ActivityDetails::LlmAudit {
+            operation: operation.to_string(),
+            request_summary,
+            status: status.to_string(),
+            redacted: audit.redact,
+            truncated,
+            messages,
+            error: error.map(ToString::to_string),
+        }),
+        None,
+        None,
+        Some("llm_audit".to_string()),
+        None,
+        duration_ms,
+        Some(state.config.llm.provider.clone()),
+        Some(state.config.llm.model.clone()),
+        token_usage,
+    );
+}
+
+fn llm_audit_messages_from_request(
+    state: &AppState,
+    audit: &LlmAuditConfig,
+    request_body: &serde_json::Value,
+) -> (Vec<LlmAuditMessage>, bool) {
+    let max_message_chars = audit.max_message_chars.max(1);
+    let max_total_chars = audit.max_total_chars.max(1);
+    let api_key = resolve_llm_api_key(&state.config.llm);
+    let mut total_chars = 0usize;
+    let mut any_truncated = false;
+    let mut messages = Vec::new();
+
+    for message in request_body
+        .get("messages")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let role = message
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let raw_content = message
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let mut content = if audit.redact {
+            redact_llm_audit_content(raw_content, api_key.as_deref())
+        } else {
+            raw_content.to_string()
+        };
+        let remaining = max_total_chars.saturating_sub(total_chars);
+        if remaining == 0 {
+            any_truncated = true;
+            break;
+        }
+        let limit = max_message_chars.min(remaining);
+        let (limited, truncated) = truncate_chars(&content, limit);
+        if truncated {
+            any_truncated = true;
+        }
+        content = limited;
+        total_chars = total_chars.saturating_add(content.chars().count());
+        messages.push(LlmAuditMessage {
+            role,
+            content,
+            truncated,
+        });
+        if total_chars >= max_total_chars {
+            any_truncated = true;
+            break;
+        }
+    }
+
+    (messages, any_truncated)
+}
+
+fn redact_llm_audit_content(content: &str, explicit_secret: Option<&str>) -> String {
+    let mut redacted = content.to_string();
+    if let Some(secret) = explicit_secret
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        redacted = redacted.replace(secret, "[REDACTED]");
+    }
+    let patterns = [
+        r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{12,}",
+        r#"(?i)\b(api[_-]?key|token|password|secret)\s*[:=]\s*['"]?[^'"\s,;]+"#,
+        r"(?i)\b(postgres(?:ql)?|mysql|mongodb|redis)://([^:\s/@]+):([^@\s]+)@",
+    ];
+    for pattern in patterns {
+        if let Ok(regex) = Regex::new(pattern) {
+            redacted = match pattern {
+                p if p.contains("bearer") => regex.replace_all(&redacted, "$1[REDACTED]").into(),
+                p if p.contains("://") => {
+                    regex.replace_all(&redacted, "$1://$2:[REDACTED]@").into()
+                }
+                _ => regex.replace_all(&redacted, "$1=[REDACTED]").into(),
+            };
+        }
+    }
+    redacted
+}
+
+fn truncate_chars(content: &str, limit: usize) -> (String, bool) {
+    if limit == 0 {
+        return (String::new(), !content.is_empty());
+    }
+    let mut chars = content.chars();
+    let limited = chars.by_ref().take(limit).collect::<String>();
+    if chars.next().is_none() {
+        return (limited, false);
+    }
+
+    let suffix = "\n[truncated]";
+    let suffix_len = suffix.chars().count();
+    if limit <= suffix_len {
+        return (suffix.chars().take(limit).collect(), true);
+    }
+
+    let prefix_limit = limit - suffix_len;
+    let prefix = content.chars().take(prefix_limit).collect::<String>();
+    (format!("{prefix}{suffix}"), true)
+}
+
 fn activity_kind_label(kind: &ActivityKind) -> &'static str {
     match kind {
         ActivityKind::Checkpoint => "checkpoint",
@@ -6325,6 +7283,7 @@ fn activity_kind_label(kind: &ActivityKind) -> &'static str {
         ActivityKind::DeleteMemory => "delete_memory",
         ActivityKind::Briefing => "briefing",
         ActivityKind::Diagnostic => "diagnostic",
+        ActivityKind::LlmAudit => "llm_audit",
     }
 }
 
@@ -6768,6 +7727,27 @@ mod tests {
     use super::*;
     use mem_api::AutomationMode;
 
+    #[test]
+    fn llm_audit_redacts_common_secret_shapes() {
+        let content =
+            "bearer sk-live-secret-token password=hunter2 postgresql://memory:dbpass@localhost/db";
+        let redacted = redact_llm_audit_content(content, Some("sk-live-secret-token"));
+
+        assert!(!redacted.contains("sk-live-secret-token"));
+        assert!(!redacted.contains("hunter2"));
+        assert!(!redacted.contains("dbpass"));
+        assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn llm_audit_truncates_by_character_limit() {
+        let (content, truncated) = truncate_chars("abcdefghijklmnop", 15);
+
+        assert!(truncated);
+        assert_eq!(content, "abc\n[truncated]");
+        assert_eq!(content.chars().count(), 15);
+    }
+
     fn test_presence(
         watcher_id: &str,
         project: &str,
@@ -6869,6 +7849,79 @@ mod tests {
             .expect("enable creation toml");
 
         assert!(enabled.contains("create_enabled = true"));
+    }
+
+    #[test]
+    fn llm_audit_toml_update_creates_safe_defaults() {
+        let updated =
+            set_llm_audit_enabled_in_toml("[service]\nbind_addr = \"127.0.0.1:4040\"\n", true)
+                .expect("enable llm audit");
+
+        assert!(updated.contains("[llm_audit]"));
+        assert!(updated.contains("enabled = true"));
+        assert!(updated.contains("redact = true"));
+        assert!(updated.contains("max_message_chars = 8000"));
+        assert!(updated.contains("max_total_chars = 32000"));
+    }
+
+    #[test]
+    fn llm_audit_toml_update_preserves_existing_limits() {
+        let updated = set_llm_audit_enabled_in_toml(
+            r#"
+            [llm_audit]
+            enabled = false
+            redact = true
+            max_message_chars = 1200
+            max_total_chars = 2400
+            "#,
+            true,
+        )
+        .expect("enable llm audit");
+
+        assert!(updated.contains("enabled = true"));
+        assert!(updated.contains("max_message_chars = 1200"));
+        assert!(updated.contains("max_total_chars = 2400"));
+    }
+
+    #[test]
+    fn runtime_skill_status_reports_current_bundle() {
+        let root = std::env::temp_dir().join(format!("memory-skill-status-{}", Uuid::new_v4()));
+        for skill in MEMORY_SKILL_NAMES {
+            let dir = root.join(".agents").join("skills").join(skill);
+            fs::create_dir_all(&dir).expect("create skill dir");
+            fs::write(
+                dir.join("SKILL.md"),
+                "---\nname: test\nversion: 0.8.6-dev\n---\n",
+            )
+            .expect("write skill");
+        }
+
+        let status = runtime_skill_status(root.to_str(), "0.8.6-dev");
+
+        assert_eq!(status.status, "ok");
+        assert_eq!(status.bundle_version, "0.8.6-dev");
+        assert!(status.summary.contains("skills current"));
+
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn runtime_skill_status_warns_on_outdated_or_missing_bundle() {
+        let root = std::env::temp_dir().join(format!("memory-skill-status-{}", Uuid::new_v4()));
+        let dir = root
+            .join(".agents")
+            .join("skills")
+            .join(MEMORY_SKILL_NAMES[0]);
+        fs::create_dir_all(&dir).expect("create skill dir");
+        fs::write(dir.join("SKILL.md"), "---\nversion: 0.1.0\n---\n").expect("write skill");
+
+        let status = runtime_skill_status(root.to_str(), "0.8.6-dev");
+
+        assert_eq!(status.status, "warn");
+        assert!(status.summary.contains("outdated"));
+        assert!(status.summary.contains("missing"));
+
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

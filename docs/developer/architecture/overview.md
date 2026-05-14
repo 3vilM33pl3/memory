@@ -73,7 +73,7 @@ The CLI currently uses two transports:
 - a localhost HTTP API kept as the compatibility and fallback surface
 - a persistent Cap'n Proto connection for live TUI subscriptions
 
-Initialized repositories keep local project metadata and overrides under `.mem/`. Shared defaults live in the global config and repo-local values can override them when needed.
+Initialized repositories keep a tiny project marker under `.mem/project.toml`, agent-visible behavior under `.agents/`, and operational project config/state/cache under user-local Memory Layer directories. Shared defaults live in the global config and project-local values can override them when needed.
 
 ### Backend Service (`memory service`)
 

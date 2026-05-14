@@ -33,6 +33,7 @@ Those links are computed automatically during curation from strong text overlap,
 - `e` re-embed the active embedding space
 - `a` archive low-value memories
 - `Shift+D` delete the selected memory
+- `h` open or close detailed help for this tab
 
 ## When To Use It
 

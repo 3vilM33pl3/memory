@@ -101,7 +101,7 @@ See also:
 const INIT_AFTER_HELP: &str = "\
 Agent notes:
   Use in a repository before dev init, TUI, web UI, watcher, scan, query, or remember workflows.
-  Mutates repo-local .mem bootstrap files and agent skill files unless --dry-run is passed.
+  Mutates user-local project config plus the repo-local .mem marker and agent skill files unless --dry-run is passed.
 
 Examples:
   memory init
@@ -114,7 +114,7 @@ See also:
 const UPGRADE_AFTER_HELP: &str = "\
 Agent notes:
   Use after installing a newer Memory Layer package to refresh repo-local Memory skills.
-  Backs up replaced skill directories under .mem/runtime/skill-backups before writing.
+  Backs up replaced skill directories under the user-local project runtime directory before writing.
   Prefer --dry-run --json before applying from automation.
 
 Examples:
@@ -142,7 +142,7 @@ const DEV_INIT_AFTER_HELP: &str = "\
 Agent notes:
   Run after memory init when developing Memory Layer from source.
   Use --copy-from-global to copy database, LLM, embedding, feature, and writer settings into the dev overlay.
-  Mutates .mem/config.dev.toml and .mem/runtime/dev unless --dry-run is passed.
+  Mutates the user-local project dev overlay and dev runtime directory unless --dry-run is passed.
 
 Examples:
   memory init
@@ -1086,14 +1086,14 @@ struct DevArgs {
 
 #[derive(Debug, Subcommand)]
 enum DevCommand {
-    /// Create `.mem/config.dev.toml` and the dev runtime directory.
+    /// Create the user-local project dev overlay and dev runtime directory.
     #[command(after_help = DEV_INIT_AFTER_HELP)]
     Init(DevInitArgs),
 }
 
 #[derive(Debug, Args)]
 struct DevInitArgs {
-    /// Overwrite an existing `.mem/config.dev.toml` instead of preserving it.
+    /// Overwrite an existing dev overlay instead of preserving it.
     #[arg(long)]
     force: bool,
     /// Print what would be written without touching the filesystem.
@@ -3757,9 +3757,11 @@ async fn run_doctor(
     project: &str,
     fix: bool,
 ) -> Result<DoctorReport> {
+    let project_paths = mem_platform::project_paths(repo_root, project)
+        .ok_or_else(|| anyhow::anyhow!("could not resolve user project config paths"))?;
     let config_path = cli_config
         .clone()
-        .unwrap_or_else(|| repo_root.join(".mem").join("config.toml"));
+        .unwrap_or_else(|| project_paths.config_path());
     let global_config_path = discover_global_config_path();
     let mut report = DoctorReport {
         project: project.to_string(),
@@ -3774,6 +3776,7 @@ async fn run_doctor(
 
     let mem_dir = repo_root.join(".mem");
     let project_path = mem_dir.join("project.toml");
+    let legacy_config_path = mem_dir.join("config.toml");
     let root_gitignore_path = repo_root.join(".gitignore");
     let local_service_overrides = read_local_service_overrides(repo_root);
 
@@ -3804,6 +3807,41 @@ async fn run_doctor(
         init_fix_applied,
     ));
 
+    let migration_fix_applied = if !config_path.exists() && legacy_config_path.exists() && fix {
+        repair_repo_bootstrap(repo_root, project)?;
+        true
+    } else {
+        false
+    };
+    report.push(doctor_check(
+        "project.legacy_config_migration",
+        if legacy_config_path.exists() && config_path.exists() {
+            DoctorStatus::Ok
+        } else if legacy_config_path.exists() {
+            DoctorStatus::Warn
+        } else {
+            DoctorStatus::Ok
+        },
+        if legacy_config_path.exists() && config_path.exists() {
+            "Legacy .mem config has a user-local project config counterpart."
+        } else if legacy_config_path.exists() {
+            "Legacy .mem config is present but has not been migrated to the user-local project config directory."
+        } else {
+            "No legacy .mem config migration is needed."
+        },
+        Some(format!(
+            "legacy={}, current={}",
+            legacy_config_path.display(),
+            config_path.display()
+        )),
+        if legacy_config_path.exists() && !config_path.exists() {
+            Some("memory doctor --fix".to_string())
+        } else {
+            None
+        },
+        migration_fix_applied,
+    ));
+
     let config_fix_applied = if !config_path.exists() && fix {
         repair_repo_bootstrap(repo_root, project)?;
         true
@@ -3811,20 +3849,26 @@ async fn run_doctor(
         false
     };
     report.push(doctor_check(
-        "repo.config_file",
+        "project.config_file",
         if config_path.exists() || config_fix_applied {
             DoctorStatus::Ok
+        } else if legacy_config_path.exists() {
+            DoctorStatus::Warn
         } else {
             DoctorStatus::Fail
         },
         if config_path.exists() || config_fix_applied {
-            "Config file is present."
+            "User-local project config file is present."
+        } else if legacy_config_path.exists() {
+            "User-local project config file is missing; legacy .mem/config.toml fallback is active."
         } else {
-            "Config file is missing."
+            "User-local project config file is missing."
         },
         Some(config_path.display().to_string()),
         if config_path.exists() || config_fix_applied {
             None
+        } else if legacy_config_path.exists() {
+            Some("memory doctor --fix".to_string())
         } else {
             Some("memory init".to_string())
         },
@@ -3884,31 +3928,28 @@ async fn run_doctor(
         false,
     ));
 
-    let gitignore_fix_applied = if !root_gitignore_contains_mem(repo_root)? && fix {
-        ensure_root_gitignore_entry(&root_gitignore_path, "/.mem\n")?;
-        true
-    } else {
-        false
-    };
     report.push(doctor_check(
         "repo.gitignore",
         if root_gitignore_contains_mem(repo_root)? {
-            DoctorStatus::Ok
-        } else {
             DoctorStatus::Warn
+        } else {
+            DoctorStatus::Ok
         },
         if root_gitignore_contains_mem(repo_root)? {
-            "Root .gitignore ignores .mem."
+            "Root .gitignore ignores .mem, which may hide the repo-local project marker."
         } else {
-            "Root .gitignore does not ignore .mem."
+            "Root .gitignore does not hide the repo-local .mem marker directory."
         },
         Some(root_gitignore_path.display().to_string()),
         if root_gitignore_contains_mem(repo_root)? {
-            None
+            Some(
+                "Remove `/.mem` from the root .gitignore if you want to commit .mem/project.toml."
+                    .to_string(),
+            )
         } else {
-            Some("memory doctor --fix".to_string())
+            None
         },
-        gitignore_fix_applied,
+        false,
     ));
 
     let skill_upgrade_fix = if fix {
@@ -4914,24 +4955,59 @@ async fn run_doctor(
 
 fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
     let mem_dir = repo_root.join(".mem");
-    let runtime_dir = mem_dir.join("runtime");
-    let config_path = mem_dir.join("config.toml");
+    let project_paths = mem_platform::project_paths(repo_root, project)
+        .ok_or_else(|| anyhow::anyhow!("could not resolve user project config paths"))?;
+    let runtime_dir = project_paths.runtime_dir();
+    let config_path = project_paths.config_path();
+    let env_path = project_paths.env_path();
+    let home_project_path = project_paths.project_path();
     let project_path = mem_dir.join("project.toml");
+    let legacy_config_path = mem_dir.join("config.toml");
+    let legacy_env_path = mem_dir.join("memory-layer.env");
     let local_gitignore_path = mem_dir.join(".gitignore");
     let agent_config_path = repo_root.join(".agents").join("memory-layer.toml");
     let skill_root = repo_root.join(".agents").join("skills");
 
-    fs::create_dir_all(&runtime_dir).context("create .mem/runtime")?;
+    fs::create_dir_all(&project_paths.config_dir)
+        .with_context(|| format!("create {}", project_paths.config_dir.display()))?;
+    fs::create_dir_all(&runtime_dir)
+        .with_context(|| format!("create {}", runtime_dir.display()))?;
     if !config_path.exists() {
-        fs::write(&config_path, render_repo_config(repo_root)).context("write .mem/config.toml")?;
+        if legacy_config_path.exists() {
+            fs::copy(&legacy_config_path, &config_path).with_context(|| {
+                format!(
+                    "copy {} to {}",
+                    legacy_config_path.display(),
+                    config_path.display()
+                )
+            })?;
+        } else {
+            fs::write(&config_path, render_repo_config(repo_root, &project_paths))
+                .with_context(|| format!("write {}", config_path.display()))?;
+        }
     }
+    if !env_path.exists() && legacy_env_path.exists() {
+        fs::copy(&legacy_env_path, &env_path).with_context(|| {
+            format!(
+                "copy {} to {}",
+                legacy_env_path.display(),
+                env_path.display()
+            )
+        })?;
+    }
+    if !home_project_path.exists() {
+        fs::write(
+            &home_project_path,
+            render_project_metadata(project, repo_root),
+        )
+        .with_context(|| format!("write {}", home_project_path.display()))?;
+    }
+    fs::create_dir_all(&mem_dir).context("create .mem")?;
     if !project_path.exists() {
         fs::write(&project_path, render_project_metadata(project, repo_root))
             .context("write .mem/project.toml")?;
     }
-    if !local_gitignore_path.exists() {
-        fs::write(&local_gitignore_path, "runtime/\n").context("write .mem/.gitignore")?;
-    }
+    ensure_mem_gitignore(&local_gitignore_path, false)?;
     if !agent_config_path.exists() {
         if let Some(parent) = agent_config_path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
@@ -4948,7 +5024,6 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
         })?;
         sync_memory_skill_bundle(&skill_template_dir, &skill_root, false)?;
     }
-    ensure_root_gitignore_entry(&repo_root.join(".gitignore"), "/.mem\n")?;
     ensure_claude_md_memory_section(repo_root, project)?;
     Ok(())
 }
@@ -4981,15 +5056,21 @@ fn automation_runtime_dir(config: &AppConfig, repo_root: &Path) -> PathBuf {
         PathBuf::from(path)
             .parent()
             .map(PathBuf::from)
-            .unwrap_or_else(|| repo_root.join(".mem").join("runtime"))
+            .unwrap_or_else(|| default_automation_runtime_dir(repo_root))
     } else if let Some(path) = &config.automation.audit_log_path {
         PathBuf::from(path)
             .parent()
             .map(PathBuf::from)
-            .unwrap_or_else(|| repo_root.join(".mem").join("runtime"))
+            .unwrap_or_else(|| default_automation_runtime_dir(repo_root))
     } else {
-        repo_root.join(".mem").join("runtime")
+        default_automation_runtime_dir(repo_root)
     }
+}
+
+fn default_automation_runtime_dir(repo_root: &Path) -> PathBuf {
+    mem_api::project_paths_for_repo(repo_root)
+        .map(|paths| paths.runtime_dir())
+        .unwrap_or_else(|| repo_root.join(".mem").join("runtime"))
 }
 
 #[derive(Clone, Debug, Default)]
@@ -5008,20 +5089,26 @@ impl LocalServiceOverrides {
 }
 
 fn default_local_service_overrides(repo_root: &Path) -> LocalServiceOverrides {
+    let socket_path = mem_api::project_paths_for_repo(repo_root)
+        .map(|paths| paths.runtime_dir().join("memory-layer.capnp.sock"))
+        .unwrap_or_else(|| {
+            repo_root
+                .join(".mem")
+                .join("runtime")
+                .join("memory-layer.capnp.sock")
+        });
     LocalServiceOverrides {
         bind_addr: "127.0.0.1:4140".to_string(),
         capnp_tcp_addr: "127.0.0.1:4141".to_string(),
-        capnp_unix_socket: repo_root
-            .join(".mem")
-            .join("runtime")
-            .join("memory-layer.capnp.sock")
-            .display()
-            .to_string(),
+        capnp_unix_socket: socket_path.display().to_string(),
     }
 }
 
 fn read_local_service_overrides(repo_root: &Path) -> Option<LocalServiceOverrides> {
-    let config_path = repo_root.join(".mem").join("config.toml");
+    let config_path = mem_api::project_paths_for_repo(repo_root)
+        .map(|paths| paths.config_path())
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| repo_root.join(".mem").join("config.toml"));
     let content = fs::read_to_string(config_path).ok()?;
     let mut in_service = false;
     let mut overrides = LocalServiceOverrides::default();
@@ -5113,7 +5200,7 @@ fn print_doctor_report(report: &DoctorReport) {
             default_global_config_path_label()
         );
     }
-    println!("Repo-local config: {}\n", report.config_path);
+    println!("Project config: {}\n", report.config_path);
     for check in &report.checks {
         let icon = match check.status {
             DoctorStatus::Ok => "OK",
@@ -5171,27 +5258,57 @@ fn initialize_repo(
     print_only: bool,
 ) -> Result<String> {
     let mem_dir = repo_root.join(".mem");
-    let runtime_dir = mem_dir.join("runtime");
-    let config_path = mem_dir.join("config.toml");
+    let project_paths = mem_platform::project_paths(repo_root, project)
+        .ok_or_else(|| anyhow::anyhow!("could not resolve user project config paths"))?;
+    let runtime_dir = project_paths.runtime_dir();
+    let config_path = project_paths.config_path();
+    let env_path = project_paths.env_path();
+    let home_project_path = project_paths.project_path();
     let project_path = mem_dir.join("project.toml");
+    let legacy_config_path = mem_dir.join("config.toml");
+    let legacy_env_path = mem_dir.join("memory-layer.env");
     let local_gitignore_path = mem_dir.join(".gitignore");
-    let root_gitignore_path = repo_root.join(".gitignore");
     let agent_config_path = repo_root.join(".agents").join("memory-layer.toml");
     let skill_root = repo_root.join(".agents").join("skills");
     let skill_template_dir = discover_skill_template_dir()
         .ok_or_else(|| anyhow::anyhow!("could not locate packaged memory-layer skill template"))?;
 
-    let config_contents = render_repo_config(repo_root);
+    let config_contents = render_repo_config(repo_root, &project_paths);
     let project_contents = render_project_metadata(project, repo_root);
     let agent_project_contents = render_agent_project_config(project, repo_root);
-    let mem_gitignore_contents = "runtime/\n";
-    let root_gitignore_line = "/.mem\n";
-
     if !print_only {
-        fs::create_dir_all(&runtime_dir).context("create .mem/runtime")?;
+        fs::create_dir_all(&project_paths.config_dir)
+            .with_context(|| format!("create {}", project_paths.config_dir.display()))?;
+        fs::create_dir_all(&runtime_dir)
+            .with_context(|| format!("create {}", runtime_dir.display()))?;
         if force || !config_path.exists() {
-            fs::write(&config_path, config_contents).context("write .mem/config.toml")?;
+            if !force && legacy_config_path.exists() {
+                fs::copy(&legacy_config_path, &config_path).with_context(|| {
+                    format!(
+                        "copy {} to {}",
+                        legacy_config_path.display(),
+                        config_path.display()
+                    )
+                })?;
+            } else {
+                fs::write(&config_path, config_contents)
+                    .with_context(|| format!("write {}", config_path.display()))?;
+            }
         }
+        if !force && !env_path.exists() && legacy_env_path.exists() {
+            fs::copy(&legacy_env_path, &env_path).with_context(|| {
+                format!(
+                    "copy {} to {}",
+                    legacy_env_path.display(),
+                    env_path.display()
+                )
+            })?;
+        }
+        if force || !home_project_path.exists() {
+            fs::write(&home_project_path, &project_contents)
+                .with_context(|| format!("write {}", home_project_path.display()))?;
+        }
+        fs::create_dir_all(&mem_dir).context("create .mem")?;
         if force || !project_path.exists() {
             fs::write(&project_path, project_contents).context("write .mem/project.toml")?;
         }
@@ -5202,12 +5319,8 @@ fn initialize_repo(
             fs::write(&agent_config_path, agent_project_contents)
                 .context("write .agents/memory-layer.toml")?;
         }
-        if force || !local_gitignore_path.exists() {
-            fs::write(&local_gitignore_path, mem_gitignore_contents)
-                .context("write .mem/.gitignore")?;
-        }
+        ensure_mem_gitignore(&local_gitignore_path, force)?;
         sync_memory_skill_bundle(&skill_template_dir, &skill_root, force)?;
-        ensure_root_gitignore_entry(&root_gitignore_path, root_gitignore_line)?;
         ensure_claude_md_memory_section(repo_root, project)?;
     }
 
@@ -5222,22 +5335,45 @@ fn initialize_repo(
     ))
 }
 
+fn ensure_mem_gitignore(path: &Path, force: bool) -> Result<()> {
+    const CONTENTS: &str = "*\n!.gitignore\n!project.toml\n";
+    if force || !path.exists() {
+        fs::write(path, CONTENTS).context("write .mem/.gitignore")?;
+        return Ok(());
+    }
+
+    let current = fs::read_to_string(path).context("read .mem/.gitignore")?;
+    let lines: Vec<&str> = current
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    let allowed = ["*", "!.gitignore", "!project.toml"];
+    let has_safe_default = allowed
+        .into_iter()
+        .all(|required| lines.contains(&required));
+    let has_only_safe_rules = lines.iter().all(|line| allowed.contains(line));
+    if !has_safe_default || !has_only_safe_rules {
+        fs::write(path, CONTENTS).context("migrate .mem/.gitignore")?;
+    }
+
+    Ok(())
+}
+
 fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String> {
-    // Prefer the .mem/ that the config loader would find (ancestor walk from
-    // cwd), so running `memory dev init` inside a git worktree lands the
-    // overlay next to the existing base config in the main repo.
-    let mem_dir = mem_api::discover_repo_config_path()
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-        .unwrap_or_else(|| repo_root.join(".mem"));
-    if !mem_dir.is_dir() {
+    let project = mem_api::project_slug_for_repo(repo_root);
+    let project_paths = mem_platform::project_paths(repo_root, &project)
+        .ok_or_else(|| anyhow::anyhow!("could not resolve user project config paths"))?;
+    let base_config_path = project_paths.config_path();
+    if !base_config_path.is_file() && !repo_root.join(".mem").join("config.toml").is_file() {
         anyhow::bail!(
-            "no .mem/ directory found at {}. Run `memory init` first to bootstrap the \
+            "no project config found at {}. Run `memory init` first to bootstrap the \
              base config before layering the dev overlay on top.",
-            mem_dir.display()
+            base_config_path.display()
         );
     }
-    let overlay_path = mem_dir.join("config.dev.toml");
-    let runtime_dev_dir = mem_dir.join("runtime").join("dev");
+    let overlay_path = project_paths.dev_config_path();
+    let runtime_dev_dir = project_paths.runtime_dir().join("dev");
     let capnp_unix_socket = runtime_dev_dir.join("memory-layer.capnp.sock");
     let state_file_path = runtime_dev_dir.join("automation-state.json");
     let audit_log_path = runtime_dev_dir.join("automation.log");
@@ -5245,7 +5381,7 @@ fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String
     let shared_snippet = resolve_shared_global_snippet(args)?;
 
     let mut contents = format!(
-        "# Overlay on top of .mem/config.toml for the dev profile.\n\
+        "# Overlay on top of the user-local project config for the dev profile.\n\
          # Active when MEMORY_LAYER_PROFILE=dev or the binary runs from a cargo target/ directory.\n\
          # The dev profile does NOT read the global config — anything shared (database URL,\n\
          # LLM endpoints) lives here. Re-run `memory dev init --copy-from-global` to refresh.\n\
@@ -5282,6 +5418,9 @@ fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String
         ));
     }
 
+    if let Some(parent) = overlay_path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
     fs::create_dir_all(&runtime_dev_dir)
         .with_context(|| format!("create {}", runtime_dev_dir.display()))?;
     if overlay_path.exists() && !args.force {
@@ -6675,7 +6814,11 @@ fn ensure_agent_watch_repo_bootstrap(repo_root: &Path, project: &str) -> Result<
 }
 
 fn ensure_agent_watch_repo_config(repo_root: &Path) -> Result<()> {
-    let path = repo_root.join(".mem").join("config.toml");
+    let project = resolve_manager_project_slug(repo_root);
+    let path = mem_platform::project_paths(repo_root, &project)
+        .map(|paths| paths.config_path())
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| repo_root.join(".mem").join("config.toml"));
     let content = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     let mut value: toml::Value = content
         .parse()
@@ -6818,14 +6961,11 @@ fn start_managed_agent_watcher(
     ]);
     #[cfg(not(target_os = "macos"))]
     cmd.arg(memory_binary);
-    // Prefer the repo-local config so the watcher talks to the same service
-    // instance the TUI and CLI use for this project.
+    // Prefer the resolved project config so the watcher talks to the same
+    // service instance the TUI and CLI use for this project.
     #[cfg(not(target_os = "macos"))]
     {
-        let repo_config = repo_root.join(".mem").join("config.toml");
-        if repo_config.is_file() {
-            cmd.arg("--config").arg(&repo_config);
-        } else if let Some(path) = config_path {
+        if let Some(path) = config_path {
             cmd.arg("--config").arg(path);
         }
     }
@@ -7583,13 +7723,9 @@ fn render_managed_watch_launch_agent(
     let stdout_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stdout.log"));
     let stderr_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stderr.log"));
     let mut args = vec![binary.display().to_string()];
-    // Prefer the repo-local config so the watcher talks to the same service
-    // instance the TUI and CLI use for this project.
-    let repo_config = repo_root.join(".mem").join("config.toml");
-    if repo_config.is_file() {
-        args.push("--config".to_string());
-        args.push(repo_config.display().to_string());
-    } else if let Some(path) = config_path {
+    // Prefer the resolved project config so the watcher talks to the same
+    // service instance the TUI and CLI use for this project.
+    if let Some(path) = config_path {
         args.push("--config".to_string());
         args.push(path.display().to_string());
     }
@@ -8261,10 +8397,11 @@ fn upgrade_project_skills_with_template(
         }) {
         None
     } else {
+        let runtime_dir = mem_api::project_paths_for_repo(repo_root)
+            .map(|paths| paths.runtime_dir())
+            .unwrap_or_else(|| repo_root.join(".mem").join("runtime"));
         Some(
-            repo_root
-                .join(".mem")
-                .join("runtime")
+            runtime_dir
                 .join("skill-backups")
                 .join(Utc::now().format("%Y%m%dT%H%M%SZ").to_string()),
         )
@@ -8445,10 +8582,14 @@ fn set_copied_file_permissions(_path: &Path, _mode: u32) -> Result<()> {
     Ok(())
 }
 
-fn render_repo_config(repo_root: &Path) -> String {
+fn render_repo_config(repo_root: &Path, project_paths: &mem_platform::ProjectPaths) -> String {
     let repo_root = repo_root.display();
+    let runtime_dir = project_paths.runtime_dir();
+    let socket_path = runtime_dir.join("memory-layer.capnp.sock");
+    let audit_log_path = runtime_dir.join("automation.log");
+    let state_file_path = runtime_dir.join("automation-state.json");
     format!(
-        r#"# Repo-local overrides for this project.
+        r#"# User-local project overrides for this project.
 # Put shared defaults and secrets in the global config:
 #   {}
 # Shared LLM settings for `memory scan` should also live there under [llm].
@@ -8457,7 +8598,7 @@ fn render_repo_config(repo_root: &Path) -> String {
 # Example dev endpoints:
 # [service]
 # bind_addr = "127.0.0.1:4140"
-# capnp_unix_socket = "{repo_root}/.mem/runtime/memory-layer.capnp.sock"
+# capnp_unix_socket = "{}"
 # capnp_tcp_addr = "127.0.0.1:4141"
 
 [automation]
@@ -8470,10 +8611,13 @@ idle_threshold = "5m"
 min_changed_files = 2
 require_passing_test = false
 ignored_paths = [".git/", "target/", ".mem/"]
-audit_log_path = "{repo_root}/.mem/runtime/automation.log"
-state_file_path = "{repo_root}/.mem/runtime/automation-state.json"
+audit_log_path = "{}"
+state_file_path = "{}"
 "#,
-        default_global_config_path_label()
+        default_global_config_path_label(),
+        socket_path.display(),
+        audit_log_path.display(),
+        state_file_path.display()
     )
 }
 
@@ -8639,27 +8783,6 @@ fn ensure_claude_md_memory_section(repo_root: &Path, project: &str) -> Result<()
     Ok(())
 }
 
-fn ensure_root_gitignore_entry(path: &Path, line: &str) -> Result<()> {
-    let mut content = if path.exists() {
-        fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
-    } else {
-        String::new()
-    };
-
-    if !content
-        .lines()
-        .any(|existing| existing.trim() == line.trim())
-    {
-        if !content.is_empty() && !content.ends_with('\n') {
-            content.push('\n');
-        }
-        content.push_str(line);
-        fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
-    }
-
-    Ok(())
-}
-
 fn render_init_summary(
     repo_root: &Path,
     project: &str,
@@ -8681,12 +8804,11 @@ fn render_init_summary(
         "7. Optional: enable the Linux Codex-linked watcher manager:\n   memory watcher manager enable\n   Legacy per-repo watcher service: memory watcher enable --project ".to_string() + project
     };
     format!(
-        "{action} repo-local memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {}\n- {}\n- {}\n- {}/runtime/\n- {} (bundled memory skills)\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} for repo-specific runtime overrides\n3. Use {} to customize project memory behavior\n4. Start the shared backend if it is not already running:\n   memory service run --config {}\n5. Optional: configure repo-local [service] overrides if you want a parallel dev backend for this repo\n6. Optional: run a project scan:\n   memory scan --project {}\n{}\n8. Open the TUI:\n   memory tui --project {}\n9. Use the repo-local memory skill bundle from {} (umbrella skill at {}/memory-layer)",
+        "{action} memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {} (user-local project config)\n- {} (repo-local project marker)\n- {} (agent-visible project behavior)\n- {} (bundled memory skills)\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} for project runtime overrides\n3. Use {} to customize agent-visible project memory behavior\n4. Start the shared backend if it is not already running:\n   memory service run --config {}\n5. Optional: configure project-local [service] overrides if you want a parallel dev backend for this project\n6. Optional: run a project scan:\n   memory scan --project {}\n{}\n8. Open the TUI:\n   memory tui --project {}\n9. Use the repo-local memory skill bundle from {} (umbrella skill at {}/memory-layer)",
         repo_root.display(),
         config_path.display(),
         project_path.display(),
         agent_config_path.display(),
-        config_path.parent().unwrap_or(repo_root).display(),
         skills_root.display(),
         default_global_config_path_label(),
         config_path.display(),
@@ -9145,6 +9267,35 @@ impl ApiClient {
         if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
             anyhow::bail!(
                 "service does not support toggling automatic embedding creation yet; restart or upgrade memory-service so /v1/embeddings/create-enabled is available"
+            );
+        }
+        get_json(response).await
+    }
+
+    pub(crate) async fn llm_audit_status(&self) -> Result<mem_api::LlmAuditStatusResponse> {
+        get_json(
+            self.client
+                .get(service_url(&self.config, "/v1/config/llm-audit"))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn set_llm_audit_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<mem_api::LlmAuditStatusResponse> {
+        let response = self
+            .client
+            .post(service_url(&self.config, "/v1/config/llm-audit"))
+            .headers(write_headers(&self.config)?)
+            .json(&mem_api::SetLlmAuditRequest { enabled })
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            anyhow::bail!(
+                "service does not support toggling LLM audit yet; restart or upgrade memory-service so /v1/config/llm-audit is available"
             );
         }
         get_json(response).await
@@ -11875,6 +12026,12 @@ fn eval_memory_config_path(cwd: &Path) -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| env::var_os("MEMORY_LAYER_CONFIG").map(PathBuf::from))
         .or_else(|| {
+            mem_platform::discover_project_root(cwd)
+                .and_then(|repo_root| mem_api::project_paths_for_repo(&repo_root))
+                .map(|paths| paths.config_path())
+                .filter(|path| path.exists())
+        })
+        .or_else(|| {
             let candidate = cwd.join(".mem").join("config.toml");
             candidate.exists().then_some(candidate)
         })
@@ -12007,6 +12164,7 @@ fn activity_kind_text(kind: &mem_api::ActivityKind) -> &'static str {
         mem_api::ActivityKind::DeleteMemory => "delete",
         mem_api::ActivityKind::Briefing => "briefing",
         mem_api::ActivityKind::Diagnostic => "diagnostic",
+        mem_api::ActivityKind::LlmAudit => "llm_audit",
     }
 }
 
@@ -12528,6 +12686,7 @@ fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
         "debugging" => Ok(mem_api::MemoryType::Debugging),
         "environment" => Ok(mem_api::MemoryType::Environment),
         "domain_fact" => Ok(mem_api::MemoryType::DomainFact),
+        "documentation" => Ok(mem_api::MemoryType::Documentation),
         "task" => Ok(mem_api::MemoryType::Task),
         "plan" => Ok(mem_api::MemoryType::Plan),
         "implementation" => Ok(mem_api::MemoryType::Implementation),
@@ -12657,6 +12816,7 @@ fn parse_memory_type_arg(value: &str) -> Result<MemoryType> {
         "debugging" => Ok(MemoryType::Debugging),
         "environment" => Ok(MemoryType::Environment),
         "domain_fact" => Ok(MemoryType::DomainFact),
+        "documentation" => Ok(MemoryType::Documentation),
         "task" => Ok(MemoryType::Task),
         "plan" => Ok(MemoryType::Plan),
         "implementation" => Ok(MemoryType::Implementation),
@@ -12666,8 +12826,8 @@ fn parse_memory_type_arg(value: &str) -> Result<MemoryType> {
         "reference" => Ok(MemoryType::Reference),
         _ => anyhow::bail!(
             "unknown memory type '{value}'; expected one of: architecture, convention, \
-             decision, incident, debugging, environment, domain_fact, task, plan, implementation, \
-             user, feedback, project, reference"
+             decision, incident, debugging, environment, domain_fact, documentation, task, plan, \
+             implementation, user, feedback, project, reference"
         ),
     }
 }
@@ -14121,10 +14281,14 @@ mod tests {
     }
 
     #[test]
-    fn task_memory_type_parses_from_cli_args() {
+    fn newer_memory_types_parse_from_cli_args() {
         assert_eq!(
             parse_memory_type_arg("task").unwrap(),
             mem_api::MemoryType::Task
+        );
+        assert_eq!(
+            parse_memory_type_arg("documentation").unwrap(),
+            mem_api::MemoryType::Documentation
         );
     }
 
@@ -14635,7 +14799,8 @@ mod tests {
         let repo_root = PathBuf::from("/tmp/memory");
         let summary = initialize_repo(&repo_root, "memory", false, true).unwrap();
 
-        assert!(summary.contains(".mem/config.toml"));
+        assert!(summary.contains("user-local project config"));
+        assert!(summary.contains(".mem/project.toml"));
         assert!(summary.contains(".agents/memory-layer.toml"));
         assert!(summary.contains(".agents/skills"));
         assert!(summary.contains("bundled memory skills"));
@@ -14649,15 +14814,27 @@ mod tests {
 
     #[test]
     fn init_creates_repo_files_and_gitignore_entry() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let repo_root = unique_temp_dir("mem-init");
+        let xdg_root = unique_temp_dir("mem-init-xdg");
+        let old_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_state = std::env::var("XDG_STATE_HOME").ok();
+        let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
+            std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
+            std::env::set_var("XDG_CACHE_HOME", xdg_root.join("cache"));
+        }
         fs::create_dir_all(&repo_root).unwrap();
 
         initialize_repo(&repo_root, "memory", false, false).unwrap();
+        let paths = mem_platform::project_paths(&repo_root, "memory").unwrap();
 
-        assert!(repo_root.join(".mem/config.toml").is_file());
+        assert!(paths.config_path().is_file());
+        assert!(paths.project_path().is_file());
         assert!(repo_root.join(".mem/project.toml").is_file());
         assert!(repo_root.join(".agents/memory-layer.toml").is_file());
-        assert!(repo_root.join(".mem/runtime").is_dir());
+        assert!(paths.runtime_dir().is_dir());
         assert!(
             repo_root
                 .join(".agents/skills/memory-layer/SKILL.md")
@@ -14699,21 +14876,51 @@ mod tests {
                 .is_file()
         );
         assert!(
-            fs::read_to_string(repo_root.join(".mem/config.toml"))
+            fs::read_to_string(paths.config_path())
                 .unwrap()
                 .contains("[automation]")
         );
         assert_eq!(
             fs::read_to_string(repo_root.join(".mem/.gitignore")).unwrap(),
-            "runtime/\n"
+            "*\n!.gitignore\n!project.toml\n"
         );
-        assert!(
-            fs::read_to_string(repo_root.join(".gitignore"))
-                .unwrap()
-                .contains("/.mem")
+        assert!(!root_gitignore_contains_mem(&repo_root).unwrap());
+
+        restore_env_var("XDG_CONFIG_HOME", old_config);
+        restore_env_var("XDG_STATE_HOME", old_state);
+        restore_env_var("XDG_CACHE_HOME", old_cache);
+        let _ = fs::remove_dir_all(repo_root);
+        let _ = fs::remove_dir_all(xdg_root);
+    }
+
+    #[test]
+    fn init_migrates_legacy_mem_gitignore() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let repo_root = unique_temp_dir("mem-init-gitignore");
+        let xdg_root = unique_temp_dir("mem-init-gitignore-xdg");
+        let old_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_state = std::env::var("XDG_STATE_HOME").ok();
+        let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
+            std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
+            std::env::set_var("XDG_CACHE_HOME", xdg_root.join("cache"));
+        }
+        fs::create_dir_all(repo_root.join(".mem")).unwrap();
+        fs::write(repo_root.join(".mem/.gitignore"), "runtime/\n").unwrap();
+
+        initialize_repo(&repo_root, "memory", false, false).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(repo_root.join(".mem/.gitignore")).unwrap(),
+            "*\n!.gitignore\n!project.toml\n"
         );
 
+        restore_env_var("XDG_CONFIG_HOME", old_config);
+        restore_env_var("XDG_STATE_HOME", old_state);
+        restore_env_var("XDG_CACHE_HOME", old_cache);
         let _ = fs::remove_dir_all(repo_root);
+        let _ = fs::remove_dir_all(xdg_root);
     }
 
     #[test]
@@ -14742,15 +14949,27 @@ mod tests {
 
     #[test]
     fn repair_repo_bootstrap_creates_missing_files() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let repo_root = unique_temp_dir("mem-doctor-fix");
+        let xdg_root = unique_temp_dir("mem-doctor-fix-xdg");
+        let old_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_state = std::env::var("XDG_STATE_HOME").ok();
+        let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
+            std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
+            std::env::set_var("XDG_CACHE_HOME", xdg_root.join("cache"));
+        }
         fs::create_dir_all(&repo_root).unwrap();
 
         repair_repo_bootstrap(&repo_root, "memory").unwrap();
+        let paths = mem_platform::project_paths(&repo_root, "memory").unwrap();
 
-        assert!(repo_root.join(".mem/config.toml").is_file());
+        assert!(paths.config_path().is_file());
+        assert!(paths.project_path().is_file());
         assert!(repo_root.join(".mem/project.toml").is_file());
         assert!(repo_root.join(".agents/memory-layer.toml").is_file());
-        assert!(repo_root.join(".mem/runtime").is_dir());
+        assert!(paths.runtime_dir().is_dir());
         assert!(
             repo_root
                 .join(".agents/skills/memory-layer/SKILL.md")
@@ -14781,14 +15000,28 @@ mod tests {
                 .join(".agents/skills/memory-remember/SKILL.md")
                 .is_file()
         );
-        assert!(root_gitignore_contains_mem(&repo_root).unwrap());
+        assert!(!root_gitignore_contains_mem(&repo_root).unwrap());
 
+        restore_env_var("XDG_CONFIG_HOME", old_config);
+        restore_env_var("XDG_STATE_HOME", old_state);
+        restore_env_var("XDG_CACHE_HOME", old_cache);
         let _ = fs::remove_dir_all(repo_root);
+        let _ = fs::remove_dir_all(xdg_root);
     }
 
     #[test]
     fn init_preserves_existing_memory_skills_without_force() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let repo_root = unique_temp_dir("mem-init-skill-bundle");
+        let xdg_root = unique_temp_dir("mem-init-skill-bundle-xdg");
+        let old_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_state = std::env::var("XDG_STATE_HOME").ok();
+        let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
+            std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
+            std::env::set_var("XDG_CACHE_HOME", xdg_root.join("cache"));
+        }
         fs::create_dir_all(repo_root.join(".agents/skills/memory-layer")).unwrap();
         fs::write(
             repo_root.join(".agents/skills/memory-layer/SKILL.md"),
@@ -14828,7 +15061,11 @@ mod tests {
                 .is_file()
         );
 
+        restore_env_var("XDG_CONFIG_HOME", old_config);
+        restore_env_var("XDG_STATE_HOME", old_state);
+        restore_env_var("XDG_CACHE_HOME", old_cache);
         let _ = fs::remove_dir_all(repo_root);
+        let _ = fs::remove_dir_all(xdg_root);
     }
 
     #[test]
@@ -15207,6 +15444,7 @@ mod tests {
             },
             features: mem_api::FeatureFlags::default(),
             llm: mem_api::LlmConfig::default(),
+            llm_audit: mem_api::LlmAuditConfig::default(),
             embeddings: mem_api::EmbeddingsConfig::default(),
             cluster: mem_api::ClusterConfig::default(),
             writer: mem_api::WriterConfig::default(),

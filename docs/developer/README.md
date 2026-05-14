@@ -20,7 +20,7 @@ cargo run --bin memory -- service run            # 4250 HTTP, 4251 capnp
 cargo run --bin memory -- tui                    # header reads [dev]
 ```
 
-The dev stack is detected automatically when the binary path lives under `target/{debug,release}/` and reads its config from `.mem/config.toml` plus a `.mem/config.dev.toml` overlay — never from the installed global config.
+The dev stack is detected automatically when the binary path lives under `target/{debug,release}/` and reads its config from the user-local project `config.toml` plus a user-local project `config.dev.toml` overlay — never from the installed global config.
 
 For the full isolation contract, default ports, override flags, and troubleshooting, see [Dev Stack vs Installed Stack](dev-stack.md).
 

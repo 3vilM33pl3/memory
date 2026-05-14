@@ -8,6 +8,8 @@ export type MemoryType =
   | "debugging"
   | "environment"
   | "domain_fact"
+  | "documentation"
+  | "task"
   | "plan"
   | "implementation"
   | "user"
@@ -195,16 +197,25 @@ export interface MemoryHistoryResponse {
 }
 
 export interface QueryDiagnostics {
+  retrieval_mode: string;
+  lexical_enabled: boolean;
+  semantic_enabled: boolean;
+  graph_enabled: boolean;
+  relation_boost_enabled: boolean;
   lexical_candidates: number;
   semantic_candidates: number;
   merged_candidates: number;
   returned_results: number;
   relation_augmented_candidates: number;
+  graph_candidates: number;
+  graph_augmented_candidates: number;
   lexical_duration_ms: number;
   semantic_duration_ms: number;
   rerank_duration_ms: number;
+  graph_duration_ms: number;
   total_duration_ms: number;
   semantic_status: string;
+  graph_status: string;
 }
 
 export type QueryAnswerMethod = "deterministic" | "llm" | "fallback";
@@ -256,12 +267,27 @@ export interface QueryResult {
     tag_match_count: number;
     path_match_count: number;
     relation_boost: number;
+    graph_boost: number;
+    graph_match_count: number;
+    graph_edge_count: number;
     importance: number;
     memory_confidence: number;
     recency_boost: number;
   };
   tags: string[];
   sources: Partial<MemorySourceRecord>[];
+  graph_connections: QueryGraphConnection[];
+}
+
+export interface QueryGraphConnection {
+  file_path: string;
+  symbol?: string | null;
+  symbol_kind?: string | null;
+  edge_kind?: string | null;
+  neighbor_symbol?: string | null;
+  direction?: string | null;
+  score_boost: number;
+  reason: string;
 }
 
 export interface QueryResponse {
@@ -290,6 +316,7 @@ export type ActivityKind =
   | "commit_sync"
   | "bundle_export"
   | "bundle_import"
+  | "graph_extract"
   | "query"
   | "query_error"
   | "watcher_health"
@@ -299,7 +326,32 @@ export type ActivityKind =
   | "reindex"
   | "reembed"
   | "archive"
-  | "delete_memory";
+  | "delete_memory"
+  | "briefing"
+  | "diagnostic"
+  | "llm_audit";
+
+export type DiagnosticSeverity = "info" | "warning" | "error";
+
+export interface DiagnosticInfo {
+  code: string;
+  source: string;
+  component: string;
+  operation: string;
+  severity: DiagnosticSeverity;
+  message: string;
+  raw_error?: string | null;
+  explanation?: string | null;
+  fix_hint?: string | null;
+  doctor_hint?: string | null;
+  command_hint?: string | null;
+}
+
+export interface LlmAuditMessage {
+  role: string;
+  content: string;
+  truncated: boolean;
+}
 
 export type ActivityDetails =
   | {
@@ -333,6 +385,26 @@ export type ActivityDetails =
       curate_run_id?: string | null;
     }
   | {
+      type: "graph_extract";
+      repo_root: string;
+      git_head?: string | null;
+      since?: string | null;
+      extraction_run_id?: string | null;
+      dry_run: boolean;
+      reused_existing_run: boolean;
+      index_reused: boolean;
+      analyzer_version: string;
+      strategy_version: string;
+      symbol_count: number;
+      reference_count: number;
+      resolved_reference_count: number;
+      unresolved_reference_count: number;
+      ambiguous_reference_count: number;
+      graph_node_count: number;
+      graph_edge_count: number;
+      evidence_count: number;
+    }
+  | {
       type: "commit_sync";
       imported_count: number;
       updated_count: number;
@@ -354,7 +426,24 @@ export type ActivityDetails =
       confidence: number;
       insufficient_evidence: boolean;
       total_duration_ms: number;
+      graph_status?: string | null;
+      graph_candidates: number;
+      graph_augmented_candidates: number;
+      graph_duration_ms: number;
+      graph_result_count: number;
+      graph_connection_count: number;
+      graph_connections: QueryGraphConnection[];
       answer?: string | null;
+      error?: string | null;
+    }
+  | {
+      type: "llm_audit";
+      operation: string;
+      request_summary: string;
+      status: string;
+      redacted: boolean;
+      truncated: boolean;
+      messages: LlmAuditMessage[];
       error?: string | null;
     }
   | {
@@ -415,6 +504,10 @@ export type ActivityDetails =
       type: "delete_memory";
       deleted: boolean;
       summary: string;
+    }
+  | {
+      type: "diagnostic";
+      diagnostic: DiagnosticInfo;
     };
 
 export interface ActivityEvent {
@@ -439,6 +532,96 @@ export interface ActivityListResponse {
   project: string;
   total_returned: number;
   items: ActivityEvent[];
+}
+
+export interface TokenUsageSummary {
+  action_count: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_write_tokens: number;
+  total_tokens: number;
+}
+
+export interface UpToSpeedRequest {
+  project: string;
+  include_llm_summary: boolean;
+  limit: number;
+}
+
+export interface UpToSpeedResponse {
+  project: string;
+  generated_at: string;
+  briefing: string;
+  current_focus: string[];
+  recent_work: string[];
+  blockers: string[];
+  next_actions: ResumeAction[];
+  useful_memories: ProjectMemoryListItem[];
+  recent_activities: ActivityEvent[];
+  token_usage: TokenUsageSummary;
+  warnings: string[];
+}
+
+export interface LlmAuditStatusResponse {
+  enabled: boolean;
+  redacted: boolean;
+  max_message_chars: number;
+  max_total_chars: number;
+  profile: string;
+  config_path?: string | null;
+}
+
+export interface RuntimeComponentStatus {
+  version: string;
+  status: string;
+  detail?: string | null;
+}
+
+export interface RuntimeManagerStatus {
+  version: string;
+  state: string;
+  mode?: string | null;
+  detail?: string | null;
+  tracked_sessions: number;
+  warning_count: number;
+  runtime_mode?: string | null;
+  last_reconcile_reason?: string | null;
+  event_count: number;
+  fallback_scan_count: number;
+}
+
+export interface RuntimeWatcherStatus {
+  version: string;
+  status: string;
+  detail?: string | null;
+  active_count: number;
+  unhealthy_count: number;
+  stale_after_seconds: number;
+}
+
+export interface RuntimeSkillStatus {
+  bundle_version: string;
+  status: string;
+  summary: string;
+}
+
+export interface RuntimeRestartNotice {
+  version: string;
+  reason: string;
+  marker_path: string;
+}
+
+export interface RuntimeStatusResponse {
+  generated_at: string;
+  project: string;
+  profile: string;
+  web: RuntimeComponentStatus;
+  service: RuntimeComponentStatus;
+  manager: RuntimeManagerStatus;
+  watchers: RuntimeWatcherStatus;
+  skills: RuntimeSkillStatus;
+  restart_notice?: RuntimeRestartNotice | null;
 }
 
 export interface ReindexResponse {

@@ -30,9 +30,10 @@ For local and hosted database setup examples, see [Getting Started: PostgreSQL R
 The shared service API token is usually generated automatically into the adjacent `memory-layer.env` file. The wizard only needs an explicit token value if you want to override that generated token.
 If you leave `writer.id` unset, Memory Layer derives a stable writer identity automatically at runtime.
 
-`memory wizard` inside a repository is local-first and bootstraps project files such as:
+`memory wizard` inside a repository is project-first and bootstraps user-local project config plus repo-local agent files such as:
 
-- `.mem/config.toml`
+- user-local project `config.toml`
+- user-local project `memory-layer.env` when needed
 - `.mem/project.toml`
 - `.agents/memory-layer.toml`
 - `.agents/skills/`
@@ -43,9 +44,12 @@ Inside a repository, the wizard defaults to repo-local scope unless you explicit
 
 At repo scope, the wizard creates:
 
-- `.mem/` runtime and repo-local config files
+- user-local project config/state/cache directories
+- `.mem/project.toml` as the repo-local project marker
 - `.agents/memory-layer.toml`
 - a repo-local copy of the Memory Layer skill bundle
+
+Older `.mem/config.toml`, `.mem/memory-layer.env`, and `.mem/runtime/` layouts remain readable as legacy fallback. Use `memory doctor --fix` to copy missing legacy config/env files into the current user-local project layout.
 
 The bundled skills are created from the packaged `skill-template`, or from the repo-local template during source/dev usage.
 That repo-local bundle now uses a shared Go helper under `.agents/skills/memory-layer/scripts/`, so `go` must be available on `PATH` anywhere you expect the repo-local skills to run.

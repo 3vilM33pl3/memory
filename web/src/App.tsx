@@ -11,13 +11,16 @@ import {
   getAgentSnapshot,
   getEmbeddingBackends,
   getHealth,
+  getLlmAuditStatus,
   getMemory,
   getMemoryHistory,
   getMemories,
   getOverview,
   getReplacementPolicy,
   getReplacementProposals,
+  getRuntimeStatus,
   getResume,
+  getUpToSpeed,
   importBundle,
   previewExportBundle,
   previewImportBundle,
@@ -27,12 +30,15 @@ import {
   runQuery,
   saveReplacementPolicy,
   setEmbeddingCreationEnabled,
+  setLlmAuditEnabled,
 } from "./api";
 import type {
   ActivityEvent,
   AgentSnapshotResponse,
+  DiagnosticInfo,
   EmbeddingBackendInfo,
   EmbeddingBackendsResponse,
+  LlmAuditStatusResponse,
   MemoryEntryResponse,
   MemoryHistoryResponse,
   MemoryStatus,
@@ -47,17 +53,25 @@ import type {
   ReplacementPolicyResponse,
   ReplacementProposalRecord,
   ResumeResponse,
+  RuntimeStatusResponse,
   StreamRequest,
   StreamResponse,
+  UpToSpeedResponse,
 } from "./types";
 
-const PRIMARY_TABS = ["memories", "agents", "query", "project", "review", "watchers", "embeddings", "resume"] as const;
-const MORE_TABS = ["bundles", "activity"] as const;
+const PRIMARY_TABS = ["memories", "agents", "query", "activity", "errors", "project", "review", "watchers", "embeddings", "resume"] as const;
+const MORE_TABS = ["bundles"] as const;
 const ALL_TABS = [...PRIMARY_TABS, ...MORE_TABS] as const;
 type Tab = (typeof ALL_TABS)[number];
 
 type MemoryTypeFilter = "all" | MemoryType;
 type StatusFilter = "all" | MemoryStatus;
+
+interface QueryHistoryEntry {
+  question: string;
+  response: QueryResponse;
+  roundtripMs: number;
+}
 
 function embeddingBackendSelectionIndex(
   payload: EmbeddingBackendsResponse,
@@ -119,6 +133,8 @@ const MEMORY_TYPES: MemoryType[] = [
   "debugging",
   "environment",
   "domain_fact",
+  "documentation",
+  "task",
   "plan",
   "implementation",
   "user",
@@ -145,14 +161,18 @@ export default function App() {
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [queryRoundtripMs, setQueryRoundtripMs] = useState<number | null>(null);
-  const [queryHistory, setQueryHistory] = useState<string[]>([]);
+  const [queryHistory, setQueryHistory] = useState<QueryHistoryEntry[]>([]);
   const [queryHistoryCursor, setQueryHistoryCursor] = useState<number | null>(null);
   const [selectedQueryMemoryLoading, setSelectedQueryMemoryLoading] = useState(false);
   const [selectedQueryMemoryError, setSelectedQueryMemoryError] = useState<string | null>(null);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [selectedActivityIndex, setSelectedActivityIndex] = useState(0);
+  const [localDiagnostics, setLocalDiagnostics] = useState<DiagnosticInfo[]>([]);
+  const [selectedErrorIndex, setSelectedErrorIndex] = useState(0);
   const [statusMessage, setStatusMessage] = useState("Connecting to Memory Layer...");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusResponse | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [textFilter, setTextFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -180,6 +200,14 @@ export default function App() {
   const [resumeData, setResumeData] = useState<ResumeResponse | null>(null);
   const [resumeLoading, setResumeLoading] = useState(false);
   const [resumeAutoloadedFor, setResumeAutoloadedFor] = useState<string | null>(null);
+  // Activity briefing state
+  const [upToSpeed, setUpToSpeed] = useState<UpToSpeedResponse | null>(null);
+  const [upToSpeedLoading, setUpToSpeedLoading] = useState(false);
+  const [upToSpeedError, setUpToSpeedError] = useState<string | null>(null);
+  const [llmAudit, setLlmAudit] = useState<LlmAuditStatusResponse | null>(null);
+  const [llmAuditLoading, setLlmAuditLoading] = useState(false);
+  const [llmAuditError, setLlmAuditError] = useState<string | null>(null);
+  const [llmAuditToggling, setLlmAuditToggling] = useState(false);
   // Proposals state
   const [proposals, setProposals] = useState<ReplacementProposalRecord[]>([]);
   const [selectedProposalIndex, setSelectedProposalIndex] = useState(0);
@@ -204,7 +232,10 @@ export default function App() {
       .then((response) =>
         setActivities((current) => mergeActivityEventLists(response.items, current).slice(0, 200)),
       )
-      .catch((error: Error) => setStatusMessage(error.message));
+      .catch((error: Error) => {
+        setStatusMessage(error.message);
+        recordLocalDiagnostic("activity", "load", error.message);
+      });
   }, [project]);
 
   // WebSocket
@@ -232,16 +263,19 @@ export default function App() {
         setActivities((current) => mergeActivityEvents(payload.event, current).slice(0, 200));
       } else if (payload.type === "error") {
         setStatusMessage(payload.message);
+        recordLocalDiagnostic("websocket", "stream", payload.message);
       }
     });
 
     socket.addEventListener("close", () => {
       setConnectionState("offline");
       setStatusMessage("Live connection lost. The page still works, but updates are no longer streaming.");
+      recordLocalDiagnostic("websocket", "close", "Live connection lost.");
     });
 
     socket.addEventListener("error", () => {
       setConnectionState("offline");
+      recordLocalDiagnostic("websocket", "error", "WebSocket connection failed.");
     });
 
     return () => {
@@ -322,6 +356,11 @@ export default function App() {
     void refreshEmbeddings();
   }, [tab, project]);
 
+  useEffect(() => {
+    if (tab !== "activity") return;
+    void refreshLlmAuditStatus();
+  }, [tab]);
+
   const filteredMemories = useMemo(() => {
     return memories.items.filter((item) => {
       if (textFilter) {
@@ -346,8 +385,40 @@ export default function App() {
     return roots.length === 1 ? roots[0] : "";
   }, [overview.automation?.repo_root, overview.watchers?.watchers, repoRootInput]);
 
+  const sortedAgentSessions = useMemo(() => {
+    const sessions = [...(agentSnapshot?.sessions ?? [])];
+    sessions.sort((left, right) => {
+      const leftCurrent = left.project_name === project || left.cwd === effectiveRepoRoot;
+      const rightCurrent = right.project_name === project || right.cwd === effectiveRepoRoot;
+      if (leftCurrent !== rightCurrent) return leftCurrent ? -1 : 1;
+      return right.started_at - left.started_at;
+    });
+    return sessions;
+  }, [agentSnapshot?.sessions, effectiveRepoRoot, project]);
+
+  const errorItems = collectErrorItems(activities, localDiagnostics, connectionState);
+
   const selectedEmbeddingBackend = embeddingBackends?.backends[selectedEmbeddingIndex] ?? null;
   const embeddingBusy = embeddingLoading || embeddingOperation !== null;
+
+  useEffect(() => {
+    let active = true;
+    const refreshRuntimeStatus = () => {
+      void getRuntimeStatus(project, effectiveRepoRoot || null)
+        .then((payload) => {
+          if (active) setRuntimeStatus(payload);
+        })
+        .catch((error: Error) => {
+          if (active) recordLocalDiagnostic("runtime", "status", error.message);
+        });
+    };
+    refreshRuntimeStatus();
+    const id = setInterval(refreshRuntimeStatus, 5000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [effectiveRepoRoot, project]);
 
   useEffect(() => {
     if (!effectiveRepoRoot) return;
@@ -374,11 +445,30 @@ export default function App() {
     }
   }, [filteredMemories, selectedMemoryId]);
 
+  useEffect(() => {
+    setSelectedAgentIndex((current) => Math.min(current, Math.max(sortedAgentSessions.length - 1, 0)));
+  }, [sortedAgentSessions.length]);
+
+  useEffect(() => {
+    setSelectedErrorIndex((current) => Math.min(current, Math.max(errorItems.length - 1, 0)));
+  }, [errorItems.length]);
+
   // Keyboard shortcuts
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
       const inInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
+
+      if (!inInput && (e.key === "h" || e.key === "H")) {
+        e.preventDefault();
+        setHelpOpen((current) => !current);
+        return;
+      }
+      if (!inInput && e.key === "Escape" && helpOpen) {
+        e.preventDefault();
+        setHelpOpen(false);
+        return;
+      }
 
       if (inInput) return;
 
@@ -434,7 +524,7 @@ export default function App() {
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [embeddingBusy, project, selectedEmbeddingBackend, tab]);
+  }, [embeddingBusy, helpOpen, project, selectedEmbeddingBackend, tab]);
 
   const refreshProject = useCallback(async (nextProject: string) => {
     try {
@@ -467,10 +557,6 @@ export default function App() {
     setQueryLoading(true);
     setQueryError(null);
     setQueryHistoryCursor(null);
-    setQueryHistory((current) => {
-      const withoutDuplicateTail = current[current.length - 1] === trimmed ? current : [...current, trimmed];
-      return withoutDuplicateTail.slice(-50);
-    });
     try {
       setStatusMessage(`Running query for "${trimmed}"...`);
       const response = await runQuery({
@@ -483,14 +569,21 @@ export default function App() {
       });
       setQueryResponse(response);
       setSelectedQueryIndex(0);
-      setQueryRoundtripMs(Math.round(performance.now() - started));
-      setStatusMessage(`Query returned ${response.results.length} memories in ${Math.round(performance.now() - started)} ms.`);
+      const roundtripMs = Math.round(performance.now() - started);
+      setQueryRoundtripMs(roundtripMs);
+      setQueryHistory((current) => {
+        const entry = { question: trimmed, response, roundtripMs };
+        const withoutDuplicateTail = current[current.length - 1]?.question === trimmed ? current.slice(0, -1) : current;
+        return [...withoutDuplicateTail, entry].slice(-50);
+      });
+      setStatusMessage(`Query returned ${response.results.length} memories in ${roundtripMs} ms.`);
       setTab("query");
     } catch (error) {
       const message = (error as Error).message;
       setQueryError(message);
       setQueryRoundtripMs(Math.round(performance.now() - started));
       setStatusMessage(message);
+      recordLocalDiagnostic("query", "run", message);
     } finally {
       setQueryLoading(false);
     }
@@ -514,9 +607,36 @@ export default function App() {
       setQueryText("");
       setStatusMessage("Returned to a new empty query.");
     } else {
-      setQueryText(queryHistory[next]);
+      const entry = queryHistory[next];
+      setQueryText(entry.question);
+      setQueryResponse(entry.response);
+      setQueryRoundtripMs(entry.roundtripMs);
+      setSelectedQueryIndex(0);
+      setQueryError(null);
       setStatusMessage(`Loaded query history item ${next + 1}/${queryHistory.length}.`);
     }
+  }
+
+  function recordLocalDiagnostic(component: string, operation: string, message: string) {
+    const diagnostic: DiagnosticInfo = {
+      code: `${component}_${operation}_failed`,
+      source: "web",
+      component,
+      operation,
+      severity: "error",
+      message,
+      raw_error: message,
+      explanation: "This error was observed by the browser UI during the current session.",
+      fix_hint: "Refresh the tab or run memory doctor if the problem persists.",
+      doctor_hint: "memory doctor",
+      command_hint: "memory doctor",
+    };
+    setLocalDiagnostics((current) => {
+      if (current[0]?.code === diagnostic.code && current[0]?.message === diagnostic.message) {
+        return current;
+      }
+      return [diagnostic, ...current].slice(0, 100);
+    });
   }
 
   async function runProjectAction(action: "curate" | "reindex" | "reembed" | "archive") {
@@ -624,6 +744,56 @@ export default function App() {
       setStatusMessage((error as Error).message);
     } finally {
       setResumeLoading(false);
+    }
+  }
+
+  async function handleUpToSpeed(includeLlmSummary: boolean) {
+    setUpToSpeedLoading(true);
+    setUpToSpeedError(null);
+    try {
+      const data = await getUpToSpeed({ project, include_llm_summary: includeLlmSummary, limit: 20 });
+      setUpToSpeed(data);
+      setStatusMessage(includeLlmSummary ? "LLM get-up-to-speed briefing loaded." : "Deterministic get-up-to-speed briefing loaded.");
+    } catch (error) {
+      const message = (error as Error).message;
+      setUpToSpeedError(message);
+      setStatusMessage(message);
+      recordLocalDiagnostic("activity", "up_to_speed", message);
+    } finally {
+      setUpToSpeedLoading(false);
+    }
+  }
+
+  async function refreshLlmAuditStatus() {
+    setLlmAuditLoading(true);
+    setLlmAuditError(null);
+    try {
+      const status = await getLlmAuditStatus();
+      setLlmAudit(status);
+    } catch (error) {
+      const message = (error as Error).message;
+      setLlmAuditError(message);
+      recordLocalDiagnostic("activity", "llm_audit_status", message);
+    } finally {
+      setLlmAuditLoading(false);
+    }
+  }
+
+  async function handleToggleLlmAudit() {
+    const enabled = !(llmAudit?.enabled ?? false);
+    setLlmAuditToggling(true);
+    setLlmAuditError(null);
+    try {
+      const status = await setLlmAuditEnabled(enabled);
+      setLlmAudit(status);
+      setStatusMessage(`LLM audit/debug logging ${status.enabled ? "enabled" : "disabled"}.`);
+    } catch (error) {
+      const message = (error as Error).message;
+      setLlmAuditError(message);
+      setStatusMessage(message);
+      recordLocalDiagnostic("activity", "llm_audit_toggle", message);
+    } finally {
+      setLlmAuditToggling(false);
     }
   }
 
@@ -798,8 +968,9 @@ export default function App() {
   const activeActivity = activities[selectedActivityIndex] ?? null;
   const activeQueryResult = queryResponse?.results[selectedQueryIndex] ?? null;
   const serviceVersion = typeof health?.version === "string" ? health.version : "unknown";
-  const selectedAgent = agentSnapshot?.sessions[selectedAgentIndex] ?? null;
+  const selectedAgent = sortedAgentSessions[selectedAgentIndex] ?? null;
   const activeProposal = proposals[selectedProposalIndex] ?? null;
+  const activeError = errorItems[selectedErrorIndex] ?? null;
 
   return (
     <div className="app-shell">
@@ -833,12 +1004,15 @@ export default function App() {
       <section className="status-strip">
         <span className={`status-pill status-${connectionState}`}>{connectionState}</span>
         <span><strong>{overview.project}</strong></span>
-        <span>service {overview.service_status}</span>
+        <span>Web v{runtimeStatus?.web.version ?? serviceVersion} {runtimeStatus?.web.status ?? "ok"}</span>
+        <span>Service v{runtimeStatus?.service.version ?? serviceVersion} {runtimeStatus?.service.status ?? overview.service_status}</span>
+        <span>Manager v{runtimeStatus?.manager.version ?? serviceVersion} {runtimeStatus?.manager.state ?? "unknown"}{runtimeStatus?.manager.detail ? ` ${runtimeStatus.manager.detail}` : ""}</span>
+        <span>Watchers v{runtimeStatus?.watchers.version ?? serviceVersion} {runtimeStatus?.watchers.status ?? "unknown"} {runtimeStatus?.watchers.detail ?? `${overview.watchers?.active_count ?? 0} active`}</span>
+        <span>Skills v{runtimeStatus?.skills.bundle_version ?? serviceVersion} {runtimeStatus?.skills.status ?? "unknown"}{runtimeStatus?.skills.summary ? ` ${runtimeStatus.skills.summary}` : ""}</span>
         <span>db {overview.database_status}</span>
         <span>{overview.memory_entries_total} memories</span>
         <span>{overview.raw_captures_total} captures</span>
-        <span>{overview.watchers?.active_count ?? 0} watchers</span>
-        <span>mem-service {serviceVersion}</span>
+        {runtimeStatus?.restart_notice ? <span className="restart-text">restart {runtimeStatus.restart_notice.version}</span> : null}
       </section>
 
       <nav className="tabs">
@@ -859,7 +1033,12 @@ export default function App() {
             <option key={name} value={name}>{name}</option>
           ))}
         </select>
+        <button className={helpOpen ? "tab-active" : ""} onClick={() => setHelpOpen((current) => !current)} type="button">
+          Help
+        </button>
       </nav>
+
+      {helpOpen ? <HelpPanel tab={tab} /> : null}
 
       {/* ── Memories ── */}
       {tab === "memories" ? (
@@ -989,8 +1168,8 @@ export default function App() {
         <section className="panel-grid">
           <div className="panel">
             <div className="list-view">
-              {agentSnapshot?.sessions.length ? (
-                agentSnapshot.sessions.map((session, index) => (
+              {sortedAgentSessions.length ? (
+                sortedAgentSessions.map((session, index) => (
                   <button
                     key={session.session_id}
                     type="button"
@@ -1137,13 +1316,17 @@ export default function App() {
                   <span>roundtrip {queryRoundtripMs ?? "n/a"} ms</span>
                   <span>confidence {queryResponse.confidence.toFixed(2)}</span>
                   <span>{queryResponse.insufficient_evidence ? "insufficient evidence" : "sufficient evidence"}</span>
-                  <span>lexical {queryResponse.diagnostics.lexical_candidates}</span>
-                  <span>semantic {queryResponse.diagnostics.semantic_candidates}</span>
+                  <span>mode {queryResponse.diagnostics.retrieval_mode}</span>
+                  <span>lexical {queryResponse.diagnostics.lexical_candidates} / {queryResponse.diagnostics.lexical_duration_ms} ms</span>
+                  <span>semantic {queryResponse.diagnostics.semantic_candidates} / {queryResponse.diagnostics.semantic_duration_ms} ms [{queryResponse.diagnostics.semantic_status}]</span>
+                  <span>graph {queryResponse.diagnostics.graph_candidates} / {queryResponse.diagnostics.graph_duration_ms} ms [{queryResponse.diagnostics.graph_status}]</span>
                   <span>merged {queryResponse.diagnostics.merged_candidates}</span>
                   <span>returned {queryResponse.diagnostics.returned_results}</span>
                   <span>relation {queryResponse.diagnostics.relation_augmented_candidates}</span>
+                  <span>graph augmented {queryResponse.diagnostics.graph_augmented_candidates}</span>
                   <span>rerank {queryResponse.diagnostics.rerank_duration_ms} ms</span>
                   <span>total {queryResponse.diagnostics.total_duration_ms} ms</span>
+                  <span>{queryResponse.answer_generation.token_usage ? `${formatTokens(queryResponse.answer_generation.token_usage.total_tokens)} answer tokens` : "tokens n/a"}</span>
                 </div>
                 {queryResponse.answer_generation.fallback_reason ? (
                   <p className="muted">Fallback: {queryResponse.answer_generation.fallback_reason}</p>
@@ -1208,11 +1391,31 @@ export default function App() {
                       <span>phrases {activeQueryResult.debug.exact_phrase_matches}</span>
                       <span>tags {activeQueryResult.debug.tag_match_count}</span>
                       <span>paths {activeQueryResult.debug.path_match_count}</span>
+                      <span>graph {formatNumber(activeQueryResult.debug.graph_boost)}</span>
+                      <span>graph matches {activeQueryResult.debug.graph_match_count}</span>
+                      <span>graph edges {activeQueryResult.debug.graph_edge_count}</span>
                       <span>importance {activeQueryResult.debug.importance}</span>
                       <span>memory confidence {formatNumber(activeQueryResult.debug.memory_confidence)}</span>
                       <span>recency {formatNumber(activeQueryResult.debug.recency_boost)}</span>
                     </div>
                   </section>
+                  {activeQueryResult.graph_connections.length ? (
+                    <section className="detail-section">
+                      <h3>Graph connections</h3>
+                      {activeQueryResult.graph_connections.map((connection, index) => (
+                        <div key={`${connection.file_path}-${connection.symbol ?? ""}-${connection.neighbor_symbol ?? ""}-${index}`} className="relation-row">
+                          <span className="badge">+{connection.score_boost.toFixed(2)}</span>
+                          <span>{connection.reason}</span>
+                          <span className="muted">
+                            {connection.file_path}
+                            {connection.symbol ? ` · ${connection.symbol}` : ""}
+                            {connection.edge_kind ? ` · ${connection.edge_kind}` : ""}
+                            {connection.neighbor_symbol ? ` -> ${connection.neighbor_symbol}` : ""}
+                          </span>
+                        </div>
+                      ))}
+                    </section>
+                  ) : null}
                   <section className="detail-section">
                     <h3>Tags</h3>
                     {activeQueryResult.tags.length ? (
@@ -1268,8 +1471,49 @@ export default function App() {
 
       {/* ── Activity ── */}
       {tab === "activity" ? (
-        <section className="panel-grid">
-          <div className="panel">
+        <section className="panel-stack">
+          <div className="panel activity-briefing">
+            <div className="detail-header">
+              <div>
+                <h2>Get Up To Speed</h2>
+                <p className="muted">
+                  Uses persisted activities, recent memory changes, commits, warnings, and token summaries.
+                </p>
+              </div>
+              <div className="proposal-actions">
+                <button onClick={() => void handleUpToSpeed(false)} type="button" disabled={upToSpeedLoading}>
+                  Deterministic
+                </button>
+                <button onClick={() => void handleUpToSpeed(true)} type="button" disabled={upToSpeedLoading}>
+                  LLM briefing
+                </button>
+                <button onClick={() => void handleToggleLlmAudit()} type="button" disabled={llmAuditToggling || llmAuditLoading}>
+                  {llmAudit?.enabled ? "Disable LLM audit" : "Enable LLM audit"}
+                </button>
+              </div>
+            </div>
+            {upToSpeedLoading ? <p className="loading-indicator">Generating get-up-to-speed briefing...</p> : null}
+            {upToSpeedError ? <p className="warning-list">Briefing failed: {upToSpeedError}</p> : null}
+            {upToSpeed ? (
+              <>
+                <RichText text={upToSpeed.briefing} />
+                <div className="stats-row">
+                  <span>{upToSpeed.recent_activities.length} activities</span>
+                  <span>{upToSpeed.useful_memories.length} useful memories</span>
+                  <span>{upToSpeed.token_usage.action_count} token-tracked actions</span>
+                  <span>{formatTokens(upToSpeed.token_usage.total_tokens)} tokens</span>
+                </div>
+              </>
+            ) : (
+              <p className="muted">Generate a deterministic briefing for a cheap handoff, or an LLM briefing for a synthesized narrative.</p>
+            )}
+            <p className="muted">
+              LLM audit: {llmAuditToggling ? "updating" : llmAuditLoading ? "loading" : llmAudit ? `${llmAudit.enabled ? "on" : "off"} · redaction ${llmAudit.redacted ? "on" : "off"} · ${llmAudit.profile}` : "unknown"}
+              {llmAuditError ? ` · ${llmAuditError}` : ""}
+            </p>
+          </div>
+          <section className="panel-grid">
+            <div className="panel">
             <div className="list-view">
               {activities.map((event, index) => (
                 <button
@@ -1300,6 +1544,81 @@ export default function App() {
               </>
             ) : (
               <p className="muted">Keep this page open while queries, captures, curation runs, and deletions happen.</p>
+            )}
+            </div>
+          </section>
+        </section>
+      ) : null}
+
+      {/* ── Errors ── */}
+      {tab === "errors" ? (
+        <section className="panel-grid">
+          <div className="panel">
+            <div className="list-view">
+              {errorItems.length ? (
+                errorItems.map((item, index) => (
+                  <button
+                    key={`${item.when ?? "session"}-${item.diagnostic.code}-${index}`}
+                    type="button"
+                    className={`list-item ${selectedErrorIndex === index ? "selected" : ""}`}
+                    onClick={() => setSelectedErrorIndex(index)}
+                  >
+                    <div>
+                      <strong>{item.diagnostic.message}</strong>
+                      <p>{item.diagnostic.source} · {item.diagnostic.component} · {item.diagnostic.operation}</p>
+                    </div>
+                    <div className="meta-stack">
+                      <span className={`badge badge-${item.diagnostic.severity === "error" ? "archived" : "active"}`}>{item.diagnostic.severity}</span>
+                      <span>{formatDateTime(item.when)}</span>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <p className="muted">No diagnostics recorded for this project or browser session.</p>
+              )}
+            </div>
+          </div>
+          <div className="panel detail-scroll">
+            {activeError ? (
+              <>
+                <h2>{activeError.diagnostic.code || "diagnostic"}</h2>
+                <Metric label="When" value={formatDateTime(activeError.when)} />
+                <Metric label="Severity" value={activeError.diagnostic.severity} />
+                <Metric label="Source" value={activeError.diagnostic.source || "unknown"} />
+                <Metric label="Component" value={activeError.diagnostic.component || "unknown"} />
+                <Metric label="Operation" value={activeError.diagnostic.operation || "unknown"} />
+                <section className="detail-section">
+                  <h3>Summary</h3>
+                  <p>{activeError.diagnostic.message}</p>
+                </section>
+                {activeError.diagnostic.explanation ? (
+                  <section className="detail-section">
+                    <h3>Explanation</h3>
+                    <p>{activeError.diagnostic.explanation}</p>
+                  </section>
+                ) : null}
+                {activeError.diagnostic.fix_hint ? (
+                  <section className="detail-section">
+                    <h3>How to fix</h3>
+                    <p>{activeError.diagnostic.fix_hint}</p>
+                  </section>
+                ) : null}
+                {(activeError.diagnostic.doctor_hint || activeError.diagnostic.command_hint) ? (
+                  <section className="detail-section">
+                    <h3>Commands</h3>
+                    {activeError.diagnostic.doctor_hint ? <code>{activeError.diagnostic.doctor_hint}</code> : null}
+                    {activeError.diagnostic.command_hint ? <code>{activeError.diagnostic.command_hint}</code> : null}
+                  </section>
+                ) : null}
+                {activeError.diagnostic.raw_error ? (
+                  <section className="detail-section">
+                    <h3>Raw error</h3>
+                    <pre>{activeError.diagnostic.raw_error}</pre>
+                  </section>
+                ) : null}
+              </>
+            ) : (
+              <p className="muted">Provider errors, query failures, watcher failures, and browser connection errors will appear here.</p>
             )}
           </div>
         </section>
@@ -1903,6 +2222,27 @@ function ActivityDetail({ event }: { event: ActivityEvent }) {
     case "scan":
       rows.push(["Dry run", String(details.dry_run)], ["Candidates", String(details.candidate_count)], ["Files", String(details.files_considered)], ["Commits", String(details.commits_considered)], ["Index reused", String(details.index_reused)], ["Report", details.report_path], ["Capture", details.capture_id ?? "n/a"], ["Curate run", details.curate_run_id ?? "n/a"]);
       break;
+    case "graph_extract":
+      rows.push(
+        ["Repo root", details.repo_root],
+        ["Extraction run", details.extraction_run_id ?? "n/a"],
+        ["Dry run", String(details.dry_run)],
+        ["Reused existing run", String(details.reused_existing_run)],
+        ["Index reused", String(details.index_reused)],
+        ["Analyzer", details.analyzer_version],
+        ["Strategy", details.strategy_version],
+        ["Symbols", String(details.symbol_count)],
+        ["References", String(details.reference_count)],
+        ["Resolved", String(details.resolved_reference_count)],
+        ["Unresolved", String(details.unresolved_reference_count)],
+        ["Ambiguous", String(details.ambiguous_reference_count)],
+        ["Graph nodes", String(details.graph_node_count)],
+        ["Graph edges", String(details.graph_edge_count)],
+        ["Evidence", String(details.evidence_count)],
+        ["HEAD", details.git_head ?? "n/a"],
+        ["Since", details.since ?? "n/a"],
+      );
+      break;
     case "commit_sync":
       rows.push(["Imported", String(details.imported_count)], ["Updated", String(details.updated_count)], ["Received", String(details.total_received)], ["Newest", details.newest_commit ?? "n/a"], ["Oldest", details.oldest_commit ?? "n/a"]);
       break;
@@ -1911,8 +2251,39 @@ function ActivityDetail({ event }: { event: ActivityEvent }) {
       break;
     case "query":
       rows.push(["Query", details.query], ["Top K", String(details.top_k)], ["Results", String(details.result_count)], ["Confidence", details.confidence.toFixed(2)], ["Insufficient evidence", String(details.insufficient_evidence)], ["Duration", `${details.total_duration_ms} ms`]);
+      rows.push(["Graph status", details.graph_status ?? "n/a"], ["Graph candidates", String(details.graph_candidates)], ["Graph augmented", String(details.graph_augmented_candidates)], ["Graph duration", `${details.graph_duration_ms} ms`], ["Graph result count", String(details.graph_result_count)], ["Graph connections", String(details.graph_connection_count)]);
+      if (details.graph_connections.length) {
+        sections.push(
+          <section className="detail-section" key="graph-connections">
+            <h3>Graph connections</h3>
+            {details.graph_connections.map((connection, index) => (
+              <div key={`${connection.file_path}-${index}`} className="relation-row">
+                <span className="badge">+{connection.score_boost.toFixed(2)}</span>
+                <span>{connection.reason}</span>
+                <span className="muted">{connection.file_path}</span>
+              </div>
+            ))}
+          </section>,
+        );
+      }
       if (details.answer) sections.push(<ActivityText key="answer" title="Answer" text={details.answer} />);
       if (details.error) rows.push(["Error", details.error]);
+      break;
+    case "llm_audit":
+      rows.push(["Operation", details.operation], ["Request", details.request_summary], ["Status", details.status], ["Redacted", String(details.redacted)], ["Truncated", String(details.truncated)], ["Error", details.error ?? "n/a"]);
+      if (details.messages.length) {
+        sections.push(
+          <section className="detail-section" key="llm-audit-messages">
+            <h3>Messages</h3>
+            {details.messages.map((message, index) => (
+              <div key={`${message.role}-${index}`} className="source-card">
+                <strong>{message.role}{message.truncated ? " (truncated)" : ""}</strong>
+                <pre>{message.content}</pre>
+              </div>
+            ))}
+          </section>,
+        );
+      }
       break;
     case "watcher_health":
       rows.push(["Watcher", details.watcher_id], ["Hostname", details.hostname], ["Health", details.health], ["Previous health", details.previous_health ?? "n/a"], ["Managed by service", String(details.managed_by_service)], ["Restart attempts", String(details.restart_attempt_count)], ["Recovered after attempts", details.recovered_after_restart_attempts?.toString() ?? "n/a"], ["Agent CLI", details.agent_cli ?? "n/a"], ["Agent session", details.agent_session_id ?? "n/a"], ["Agent PID", details.agent_pid?.toString() ?? "n/a"], ["Message", details.message ?? "n/a"]);
@@ -1937,6 +2308,12 @@ function ActivityDetail({ event }: { event: ActivityEvent }) {
       break;
     case "delete_memory":
       rows.push(["Deleted", String(details.deleted)], ["Deleted summary", details.summary]);
+      break;
+    case "diagnostic":
+      rows.push(["Code", details.diagnostic.code], ["Severity", details.diagnostic.severity], ["Source", details.diagnostic.source], ["Component", details.diagnostic.component], ["Operation", details.diagnostic.operation], ["Message", details.diagnostic.message], ["Doctor", details.diagnostic.doctor_hint ?? "n/a"], ["Command", details.diagnostic.command_hint ?? "n/a"]);
+      if (details.diagnostic.explanation) sections.push(<ActivityText key="diag-explanation" title="Explanation" text={details.diagnostic.explanation} />);
+      if (details.diagnostic.fix_hint) sections.push(<ActivityText key="diag-fix" title="How to fix" text={details.diagnostic.fix_hint} />);
+      if (details.diagnostic.raw_error) sections.push(<ActivityText key="diag-raw" title="Raw error" text={details.diagnostic.raw_error} />);
       break;
   }
 
@@ -1972,6 +2349,212 @@ function ActivityText({ title, text }: { title: string; text: string }) {
     </section>
   );
 }
+
+interface ErrorItem {
+  when: string | null;
+  diagnostic: DiagnosticInfo;
+}
+
+function collectErrorItems(
+  activities: ActivityEvent[],
+  localDiagnostics: DiagnosticInfo[],
+  connectionState: "connecting" | "live" | "offline",
+): ErrorItem[] {
+  const items: ErrorItem[] = localDiagnostics.map((diagnostic) => ({ when: null, diagnostic }));
+  if (connectionState === "offline") {
+    items.push({
+      when: null,
+      diagnostic: {
+        code: "backend_unavailable",
+        source: "web",
+        component: "service",
+        operation: "stream",
+        severity: "error",
+        message: "Memory Layer backend live connection is unavailable.",
+        raw_error: "WebSocket connection is offline.",
+        explanation: "The browser can no longer receive live project updates from the backend stream.",
+        fix_hint: "Check that the service is running, refresh the page, or run memory doctor.",
+        doctor_hint: "memory doctor",
+        command_hint: "memory service status",
+      },
+    });
+  }
+  for (const event of activities) {
+    const details = event.details;
+    if (details?.type === "diagnostic") {
+      items.push({ when: event.recorded_at, diagnostic: details.diagnostic });
+    } else if (details?.type === "query" && details.error) {
+      items.push({
+        when: event.recorded_at,
+        diagnostic: {
+          code: "query_error",
+          source: event.source ?? "service",
+          component: "query",
+          operation: "query",
+          severity: "error",
+          message: details.error,
+          raw_error: details.error,
+          explanation: "A persisted project query failed.",
+          fix_hint: "Open Query or Activity detail and run memory doctor if this repeats.",
+          doctor_hint: "memory doctor",
+          command_hint: "memory doctor",
+        },
+      });
+    } else if (
+      details?.type === "watcher_health" &&
+      ["stale", "restarting", "failed"].includes(details.health)
+    ) {
+      items.push({
+        when: event.recorded_at,
+        diagnostic: {
+          code: "watcher_health",
+          source: event.source ?? "watcher",
+          component: "watcher",
+          operation: "heartbeat",
+          severity: details.health === "failed" ? "error" : "warning",
+          message: details.message ?? event.summary,
+          raw_error: details.message ?? event.summary,
+          explanation: "A watcher reported unhealthy or restarting state.",
+          fix_hint: `Inspect watcher ${details.watcher_id} or run memory doctor.`,
+          doctor_hint: "memory doctor",
+          command_hint: "memory watcher status",
+        },
+      });
+    } else if (event.kind === "query_error") {
+      items.push({
+        when: event.recorded_at,
+        diagnostic: {
+          code: "query_error",
+          source: event.source ?? "service",
+          component: "query",
+          operation: "query",
+          severity: "error",
+          message: event.summary,
+          raw_error: event.summary,
+          explanation: "A persisted project query failed.",
+          fix_hint: "Open the activity detail and run memory doctor if this repeats.",
+          doctor_hint: "memory doctor",
+          command_hint: "memory doctor",
+        },
+      });
+    }
+  }
+  const fallbackTime = Date.now();
+  return items.sort((left, right) => {
+    const leftTime = left.when ? Date.parse(left.when) : fallbackTime;
+    const rightTime = right.when ? Date.parse(right.when) : fallbackTime;
+    return rightTime - leftTime;
+  });
+}
+
+function HelpPanel({ tab }: { tab: Tab }) {
+  const help = WEB_HELP[tab] ?? WEB_HELP.memories;
+  return (
+    <section className="panel help-panel">
+      <h2>{help.title}</h2>
+      <div className="help-grid">
+        <div>
+          <h3>Purpose</h3>
+          <p>{help.purpose}</p>
+        </div>
+        <div>
+          <h3>Layout</h3>
+          <ul>{help.layout.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+        <div>
+          <h3>Controls</h3>
+          <ul>{help.controls.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+        <div>
+          <h3>Workflows</h3>
+          <ul>{help.workflows.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const SHARED_CONTROLS = ["Click tabs to switch sections.", "`h` or Help opens/closes this help panel.", "`r` refreshes project state when focus is not in an input."];
+
+const WEB_HELP: Record<Tab, { title: string; purpose: string; layout: string[]; controls: string[]; workflows: string[] }> = {
+  memories: {
+    title: "Memories Help",
+    purpose: "Browse canonical project memory, inspect details, provenance, embeddings, history, and related memories.",
+    layout: ["Left side filters and memory list.", "Right side selected memory detail with markdown-like canonical text.", "Embeddings, tags, sources, and relations are grouped in detail sections."],
+    controls: ["/ focuses memory search.", ...SHARED_CONTROLS],
+    workflows: ["Filter by type, status, text, or tag.", "Verify sources before relying on a memory.", "Use History before deleting or replacing important memory."],
+  },
+  agents: {
+    title: "Agents Help",
+    purpose: "Monitor detected local coding-agent sessions, context pressure, rate limits, ports, and active work.",
+    layout: ["Current project sessions are listed first.", "Detail pane shows model, tokens, context usage, process, git, children, and rate limits."],
+    controls: ["Click an agent row to inspect it.", ...SHARED_CONTROLS],
+    workflows: ["Check which agent owns a project or watcher.", "Use context and rate-limit data before adding work to a busy session."],
+  },
+  query: {
+    title: "Query Help",
+    purpose: "Ask project memory questions and inspect answer evidence, citations, timing, ranking, and graph connections.",
+    layout: ["Question panel shows answer and timing breakdown.", "Results list shows ranked memories.", "Detail pane explains why the selected memory matched."],
+    controls: ["Enter submits the question.", "ArrowUp/ArrowDown in the query input restores previous queries and their results.", "Click a result to inspect ranking details."],
+    workflows: ["Compare answer citations with returned memories.", "Use timing fields to locate slow lexical, semantic, graph, rerank, answer, or UI phases.", "Treat graph connections as retrieval explanations, not standalone answer citations."],
+  },
+  activity: {
+    title: "Activity Help",
+    purpose: "Review persisted backend activity and generate get-up-to-speed briefings for handoff or interruption recovery.",
+    layout: ["Top panel generates deterministic or LLM briefings and shows LLM audit/debug status.", "Left table lists activity with token and duration summaries.", "Right pane shows structured details."],
+    controls: ["Use Deterministic or LLM briefing buttons.", "Use the LLM audit button briefly while debugging prompts.", ...SHARED_CONTROLS],
+    workflows: ["Generate a briefing before handing work to a new agent.", "Inspect token and duration fields to understand cost and latency.", "Open query activities to inspect graph behavior and answer cost."],
+  },
+  errors: {
+    title: "Errors Help",
+    purpose: "Inspect persisted diagnostics and browser-session errors with explanations and suggested fixes.",
+    layout: ["Left list shows time, severity, source, component, and summary.", "Right pane shows explanation, fix hints, doctor hints, commands, and raw error."],
+    controls: ["Click an error row to inspect it.", ...SHARED_CONTROLS],
+    workflows: ["Open this tab when the footer shows errors or an operation fails.", "Prefer memory doctor hints when shown.", "Use source/component to route fixes to service, watcher, manager, provider, database, or browser."],
+  },
+  project: {
+    title: "Project Help",
+    purpose: "Show high-level project health, memory counts, embedding/search state, recent activity, automation, and watcher status.",
+    layout: ["Metric panels summarize the project.", "Breakdowns show memory types, source kinds, tags, files, and recent activity."],
+    controls: ["Project and repo root fields at the top choose scope.", ...SHARED_CONTROLS],
+    workflows: ["Start here for a health check.", "Use counts to spot missing memory, missing embeddings, or pending curation."],
+  },
+  review: {
+    title: "Review Help",
+    purpose: "Approve or reject replacement proposals so duplicate or superseded memories are curated safely.",
+    layout: ["Proposal list on the left.", "Candidate/target detail and policy controls on the right."],
+    controls: ["Approve or Reject selected proposals.", "Cycle policy when a repo root is resolved.", ...SHARED_CONTROLS],
+    workflows: ["Approve only when the candidate is clearly better and provenance remains valid.", "Reject ambiguous matches that would lose context."],
+  },
+  watchers: {
+    title: "Watchers Help",
+    purpose: "Show watcher heartbeat state, agent ownership, restart attempts, and recovery behavior.",
+    layout: ["Summary panel shows counts and stale threshold.", "Watcher cards show owner/session/pid, host service, heartbeat, and restarts."],
+    controls: [...SHARED_CONTROLS],
+    workflows: ["Use this tab when captures are not appearing.", "Check owner/session and stale heartbeat before restarting anything."],
+  },
+  embeddings: {
+    title: "Embeddings Help",
+    purpose: "Inspect embedding backends, switch semantic search, compare coverage, and backfill missing vectors.",
+    layout: ["Summary shows active backend and create state.", "Backend list shows readiness and coverage.", "Detail pane has activation, creation, reembed, and reindex controls."],
+    controls: ["Enter toggles selected backend search.", "c toggles automatic creation.", "e creates embeddings.", "I reindexes.", ...SHARED_CONTROLS],
+    workflows: ["Use Create embeddings for normal missing-vector backfill.", "Use Reindex when chunks need rebuilding.", "Switch active backend after both spaces are populated to compare retrieval."],
+  },
+  resume: {
+    title: "Resume Help",
+    purpose: "Get back into flow with checkpoint, current thread, next steps, recent changes, attention items, and durable context.",
+    layout: ["Load button generates the briefing.", "Scrollable detail shows checkpoint, next actions, summaries, memories, timeline, warnings, and commits."],
+    controls: ["Click Load resume to refresh context.", ...SHARED_CONTROLS],
+    workflows: ["Open this after interruption or when handing off work.", "Use the next-step section as the immediate continuation point."],
+  },
+  bundles: {
+    title: "Bundles Help",
+    purpose: "Export and import portable memory bundles from the browser.",
+    layout: ["Left side previews/downloads exports.", "Right side previews/applies imports."],
+    controls: ["Choose export options before preview or download.", "Choose a bundle file before preview or import.", ...SHARED_CONTROLS],
+    workflows: ["Preview before exporting or importing.", "Include provenance fields only when the bundle audience should see them."],
+  },
+};
 
 function RichText({ text }: { text: string }) {
   const lines = text.split(/\r?\n/);

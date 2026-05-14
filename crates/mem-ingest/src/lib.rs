@@ -122,7 +122,27 @@ fn classify_type(request: &CaptureTaskRequest, text: &str) -> MemoryType {
         text.to_lowercase()
     );
 
-    if haystack.contains("debug") || haystack.contains("fix") || haystack.contains("bug") {
+    let has_documentation_marker = [
+        "documentation",
+        "docs/",
+        "readme",
+        "guide",
+        "screenshot",
+        "frontpage",
+        "github pages",
+    ]
+    .iter()
+    .any(|marker| haystack.contains(marker))
+        || haystack.split_whitespace().any(|word| {
+            matches!(
+                word.trim_matches(|ch: char| !ch.is_alphanumeric()),
+                "doc" | "docs"
+            )
+        });
+
+    if has_documentation_marker {
+        MemoryType::Documentation
+    } else if haystack.contains("debug") || haystack.contains("fix") || haystack.contains("bug") {
         MemoryType::Debugging
     } else if haystack.contains("decision") || haystack.contains("choose") {
         MemoryType::Decision
@@ -271,9 +291,10 @@ fn build_sources(
 
 fn normalize_candidate_canonical_text(memory_type: &MemoryType, input: &str) -> String {
     match memory_type {
-        MemoryType::Task | MemoryType::Plan | MemoryType::Implementation => {
-            normalize_markdown_block(input)
-        }
+        MemoryType::Task
+        | MemoryType::Plan
+        | MemoryType::Implementation
+        | MemoryType::Documentation => normalize_markdown_block(input),
         _ => normalize_sentence(input),
     }
 }
@@ -380,6 +401,42 @@ mod tests {
             "# Plan\n\n- Step one\n- Step two"
         );
         assert_eq!(candidates[0].memory_type, MemoryType::Plan);
+    }
+
+    #[test]
+    fn structured_documentation_candidates_preserve_multiline_markdown() {
+        let mut request = sample_request();
+        request.notes.clear();
+        request.structured_candidates = vec![mem_api::CaptureCandidateInput {
+            canonical_text: "# Quickstart\n\n- Install PostgreSQL\n- Run setup\n".to_string(),
+            summary: "Document quickstart".to_string(),
+            memory_type: MemoryType::Documentation,
+            confidence: 0.95,
+            importance: 4,
+            tags: vec!["documentation".to_string()],
+            sources: Vec::new(),
+        }];
+
+        let candidates = extract_candidates(&request);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].canonical_text,
+            "# Quickstart\n\n- Install PostgreSQL\n- Run setup"
+        );
+        assert_eq!(candidates[0].memory_type, MemoryType::Documentation);
+    }
+
+    #[test]
+    fn documentation_work_classifies_as_documentation() {
+        let mut request = sample_request();
+        request.task_title = "Docs update".to_string();
+        request.user_prompt = "Improve the quickstart guide".to_string();
+        request.agent_summary = "Documented setup steps".to_string();
+        request.notes =
+            vec!["Updated docs/user/getting-started.md with install guidance.".to_string()];
+
+        let candidates = extract_candidates(&request);
+        assert_eq!(candidates[0].memory_type, MemoryType::Documentation);
     }
 
     #[test]

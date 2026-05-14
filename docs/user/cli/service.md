@@ -78,7 +78,7 @@ Use `systemctl` directly only when debugging a specific unit.
 
 ## Development And Source Use
 
-When working from source, `cargo run --bin memory -- service run` starts a **dev** backend that is fully isolated from any installed service on the same machine: different HTTP port (`4250` vs `4040`), different Cap'n Proto port (`4251` vs `4041`), and its own Cap'n Proto Unix socket under `<repo>/.mem/runtime/dev/`. The dev profile ignores the installed global config entirely.
+When working from source, `cargo run --bin memory -- service run` starts a **dev** backend that is fully isolated from any installed service on the same machine: different HTTP port (`4250` vs `4040`), different Cap'n Proto port (`4251` vs `4041`), and its own Cap'n Proto Unix socket under the user-local project runtime directory. The dev profile ignores the installed global config entirely.
 
 Bootstrap is one-time per checkout:
 
@@ -88,6 +88,6 @@ cargo run --bin memory -- dev init --copy-from-global
 cargo run --bin memory -- service run
 ```
 
-`--copy-from-global` lifts the database URL and LLM/embedding endpoints out of the installed config into the dev overlay. Without it (and without a TTY) you will need to populate those sections in `.mem/config.dev.toml` by hand.
+`--copy-from-global` lifts the database URL and LLM/embedding endpoints out of the installed config into the dev overlay. Without it (and without a TTY) you will need to populate those sections in the user-local project `config.dev.toml` by hand.
 
 For the full isolation contract, override flags, verification steps, and troubleshooting, see [Dev Stack vs Installed Stack](../../developer/dev-stack.md).

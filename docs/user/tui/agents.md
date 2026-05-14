@@ -16,11 +16,12 @@ This tab is read-only. It is inspired by `abtop`, but it uses Memory Layer's own
 
 ## Key Controls
 
-- `Tab` or `h/l` move into and out of the tab
+- `Tab` or `l` move forward through tabs; `Shift+Tab` or `Left` moves back
 - `j/k` move between visible sessions
 - `PgUp/PgDn` scroll the detail pane
 - `Home` jump detail scrolling back to the top
 - `r` refresh the wider Memory project state; agent session collection also keeps updating in the background
+- `h` open or close detailed help for this tab
 
 ## When To Use It
 

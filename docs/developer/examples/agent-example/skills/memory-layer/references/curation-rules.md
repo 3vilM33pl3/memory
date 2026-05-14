@@ -75,7 +75,14 @@ At minimum, classify into one of:
 - `debugging`
 - `environment`
 - `domain_fact`
+- `documentation`
+- `task`
 - `plan`
+- `implementation`
+- `user`
+- `feedback`
+- `project`
+- `reference`
 
 ### Suggested meanings
 
@@ -100,8 +107,29 @@ Facts about tooling, setup, build, or runtime environment.
 #### domain_fact
 Stable fact about the business or product domain.
 
+#### documentation
+Durable documentation work or documentation-system knowledge. Do not use this only because a source file lives under `docs/`; classify the remembered fact by meaning.
+
+#### task
+Actionable user instruction that entered execution without an approved plan.
+
 #### plan
 An approved execution plan that should guide the current implementation thread.
+
+#### implementation
+Verified delivered outcome after completed work.
+
+#### user
+Durable user preference or instruction.
+
+#### feedback
+Durable feedback about behavior, quality, or UX.
+
+#### project
+Project-level state broader than one implementation result.
+
+#### reference
+Durable reference to external or internal source material.
 
 ---
 

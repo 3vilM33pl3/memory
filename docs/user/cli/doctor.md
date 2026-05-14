@@ -20,7 +20,7 @@ Use `doctor` when Memory Layer is installed but something is not working the way
 - backend connectivity issues
 - Ollama reachability and missing local LLM models when `[llm].provider = "ollama"`
 - missing `pgvector`
-- project bootstrap problems such as missing `.mem` files
+- project bootstrap problems such as missing user-local project config, missing `.mem/project.toml`, or legacy `.mem` config that has not been migrated
 - repo-local Memory skill-bundle version and missing/outdated skill files
 - repo-local service or watcher configuration issues
 

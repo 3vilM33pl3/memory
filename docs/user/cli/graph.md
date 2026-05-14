@@ -18,7 +18,7 @@ JSON is the default output. Use `--text` for a human-readable summary.
 Important flags:
 
 - `--dry-run` previews counts and sample unresolved references without writing database rows or index files.
-- `--rebuild-index` refreshes `.mem/runtime/index/*-repo-index.json` before extraction.
+- `--rebuild-index` refreshes the user-local project repository index before extraction.
 - `--force` creates a fresh extraction run even when an identical completed run already exists.
 - `--since` is passed through to the repository index context.
 

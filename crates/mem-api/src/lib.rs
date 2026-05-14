@@ -25,6 +25,7 @@ pub enum MemoryType {
     Debugging,
     Environment,
     DomainFact,
+    Documentation,
     Task,
     Plan,
     Implementation,
@@ -44,6 +45,7 @@ impl fmt::Display for MemoryType {
             Self::Debugging => "debugging",
             Self::Environment => "environment",
             Self::DomainFact => "domain_fact",
+            Self::Documentation => "documentation",
             Self::Task => "task",
             Self::Plan => "plan",
             Self::Implementation => "implementation",
@@ -1120,6 +1122,7 @@ pub enum ActivityKind {
     DeleteMemory,
     Briefing,
     Diagnostic,
+    LlmAudit,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -1257,6 +1260,16 @@ pub enum ActivityDetails {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    LlmAudit {
+        operation: String,
+        request_summary: String,
+        status: String,
+        redacted: bool,
+        truncated: bool,
+        messages: Vec<LlmAuditMessage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     WatcherHealth {
         watcher_id: String,
         hostname: String,
@@ -1319,6 +1332,13 @@ pub enum ActivityDetails {
     Diagnostic {
         diagnostic: DiagnosticInfo,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmAuditMessage {
+    pub role: String,
+    pub content: String,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1758,6 +1778,22 @@ pub struct SetEmbeddingCreationRequest {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmAuditStatusResponse {
+    pub enabled: bool,
+    pub redacted: bool,
+    pub max_message_chars: usize,
+    pub max_total_chars: usize,
+    pub profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetLlmAuditRequest {
+    pub enabled: bool,
+}
+
 impl ActivateEmbeddingBackendRequest {
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.name.trim().is_empty() {
@@ -2185,6 +2221,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub llm: LlmConfig,
     #[serde(default)]
+    pub llm_audit: LlmAuditConfig,
+    #[serde(default)]
     pub embeddings: EmbeddingsConfig,
     #[serde(default)]
     pub cluster: ClusterConfig,
@@ -2228,8 +2266,8 @@ impl AppConfig {
             // Global config is part of the installed/prod stack; the dev
             // stack ignores it so a cargo-run service cannot silently pick
             // up the packaged machine-wide settings. Bootstrap shared
-            // values (database URL, LLM endpoints) into .mem/config.dev.toml
-            // via `memory dev init --copy-from-global`.
+            // values (database URL, LLM endpoints) into the user-local project
+            // config.dev.toml via `memory dev init --copy-from-global`.
             if profile == Profile::Prod {
                 if let Some(path) = discover_global_config_path() {
                     env_files.push(env_path_for_config(&path));
@@ -2438,12 +2476,34 @@ pub fn discover_repo_config_path() -> Option<PathBuf> {
     find_repo_config_path(&cwd)
 }
 
+pub fn project_paths_for_repo(repo_root: &Path) -> Option<mem_platform::ProjectPaths> {
+    let slug = project_slug_for_repo(repo_root);
+    mem_platform::project_paths(repo_root, &slug)
+}
+
+pub fn project_slug_for_repo(repo_root: &Path) -> String {
+    read_repo_project_slug(repo_root)
+        .or_else(|| {
+            repo_root
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| "project".to_string())
+}
+
 pub fn dev_overlay_path_for_base(base: &Path) -> Option<PathBuf> {
     base.parent().map(|parent| parent.join("config.dev.toml"))
 }
 
 pub fn discover_repo_dev_config_path() -> Option<PathBuf> {
     let cwd = env::current_dir().ok()?;
+    if let Some(repo_root) = mem_platform::discover_project_root(&cwd)
+        && let Some(paths) = project_paths_for_repo(&repo_root)
+        && paths.dev_config_path().is_file()
+    {
+        return Some(paths.dev_config_path());
+    }
     for directory in cwd.ancestors() {
         let candidate = directory.join(".mem").join("config.dev.toml");
         if candidate.is_file() {
@@ -2456,7 +2516,7 @@ pub fn discover_repo_dev_config_path() -> Option<PathBuf> {
 fn dev_overlay_missing_message(base: Option<&Path>) -> String {
     let hint = match base.and_then(Path::parent) {
         Some(dir) => format!("{}/config.dev.toml", dir.display()),
-        None => "<repo>/.mem/config.dev.toml".to_string(),
+        None => "<project config>/config.dev.toml".to_string(),
     };
     format!(
         "dev profile active but {hint} is missing. Run `memory dev init` to \
@@ -2479,6 +2539,12 @@ pub fn discover_global_config_path() -> Option<PathBuf> {
 }
 
 pub fn find_repo_config_path(start: &Path) -> Option<PathBuf> {
+    if let Some(repo_root) = mem_platform::discover_project_root(start)
+        && let Some(paths) = project_paths_for_repo(&repo_root)
+        && paths.config_path().is_file()
+    {
+        return Some(paths.config_path());
+    }
     for directory in start.ancestors() {
         let candidate = directory.join(".mem").join("config.toml");
         if candidate.is_file() {
@@ -2547,8 +2613,12 @@ pub fn repo_agent_settings_path(repo_root: &Path) -> PathBuf {
 }
 
 pub fn read_repo_project_slug(repo_root: &Path) -> Option<String> {
-    let project_path = repo_root.join(".mem").join("project.toml");
-    let content = std::fs::read_to_string(project_path).ok()?;
+    read_project_slug_from_file(&repo_root.join(".mem").join("project.toml"))
+        .or_else(|| read_project_slug_from_file(&repo_agent_settings_path(repo_root)))
+}
+
+fn read_project_slug_from_file(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -2691,6 +2761,29 @@ pub struct LlmConfig {
     pub max_input_bytes: usize,
     #[serde(default = "default_llm_max_output_tokens")]
     pub max_output_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmAuditConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub redact: bool,
+    #[serde(default = "default_llm_audit_max_message_chars")]
+    pub max_message_chars: usize,
+    #[serde(default = "default_llm_audit_max_total_chars")]
+    pub max_total_chars: usize,
+}
+
+impl Default for LlmAuditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            redact: true,
+            max_message_chars: default_llm_audit_max_message_chars(),
+            max_total_chars: default_llm_audit_max_total_chars(),
+        }
+    }
 }
 
 impl Default for LlmConfig {
@@ -3183,6 +3276,14 @@ fn default_llm_max_output_tokens() -> u32 {
     3_000
 }
 
+fn default_llm_audit_max_message_chars() -> usize {
+    8_000
+}
+
+fn default_llm_audit_max_total_chars() -> usize {
+    32_000
+}
+
 fn default_poll_interval() -> Duration {
     Duration::from_secs(60)
 }
@@ -3273,8 +3374,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn memory_type_task_displays_as_snake_case() {
+    fn new_memory_types_display_as_snake_case() {
         assert_eq!(MemoryType::Task.to_string(), "task");
+        assert_eq!(MemoryType::Documentation.to_string(), "documentation");
     }
 
     #[test]
@@ -3306,6 +3408,65 @@ mod tests {
             "max_completion_tokens"
         );
         assert!(llm_requires_api_key(&config));
+    }
+
+    #[test]
+    fn llm_audit_config_defaults_to_safe_disabled_mode() {
+        let config: AppConfig = toml::from_str(
+            r#"
+            [service]
+            bind_addr = "127.0.0.1:4040"
+            capnp_unix_socket = "/tmp/memory-test.sock"
+            capnp_tcp_addr = "127.0.0.1:4041"
+            api_token = "token"
+            request_timeout = "30s"
+
+            [database]
+            url = "postgresql://memory"
+            "#,
+        )
+        .expect("parse config without llm_audit");
+
+        assert!(!config.llm_audit.enabled);
+        assert!(config.llm_audit.redact);
+        assert_eq!(config.llm_audit.max_message_chars, 8_000);
+        assert_eq!(config.llm_audit.max_total_chars, 32_000);
+    }
+
+    #[test]
+    fn llm_audit_activity_details_roundtrip() {
+        let details = ActivityDetails::LlmAudit {
+            operation: "query_answer".to_string(),
+            request_summary: "Question: activity".to_string(),
+            status: "success".to_string(),
+            redacted: true,
+            truncated: false,
+            messages: vec![LlmAuditMessage {
+                role: "user".to_string(),
+                content: "Question: activity".to_string(),
+                truncated: false,
+            }],
+            error: None,
+        };
+
+        let encoded = serde_json::to_value(&details).expect("serialize details");
+        assert_eq!(encoded["type"], "llm_audit");
+        let decoded: ActivityDetails =
+            serde_json::from_value(encoded).expect("deserialize details");
+
+        match decoded {
+            ActivityDetails::LlmAudit {
+                operation,
+                messages,
+                redacted,
+                ..
+            } => {
+                assert_eq!(operation, "query_answer");
+                assert!(redacted);
+                assert_eq!(messages[0].role, "user");
+            }
+            other => panic!("unexpected activity details: {other:?}"),
+        }
     }
 
     #[test]
@@ -3792,6 +3953,63 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
 
         assert_eq!(find_repo_config_path(&nested).unwrap(), config_path);
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn project_home_config_wins_over_legacy_repo_config() {
+        let _guard = env_lock().lock().unwrap();
+        let temp_dir = unique_temp_dir("mem-api-project-home");
+        let repo_dir = temp_dir.join("repo");
+        let config_home = temp_dir.join("config-home");
+        let state_home = temp_dir.join("state-home");
+        let cache_home = temp_dir.join("cache-home");
+        let old_config_home = env::var("XDG_CONFIG_HOME").ok();
+        let old_state_home = env::var("XDG_STATE_HOME").ok();
+        let old_cache_home = env::var("XDG_CACHE_HOME").ok();
+        fs::create_dir_all(repo_dir.join(".mem")).unwrap();
+        fs::write(
+            repo_dir.join(".mem").join("project.toml"),
+            "slug = \"demo\"\n",
+        )
+        .unwrap();
+        fs::write(
+            repo_dir.join(".mem").join("config.toml"),
+            "[automation]\nenabled = false\n",
+        )
+        .unwrap();
+
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", &config_home);
+            env::set_var("XDG_STATE_HOME", &state_home);
+            env::set_var("XDG_CACHE_HOME", &cache_home);
+        }
+        let paths = project_paths_for_repo(&repo_dir).unwrap();
+        fs::create_dir_all(&paths.config_dir).unwrap();
+        fs::write(paths.config_path(), "[automation]\nenabled = true\n").unwrap();
+
+        assert_eq!(
+            find_repo_config_path(&repo_dir).unwrap(),
+            paths.config_path()
+        );
+
+        unsafe {
+            if let Some(value) = old_config_home {
+                env::set_var("XDG_CONFIG_HOME", value);
+            } else {
+                env::remove_var("XDG_CONFIG_HOME");
+            }
+            if let Some(value) = old_state_home {
+                env::set_var("XDG_STATE_HOME", value);
+            } else {
+                env::remove_var("XDG_STATE_HOME");
+            }
+            if let Some(value) = old_cache_home {
+                env::set_var("XDG_CACHE_HOME", value);
+            } else {
+                env::remove_var("XDG_CACHE_HOME");
+            }
+        }
         let _ = fs::remove_dir_all(temp_dir);
     }
 

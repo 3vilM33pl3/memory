@@ -22,6 +22,7 @@ If a checkpoint exists and the project changed since that checkpoint, the TUI op
 - `PgUp/PgDn` page through long briefings
 - `Home` jump back to the top
 - `r` refresh the resume pack
+- `h` open or close detailed help for this tab
 
 ## When To Use It
 

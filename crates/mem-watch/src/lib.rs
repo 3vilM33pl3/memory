@@ -85,7 +85,9 @@ impl AutomationState {
 }
 
 pub fn default_runtime_dir(repo_root: &Path) -> PathBuf {
-    repo_root.join(".memory-layer")
+    mem_api::project_paths_for_repo(repo_root)
+        .map(|paths| paths.runtime_dir())
+        .unwrap_or_else(|| repo_root.join(".memory-layer"))
 }
 
 pub fn state_path(config: &AutomationConfig, repo_root: &Path) -> PathBuf {
@@ -931,6 +933,7 @@ mod tests {
             },
             features: mem_api::FeatureFlags::default(),
             llm: mem_api::LlmConfig::default(),
+            llm_audit: mem_api::LlmAuditConfig::default(),
             embeddings: mem_api::EmbeddingsConfig::default(),
             cluster: mem_api::ClusterConfig::default(),
             writer: mem_api::WriterConfig::default(),
