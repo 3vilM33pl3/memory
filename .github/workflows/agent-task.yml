@@ -94,7 +94,6 @@ jobs:
           codex exec \
             --model "${{ inputs.model }}" \
             --sandbox workspace-write \
-            --ask-for-approval never \
             --output-last-message "$RUNNER_TEMP/agent-task-summary.md" \
             "Implement the task described in $RUNNER_TEMP/agent-task.md."
 

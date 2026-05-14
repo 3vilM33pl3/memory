@@ -103,7 +103,6 @@ jobs:
           codex exec \
             --model "$CODEX_RESOLVE_MODEL" \
             --sandbox workspace-write \
-            --ask-for-approval never \
             "Address actionable review comments and obvious CI failures for PR #${PR_NUMBER}. Make minimal changes, keep public behavior stable unless the PR intends otherwise, run focused validation where practical, and leave unrelated code untouched. PR context is in $RUNNER_TEMP/pr-context.txt."
 
           if git diff --quiet; then
@@ -162,7 +161,6 @@ jobs:
           codex exec \
             --model "$CODEX_DISCUSS_MODEL" \
             --sandbox read-only \
-            --ask-for-approval never \
             --output-last-message "$RUNNER_TEMP/agent-discussion.md" \
             "Answer the PR discussion request in $RUNNER_TEMP/agent-question.txt using the PR context in $RUNNER_TEMP/pr-context.json and the repository. Be concrete, cite files where useful, and do not modify files."
           gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/agent-discussion.md"
