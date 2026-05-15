@@ -102,6 +102,7 @@ There are three important memory-skill copies in this repository:
    - the umbrella skill is `.agents/skills/memory-layer/`
    - the focused skills are:
      - `.agents/skills/memory-project-init/`
+     - `.agents/skills/memory-github-init/`
      - `.agents/skills/memory-query-resume/`
      - `.agents/skills/memory-plan-execution/`
      - `.agents/skills/memory-direct-task-start/`

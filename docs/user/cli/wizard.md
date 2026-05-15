@@ -57,6 +57,7 @@ The bundle includes these Memory-owned skills:
 
 - `memory-layer`
 - `memory-project-init`
+- `memory-github-init`
 - `memory-query-resume`
 - `memory-plan-execution`
 - `memory-direct-task-start`

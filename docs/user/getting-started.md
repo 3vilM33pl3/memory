@@ -384,6 +384,7 @@ The repo-local skill bundle contains:
 
 - `memory-layer`
 - `memory-project-init`
+- `memory-github-init`
 - `memory-query-resume`
 - `memory-plan-execution`
 - `memory-direct-task-start`

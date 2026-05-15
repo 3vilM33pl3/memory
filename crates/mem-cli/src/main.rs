@@ -8012,6 +8012,7 @@ fn watcher_command_requires_config_load(command: &WatcherCommand) -> bool {
 const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-layer",
     "memory-project-init",
+    "memory-github-init",
     "memory-query-resume",
     "memory-plan-execution",
     "memory-direct-task-start",
@@ -14852,6 +14853,11 @@ mod tests {
         );
         assert!(
             repo_root
+                .join(".agents/skills/memory-github-init/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
                 .join(".agents/skills/memory-plan-execution/SKILL.md")
                 .is_file()
         );
@@ -14987,6 +14993,11 @@ mod tests {
         );
         assert!(
             repo_root
+                .join(".agents/skills/memory-github-init/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
                 .join(".agents/skills/memory-plan-execution/SKILL.md")
                 .is_file()
         );
@@ -15047,6 +15058,11 @@ mod tests {
         );
         assert!(
             repo_root
+                .join(".agents/skills/memory-github-init/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
                 .join(".agents/skills/memory-plan-execution/SKILL.md")
                 .is_file()
         );
@@ -15098,6 +15114,9 @@ mod tests {
 
         let umbrella =
             fs::read_to_string(repo_root.join(".agents/skills/memory-layer/SKILL.md")).unwrap();
+        let github_init =
+            fs::read_to_string(repo_root.join(".agents/skills/memory-github-init/SKILL.md"))
+                .unwrap();
         let query_resume =
             fs::read_to_string(repo_root.join(".agents/skills/memory-query-resume/SKILL.md"))
                 .unwrap();
@@ -15105,6 +15124,9 @@ mod tests {
             fs::read_to_string(repo_root.join(".agents/skills/memory-remember/SKILL.md")).unwrap();
 
         assert!(umbrella.contains("Code explanation memory rule"));
+        assert!(umbrella.contains("memory-github-init"));
+        assert!(github_init.contains("Memory GitHub Init Skill"));
+        assert!(github_init.contains("dry-run"));
         assert!(umbrella.contains("Store a distilled memory, not the whole chat answer"));
         assert!(query_resume.contains("explain code, a file, a module"));
         assert!(query_resume.contains("store the distilled reusable explanation"));

@@ -2030,6 +2030,7 @@ const GLOBAL_TUI_RESTART_MARKER: &str = "/usr/local/var/memory-layer/tui-restart
 
 const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-direct-task-start",
+    "memory-github-init",
     "memory-layer",
     "memory-plan-execution",
     "memory-project-init",

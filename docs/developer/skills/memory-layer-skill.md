@@ -7,6 +7,7 @@ This page explains the current repo-local Memory Layer skill bundle. The canonic
 The focused skills that sit beside it are:
 
 - `.agents/skills/memory-project-init/SKILL.md`
+- `.agents/skills/memory-github-init/SKILL.md`
 - `.agents/skills/memory-query-resume/SKILL.md`
 - `.agents/skills/memory-plan-execution/SKILL.md`
 - `.agents/skills/memory-direct-task-start/SKILL.md`
@@ -38,6 +39,7 @@ The bundle as a whole tells the agent when to:
 - query project memory before answering repo-specific questions
 - use `resume` to get back into flow after an interruption
 - initialise or refresh repo-local Memory Layer setup for a project
+- guide first-time GitHub repository onboarding with discovery, questions, dry-run review, and verification
 - save the approved plan and checkpoint when a planning phase turns into approved execution
 - save a task memory when direct implementation starts without an approved plan
 - remember meaningful completed work automatically
@@ -50,14 +52,15 @@ The umbrella skill handles broad or mixed memory turns. The focused skills handl
 The current live bundle workflow is:
 
 1. `memory-project-init` handles repo-local setup and refreshes for target projects.
-2. `memory-query-resume` handles query-first answers and interruption recovery.
-3. `memory-plan-execution` handles execution start and plan-completion verification.
-4. `memory-direct-task-start` records direct no-plan implementation starts.
-5. `memory-remember` handles post-task remembering once work is actually complete.
-6. Code explanation turns query memory first, inspect relevant code or docs, answer, then remember the distilled reusable explanation when it is durable.
-7. The umbrella `memory-layer` skill keeps the shared invariants and covers mixed or ambiguous memory turns.
-8. Prefer insufficient evidence over unsupported conclusions.
-9. Never invent provenance.
+2. `memory-github-init` handles first-time GitHub repository onboarding and GitHub setup audits.
+3. `memory-query-resume` handles query-first answers and interruption recovery.
+4. `memory-plan-execution` handles execution start and plan-completion verification.
+5. `memory-direct-task-start` records direct no-plan implementation starts.
+6. `memory-remember` handles post-task remembering once work is actually complete.
+7. Code explanation turns query memory first, inspect relevant code or docs, answer, then remember the distilled reusable explanation when it is durable.
+8. The umbrella `memory-layer` skill keeps the shared invariants and covers mixed or ambiguous memory turns.
+9. Prefer insufficient evidence over unsupported conclusions.
+10. Never invent provenance.
 
 The important change is that the bundle is no longer centered on one broad skill or on a manual `memory capture task -> curate-memory` sequence for normal work. The preferred path is now a focused workflow plus `remember-task`, which captures and curates in one step.
 
