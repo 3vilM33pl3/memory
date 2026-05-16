@@ -72,5 +72,6 @@ After approve/reject the tab fetches a fresh proposal list automatically, so the
 ## Related Docs
 
 - [Project Tab](project.md) — high-level dashboard; shows the pending count as a health signal.
+- [Proposals Command](../cli/proposals.md) — CLI surface for agent-led proposal review.
 - [Curate command](../cli/curate.md) — how proposals are produced.
 - [TUI Guide](README.md) — other tabs and shared navigation.

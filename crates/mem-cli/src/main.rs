@@ -832,6 +832,19 @@ Examples:
 See also:
   docs/user/cli/curate.md";
 
+const PROPOSALS_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Review pending memory replacement proposals produced by curation.
+  List/show are read-only. Approve/reject mutate memory state and require an explicit review decision.
+
+Examples:
+  memory proposals list --project memory --json
+  memory proposals show --project memory --id 00000000-0000-0000-0000-000000000000
+  memory proposals approve --project memory --id 00000000-0000-0000-0000-000000000000 --json
+
+See also:
+  docs/user/cli/proposals.md";
+
 const EMBEDDINGS_GROUP_AFTER_HELP: &str = "\
 Agent notes:
   Manage semantic retrieval spaces. list/activate are global backend operations; reindex/reembed/prune operate per project.
@@ -1069,6 +1082,8 @@ enum Command {
     Remember(RememberArgs),
     #[command(about = "Curate raw captures into canonical memory.", after_help = CURATE_AFTER_HELP)]
     Curate(CurateArgs),
+    #[command(about = "Review pending memory replacement proposals.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
+    Proposals(ProposalsArgs),
     #[command(about = "Rebuild and maintain embedding spaces.", after_help = EMBEDDINGS_GROUP_AFTER_HELP)]
     Embeddings(EmbeddingsArgs),
     #[command(about = "Check backend service health.", after_help = HEALTH_AFTER_HELP)]
@@ -2109,6 +2124,67 @@ struct CurateArgs {
     /// Preview curation decisions without writing memory state.
     #[arg(long)]
     dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Review pending memory replacement proposals.",
+    after_help = PROPOSALS_GROUP_AFTER_HELP
+)]
+struct ProposalsArgs {
+    #[command(subcommand)]
+    command: ProposalsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProposalsCommand {
+    #[command(about = "List pending replacement proposals.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
+    List(ProposalsListArgs),
+    #[command(about = "Show one pending replacement proposal.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
+    Show(ProposalsShowArgs),
+    #[command(about = "Approve a pending replacement proposal.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
+    Approve(ProposalsResolveArgs),
+    #[command(about = "Reject a pending replacement proposal.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
+    Reject(ProposalsResolveArgs),
+}
+
+#[derive(Debug, Args)]
+struct ProposalsListArgs {
+    /// Project slug to inspect.
+    #[arg(long)]
+    project: String,
+    /// Limit the number of proposals printed in text or JSON output.
+    #[arg(long)]
+    limit: Option<usize>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProposalsShowArgs {
+    /// Project slug to inspect.
+    #[arg(long)]
+    project: String,
+    /// Pending proposal id.
+    #[arg(long)]
+    id: Uuid,
+    /// Emit the proposal as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProposalsResolveArgs {
+    /// Project slug to update.
+    #[arg(long)]
+    project: String,
+    /// Pending proposal id.
+    #[arg(long)]
+    id: Uuid,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -3347,6 +3423,10 @@ async fn main() -> Result<()> {
                 .send()
                 .await?;
             print_json_response(response).await?;
+        }
+        Command::Proposals(args) => {
+            let api = ApiClient::new(client, config);
+            handle_proposals_command(args, &api).await?;
         }
         Command::Embeddings(args) => match args.command {
             EmbeddingsCommand::List => {
@@ -8099,6 +8179,7 @@ const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-layer",
     "memory-project-init",
     "memory-github-init",
+    "memory-review-proposals",
     "memory-query-resume",
     "memory-plan-execution",
     "memory-direct-task-start",
@@ -9593,6 +9674,114 @@ async fn print_json_response(response: reqwest::Response) -> Result<()> {
     }
     println!("{body}");
     Ok(())
+}
+
+async fn handle_proposals_command(args: ProposalsArgs, api: &ApiClient) -> Result<()> {
+    match args.command {
+        ProposalsCommand::List(args) => {
+            let mut response = api.replacement_proposals(&args.project).await?;
+            if let Some(limit) = args.limit {
+                response.proposals.truncate(limit);
+            }
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                print_replacement_proposals(&response);
+            }
+        }
+        ProposalsCommand::Show(args) => {
+            let response = api.replacement_proposals(&args.project).await?;
+            let proposal = find_replacement_proposal(response.proposals, args.id)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&proposal)?);
+            } else {
+                print_replacement_proposal_detail(&proposal);
+            }
+        }
+        ProposalsCommand::Approve(args) => {
+            let response = api
+                .approve_replacement_proposal(&args.project, args.id)
+                .await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                println!(
+                    "Approved replacement proposal {}: {} -> {}",
+                    response.proposal_id, response.target_summary, response.candidate_summary
+                );
+            }
+        }
+        ProposalsCommand::Reject(args) => {
+            let response = api
+                .reject_replacement_proposal(&args.project, args.id)
+                .await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                println!(
+                    "Rejected replacement proposal {} for {}.",
+                    response.proposal_id, response.target_summary
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn find_replacement_proposal(
+    proposals: Vec<mem_api::ReplacementProposalRecord>,
+    id: Uuid,
+) -> Result<mem_api::ReplacementProposalRecord> {
+    proposals
+        .into_iter()
+        .find(|proposal| proposal.id == id)
+        .with_context(|| format!("pending replacement proposal {id} was not found"))
+}
+
+fn print_replacement_proposals(response: &mem_api::ReplacementProposalListResponse) {
+    if response.proposals.is_empty() {
+        println!(
+            "No pending replacement proposals for `{}`.",
+            response.project
+        );
+        return;
+    }
+    println!(
+        "Pending replacement proposals for `{}`: {}",
+        response.project,
+        response.proposals.len()
+    );
+    for (index, proposal) in response.proposals.iter().enumerate() {
+        println!(
+            "\n{}. {} [{} score {}]",
+            index + 1,
+            proposal.candidate_summary,
+            proposal.candidate_memory_type,
+            proposal.score
+        );
+        println!("   id: {}", proposal.id);
+        println!("   target: {}", proposal.target_summary);
+        if !proposal.reasons.is_empty() {
+            println!("   why: {}", proposal.reasons.join(", "));
+        }
+    }
+}
+
+fn print_replacement_proposal_detail(proposal: &mem_api::ReplacementProposalRecord) {
+    println!("Proposal: {}", proposal.id);
+    println!("Project: {}", proposal.project);
+    println!("Target memory: {}", proposal.target_memory_id);
+    println!("Target summary: {}", proposal.target_summary);
+    println!("Candidate summary: {}", proposal.candidate_summary);
+    println!(
+        "Type / Score / Policy: {} / {} / {}",
+        proposal.candidate_memory_type, proposal.score, proposal.policy
+    );
+    if !proposal.reasons.is_empty() {
+        println!("Why proposed: {}", proposal.reasons.join(", "));
+    }
+    println!("Created: {}", proposal.created_at.to_rfc3339());
+    println!("\nCandidate text:\n{}", proposal.candidate_canonical_text);
 }
 
 fn format_api_error(status: reqwest::StatusCode, body: &str) -> String {
@@ -13935,6 +14124,7 @@ mod tests {
             "capture" => Some("capture.md"),
             "remember" => Some("remember.md"),
             "curate" => Some("curate.md"),
+            "proposals" => Some("proposals.md"),
             "embeddings" => Some("embeddings.md"),
             "health" => Some("health.md"),
             "stats" => Some("stats.md"),
@@ -14044,18 +14234,21 @@ mod tests {
         let bash = rendered_completion(clap_complete::Shell::Bash);
         assert!(bash.contains("wizard"));
         assert!(bash.contains("completion"));
+        assert!(bash.contains("proposals"));
         assert!(bash.contains("watcher"));
         assert!(bash.contains("manager"));
         assert!(bash.contains("--project"));
 
         let zsh = rendered_completion(clap_complete::Shell::Zsh);
         assert!(zsh.contains("_memory"));
+        assert!(zsh.contains("proposals"));
         assert!(zsh.contains("watcher"));
         assert!(zsh.contains("manager"));
         assert!(zsh.contains("completion"));
 
         let fish = rendered_completion(clap_complete::Shell::Fish);
         assert!(fish.contains("complete -c memory"));
+        assert!(fish.contains("proposals"));
         assert!(fish.contains("watcher"));
         assert!(fish.contains("manager"));
         assert!(fish.contains("completion"));
@@ -14119,6 +14312,37 @@ mod tests {
         assert!(output.contains("Use before answering project-specific questions"));
         assert!(output.contains("insufficient_evidence"));
         assert!(output.contains("docs/user/cli/query.md"));
+    }
+
+    #[test]
+    fn proposals_help_includes_review_guidance() {
+        let output = rendered_help(&["memory", "proposals", "--help"]);
+        assert!(output.contains("Review pending memory replacement proposals"));
+        assert!(output.contains("Approve/reject mutate memory state"));
+        assert!(output.contains("docs/user/cli/proposals.md"));
+    }
+
+    #[test]
+    fn proposals_show_parses_uuid_and_json_flag() {
+        let cli = Cli::parse_from([
+            "memory",
+            "proposals",
+            "show",
+            "--project",
+            "memory",
+            "--id",
+            "00000000-0000-0000-0000-000000000000",
+            "--json",
+        ]);
+        let super::Command::Proposals(args) = cli.command else {
+            panic!("expected proposals command");
+        };
+        let super::ProposalsCommand::Show(args) = args.command else {
+            panic!("expected proposals show command");
+        };
+        assert_eq!(args.project, "memory");
+        assert_eq!(args.id, Uuid::nil());
+        assert!(args.json);
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -14941,6 +15165,11 @@ mod tests {
         assert!(
             repo_root
                 .join(".agents/skills/memory-github-init/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-review-proposals/SKILL.md")
                 .is_file()
         );
         assert!(

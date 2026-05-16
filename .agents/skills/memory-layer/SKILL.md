@@ -24,6 +24,9 @@ Prefer the focused skills when the task is clearly one of these:
 - `memory-query-resume`
   - query project memory before repo-specific answers
   - resume a project after an interruption
+- `memory-review-proposals`
+  - review pending curation replacement proposals interactively
+  - explain why each candidate was proposed and gather proof before approve/reject
 - `memory-project-init`
   - initialise or refresh repo-local Memory Layer setup for a target project
   - preview `.mem/` and `.agents/` writes before applying setup
@@ -47,15 +50,16 @@ These rules apply across the whole memory skill bundle:
 
 1. Query memory before answering project-specific questions.
 2. Use `resume` instead of a generic query for interruption-recovery prompts.
-3. Use the project-init workflow for repo-local Memory Layer setup requests.
-4. Use the GitHub init workflow for first-time GitHub repository onboarding.
-5. Save the approved plan before implementation begins when a planning phase turns into execution.
-6. When an actionable user instruction starts execution without an approved plan, save a task memory before implementation begins.
-7. Verify plan-backed work is complete before claiming the task is finished.
-8. Remember meaningful work after it is actually done.
-9. When you explain code, a file, a module, or the whole codebase, remember the distilled reusable explanation after answering.
-10. Prefer insufficient evidence over unsupported conclusions.
-11. Never invent provenance.
+3. Use proposal review for pending curation replacement proposals; approve or reject only after an explicit review decision.
+4. Use the project-init workflow for repo-local Memory Layer setup requests.
+5. Use the GitHub init workflow for first-time GitHub repository onboarding.
+6. Save the approved plan before implementation begins when a planning phase turns into execution.
+7. When an actionable user instruction starts execution without an approved plan, save a task memory before implementation begins.
+8. Verify plan-backed work is complete before claiming the task is finished.
+9. Remember meaningful work after it is actually done.
+10. When you explain code, a file, a module, or the whole codebase, remember the distilled reusable explanation after answering.
+11. Prefer insufficient evidence over unsupported conclusions.
+12. Never invent provenance.
 
 ## Mandatory post-task rule
 

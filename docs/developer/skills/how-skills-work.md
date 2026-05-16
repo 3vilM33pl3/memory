@@ -104,6 +104,7 @@ There are three important memory-skill copies in this repository:
      - `.agents/skills/memory-project-init/`
      - `.agents/skills/memory-github-init/`
      - `.agents/skills/memory-query-resume/`
+     - `.agents/skills/memory-review-proposals/`
      - `.agents/skills/memory-plan-execution/`
      - `.agents/skills/memory-direct-task-start/`
      - `.agents/skills/memory-remember/`

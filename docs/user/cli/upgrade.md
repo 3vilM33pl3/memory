@@ -31,6 +31,7 @@ The Memory-owned skill set is:
 - `memory-project-init`
 - `memory-github-init`
 - `memory-query-resume`
+- `memory-review-proposals`
 - `memory-plan-execution`
 - `memory-direct-task-start`
 - `memory-remember`

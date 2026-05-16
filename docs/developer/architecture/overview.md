@@ -98,6 +98,7 @@ The repo-local Memory Layer skill bundle in `.agents/skills/` tells Codex when t
 - initialise or refresh Memory Layer setup for a target project
 - query memory before answering project-specific questions
 - resume after interruptions
+- review pending memory replacement proposals
 - save approved plans before execution
 - save direct task starts when implementation begins without an approved plan
 - verify plan-backed work before claiming completion

@@ -2161,6 +2161,7 @@ const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-layer",
     "memory-plan-execution",
     "memory-project-init",
+    "memory-review-proposals",
     "memory-query-resume",
     "memory-remember",
 ];

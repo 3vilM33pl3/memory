@@ -138,6 +138,62 @@ func TestBuildCaptureTaskArgsRejectsMissingFile(t *testing.T) {
 	}
 }
 
+func TestReviewProposalsListAddsJSONInJSONMode(t *testing.T) {
+	got, err := buildInvocation([]string{"review-proposals", "list", "--project", "memory", "--limit", "3"}, outputJSON)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"proposals", "list", "--project", "memory", "--limit", "3", "--json"}
+	if len(got.commandArgs) != len(want) {
+		t.Fatalf("unexpected arg count: got %v want %v", got.commandArgs, want)
+	}
+	for i := range want {
+		if got.commandArgs[i] != want[i] {
+			t.Fatalf("arg %d mismatch: got %q want %q", i, got.commandArgs[i], want[i])
+		}
+	}
+	if got.project != "memory" {
+		t.Fatalf("unexpected project: %q", got.project)
+	}
+	if !got.expectJSON {
+		t.Fatal("expected JSON output")
+	}
+}
+
+func TestReviewProposalsApproveTextModePassesThrough(t *testing.T) {
+	got, err := buildInvocation([]string{
+		"review-proposals",
+		"approve",
+		"--project", "memory",
+		"--id", "00000000-0000-0000-0000-000000000000",
+	}, outputText)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"proposals", "approve", "--project", "memory", "--id", "00000000-0000-0000-0000-000000000000"}
+	if len(got.commandArgs) != len(want) {
+		t.Fatalf("unexpected arg count: got %v want %v", got.commandArgs, want)
+	}
+	for i := range want {
+		if got.commandArgs[i] != want[i] {
+			t.Fatalf("arg %d mismatch: got %q want %q", i, got.commandArgs[i], want[i])
+		}
+	}
+	if got.expectJSON {
+		t.Fatal("did not expect JSON output")
+	}
+	if !got.textPassthrough {
+		t.Fatal("expected text passthrough")
+	}
+}
+
+func TestReviewProposalsRejectsUnknownAction(t *testing.T) {
+	_, err := buildInvocation([]string{"review-proposals", "maybe", "--project", "memory"}, outputJSON)
+	if err == nil {
+		t.Fatal("expected unknown action error")
+	}
+}
+
 func TestParseGlobalOptionsSupportsTextMode(t *testing.T) {
 	mode, remaining, err := parseGlobalOptions([]string{"--text", "resume-project", "memory"})
 	if err != nil {

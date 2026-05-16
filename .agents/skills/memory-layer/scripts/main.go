@@ -241,6 +241,8 @@ func buildInvocation(args []string, mode outputMode) (helperInvocation, error) {
 		return buildCaptureTaskInvocation(args[1:])
 	case "curate-memory":
 		return buildCurateMemoryInvocation(args[1:])
+	case "review-proposals":
+		return buildReviewProposalsInvocation(args[1:], mode)
 	case "start-plan-execution":
 		return helperInvocation{
 			helperCommand:   "start-plan-execution",
@@ -286,6 +288,7 @@ Commands:
   checkpoint-project [--project <slug>] [--note <text>]
   capture-task <payload.json>
   curate-memory [project-slug]
+  review-proposals <list|show|approve|reject> --project <slug> [--id <uuid>] [--limit N]
   start-plan-execution <memory checkpoint start-execution args...>
   start-task-execution <memory checkpoint start-task args...>
   finish-plan-execution <memory checkpoint finish-execution args...>
@@ -439,6 +442,44 @@ func buildCurateMemoryInvocation(args []string) (helperInvocation, error) {
 		expectJSON:      true,
 		textPassthrough: false,
 	}, nil
+}
+
+func buildReviewProposalsInvocation(args []string, mode outputMode) (helperInvocation, error) {
+	if len(args) == 0 {
+		return helperInvocation{}, errors.New("Usage: review-proposals <list|show|approve|reject> --project <slug> [--id <uuid>] [--limit N]")
+	}
+	action := args[0]
+	switch action {
+	case "list", "show", "approve", "reject":
+	default:
+		return helperInvocation{}, fmt.Errorf("unknown review-proposals action: %s", action)
+	}
+	commandArgs := append([]string{"proposals", action}, args[1:]...)
+	if mode == outputJSON {
+		commandArgs = append(commandArgs, "--json")
+	}
+	project := projectFromFlag(args[1:])
+	return helperInvocation{
+		helperCommand:   "review-proposals",
+		project:         project,
+		commandArgs:     commandArgs,
+		expectJSON:      mode == outputJSON,
+		textPassthrough: mode == outputText,
+	}, nil
+}
+
+func projectFromFlag(args []string) string {
+	project := defaultProject()
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--project" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(arg, "--project=") {
+			return strings.TrimPrefix(arg, "--project=")
+		}
+	}
+	return project
 }
 
 func buildRememberInvocation(helperCommand string, args []string) (helperInvocation, error) {

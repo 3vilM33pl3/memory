@@ -53,6 +53,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Capture Command](cli/capture.md)
 - [Remember Command](cli/remember.md)
 - [Curate Command](cli/curate.md)
+- [Proposals Command](cli/proposals.md)
 - [History Command](cli/history.md)
 - [Prune History](cli/prune-history.md)
 - [Embedding Operations](cli/embeddings.md)
