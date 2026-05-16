@@ -5381,7 +5381,7 @@ fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String
     }
     let overlay_path = project_paths.dev_config_path();
     let runtime_dev_dir = project_paths.runtime_dir().join("dev");
-    let capnp_unix_socket = runtime_dev_dir.join("memory-layer.capnp.sock");
+    let capnp_unix_socket = dev_capnp_unix_socket_path(&project_paths);
     let state_file_path = runtime_dev_dir.join("automation-state.json");
     let audit_log_path = runtime_dev_dir.join("automation.log");
 
@@ -5444,6 +5444,15 @@ fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String
         overlay_path.display(),
         runtime_dev_dir.display()
     ))
+}
+
+fn dev_capnp_unix_socket_path(project_paths: &mem_platform::ProjectPaths) -> PathBuf {
+    let identity = project_paths
+        .key
+        .rsplit_once('-')
+        .map(|(_, hash)| hash)
+        .unwrap_or(&project_paths.key);
+    env::temp_dir().join(format!("memory-layer-dev-{identity}.sock"))
 }
 
 /// Tables we willingly copy from the global config into the dev overlay. The
@@ -13687,9 +13696,9 @@ mod tests {
         build_plan_execution_request, build_remember_request, build_task_start_request,
         chat_completion_content, derive_plan_thread_key, derive_plan_title,
         durable_plan_source_path, ensure_checkbox_plan, ensure_direct_llm_eval_config,
-        ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
-        mask_database_url, newest_tui_restart_notice, parse_memory_type_arg,
-        parse_no_memory_grounded_answer, parse_plan_checkboxes,
+        ensure_shared_service_api_token, initialize_dev_overlay, initialize_repo,
+        is_placeholder_database_url, mask_database_url, newest_tui_restart_notice,
+        parse_memory_type_arg, parse_no_memory_grounded_answer, parse_plan_checkboxes,
         project_skill_inventory_with_template, read_skill_version, render_agent_project_config,
         render_claude_md_memory_section, repair_repo_bootstrap, resolve_project_slug,
         resolve_repo_root, resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
@@ -14937,6 +14946,62 @@ mod tests {
     }
 
     #[test]
+    fn dev_init_uses_short_capnp_unix_socket_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let repo_root = unique_temp_dir("mem-dev-init");
+        let xdg_root = unique_temp_dir("mem-dev-init-xdg");
+        let old_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_state = std::env::var("XDG_STATE_HOME").ok();
+        let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
+            std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
+            std::env::set_var("XDG_CACHE_HOME", xdg_root.join("cache"));
+        }
+        fs::create_dir_all(&repo_root).unwrap();
+        initialize_repo(&repo_root, "memory", false, false).unwrap();
+
+        initialize_dev_overlay(
+            &repo_root,
+            &super::DevInitArgs {
+                force: false,
+                dry_run: false,
+                bind_addr: "127.0.0.1:4250".to_string(),
+                capnp_tcp_addr: "127.0.0.1:4251".to_string(),
+                copy_from_global: false,
+                no_copy_from_global: true,
+            },
+        )
+        .unwrap();
+
+        let paths = mem_platform::project_paths(&repo_root, "memory").unwrap();
+        let dev_config = fs::read_to_string(paths.dev_config_path()).unwrap();
+        let socket_path = dev_config
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("capnp_unix_socket = ")
+                    .map(|value| value.trim_matches('"').to_string())
+            })
+            .unwrap();
+        let socket_file_name = Path::new(&socket_path)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap();
+        assert!(socket_file_name.starts_with("memory-layer-dev-"));
+        assert!(
+            socket_path.len() < 100,
+            "socket path should fit Unix SUN_LEN: {socket_path}"
+        );
+
+        restore_env_var("XDG_CONFIG_HOME", old_config);
+        restore_env_var("XDG_STATE_HOME", old_state);
+        restore_env_var("XDG_CACHE_HOME", old_cache);
+        let _ = fs::remove_dir_all(repo_root);
+        let _ = fs::remove_dir_all(xdg_root);
+    }
+
+    #[test]
     fn resolve_repo_root_falls_back_to_cwd() {
         let cwd = PathBuf::from("/tmp/not-a-repo");
         assert_eq!(resolve_repo_root(&cwd).unwrap(), cwd);
@@ -15576,7 +15641,17 @@ mod tests {
 
     #[test]
     fn skill_upgrade_replaces_outdated_skill_and_creates_backup() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let repo = unique_temp_dir("mem-skill-upgrade");
+        let xdg_root = unique_temp_dir("mem-skill-upgrade-xdg");
+        let old_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_state = std::env::var("XDG_STATE_HOME").ok();
+        let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
+            std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
+            std::env::set_var("XDG_CACHE_HOME", xdg_root.join("cache"));
+        }
         let project_root = repo.join("project");
         let template_root = repo.join("memory-layer/skill-template");
         for name in super::MEMORY_SKILL_NAMES {
@@ -15607,7 +15682,11 @@ mod tests {
         );
         assert_eq!(report.inventory.status, SkillBundleStatus::Warn);
 
+        restore_env_var("XDG_CONFIG_HOME", old_config);
+        restore_env_var("XDG_STATE_HOME", old_state);
+        restore_env_var("XDG_CACHE_HOME", old_cache);
         let _ = fs::remove_dir_all(repo);
+        let _ = fs::remove_dir_all(xdg_root);
     }
 
     #[test]
