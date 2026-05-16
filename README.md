@@ -46,6 +46,7 @@ Read the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md), the
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Agent Install Prompt](#agent-install-prompt)
 - [Quick Start (Developers)](#quick-start-developers)
 - [Feature Tour](#feature-tour)
 - [Documentation](#documentation)
@@ -53,6 +54,8 @@ Read the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md), the
 - [License](#license)
 
 ## Quick Start
+
+Prefer an agent to do the install? [Jump to install with coding agent](#agent-install-prompt).
 
 The fastest path is:
 
