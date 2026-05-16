@@ -5,6 +5,7 @@ This page is a short architecture overview for developers. For the detailed runt
 ## Table of Contents
 
 - [Overview](#overview)
+- [Architecture Diagram](#architecture-diagram)
 - [Main Components](#main-components)
 - [High-Level Flows](#high-level-flows)
 - [Design Principles](#design-principles)
@@ -33,6 +34,61 @@ The architecture is split into five parts:
 3. a backend service for storage and retrieval
 4. PostgreSQL for durable data
 5. an optional watcher manager and watcher processes for background capture
+
+## Architecture Diagram
+
+This diagram shows the main runtime boundaries. For deeper write and query pipeline diagrams, see [How Memory Layer Works](how-it-works.md).
+
+```mermaid
+flowchart LR
+    subgraph ProjectRepo["Project repository"]
+        Skills["Repo-local skills<br/>.agents/skills"]
+        ProjectConfig["Project marker and config<br/>.mem/project.toml<br/>.agents/memory-layer.toml"]
+        CLI["memory CLI"]
+        TUI["Terminal UI"]
+        WebUI["Browser UI"]
+    end
+
+    subgraph Automation["Background automation"]
+        Manager["Watcher manager"]
+        Watchers["Agent-linked watchers"]
+    end
+
+    subgraph ServiceHost["Local Memory Layer runtime"]
+        Service["mem-service<br/>HTTP, WebSocket, Cap'n Proto"]
+        Search["mem-search<br/>lexical, semantic, graph, rerank"]
+        Curate["mem-curate and mem-ingest<br/>capture, normalize, curate"]
+    end
+
+    subgraph Storage["Durable storage"]
+        Postgres["PostgreSQL and pgvector"]
+        Memories["canonical memories<br/>sources, tags, relations, chunks"]
+        RawCaptures["raw captures<br/>sessions and tasks"]
+    end
+
+    subgraph External["Optional external providers"]
+        LLM["LLM provider<br/>answer and scan support"]
+        Embeddings["Embedding provider<br/>OpenAI, Voyage, Ollama, etc."]
+    end
+
+    Skills --> CLI
+    ProjectConfig --> CLI
+    CLI --> Service
+    TUI <--> Service
+    WebUI <--> Service
+    Manager --> Watchers
+    Watchers --> CLI
+    Watchers --> Service
+    Service --> Search
+    Service --> Curate
+    Search --> Postgres
+    Curate --> Postgres
+    Postgres --> RawCaptures
+    Postgres --> Memories
+    Search --> LLM
+    Search --> Embeddings
+    Curate --> LLM
+```
 
 ## Main Components
 
