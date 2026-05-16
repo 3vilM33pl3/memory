@@ -28,6 +28,7 @@ For the full isolation contract, default ports, override flags, and troubleshoot
 
 - [Dev Stack vs Installed Stack](dev-stack.md)
 - [Architecture Overview](architecture/overview.md)
+- [Built-In MCP Server](architecture/mcp-server.md)
 - [Memory Types Reference](architecture/memory-types.md)
 - [How Memory Layer Works](architecture/how-it-works.md)
 - [Embeddings and Search](architecture/embeddings-and-search.md)

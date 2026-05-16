@@ -236,6 +236,20 @@ Examples:
 See also:
   docs/user/cli/service.md";
 
+const MCP_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Use mcp run from stdio MCP clients. It writes only MCP JSON-RPC frames to stdout.
+  Use mcp status for a read-only check of service reachability and exposed MCP surface.
+  HTTP MCP is mounted by memory service when [mcp].enabled and [mcp].http_enabled are true.
+
+Examples:
+  memory mcp run --project memory
+  memory mcp status --project memory
+  memory mcp status --project memory --json
+
+See also:
+  docs/user/cli/mcp.md";
+
 const EVAL_GROUP_AFTER_HELP: &str = "\
 Agent notes:
   Use eval commands to produce reproducible evidence that memory changes retrieval, grounding, cost, or task success.
@@ -1017,6 +1031,8 @@ enum Command {
     Upgrade(UpgradeArgs),
     #[command(about = "Manage the Memory Layer backend service.", after_help = SERVICE_GROUP_AFTER_HELP)]
     Service(ServiceArgs),
+    #[command(about = "Run and inspect the built-in Memory MCP server.", after_help = MCP_GROUP_AFTER_HELP)]
+    Mcp(McpArgs),
     #[command(about = "Manage project watchers and watcher daemons.", after_help = WATCHER_GROUP_AFTER_HELP)]
     Watcher(WatcherArgs),
     #[command(about = "Inspect configuration and environment health.", after_help = DOCTOR_AFTER_HELP)]
@@ -1224,6 +1240,41 @@ struct ServiceEnsureApiTokenArgs {
     #[arg(long)]
     dry_run: bool,
     /// Emit the result as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Run and inspect the built-in Memory MCP server.",
+    after_help = MCP_GROUP_AFTER_HELP
+)]
+struct McpArgs {
+    #[command(subcommand)]
+    command: McpCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum McpCommand {
+    #[command(about = "Run a stdio MCP server for local clients.", after_help = MCP_GROUP_AFTER_HELP)]
+    Run(McpRunArgs),
+    #[command(about = "Check service reachability and exposed MCP surface.", after_help = MCP_GROUP_AFTER_HELP)]
+    Status(McpStatusArgs),
+}
+
+#[derive(Debug, Args)]
+struct McpRunArgs {
+    /// Default project slug for stdio tool calls that omit the project argument.
+    #[arg(long)]
+    project: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct McpStatusArgs {
+    /// Project slug to verify; defaults to the current repo when available.
+    #[arg(long)]
+    project: Option<String>,
+    /// Emit the status report as JSON.
     #[arg(long)]
     json: bool,
 }
@@ -2405,6 +2456,25 @@ async fn main() -> Result<()> {
             command: ServiceCommand::Run,
         }) => unreachable!("service run is handled before config loading"),
         Command::Service(_) => unreachable!("service management is handled before config loading"),
+        Command::Mcp(args) => match args.command {
+            McpCommand::Run(args) => {
+                let cwd = env::current_dir().context("read current directory")?;
+                mem_mcp::run_stdio(config, args.project, &cwd).await?;
+            }
+            McpCommand::Status(args) => {
+                let cwd = env::current_dir().context("read current directory")?;
+                let project = match args.project {
+                    Some(project) => Some(project),
+                    None => resolve_project_slug(None, &cwd).ok(),
+                };
+                let report = mem_mcp::status_report(config, project).await;
+                if args.json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("{}", mem_mcp::format_status_text(&report));
+                }
+            }
+        },
         Command::Watcher(WatcherArgs {
             command:
                 WatcherCommand::Enable(_) | WatcherCommand::Disable(_) | WatcherCommand::Status(_),
@@ -13848,6 +13918,7 @@ mod tests {
             "init" => Some("init.md"),
             "upgrade" => Some("upgrade.md"),
             "service" => Some("service.md"),
+            "mcp" => Some("mcp.md"),
             "doctor" => Some("doctor.md"),
             "commits" => Some("commits.md"),
             "repo" => Some("repo.md"),
@@ -15533,6 +15604,7 @@ mod tests {
                 api_token: "ml_testtoken".to_string(),
                 request_timeout: Duration::from_secs(30),
             },
+            mcp: mem_api::McpConfig::default(),
             database: mem_api::DatabaseConfig {
                 url: "postgresql://memory:test@localhost:5432/memory".to_string(),
             },

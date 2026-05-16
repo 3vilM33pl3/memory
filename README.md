@@ -37,6 +37,7 @@ Read the [Beginner Guide To Evaluations](docs/user/evaluation-guide.md), the
 - **Multi-embedding search:** keep OpenAI, Voyage, Cohere, Gemini, or local OpenAI-compatible embedding spaces side by side, then switch the active retrieval backend without recomputing.
 - **Distributed agents:** monitor Codex and Claude sessions across projects, including token pressure, context usage, rate limits, process details, and open ports.
 - **Agent-linked watchers:** background watchers attach to agent sessions, identify the project automatically, heartbeat to the service, and stop when the owning agent exits.
+- **Built-in MCP server:** expose read-only project memory tools to Codex, Claude, and other MCP clients over stdio or local Streamable HTTP.
 - **Get up to speed:** persisted activity events, recent memory changes, commits, warnings, and token summaries become a briefing for new or returning agents.
 - **Repeatable evaluation:** run paired no-memory vs full-memory ablations with artifacted results, gates, token accounting, and concrete retrieval-quality metrics.
 - **Human review loop:** curation can queue replacement proposals so important memory changes can be approved before older knowledge is superseded.
@@ -368,6 +369,7 @@ Project-local customization now has two layers:
 - **Use the visual workflow:** [TUI Guide](docs/user/tui/README.md), [TUI Command](docs/user/cli/tui.md), [Memories Tab](docs/user/tui/memories.md), [Query Tab](docs/user/tui/query.md), [Errors Tab](docs/user/tui/errors.md)
 - **Ask and explain:** [Query Command](docs/user/cli/query.md), [Code Graph Extraction](docs/user/cli/graph.md), [Embedding Operations](docs/user/cli/embeddings.md)
 - **Run agents and automation:** [Watcher Health](docs/user/cli/watchers.md), [Activities](docs/user/cli/activities.md), [Get Up To Speed](docs/user/cli/up-to-speed.md), [Resume Briefings](docs/user/cli/resume.md)
+- **Integrate MCP clients:** [MCP Server](docs/user/cli/mcp.md)
 - **Operate and troubleshoot:** [Service Commands](docs/user/cli/service.md), [Health](docs/user/cli/health.md), [Stats](docs/user/cli/stats.md), [Doctor Diagnostics](docs/user/cli/doctor.md), [Shell Completion](docs/user/cli/completion.md)
 - **Maintain memories:** [Remember](docs/user/cli/remember.md), [Curate](docs/user/cli/curate.md), [History](docs/user/cli/history.md), [Prune History](docs/user/cli/prune-history.md), [Archive](docs/user/cli/archive.md), [Bundles](docs/user/cli/bundles.md)
 - **Measure and develop:** [Beginner Evaluation Guide](docs/user/evaluation-guide.md), [Automated Evaluation](docs/user/cli/eval.md), [Dev Stack](docs/developer/dev-stack.md), [Dev Command](docs/user/cli/dev.md)

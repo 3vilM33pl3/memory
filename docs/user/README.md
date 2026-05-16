@@ -19,7 +19,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - **Install and configure:** [Getting Started](getting-started.md), [Wizard And Bootstrap](cli/wizard.md), [Init Bootstrap](cli/init.md), [Skill Upgrade](cli/upgrade.md)
 - **Use the visual UIs:** [TUI Guide](tui/README.md), [Browser UI](web-ui.md), [TUI Command](cli/tui.md), [Memories Tab](tui/memories.md), [Query Tab](tui/query.md), [Errors Tab](tui/errors.md)
 - **Ask useful questions:** [Query Command](cli/query.md), [Code Graph Extraction](cli/graph.md), [Embedding Operations](cli/embeddings.md)
-- **Operate agents:** [Agents Tab](tui/agents.md), [Watcher Health](cli/watchers.md), [Activity Tab](tui/activity.md), [Get Up To Speed](cli/up-to-speed.md)
+- **Operate agents:** [Agents Tab](tui/agents.md), [Watcher Health](cli/watchers.md), [Activity Tab](tui/activity.md), [Get Up To Speed](cli/up-to-speed.md), [MCP Server](cli/mcp.md)
 - **Measure impact:** [Beginner Guide To Evaluations](evaluation-guide.md), [Automated Evaluation](cli/eval.md)
 - **Troubleshoot:** [Doctor Diagnostics](cli/doctor.md), [Health](cli/health.md), [Stats](cli/stats.md), [Errors Tab](tui/errors.md)
 

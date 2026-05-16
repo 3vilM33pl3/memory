@@ -73,6 +73,8 @@ The repository is a Rust workspace with these crates:
   The user-facing CLI, TUI, wizard, doctor, scan flow, and repo bootstrap logic.
 - `crates/mem-service`
   The backend service. It owns HTTP routes, the Cap'n Proto streaming transport, migrations on startup, and orchestration of capture/query/curate operations.
+- `crates/mem-mcp`
+  The read-only MCP adapter. It exposes tools, resource templates, prompts, stdio transport, and the service-mounted Streamable HTTP transport while reusing the existing service HTTP API.
 - `crates/mem-ingest`
   Normalization of captured task payloads into candidate facts.
 - `crates/mem-curate`
