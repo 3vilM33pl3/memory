@@ -23,4 +23,23 @@ cp "$integration_dir/configs/agent_conf/MemoryLayer_memory-gpt-4o-mini.yaml" \
 cp "$integration_dir/overlays/memory_layer_adapter.py" "$checkout/memory_layer_adapter.py"
 python3 "$integration_dir/overlays/patch_memory_agent_bench.py" "$checkout"
 
+mkdir -p "$checkout/processed_data/Recsys_Redial"
+python3 - "$checkout/processed_data/Recsys_Redial/entity2id.json" <<'PY'
+import shutil
+import sys
+from pathlib import Path
+
+from huggingface_hub import hf_hub_download
+
+target = Path(sys.argv[1])
+downloaded = Path(
+    hf_hub_download(
+        repo_id="ai-hyz/MemoryAgentBench",
+        repo_type="dataset",
+        filename="entity2id.json",
+    )
+)
+shutil.copyfile(downloaded, target)
+PY
+
 printf '%s\n' "$checkout"

@@ -10,6 +10,7 @@ import json
 import os
 import re
 import hashlib
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -44,14 +45,19 @@ def _json_request(method: str, url: str, payload: dict[str, Any], token: str | N
     if origin:
         headers["origin"] = origin
     request = urllib.request.Request(url, data=body, method=method, headers=headers)
+    timeout = float(os.environ.get("MEMORY_AGENT_BENCH_HTTP_TIMEOUT", "600"))
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             data = response.read().decode("utf-8")
     except urllib.error.HTTPError as error:
         details = error.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Memory API request failed: {method} {url}: {error.code} {details}") from error
     except urllib.error.URLError as error:
         raise RuntimeError(f"Memory API request failed: {method} {url}: {error}") from error
+    except (TimeoutError, socket.timeout) as error:
+        raise RuntimeError(
+            f"Memory API request timed out after {timeout:.0f}s: {method} {url}"
+        ) from error
     return json.loads(data) if data else {}
 
 
