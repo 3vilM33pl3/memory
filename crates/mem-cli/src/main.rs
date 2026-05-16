@@ -4987,13 +4987,7 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
         }
     }
     if !env_path.exists() && legacy_env_path.exists() {
-        fs::copy(&legacy_env_path, &env_path).with_context(|| {
-            format!(
-                "copy {} to {}",
-                legacy_env_path.display(),
-                env_path.display()
-            )
-        })?;
+        migrate_legacy_env_or_create_token(&legacy_env_path, &env_path)?;
     }
     if !home_project_path.exists() {
         fs::write(
@@ -5026,6 +5020,25 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
     }
     ensure_claude_md_memory_section(repo_root, project)?;
     Ok(())
+}
+
+fn migrate_legacy_env_or_create_token(legacy_env_path: &Path, env_path: &Path) -> Result<()> {
+    match fs::copy(legacy_env_path, env_path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            ensure_shared_service_api_token(env_path, None, true).with_context(|| {
+                format!("create replacement service token in {}", env_path.display())
+            })?;
+            Ok(())
+        }
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "copy {} to {}",
+                legacy_env_path.display(),
+                env_path.display()
+            )
+        }),
+    }
 }
 
 fn root_gitignore_contains_mem(repo_root: &Path) -> Result<bool> {
@@ -5296,13 +5309,7 @@ fn initialize_repo(
             }
         }
         if !force && !env_path.exists() && legacy_env_path.exists() {
-            fs::copy(&legacy_env_path, &env_path).with_context(|| {
-                format!(
-                    "copy {} to {}",
-                    legacy_env_path.display(),
-                    env_path.display()
-                )
-            })?;
+            migrate_legacy_env_or_create_token(&legacy_env_path, &env_path)?;
         }
         if force || !home_project_path.exists() {
             fs::write(&home_project_path, &project_contents)
