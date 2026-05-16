@@ -40,6 +40,9 @@ def _json_request(method: str, url: str, payload: dict[str, Any], token: str | N
     if token:
         headers["authorization"] = f"Bearer {token}"
         headers["x-api-token"] = token
+    origin = os.environ.get("MEMORY_AGENT_BENCH_ORIGIN")
+    if origin:
+        headers["origin"] = origin
     request = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
@@ -72,17 +75,17 @@ class MemoryLayerAdapter:
         self.agent_config = agent_config
         self.dataset_config = dataset_config
         self.service_url = (
-            agent_config.get("memory_service_url")
-            or os.environ.get("MEMORY_AGENT_BENCH_MEMORY_URL")
+            os.environ.get("MEMORY_AGENT_BENCH_MEMORY_URL")
+            or agent_config.get("memory_service_url")
             or "http://127.0.0.1:4040"
         ).rstrip("/")
         self.api_token = (
-            agent_config.get("memory_api_token")
-            or _env_first(
+            _env_first(
                 "MEMORY_AGENT_BENCH_MEMORY_API_TOKEN",
                 "MEMORY_LAYER_API_TOKEN",
                 "MEMORY_SERVICE_API_TOKEN",
             )
+            or agent_config.get("memory_api_token")
         )
         self.retrieve_num = int(agent_config.get("retrieve_num", 8))
         self.chunk_index = 0
@@ -90,8 +93,10 @@ class MemoryLayerAdapter:
         self.project = self._project_slug()
 
     def _project_slug(self) -> str:
-        prefix = self.agent_config.get("memory_project_prefix") or os.environ.get(
-            "MEMORY_AGENT_BENCH_PROJECT_PREFIX", "mab"
+        prefix = (
+            os.environ.get("MEMORY_AGENT_BENCH_PROJECT_PREFIX")
+            or self.agent_config.get("memory_project_prefix")
+            or "mab"
         )
         save_path = Path(getattr(self.wrapper, "agent_save_to_folder", "memory-layer"))
         context_id = save_path.name if save_path.name else "context"

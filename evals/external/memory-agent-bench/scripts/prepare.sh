@@ -12,8 +12,8 @@ if [ ! -d "$checkout/.git" ]; then
   git clone "$repo_url" "$checkout"
 fi
 
-git -C "$checkout" fetch --depth 1 origin "$commit"
-git -C "$checkout" checkout --detach "$commit"
+git -C "$checkout" fetch --depth 1 origin "$commit" >&2
+git -C "$checkout" checkout --detach "$commit" >&2
 git -C "$checkout" reset --hard "$commit" >/dev/null
 
 mkdir -p "$checkout/configs/agent_conf/MemoryLayer"

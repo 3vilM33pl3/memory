@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import threading
 import unittest
@@ -81,6 +82,13 @@ class MemoryLayerAdapterTest(unittest.TestCase):
         self.server.shutdown()
         self.thread.join(timeout=2)
         self.server.server_close()
+        for name in (
+            "MEMORY_AGENT_BENCH_MEMORY_URL",
+            "MEMORY_AGENT_BENCH_MEMORY_API_TOKEN",
+            "MEMORY_AGENT_BENCH_PROJECT_PREFIX",
+            "MEMORY_AGENT_BENCH_ORIGIN",
+        ):
+            os.environ.pop(name, None)
 
     def test_memorize_captures_and_curates_structured_reference_memory(self):
         with TemporaryDirectory() as tmp:
@@ -134,6 +142,35 @@ class MemoryLayerAdapterTest(unittest.TestCase):
         self.assertEqual(FakeMemoryHandler.requests[-1][0], "/v1/query")
         self.assertEqual(FakeMemoryHandler.requests[-1][1]["answer_mode"], "llm")
         self.assertEqual(FakeMemoryHandler.requests[-1][1]["retrieval_mode"], "full-memory")
+
+    def test_environment_overrides_config_and_can_send_local_origin(self):
+        os.environ["MEMORY_AGENT_BENCH_MEMORY_URL"] = self.service_url
+        os.environ["MEMORY_AGENT_BENCH_MEMORY_API_TOKEN"] = "env-secret"
+        os.environ["MEMORY_AGENT_BENCH_PROJECT_PREFIX"] = "env-pilot"
+        os.environ["MEMORY_AGENT_BENCH_ORIGIN"] = "http://127.0.0.1:4250"
+        with TemporaryDirectory() as tmp:
+            adapter = MemoryLayerAdapter(
+                FakeWrapper(str(Path(tmp) / "exp_2")),
+                {
+                    "agent_name": "memory_layer",
+                    "retrieve_num": 3,
+                    "memory_service_url": "http://127.0.0.1:9",
+                    "memory_api_token": "config-secret",
+                    "memory_project_prefix": "config-pilot",
+                },
+                {
+                    "dataset": "Conflict_Resolution",
+                    "sub_dataset": "factconsolidation_sh_6k",
+                    "context_max_length": 1000,
+                },
+            )
+            adapter.send_message("goaltender is associated with ice hockey.", memorizing=True)
+
+        capture = FakeMemoryHandler.requests[0][1]
+        headers = {key.lower(): value for key, value in FakeMemoryHandler.requests[0][2].items()}
+        self.assertEqual(capture["project"], "env-pilot-conflict_resolution-factconsolidation_sh_6k-exp_2")
+        self.assertEqual(headers["authorization"], "Bearer env-secret")
+        self.assertEqual(headers["origin"], "http://127.0.0.1:4250")
 
 
 if __name__ == "__main__":

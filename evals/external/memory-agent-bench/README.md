@@ -17,7 +17,8 @@ and applies a small local patch to `agent.py`.
   `/v1/capture/task`, then curates the raw capture through `/v1/curate`.
 - Querying uses `/v1/query` with `retrieval_mode = "full-memory"` and
   `answer_mode = "llm"`.
-- The first pilot targets Accurate Retrieval with a default cap of four queries.
+- The default pilot targets a short Conflict Resolution slice with a default cap
+  of four queries.
 
 ## Prerequisites
 
@@ -30,6 +31,12 @@ Set the service token:
 export MEMORY_AGENT_BENCH_MEMORY_API_TOKEN="<service api token>"
 ```
 
+For a trusted local dev service, you can instead use local-origin auth:
+
+```bash
+export MEMORY_AGENT_BENCH_ORIGIN="http://127.0.0.1:4250"
+```
+
 Optionally override:
 
 ```bash
@@ -38,8 +45,9 @@ export MEMORY_AGENT_BENCH_PROJECT_PREFIX="mab"
 export MEMORY_AGENT_BENCH_MAX_QUERIES=4
 ```
 
-Memory query answer synthesis must be configured because the adapter requests
-`answer_mode = "llm"`.
+Memory query answer synthesis is recommended for meaningful answer-quality
+results because the adapter requests `answer_mode = "llm"`. If synthesis is not
+available, the service may return a deterministic fallback answer.
 
 ## Run
 
@@ -58,7 +66,7 @@ evals/external/memory-agent-bench/scripts/run-pilot.sh
 The default dataset config is:
 
 ```text
-configs/data_conf/Accurate_Retrieval/LongMemEval/Longmemeval_s.yaml
+configs/data_conf/Conflict_Resolution/Factconsolidation_sh_6k.yaml
 ```
 
 Artifacts are written by MemoryAgentBench under its external checkout, normally

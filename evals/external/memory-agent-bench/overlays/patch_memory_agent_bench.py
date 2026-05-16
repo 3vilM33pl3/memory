@@ -52,6 +52,20 @@ LOAD_REPLACEMENT = """        if self._is_agent_type("memory_layer"):
             return None
 """
 
+TEMPLATE_AGENT_NEEDLE = """AGENT_TYPE_MAPPING = {
+    'rag': 'rag_agent',
+    'Long_context_agent': 'long_context_agent', 
+    'Agentic_memory': 'agentic_memory_agent'
+}
+"""
+TEMPLATE_AGENT_REPLACEMENT = """AGENT_TYPE_MAPPING = {
+    'rag': 'rag_agent',
+    'Long_context_agent': 'long_context_agent', 
+    'Agentic_memory': 'agentic_memory_agent',
+    'memory_layer': 'agentic_memory_agent'
+}
+"""
+
 
 def replace_once(text: str, needle: str, replacement: str) -> str:
     if replacement in text:
@@ -72,11 +86,18 @@ def patch_agent(path: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def patch_templates(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    text = replace_once(text, TEMPLATE_AGENT_NEEDLE, TEMPLATE_AGENT_REPLACEMENT)
+    path.write_text(text, encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("checkout", type=Path)
     args = parser.parse_args()
     patch_agent(args.checkout / "agent.py")
+    patch_templates(args.checkout / "utils" / "templates.py")
 
 
 if __name__ == "__main__":
