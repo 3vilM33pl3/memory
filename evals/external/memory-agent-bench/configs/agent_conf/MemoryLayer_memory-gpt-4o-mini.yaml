@@ -1,0 +1,12 @@
+agent_name: memory_layer
+model: gpt-4o-mini
+temperature: 0.0
+input_length_limit: 10000000
+buffer_length: 200
+output_dir: ./outputs/memory-layer
+retrieve_num: 8
+
+# Runtime defaults. Environment variables can override these without editing
+# this checked-in config.
+memory_service_url: http://127.0.0.1:4040
+memory_project_prefix: mab
