@@ -41,14 +41,16 @@ use mem_api::{
     ProjectMemoriesResponse, ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation,
     ProjectMemoryBundleManifest, ProjectMemoryBundlePreview, ProjectMemoryBundleSource,
     ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
-    ProjectMemoryListItem, ProjectOverviewResponse, PruneEmbeddingsRequest,
-    PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse, QueryAnswerCitation,
-    QueryAnswerGeneration, QueryAnswerMethod, QueryAnswerMode, QueryGraphConnection, QueryRequest,
-    QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
-    RelatedMemorySummary, ReplacementPolicy, ReplacementPolicyRequest, ReplacementPolicyResponse,
+    ProjectMemoryListItem, ProjectOverviewResponse, ProvenanceVerificationRequest,
+    ProvenanceVerificationResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse,
+    PruneHistoryRequest, PruneHistoryResponse, QueryAnswerCitation, QueryAnswerGeneration,
+    QueryAnswerMethod, QueryAnswerMode, QueryGraphConnection, QueryRequest, QueryResponse,
+    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
+    ReplacementPolicy, ReplacementPolicyRequest, ReplacementPolicyResponse,
     ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
     ResumeCheckpoint, ResumeRequest, ResumeResponse, ScanActivityRequest,
-    SetEmbeddingCreationRequest, SetLlmAuditRequest, SourceKind, StatsResponse, StreamRequest,
+    SetEmbeddingCreationRequest, SetLlmAuditRequest, SourceKind, SourceProvenanceRecord,
+    SourceProvenanceStatus, SourceProvenanceVerification, StatsResponse, StreamRequest,
     StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse,
     ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
     WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
@@ -451,6 +453,7 @@ fn build_http_app(state: AppState) -> Router {
         .route("/v1/commits/sync", post(sync_commits))
         .route("/v1/capture/task", post(capture_task))
         .route("/v1/curate", post(curate_memory))
+        .route("/v1/provenance/verify", post(verify_provenance))
         .route("/v1/reindex", post(reindex))
         .route("/v1/reembed", post(reembed))
         .route("/v1/prune-embeddings", post(prune_embeddings))
@@ -1488,10 +1491,15 @@ async fn fetch_memory_entry(
 
     let sources = sqlx::query(
         r#"
-        SELECT id, task_id, file_path, git_commit, source_kind, excerpt
-        FROM memory_sources
-        WHERE memory_entry_id = $1
-        ORDER BY created_at ASC
+        SELECT ms.id, ms.task_id, ms.file_path, ms.git_commit, ms.source_kind, ms.excerpt,
+               v.status AS provenance_status,
+               v.checked_at AS provenance_checked_at,
+               v.reason AS provenance_reason,
+               v.resolved_path AS provenance_resolved_path
+        FROM memory_sources ms
+        LEFT JOIN memory_source_verifications v ON v.source_id = ms.id
+        WHERE ms.memory_entry_id = $1
+        ORDER BY ms.created_at ASC
         "#,
     )
     .bind(id)
@@ -1506,6 +1514,7 @@ async fn fetch_memory_entry(
             git_commit: row.try_get("git_commit")?,
             source_kind: parse_source_kind(&row.try_get::<String, _>("source_kind")?),
             excerpt: row.try_get("excerpt")?,
+            provenance: source_provenance_from_row(&row)?,
         })
     })
     .collect::<Result<Vec<_>, sqlx::Error>>()?;
@@ -1559,6 +1568,30 @@ async fn fetch_memory_entry(
         version_no: row.try_get("version_no")?,
         is_tombstone: row.try_get("is_tombstone")?,
     }))
+}
+
+fn source_provenance_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<Option<SourceProvenanceRecord>, sqlx::Error> {
+    let Some(status) = row.try_get::<Option<String>, _>("provenance_status")? else {
+        return Ok(None);
+    };
+    Ok(Some(SourceProvenanceRecord {
+        status: parse_source_provenance_status(&status),
+        checked_at: row.try_get("provenance_checked_at")?,
+        reason: row.try_get("provenance_reason")?,
+        resolved_path: row.try_get("provenance_resolved_path")?,
+    }))
+}
+
+fn parse_source_provenance_status(value: &str) -> SourceProvenanceStatus {
+    match value {
+        "verified" => SourceProvenanceStatus::Verified,
+        "missing_file" => SourceProvenanceStatus::MissingFile,
+        "missing_symbol" => SourceProvenanceStatus::MissingSymbol,
+        "stale" => SourceProvenanceStatus::Stale,
+        _ => SourceProvenanceStatus::Unverifiable,
+    }
 }
 
 async fn fetch_memory_embedding_spaces(
@@ -3206,6 +3239,267 @@ async fn curate_memory(
         );
     }
     Ok(Json(response))
+}
+
+async fn verify_provenance(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ProvenanceVerificationRequest>,
+) -> Result<Json<ProvenanceVerificationResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/provenance/verify", &request, true).await?,
+        ));
+    }
+    verify_project_provenance(state.pool()?, &request)
+        .await
+        .map(Json)
+        .map_err(ApiError::sql)
+}
+
+async fn verify_project_provenance(
+    pool: &PgPool,
+    request: &ProvenanceVerificationRequest,
+) -> Result<ProvenanceVerificationResponse, sqlx::Error> {
+    let project_row = sqlx::query("SELECT id, root_path FROM projects WHERE slug = $1")
+        .bind(&request.project)
+        .fetch_optional(pool)
+        .await?;
+    let Some(project_row) = project_row else {
+        return Ok(ProvenanceVerificationResponse {
+            project: request.project.clone(),
+            repo_root: request.repo_root.clone().unwrap_or_default(),
+            dry_run: request.dry_run,
+            checked_at: chrono::Utc::now(),
+            checked_count: 0,
+            verified_count: 0,
+            missing_file_count: 0,
+            missing_symbol_count: 0,
+            unverifiable_count: 0,
+            stale_count: 0,
+            stored_count: 0,
+            warnings: vec![DiagnosticInfo {
+                code: "project_not_found".to_string(),
+                source: "memory".to_string(),
+                component: "service".to_string(),
+                operation: "verify_provenance".to_string(),
+                severity: DiagnosticSeverity::Warning,
+                message: format!("Project `{}` was not found.", request.project),
+                raw_error: None,
+                explanation: None,
+                fix_hint: Some(
+                    "Create or initialize the project before verifying provenance.".to_string(),
+                ),
+                doctor_hint: None,
+                command_hint: Some(format!("memory init --project {}", request.project)),
+            }],
+            items: Vec::new(),
+        });
+    };
+    let project_id: Uuid = project_row.try_get("id")?;
+    let repo_root = request
+        .repo_root
+        .clone()
+        .unwrap_or_else(|| project_row.try_get("root_path").unwrap_or_default());
+    let checked_at = chrono::Utc::now();
+    let rows = sqlx::query(
+        r#"
+        SELECT ms.id AS source_id, m.id AS memory_id, m.summary, ms.file_path, ms.source_kind
+        FROM memory_sources ms
+        JOIN memory_entries m ON m.id = ms.memory_entry_id
+        WHERE m.project_id = $1
+          AND m.status = 'active'
+          AND COALESCE(m.is_tombstone, false) = false
+        ORDER BY m.updated_at DESC, ms.created_at ASC
+        "#,
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        let source_id: Uuid = row.try_get("source_id")?;
+        let memory_id: Uuid = row.try_get("memory_id")?;
+        let memory_summary: String = row.try_get("summary")?;
+        let file_path: Option<String> = row.try_get("file_path")?;
+        let source_kind = parse_source_kind(&row.try_get::<String, _>("source_kind")?);
+        let verification = verify_source_path(
+            source_id,
+            memory_id,
+            memory_summary,
+            source_kind,
+            file_path,
+            &repo_root,
+        );
+        items.push(verification);
+    }
+
+    let mut stored_count = 0;
+    if !request.dry_run {
+        for item in &items {
+            sqlx::query(
+                r#"
+                INSERT INTO memory_source_verifications
+                    (source_id, status, checked_at, reason, resolved_path)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (source_id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    checked_at = EXCLUDED.checked_at,
+                    reason = EXCLUDED.reason,
+                    resolved_path = EXCLUDED.resolved_path
+                "#,
+            )
+            .bind(item.source_id)
+            .bind(item.status.as_str())
+            .bind(checked_at)
+            .bind(&item.reason)
+            .bind(&item.resolved_path)
+            .execute(pool)
+            .await?;
+            stored_count += 1;
+        }
+    }
+
+    let verified_count = items
+        .iter()
+        .filter(|item| item.status == SourceProvenanceStatus::Verified)
+        .count();
+    let missing_file_count = items
+        .iter()
+        .filter(|item| item.status == SourceProvenanceStatus::MissingFile)
+        .count();
+    let missing_symbol_count = items
+        .iter()
+        .filter(|item| item.status == SourceProvenanceStatus::MissingSymbol)
+        .count();
+    let unverifiable_count = items
+        .iter()
+        .filter(|item| item.status == SourceProvenanceStatus::Unverifiable)
+        .count();
+    let stale_count = items
+        .iter()
+        .filter(|item| item.status == SourceProvenanceStatus::Stale)
+        .count();
+    let warnings = items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.status,
+                SourceProvenanceStatus::MissingFile
+                    | SourceProvenanceStatus::MissingSymbol
+                    | SourceProvenanceStatus::Stale
+            )
+        })
+        .map(|item| DiagnosticInfo {
+            code: "stale_memory_provenance".to_string(),
+            source: "memory".to_string(),
+            component: "service".to_string(),
+            operation: "verify_provenance".to_string(),
+            severity: DiagnosticSeverity::Warning,
+            message: format!(
+                "Memory {} cites {} with provenance status {}",
+                item.memory_id,
+                item.file_path.as_deref().unwrap_or("<unknown source path>"),
+                item.status.as_str()
+            ),
+            raw_error: None,
+            explanation: item.reason.clone(),
+            fix_hint: Some("Review the cited path and update or replace the memory.".to_string()),
+            doctor_hint: None,
+            command_hint: Some(format!(
+                "memory verify-provenance --project {} --repo-root {}",
+                request.project, repo_root
+            )),
+        })
+        .collect();
+
+    Ok(ProvenanceVerificationResponse {
+        project: request.project.clone(),
+        repo_root,
+        dry_run: request.dry_run,
+        checked_at,
+        checked_count: items.len(),
+        verified_count,
+        missing_file_count,
+        missing_symbol_count,
+        unverifiable_count,
+        stale_count,
+        stored_count,
+        warnings,
+        items,
+    })
+}
+
+fn verify_source_path(
+    source_id: Uuid,
+    memory_id: Uuid,
+    memory_summary: String,
+    source_kind: SourceKind,
+    file_path: Option<String>,
+    repo_root: &str,
+) -> SourceProvenanceVerification {
+    let mut resolved_path = None;
+    let (status, reason) = match (&source_kind, file_path.as_deref()) {
+        (SourceKind::File, Some(path)) if !path.trim().is_empty() => {
+            let source_path = FsPath::new(path);
+            if !source_path.is_absolute() && repo_root.trim().is_empty() {
+                return SourceProvenanceVerification {
+                    source_id,
+                    memory_id,
+                    memory_summary,
+                    source_kind,
+                    file_path,
+                    status: SourceProvenanceStatus::Unverifiable,
+                    reason: Some(
+                        "relative file source cannot be verified without a repo root".to_string(),
+                    ),
+                    resolved_path: None,
+                };
+            }
+            let resolved = if source_path.is_absolute() {
+                source_path.to_path_buf()
+            } else {
+                FsPath::new(repo_root).join(source_path)
+            };
+            resolved_path = Some(resolved.display().to_string());
+            if resolved.exists() {
+                (
+                    SourceProvenanceStatus::Verified,
+                    Some("file exists".to_string()),
+                )
+            } else {
+                (
+                    SourceProvenanceStatus::MissingFile,
+                    Some("file source no longer exists at the resolved path".to_string()),
+                )
+            }
+        }
+        (SourceKind::File, _) => (
+            SourceProvenanceStatus::Unverifiable,
+            Some("file source has no file_path".to_string()),
+        ),
+        _ => (
+            SourceProvenanceStatus::Unverifiable,
+            Some(format!(
+                "{} sources do not reference a file path",
+                source_kind_name(&source_kind)
+            )),
+        ),
+    };
+
+    SourceProvenanceVerification {
+        source_id,
+        memory_id,
+        memory_summary,
+        source_kind,
+        file_path,
+        status,
+        reason,
+        resolved_path,
+    }
 }
 
 async fn reindex(
@@ -7894,6 +8188,91 @@ mod tests {
         assert!(truncated);
         assert_eq!(content, "abc\n[truncated]");
         assert_eq!(content.chars().count(), 15);
+    }
+
+    #[test]
+    fn verify_source_path_classifies_existing_and_missing_files() {
+        let root = std::env::temp_dir().join(format!("memory-provenance-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("src")).expect("create temp repo");
+        fs::write(root.join("src/lib.rs"), "pub fn marker() {}\n").expect("write source file");
+
+        let existing = verify_source_path(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "Existing source".to_string(),
+            SourceKind::File,
+            Some("src/lib.rs".to_string()),
+            root.to_str().expect("temp path utf8"),
+        );
+        assert_eq!(existing.status, SourceProvenanceStatus::Verified);
+        assert_eq!(
+            existing.resolved_path.as_deref(),
+            Some(
+                root.join("src/lib.rs")
+                    .to_str()
+                    .expect("resolved path utf8")
+            )
+        );
+
+        let missing = verify_source_path(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "Missing source".to_string(),
+            SourceKind::File,
+            Some("src/missing.rs".to_string()),
+            root.to_str().expect("temp path utf8"),
+        );
+        assert_eq!(missing.status, SourceProvenanceStatus::MissingFile);
+        assert!(
+            missing
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("no longer exists"))
+        );
+
+        fs::remove_dir_all(root).expect("cleanup temp repo");
+    }
+
+    #[test]
+    fn verify_source_path_marks_non_file_sources_unverifiable() {
+        let verification = verify_source_path(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "Note source".to_string(),
+            SourceKind::Note,
+            None,
+            "/repo",
+        );
+
+        assert_eq!(verification.status, SourceProvenanceStatus::Unverifiable);
+        assert!(verification.resolved_path.is_none());
+        assert!(
+            verification
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("do not reference a file path"))
+        );
+    }
+
+    #[test]
+    fn verify_source_path_requires_repo_root_for_relative_files() {
+        let verification = verify_source_path(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "Relative source".to_string(),
+            SourceKind::File,
+            Some("src/lib.rs".to_string()),
+            "",
+        );
+
+        assert_eq!(verification.status, SourceProvenanceStatus::Unverifiable);
+        assert!(verification.resolved_path.is_none());
+        assert!(
+            verification
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("without a repo root"))
+        );
     }
 
     fn test_presence(

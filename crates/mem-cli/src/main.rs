@@ -30,13 +30,14 @@ use mem_api::{
     MemoryEntryResponse, MemoryType, PlanActivityAction, PlanActivityRequest, Profile,
     ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundlePreview,
     ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
-    ProjectOverviewResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters,
-    QueryRequest, QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
-    ReplacementPolicy, ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult, TokenUsage,
-    UpToSpeedRequest, UpToSpeedResponse, discover_global_config_path, discover_repo_env_path,
-    effective_llm_base_url, is_ollama_provider, is_supported_llm_provider,
-    llm_max_output_tokens_field, llm_requires_api_key, load_repo_replacement_policy,
-    read_repo_project_slug, resolve_llm_api_key,
+    ProjectOverviewResponse, ProvenanceVerificationRequest, ProvenanceVerificationResponse,
+    PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse,
+    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, ReplacementPolicy,
+    ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult, TokenUsage, UpToSpeedRequest,
+    UpToSpeedResponse, discover_global_config_path, discover_repo_env_path, effective_llm_base_url,
+    is_ollama_provider, is_supported_llm_provider, llm_max_output_tokens_field,
+    llm_requires_api_key, load_repo_replacement_policy, read_repo_project_slug,
+    resolve_llm_api_key,
 };
 use mem_platform as platform;
 use mem_service as service_runtime;
@@ -47,10 +48,7 @@ use mem_watch::{
     fetch_project_overview as fetch_automation_overview, flush_path, load_state, run_once,
     should_capture, should_curate, to_status, update_session_from_repo,
 };
-use reqwest::{
-    Client,
-    header::{HeaderMap, ORIGIN},
-};
+use reqwest::{Client, header::HeaderMap};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, postgres::PgPoolOptions};
@@ -487,6 +485,19 @@ Examples:
 
 See also:
   docs/user/cli/query.md";
+
+const VERIFY_PROVENANCE_AFTER_HELP: &str = "\
+Agent notes:
+  Use before relying on source citations after large refactors, file moves, or cleanup.
+  Prefer --dry-run --json first; omit --dry-run only when you want the verification results stored.
+
+Examples:
+  memory verify-provenance --project memory --dry-run --json
+  memory verify-provenance --project memory --repo-root . --json
+  memory verify-provenance --project memory
+
+See also:
+  docs/user/cli/verify-provenance.md";
 
 const HISTORY_AFTER_HELP: &str = "\
 Agent notes:
@@ -1070,6 +1081,8 @@ enum Command {
     Eval(EvalArgs),
     #[command(about = "Ask a project-specific question against curated memory.", after_help = QUERY_AFTER_HELP)]
     Query(QueryArgs),
+    #[command(about = "Verify memory source provenance against the filesystem.", after_help = VERIFY_PROVENANCE_AFTER_HELP)]
+    VerifyProvenance(VerifyProvenanceArgs),
     #[command(about = "Show the full version history for a memory, including tombstones.", after_help = HISTORY_AFTER_HELP)]
     History(HistoryArgs),
     #[command(about = "Prune old memory versions and tombstoned canonicals.", after_help = PRUNE_HISTORY_AFTER_HELP)]
@@ -1422,6 +1435,26 @@ struct QueryArgs {
     #[arg(long)]
     history: bool,
     /// Emit the query result as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Verify memory source provenance against the filesystem.",
+    after_help = VERIFY_PROVENANCE_AFTER_HELP
+)]
+struct VerifyProvenanceArgs {
+    /// Project slug whose memory sources should be verified.
+    #[arg(long)]
+    project: Option<String>,
+    /// Repository root used to resolve relative source paths.
+    #[arg(long)]
+    repo_root: Option<PathBuf>,
+    /// Check provenance without storing verification results.
+    #[arg(long)]
+    dry_run: bool,
+    /// Emit the verification response as JSON.
     #[arg(long)]
     json: bool,
 }
@@ -2635,6 +2668,27 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string(&payload)?);
             } else {
                 print_query_response(payload);
+            }
+        }
+        Command::VerifyProvenance(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let api = ApiClient::new(client.clone(), config.clone());
+            let project = resolve_project_slug(args.project, &cwd)?;
+            let repo_root = args
+                .repo_root
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string());
+            let response = api
+                .verify_provenance(&ProvenanceVerificationRequest {
+                    project,
+                    repo_root,
+                    dry_run: args.dry_run,
+                })
+                .await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                print_provenance_verification_response(&response);
             }
         }
         Command::History(args) => {
@@ -9289,6 +9343,21 @@ impl ApiClient {
         .await
     }
 
+    pub(crate) async fn verify_provenance(
+        &self,
+        request: &ProvenanceVerificationRequest,
+    ) -> Result<ProvenanceVerificationResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/provenance/verify"))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
     pub(crate) async fn log_scan_activity(&self, request: &ScanActivityRequest) -> Result<()> {
         let response = self
             .client
@@ -9932,6 +10001,20 @@ fn print_query_response(payload: QueryResponse) {
     if let Some(reason) = &payload.answer_generation.fallback_reason {
         println!("Fallback: {reason}\n");
     }
+    if !payload.diagnostics.provenance_warnings.is_empty() {
+        println!("Provenance warnings:");
+        for warning in &payload.diagnostics.provenance_warnings {
+            println!(
+                "  - [{}] {}",
+                diagnostic_severity_name(&warning.severity),
+                warning.message
+            );
+            if let Some(fix_hint) = &warning.fix_hint {
+                println!("    hint: {fix_hint}");
+            }
+        }
+        println!();
+    }
     println!(
         "Diagnostics: lexical {} ({} ms) | semantic {} ({} ms) | graph {} [{}] ({} ms) | merged {} | returned {} | rerank {} ms | total {} ms\n",
         payload.diagnostics.lexical_candidates,
@@ -10008,12 +10091,83 @@ fn print_query_response(payload: QueryResponse) {
         }
         for source in result.sources {
             let path = source.file_path.unwrap_or_else(|| "<no-file>".to_string());
-            println!(
-                "  source: {} {}",
-                path,
-                source.source_kind.source_kind_string()
-            );
+            if let Some(provenance) = source.provenance {
+                println!(
+                    "  source: {} {} provenance={}",
+                    path,
+                    source.source_kind.source_kind_string(),
+                    provenance.status.as_str()
+                );
+                if let Some(reason) = provenance.reason {
+                    println!("    provenance reason: {reason}");
+                }
+            } else {
+                println!(
+                    "  source: {} {}",
+                    path,
+                    source.source_kind.source_kind_string()
+                );
+            }
         }
+    }
+}
+
+fn print_provenance_verification_response(response: &ProvenanceVerificationResponse) {
+    println!(
+        "Provenance verification for `{}` at {}",
+        response.project, response.repo_root
+    );
+    println!(
+        "checked={} verified={} missing_file={} missing_symbol={} unverifiable={} stale={} stored={} dry_run={}",
+        response.checked_count,
+        response.verified_count,
+        response.missing_file_count,
+        response.missing_symbol_count,
+        response.unverifiable_count,
+        response.stale_count,
+        response.stored_count,
+        response.dry_run
+    );
+    if !response.warnings.is_empty() {
+        println!("\nWarnings:");
+        for warning in &response.warnings {
+            println!(
+                "  - [{}] {}",
+                diagnostic_severity_name(&warning.severity),
+                warning.message
+            );
+            if let Some(fix_hint) = &warning.fix_hint {
+                println!("    hint: {fix_hint}");
+            }
+        }
+    }
+    let problem_items: Vec<_> = response
+        .items
+        .iter()
+        .filter(|item| item.status != mem_api::SourceProvenanceStatus::Verified)
+        .take(25)
+        .collect();
+    if !problem_items.is_empty() {
+        println!("\nNon-verified sources:");
+        for item in problem_items {
+            println!(
+                "  - {} {} {}",
+                item.status.as_str(),
+                item.file_path.as_deref().unwrap_or("<no-file>"),
+                item.memory_summary
+            );
+            if let Some(reason) = &item.reason {
+                println!("    {reason}");
+            }
+        }
+    }
+}
+
+fn diagnostic_severity_name(severity: &mem_api::DiagnosticSeverity) -> &'static str {
+    match severity {
+        mem_api::DiagnosticSeverity::Info => "info",
+        mem_api::DiagnosticSeverity::Warning => "warning",
+        mem_api::DiagnosticSeverity::Error => "error",
     }
 }
 
@@ -12973,23 +13127,8 @@ fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
 
 fn write_headers(config: &AppConfig) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
-    if let Some(origin) = trusted_local_origin(&config.service.bind_addr) {
-        headers.insert(ORIGIN, origin.parse()?);
-    } else {
-        headers.insert("x-api-token", config.service.api_token.parse()?);
-    }
+    headers.insert("x-api-token", config.service.api_token.parse()?);
     Ok(headers)
-}
-
-fn trusted_local_origin(bind_addr: &str) -> Option<&'static str> {
-    let host = bind_addr
-        .rsplit_once(':')
-        .map(|(host, _)| host.trim_matches('[').trim_matches(']'))
-        .unwrap_or(bind_addr);
-    match host {
-        "127.0.0.1" | "localhost" | "::1" => Some("http://127.0.0.1"),
-        _ => None,
-    }
 }
 
 fn service_url(config: &AppConfig, path: &str) -> String {
@@ -14218,6 +14357,7 @@ mod tests {
             "up-to-speed" => Some("up-to-speed.md"),
             "eval" => Some("eval.md"),
             "query" => Some("query.md"),
+            "verify-provenance" => Some("verify-provenance.md"),
             "history" => Some("history.md"),
             "prune-history" => Some("prune-history.md"),
             "scan" => Some("scan.md"),
@@ -14412,6 +14552,15 @@ mod tests {
         assert!(output.contains("Use before answering project-specific questions"));
         assert!(output.contains("insufficient_evidence"));
         assert!(output.contains("docs/user/cli/query.md"));
+    }
+
+    #[test]
+    fn verify_provenance_help_includes_dry_run_guidance() {
+        let output = rendered_help(&["memory", "verify-provenance", "--help"]);
+        assert!(output.contains("Verify memory source provenance against the filesystem"));
+        assert!(output.contains("Repository root used to resolve relative source paths"));
+        assert!(output.contains("--dry-run --json"));
+        assert!(output.contains("docs/user/cli/verify-provenance.md"));
     }
 
     #[test]
@@ -15948,22 +16097,24 @@ mod tests {
     }
 
     #[test]
-    fn write_headers_adds_local_origin_for_loopback_service() {
+    fn write_headers_sends_token_for_loopback_service() {
         let mut config = test_app_config();
         config.service.bind_addr = "127.0.0.1:4040".to_string();
         config.service.api_token = "ml_testtoken".to_string();
 
         let headers = write_headers(&config).unwrap();
 
-        assert!(headers.get("x-api-token").is_none());
         assert_eq!(
-            headers.get("origin").and_then(|value| value.to_str().ok()),
-            Some("http://127.0.0.1")
+            headers
+                .get("x-api-token")
+                .and_then(|value| value.to_str().ok()),
+            Some("ml_testtoken")
         );
+        assert!(headers.get("origin").is_none());
     }
 
     #[test]
-    fn write_headers_omits_local_origin_for_non_loopback_service() {
+    fn write_headers_sends_token_for_non_loopback_service() {
         let mut config = test_app_config();
         config.service.bind_addr = "10.22.6.42:4140".to_string();
         config.service.api_token = "ml_testtoken".to_string();

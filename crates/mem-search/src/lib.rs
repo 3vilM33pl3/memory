@@ -7,10 +7,11 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
-    EmbeddingBackendConfig, EmbeddingsConfig, MemoryRelationType, MemoryType, QueryAnswerCitation,
-    QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics, QueryGraphConnection,
-    QueryMatchKind, QueryRequest, QueryResponse, QueryResult, QueryResultDebug, QueryRetrievalMode,
-    QuerySource, SourceKind,
+    DiagnosticInfo, DiagnosticSeverity, EmbeddingBackendConfig, EmbeddingsConfig,
+    MemoryRelationType, MemoryType, QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod,
+    QueryDiagnostics, QueryGraphConnection, QueryMatchKind, QueryRequest, QueryResponse,
+    QueryResult, QueryResultDebug, QueryRetrievalMode, QuerySource, SourceKind,
+    SourceProvenanceRecord, SourceProvenanceStatus,
 };
 use pgvector::Vector;
 use sqlx::{PgPool, Row};
@@ -388,6 +389,7 @@ pub async fn query_memory(
     }
     let returned_results = results.len();
 
+    let provenance_warnings = provenance_warnings_for_results(&results);
     let synthesis = synthesize_answer(&results);
 
     Ok(QueryResponse {
@@ -417,6 +419,7 @@ pub async fn query_memory(
             total_duration_ms: total_started.elapsed().as_millis() as u64,
             semantic_status,
             graph_status,
+            provenance_warnings,
         },
     })
 }
@@ -810,10 +813,15 @@ pub fn parse_relation_type(value: &str) -> MemoryRelationType {
 async fn fetch_sources(pool: &PgPool, memory_id: Uuid) -> Result<Vec<QuerySource>> {
     let rows = sqlx::query(
         r#"
-        SELECT task_id, file_path, source_kind, excerpt
-        FROM memory_sources
-        WHERE memory_entry_id = $1
-        ORDER BY created_at ASC
+        SELECT ms.task_id, ms.file_path, ms.source_kind, ms.excerpt,
+               v.status AS provenance_status,
+               v.checked_at AS provenance_checked_at,
+               v.reason AS provenance_reason,
+               v.resolved_path AS provenance_resolved_path
+        FROM memory_sources ms
+        LEFT JOIN memory_source_verifications v ON v.source_id = ms.id
+        WHERE ms.memory_entry_id = $1
+        ORDER BY ms.created_at ASC
         "#,
     )
     .bind(memory_id)
@@ -829,9 +837,80 @@ async fn fetch_sources(pool: &PgPool, memory_id: Uuid) -> Result<Vec<QuerySource
             file_path: row.try_get("file_path")?,
             source_kind: parse_source_kind(&source_kind),
             excerpt: row.try_get("excerpt")?,
+            provenance: source_provenance_from_row(&row)?,
         });
     }
     Ok(items)
+}
+
+fn source_provenance_from_row(
+    row: &sqlx::postgres::PgRow,
+) -> Result<Option<SourceProvenanceRecord>, sqlx::Error> {
+    let Some(status) = row.try_get::<Option<String>, _>("provenance_status")? else {
+        return Ok(None);
+    };
+    let checked_at = row.try_get("provenance_checked_at")?;
+    Ok(Some(SourceProvenanceRecord {
+        status: parse_source_provenance_status(&status),
+        checked_at,
+        reason: row.try_get("provenance_reason")?,
+        resolved_path: row.try_get("provenance_resolved_path")?,
+    }))
+}
+
+fn parse_source_provenance_status(value: &str) -> SourceProvenanceStatus {
+    match value {
+        "verified" => SourceProvenanceStatus::Verified,
+        "missing_file" => SourceProvenanceStatus::MissingFile,
+        "missing_symbol" => SourceProvenanceStatus::MissingSymbol,
+        "stale" => SourceProvenanceStatus::Stale,
+        _ => SourceProvenanceStatus::Unverifiable,
+    }
+}
+
+fn provenance_warnings_for_results(results: &[QueryResult]) -> Vec<DiagnosticInfo> {
+    let mut warnings = Vec::new();
+    for result in results {
+        for source in &result.sources {
+            let Some(provenance) = &source.provenance else {
+                continue;
+            };
+            if !matches!(
+                provenance.status,
+                SourceProvenanceStatus::MissingFile
+                    | SourceProvenanceStatus::MissingSymbol
+                    | SourceProvenanceStatus::Stale
+            ) {
+                continue;
+            }
+            let path = source
+                .file_path
+                .as_deref()
+                .unwrap_or("<unknown source path>");
+            warnings.push(DiagnosticInfo {
+                code: "stale_memory_provenance".to_string(),
+                source: "memory".to_string(),
+                component: "search".to_string(),
+                operation: "query".to_string(),
+                severity: DiagnosticSeverity::Warning,
+                message: format!(
+                    "Memory {} cites {} with provenance status {}",
+                    result.memory_id,
+                    path,
+                    provenance.status.as_str()
+                ),
+                raw_error: None,
+                explanation: provenance.reason.clone(),
+                fix_hint: Some(
+                    "Run `memory verify-provenance --project <slug>` and review stale citations."
+                        .to_string(),
+                ),
+                doctor_hint: None,
+                command_hint: Some("memory verify-provenance --project <slug>".to_string()),
+            });
+        }
+    }
+    warnings
 }
 
 pub fn parse_source_kind(value: &str) -> SourceKind {
@@ -2391,6 +2470,43 @@ mod tests {
         assert!(terms.contains(&"%parsing%".to_string()));
         assert!(terms.contains(&"%mem-search%".to_string()));
         assert!(!terms.contains(&"%memory%".to_string()));
+    }
+
+    #[test]
+    fn provenance_warnings_include_stale_source_statuses() {
+        let memory_id = Uuid::new_v4();
+        let results = vec![QueryResult {
+            memory_id,
+            summary: "Moved helper".to_string(),
+            memory_type: MemoryType::Refactor,
+            score: 2.0,
+            snippet: "helper moved".to_string(),
+            match_kind: QueryMatchKind::Lexical,
+            score_explanation: vec![],
+            debug: QueryResultDebug::default(),
+            tags: vec![],
+            sources: vec![QuerySource {
+                task_id: None,
+                file_path: Some("src/old.rs".to_string()),
+                source_kind: SourceKind::File,
+                excerpt: None,
+                provenance: Some(SourceProvenanceRecord {
+                    status: SourceProvenanceStatus::MissingFile,
+                    checked_at: Utc::now(),
+                    reason: Some("file source no longer exists".to_string()),
+                    resolved_path: Some("/repo/src/old.rs".to_string()),
+                }),
+            }],
+            graph_connections: vec![],
+        }];
+
+        let warnings = provenance_warnings_for_results(&results);
+
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "stale_memory_provenance");
+        assert_eq!(warnings[0].severity, DiagnosticSeverity::Warning);
+        assert!(warnings[0].message.contains(&memory_id.to_string()));
+        assert!(warnings[0].message.contains("src/old.rs"));
     }
 
     #[test]

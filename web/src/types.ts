@@ -152,6 +152,48 @@ export interface MemorySourceRecord {
   git_commit: string | null;
   source_kind: SourceKind;
   excerpt: string | null;
+  provenance?: SourceProvenanceRecord | null;
+}
+
+export type SourceProvenanceStatus =
+  | "verified"
+  | "missing_file"
+  | "missing_symbol"
+  | "unverifiable"
+  | "stale";
+
+export interface SourceProvenanceRecord {
+  status: SourceProvenanceStatus;
+  checked_at: string;
+  reason?: string | null;
+  resolved_path?: string | null;
+}
+
+export interface SourceProvenanceVerification {
+  source_id: string;
+  memory_id: string;
+  memory_summary: string;
+  source_kind: SourceKind;
+  file_path?: string | null;
+  status: SourceProvenanceStatus;
+  reason?: string | null;
+  resolved_path?: string | null;
+}
+
+export interface ProvenanceVerificationResponse {
+  project: string;
+  repo_root: string;
+  dry_run: boolean;
+  checked_at: string;
+  checked_count: number;
+  verified_count: number;
+  missing_file_count: number;
+  missing_symbol_count: number;
+  unverifiable_count: number;
+  stale_count: number;
+  stored_count: number;
+  warnings: DiagnosticInfo[];
+  items: SourceProvenanceVerification[];
 }
 
 export interface RelatedMemorySummary {
@@ -216,6 +258,7 @@ export interface QueryDiagnostics {
   total_duration_ms: number;
   semantic_status: string;
   graph_status: string;
+  provenance_warnings: DiagnosticInfo[];
 }
 
 export type QueryAnswerMethod = "deterministic" | "llm" | "fallback";

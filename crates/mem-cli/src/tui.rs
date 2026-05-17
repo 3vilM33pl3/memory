@@ -4114,6 +4114,12 @@ fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
                 if let Some(excerpt) = &source.excerpt {
                     parts.push(excerpt.clone());
                 }
+                if let Some(provenance) = &source.provenance {
+                    parts.push(format!("provenance: {}", provenance.status.as_str()));
+                    if let Some(reason) = &provenance.reason {
+                        parts.push(reason.clone());
+                    }
+                }
                 lines.push(Line::from(Span::styled(
                     parts.join(" | "),
                     Style::default().fg(Theme::TEXT),

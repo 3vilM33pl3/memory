@@ -1717,6 +1717,7 @@ mod tests {
                     file_path: Some("crates/mem-search/src/lib.rs".to_string()),
                     source_kind: mem_api::SourceKind::File,
                     excerpt: None,
+                    provenance: None,
                 }],
                 graph_connections: Vec::new(),
             }],

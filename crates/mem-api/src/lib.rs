@@ -377,6 +377,8 @@ pub struct QuerySource {
     pub source_kind: SourceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<SourceProvenanceRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -510,6 +512,8 @@ pub struct QueryDiagnostics {
     pub semantic_status: String,
     #[serde(default)]
     pub graph_status: String,
+    #[serde(default)]
+    pub provenance_warnings: Vec<DiagnosticInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -684,6 +688,97 @@ pub struct MemorySourceRecord {
     pub source_kind: SourceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<SourceProvenanceRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceProvenanceStatus {
+    Verified,
+    MissingFile,
+    MissingSymbol,
+    Unverifiable,
+    Stale,
+}
+
+impl SourceProvenanceStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::MissingFile => "missing_file",
+            Self::MissingSymbol => "missing_symbol",
+            Self::Unverifiable => "unverifiable",
+            Self::Stale => "stale",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceProvenanceRecord {
+    pub status: SourceProvenanceStatus,
+    pub checked_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvenanceVerificationRequest {
+    pub project: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+impl ProvenanceVerificationRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if let Some(repo_root) = self.repo_root.as_deref()
+            && repo_root.trim().is_empty()
+        {
+            return Err(ValidationError::new("repo_root must be non-empty"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceProvenanceVerification {
+    pub source_id: Uuid,
+    pub memory_id: Uuid,
+    pub memory_summary: String,
+    pub source_kind: SourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    pub status: SourceProvenanceStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvenanceVerificationResponse {
+    pub project: String,
+    pub repo_root: String,
+    pub dry_run: bool,
+    pub checked_at: DateTime<Utc>,
+    pub checked_count: usize,
+    pub verified_count: usize,
+    pub missing_file_count: usize,
+    pub missing_symbol_count: usize,
+    pub unverifiable_count: usize,
+    pub stale_count: usize,
+    pub stored_count: usize,
+    #[serde(default)]
+    pub warnings: Vec<DiagnosticInfo>,
+    #[serde(default)]
+    pub items: Vec<SourceProvenanceVerification>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
