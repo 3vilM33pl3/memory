@@ -526,7 +526,7 @@ func (o rememberOptions) shouldStartTask() bool {
 		return false
 	}
 	memoryType := strings.TrimSpace(o.memoryType)
-	return memoryType == "" || memoryType == "implementation"
+	return memoryType == "" || memoryType == "implementation" || memoryType == "refactor"
 }
 
 func parseRememberOptions(args []string) ([]string, rememberOptions, error) {

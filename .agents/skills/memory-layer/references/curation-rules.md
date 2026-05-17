@@ -20,6 +20,7 @@ The live application currently supports:
 - `task`
 - `plan`
 - `implementation`
+- `refactor`
 - `user`
 - `feedback`
 - `project`
@@ -33,5 +34,6 @@ Important current distinctions:
 
 - `plan` is the approved execution plan captured at start-execution time.
 - `implementation` is the verified delivered outcome, including finish-execution results and normal completed-work remember flows.
+- `refactor` is behavior-preserving code restructuring. Use it for moves, renames, extracted helpers, reorganized modules, cleanup, and mechanical reshaping when there is no intended functional change.
 - `documentation` is durable docs work or documentation-system knowledge. Do not use it merely because the source file lives under `docs/`; use `environment`, `convention`, `architecture`, or `domain_fact` when the remembered fact belongs there.
 - `debugging` is the durable troubleshooting lesson, not the same thing as the implemented outcome.

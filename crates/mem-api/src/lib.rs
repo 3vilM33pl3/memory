@@ -29,6 +29,7 @@ pub enum MemoryType {
     Task,
     Plan,
     Implementation,
+    Refactor,
     User,
     Feedback,
     Project,
@@ -49,6 +50,7 @@ impl fmt::Display for MemoryType {
             Self::Task => "task",
             Self::Plan => "plan",
             Self::Implementation => "implementation",
+            Self::Refactor => "refactor",
             Self::User => "user",
             Self::Feedback => "feedback",
             Self::Project => "project",
@@ -3409,6 +3411,7 @@ mod tests {
     fn new_memory_types_display_as_snake_case() {
         assert_eq!(MemoryType::Task.to_string(), "task");
         assert_eq!(MemoryType::Documentation.to_string(), "documentation");
+        assert_eq!(MemoryType::Refactor.to_string(), "refactor");
     }
 
     #[test]

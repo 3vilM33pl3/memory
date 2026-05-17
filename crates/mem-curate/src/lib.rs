@@ -414,10 +414,14 @@ async fn determine_replacement_decision(
         .iter()
         .any(|reason| reason == "explicit update language");
 
-    let auto = match policy {
-        ReplacementPolicy::Conservative => explicit_update && best.score >= 10,
-        ReplacementPolicy::Balanced => explicit_update && best.score >= 9 && margin >= 2,
-        ReplacementPolicy::Aggressive => best.score >= 8 && margin >= 2,
+    let auto = if candidate.memory_type == mem_api::MemoryType::Refactor {
+        best.score >= 8 && margin >= 2
+    } else {
+        match policy {
+            ReplacementPolicy::Conservative => explicit_update && best.score >= 10,
+            ReplacementPolicy::Balanced => explicit_update && best.score >= 9 && margin >= 2,
+            ReplacementPolicy::Aggressive => best.score >= 8 && margin >= 2,
+        }
     };
     if auto {
         return Ok(ReplacementDecision::Replace {
@@ -521,6 +525,7 @@ async fn load_candidate_replacement_targets(
     project_id: Uuid,
     candidate: &CandidateAssertion,
 ) -> Result<Vec<MemoryProfile>, sqlx::Error> {
+    let target_types = replacement_target_types(candidate);
     sqlx::query(
         r#"
         SELECT
@@ -545,12 +550,12 @@ async fn load_candidate_replacement_targets(
         WHERE m.project_id = $1
           AND m.status = 'active'
           AND ime.memory_entry_id IS NULL
-          AND m.memory_type = $2
+          AND m.memory_type = ANY($2)
           AND m.scope = 'project'
         "#,
     )
     .bind(project_id)
-    .bind(candidate.memory_type.to_string())
+    .bind(target_types)
     .fetch_all(&mut **tx)
     .await?
     .into_iter()
@@ -566,6 +571,21 @@ async fn load_candidate_replacement_targets(
         })
     })
     .collect()
+}
+
+fn replacement_target_types(candidate: &CandidateAssertion) -> Vec<String> {
+    if candidate.memory_type == mem_api::MemoryType::Refactor {
+        return vec![
+            mem_api::MemoryType::Refactor.to_string(),
+            mem_api::MemoryType::Implementation.to_string(),
+            mem_api::MemoryType::Architecture.to_string(),
+            mem_api::MemoryType::Convention.to_string(),
+            mem_api::MemoryType::Documentation.to_string(),
+            mem_api::MemoryType::Debugging.to_string(),
+            mem_api::MemoryType::Environment.to_string(),
+        ];
+    }
+    vec![candidate.memory_type.to_string()]
 }
 
 async fn insert_candidate_memory(
@@ -826,6 +846,7 @@ async fn refresh_relations(
             m.id,
             m.summary,
             m.canonical_text,
+            m.memory_type,
             COALESCE((
                 SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
                 FROM memory_tags mt
@@ -853,7 +874,7 @@ async fn refresh_relations(
             id: row.try_get("id")?,
             summary: row.try_get("summary")?,
             canonical_text: row.try_get("canonical_text")?,
-            memory_type: "unknown".to_string(),
+            memory_type: row.try_get("memory_type")?,
             scope: "project".to_string(),
             tags: row.try_get("tags")?,
             files: row.try_get("files")?,
@@ -888,6 +909,7 @@ async fn load_memory_profile(
             m.id,
             m.summary,
             m.canonical_text,
+            m.memory_type,
             COALESCE((
                 SELECT ARRAY_AGG(mt.tag ORDER BY mt.tag)
                 FROM memory_tags mt
@@ -911,7 +933,7 @@ async fn load_memory_profile(
             id: row.try_get("id")?,
             summary: row.try_get("summary")?,
             canonical_text: row.try_get("canonical_text")?,
-            memory_type: "unknown".to_string(),
+            memory_type: row.try_get("memory_type")?,
             scope: "project".to_string(),
             tags: row.try_get("tags")?,
             files: row.try_get("files")?,
@@ -953,6 +975,12 @@ fn classify_relation(current: &MemoryProfile, other: &MemoryProfile) -> Option<M
         return Some(MemoryRelationType::Duplicates);
     }
 
+    if current.memory_type == mem_api::MemoryType::Refactor.to_string()
+        && is_refactor_affected_target(current, other, similarity, shared_tags, shared_files)
+    {
+        return Some(MemoryRelationType::Supersedes);
+    }
+
     if has_supersedes_language(&current.canonical_text)
         && (similarity >= 0.45 || shared_tags > 0 || shared_files > 0)
     {
@@ -980,7 +1008,13 @@ fn score_replacement_candidate(
     candidate: &CandidateAssertion,
     target: MemoryProfile,
 ) -> Option<ScoredReplacement> {
-    if target.memory_type != candidate.memory_type.to_string() || target.scope != "project" {
+    if target.scope != "project" {
+        return None;
+    }
+    let same_type = target.memory_type == candidate.memory_type.to_string();
+    let refactor_target =
+        candidate.memory_type == mem_api::MemoryType::Refactor && refactor_can_affect(&target);
+    if !same_type && !refactor_target {
         return None;
     }
 
@@ -1044,11 +1078,79 @@ fn score_replacement_candidate(
         reasons.push("explicit update language".to_string());
     }
 
+    if refactor_target && is_refactor_candidate_text(candidate) && shared_files > 0 {
+        score += 4;
+        reasons.push("refactor affects shared source files".to_string());
+    }
+
     Some(ScoredReplacement {
         profile: target,
         score,
         reasons,
     })
+}
+
+fn refactor_can_affect(target: &MemoryProfile) -> bool {
+    matches!(
+        target.memory_type.as_str(),
+        "refactor"
+            | "implementation"
+            | "architecture"
+            | "convention"
+            | "documentation"
+            | "debugging"
+            | "environment"
+    )
+}
+
+fn is_refactor_candidate_text(candidate: &CandidateAssertion) -> bool {
+    candidate.memory_type == mem_api::MemoryType::Refactor
+        || has_refactor_language(&candidate.summary)
+        || has_refactor_language(&candidate.canonical_text)
+}
+
+fn is_refactor_affected_target(
+    current: &MemoryProfile,
+    other: &MemoryProfile,
+    similarity: f32,
+    shared_tags: usize,
+    shared_files: usize,
+) -> bool {
+    refactor_can_affect(other)
+        && has_refactor_language(&current.canonical_text)
+        && (shared_files > 0 && (similarity >= 0.25 || shared_tags > 0)
+            || shared_files > 0 && similarity >= 0.15
+            || shared_tags >= 2 && similarity >= 0.35)
+}
+
+fn has_refactor_language(text: &str) -> bool {
+    let value = text.to_ascii_lowercase();
+    [
+        "refactor",
+        "refactored",
+        "refactoring",
+        "restructure",
+        "restructured",
+        "reorganize",
+        "reorganized",
+        "rename",
+        "renamed",
+        "move",
+        "moved",
+        "extract helper",
+        "extracted helper",
+        "cleanup",
+        "clean up",
+        "mechanical change",
+        "no functional change",
+        "no behavior change",
+        "without functional change",
+        "without behavior change",
+        "behavior preserving",
+        "behavior-preserving",
+    ]
+    .iter()
+    .any(|cue| value.contains(cue))
 }
 
 fn normalize_text(text: &str) -> Vec<String> {
@@ -1302,14 +1404,40 @@ mod tests {
     use super::*;
 
     fn profile(canonical_text: &str, tags: &[&str], files: &[&str]) -> MemoryProfile {
+        profile_with_type("convention", canonical_text, tags, files)
+    }
+
+    fn profile_with_type(
+        memory_type: &str,
+        canonical_text: &str,
+        tags: &[&str],
+        files: &[&str],
+    ) -> MemoryProfile {
         MemoryProfile {
             id: Uuid::new_v4(),
             summary: canonical_text.to_string(),
             canonical_text: canonical_text.to_string(),
-            memory_type: "convention".to_string(),
+            memory_type: memory_type.to_string(),
             scope: "project".to_string(),
             tags: tags.iter().map(|value| value.to_string()).collect(),
             files: files.iter().map(|value| value.to_string()).collect(),
+        }
+    }
+
+    fn refactor_candidate() -> CandidateAssertion {
+        CandidateAssertion {
+            canonical_text: "Refactored query ranking helpers with no functional change."
+                .to_string(),
+            summary: "Refactored query ranking helpers".to_string(),
+            memory_type: mem_api::MemoryType::Refactor,
+            confidence: 0.9,
+            importance: 3,
+            tags: vec!["search".to_string(), "refactor".to_string()],
+            sources: vec![mem_ingest::CandidateSource {
+                file_path: Some("crates/mem-search/src/lib.rs".to_string()),
+                source_kind: mem_api::SourceKind::File,
+                excerpt: None,
+            }],
         }
     }
 
@@ -1346,6 +1474,47 @@ mod tests {
         assert_eq!(
             classify_relation(&left, &right),
             Some(MemoryRelationType::Supports)
+        );
+    }
+
+    #[test]
+    fn refactor_candidate_can_affect_implementation_memory() {
+        let candidate = refactor_candidate();
+        let target = profile_with_type(
+            "implementation",
+            "Implemented query ranking helpers for memory search.",
+            &["search"],
+            &["crates/mem-search/src/lib.rs"],
+        );
+
+        let scored = score_replacement_candidate(&candidate, target).expect("scored refactor");
+
+        assert!(scored.score >= 8);
+        assert!(
+            scored
+                .reasons
+                .contains(&"refactor affects shared source files".to_string())
+        );
+    }
+
+    #[test]
+    fn refactor_relation_supersedes_affected_memory() {
+        let left = profile_with_type(
+            "refactor",
+            "Refactored query ranking helpers with no functional change.",
+            &["search", "refactor"],
+            &["crates/mem-search/src/lib.rs"],
+        );
+        let right = profile_with_type(
+            "implementation",
+            "Implemented query ranking helpers for memory search.",
+            &["search"],
+            &["crates/mem-search/src/lib.rs"],
+        );
+
+        assert_eq!(
+            classify_relation(&left, &right),
+            Some(MemoryRelationType::Supersedes)
         );
     }
 

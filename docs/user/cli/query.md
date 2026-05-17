@@ -11,6 +11,7 @@ The answer is synthesized from the returned memories and includes citation numbe
 memory query --project memory --question "How does resume work?"
 memory query --project memory --question "What changed recently?" --type plan
 memory query --project memory --question "What was actually implemented for the watcher manager?" --type implementation
+memory query --project memory --question "What code was refactored recently?" --type refactor
 memory query --project memory --question "How is PostgreSQL setup documented?" --type documentation
 memory query --project memory --question "What are the watcher health states?" --tag watcher
 ```

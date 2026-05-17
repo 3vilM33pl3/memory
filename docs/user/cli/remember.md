@@ -136,6 +136,8 @@ That means the result still follows the normal Memory Layer data model:
 
 For normal completed work, `remember` now records an explicit `implementation` memory by default so the shipped outcome is visible in the memory list and query results.
 
+For behavior-preserving code restructuring, use `--type refactor` or include clear refactor/no-functional-change wording. Refactor memories record moves, renames, helper extraction, cleanup, and module reshaping without intended behavior changes.
+
 If your notes also contain debugging lessons, decisions, or conventions, curation can still keep those as separate secondary memories when they are justified.
 
 ## Troubleshooting

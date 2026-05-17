@@ -142,6 +142,8 @@ fn classify_type(request: &CaptureTaskRequest, text: &str) -> MemoryType {
 
     if has_documentation_marker {
         MemoryType::Documentation
+    } else if is_refactor_memory_text(&haystack) {
+        MemoryType::Refactor
     } else if haystack.contains("debug") || haystack.contains("fix") || haystack.contains("bug") {
         MemoryType::Debugging
     } else if haystack.contains("decision") || haystack.contains("choose") {
@@ -193,6 +195,62 @@ fn classify_type(request: &CaptureTaskRequest, text: &str) -> MemoryType {
     } else {
         MemoryType::Implementation
     }
+}
+
+fn is_refactor_memory_text(haystack: &str) -> bool {
+    let has_refactor_cue = [
+        "refactor",
+        "refactored",
+        "refactoring",
+        "restructure",
+        "restructured",
+        "reorganize",
+        "reorganized",
+        "rename",
+        "renamed",
+        "move",
+        "moved",
+        "extract helper",
+        "extracted helper",
+        "cleanup",
+        "clean up",
+        "mechanical change",
+    ]
+    .iter()
+    .any(|cue| haystack.contains(cue));
+    if !has_refactor_cue {
+        return false;
+    }
+
+    let behavior_preserving = [
+        "no functional change",
+        "no behavior change",
+        "without functional change",
+        "without behavior change",
+        "behavior preserving",
+        "behaviour preserving",
+        "behavior-preserving",
+        "behaviour-preserving",
+        "pure refactor",
+    ]
+    .iter()
+    .any(|cue| haystack.contains(cue));
+
+    let functional_change = [
+        "fix",
+        "fixed",
+        "bug",
+        "feature",
+        "implemented",
+        "add support",
+        "added support",
+        "new behavior",
+        "new behaviour",
+    ]
+    .iter()
+    .any(|cue| haystack.contains(cue));
+
+    behavior_preserving || !functional_change
 }
 
 fn summarize(request: &CaptureTaskRequest) -> String {
@@ -294,6 +352,7 @@ fn normalize_candidate_canonical_text(memory_type: &MemoryType, input: &str) -> 
         MemoryType::Task
         | MemoryType::Plan
         | MemoryType::Implementation
+        | MemoryType::Refactor
         | MemoryType::Documentation => normalize_markdown_block(input),
         _ => normalize_sentence(input),
     }
@@ -471,5 +530,31 @@ mod tests {
 
         let candidates = extract_candidates(&request);
         assert_eq!(candidates[0].memory_type, MemoryType::Implementation);
+    }
+
+    #[test]
+    fn behavior_preserving_refactor_classifies_as_refactor() {
+        let mut request = sample_request();
+        request.task_title = "Refactor query helpers".to_string();
+        request.user_prompt =
+            "Refactor the query helper layout with no functional change.".to_string();
+        request.agent_summary =
+            "Moved query helper code into smaller functions without behavior change.".to_string();
+        request.notes = vec!["Refactored crates/mem-search/src/lib.rs.".to_string()];
+
+        let candidates = extract_candidates(&request);
+        assert_eq!(candidates[0].memory_type, MemoryType::Refactor);
+    }
+
+    #[test]
+    fn mixed_fix_and_refactor_remains_debugging() {
+        let mut request = sample_request();
+        request.task_title = "Fix and refactor query helpers".to_string();
+        request.user_prompt = "Fix query ranking and refactor the helper code.".to_string();
+        request.agent_summary = "Fixed query ranking while extracting helpers.".to_string();
+        request.notes = vec!["Fixed a ranking bug and refactored the code.".to_string()];
+
+        let candidates = extract_candidates(&request);
+        assert_eq!(candidates[0].memory_type, MemoryType::Debugging);
     }
 }

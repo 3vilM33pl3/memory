@@ -3342,6 +3342,7 @@ enum TypeFilter {
     Task,
     Plan,
     Implementation,
+    Refactor,
 }
 
 impl TypeFilter {
@@ -3358,7 +3359,8 @@ impl TypeFilter {
             Self::Documentation => Self::Task,
             Self::Task => Self::Plan,
             Self::Plan => Self::Implementation,
-            Self::Implementation => Self::All,
+            Self::Implementation => Self::Refactor,
+            Self::Refactor => Self::All,
         }
     }
 
@@ -3377,6 +3379,7 @@ impl TypeFilter {
                 | (Self::Task, MemoryType::Task)
                 | (Self::Plan, MemoryType::Plan)
                 | (Self::Implementation, MemoryType::Implementation)
+                | (Self::Refactor, MemoryType::Refactor)
         )
     }
 
@@ -3394,6 +3397,7 @@ impl TypeFilter {
             Self::Task => "task",
             Self::Plan => "plan",
             Self::Implementation => "implementation",
+            Self::Refactor => "refactor",
         }
     }
 }
@@ -8942,6 +8946,7 @@ fn memory_type_span_from_label(label: &str) -> Span<'static> {
         "documentation" => Color::Rgb(170, 210, 255),
         "plan" => Color::Rgb(255, 120, 200),
         "implementation" => Color::Rgb(120, 230, 140),
+        "refactor" => Color::Rgb(130, 220, 160),
         "all" => Theme::TEXT,
         _ => Theme::TEXT,
     };

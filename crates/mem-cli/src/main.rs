@@ -812,7 +812,7 @@ const REMEMBER_AFTER_HELP: &str = "\
 Agent notes:
   Use after meaningful completed work to preserve durable facts with provenance.
   Include concrete notes, changed files, tests, and command output where useful.
-  Use --type user, feedback, project, reference, or implementation when classification should be explicit.
+  Use --type user, feedback, project, reference, implementation, or refactor when classification should be explicit.
 
 Examples:
   memory remember --project memory --note \"Durable fact\"
@@ -12966,6 +12966,7 @@ fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
         "task" => Ok(mem_api::MemoryType::Task),
         "plan" => Ok(mem_api::MemoryType::Plan),
         "implementation" => Ok(mem_api::MemoryType::Implementation),
+        "refactor" => Ok(mem_api::MemoryType::Refactor),
         _ => anyhow::bail!("unknown memory type: {input}"),
     }
 }
@@ -13054,6 +13055,7 @@ fn build_remember_request(
         .summary
         .unwrap_or_else(|| derive_summary(project, &files_changed));
     let mut candidate = build_remember_implementation_candidate(
+        &title,
         &summary,
         &prompt,
         &args.notes,
@@ -13096,6 +13098,7 @@ fn parse_memory_type_arg(value: &str) -> Result<MemoryType> {
         "task" => Ok(MemoryType::Task),
         "plan" => Ok(MemoryType::Plan),
         "implementation" => Ok(MemoryType::Implementation),
+        "refactor" => Ok(MemoryType::Refactor),
         "user" => Ok(MemoryType::User),
         "feedback" => Ok(MemoryType::Feedback),
         "project" => Ok(MemoryType::Project),
@@ -13103,7 +13106,7 @@ fn parse_memory_type_arg(value: &str) -> Result<MemoryType> {
         _ => anyhow::bail!(
             "unknown memory type '{value}'; expected one of: architecture, convention, \
              decision, incident, debugging, environment, domain_fact, documentation, task, plan, \
-             implementation, user, feedback, project, reference"
+             implementation, refactor, user, feedback, project, reference"
         ),
     }
 }
@@ -13591,6 +13594,83 @@ fn normalize_sentence_fragment(input: &str) -> String {
     value
 }
 
+fn is_refactor_completion(
+    title: &str,
+    summary: &str,
+    prompt: &str,
+    notes: &[String],
+    completed_items: &[String],
+) -> bool {
+    let mut haystack = format!(
+        "{} {} {}",
+        title.to_ascii_lowercase(),
+        summary.to_ascii_lowercase(),
+        prompt.to_ascii_lowercase()
+    );
+    for note in notes {
+        haystack.push(' ');
+        haystack.push_str(&note.to_ascii_lowercase());
+    }
+    for item in completed_items {
+        haystack.push(' ');
+        haystack.push_str(&item.to_ascii_lowercase());
+    }
+
+    let has_refactor_cue = [
+        "refactor",
+        "refactored",
+        "refactoring",
+        "restructure",
+        "restructured",
+        "reorganize",
+        "reorganized",
+        "rename",
+        "renamed",
+        "move",
+        "moved",
+        "extract helper",
+        "extracted helper",
+        "cleanup",
+        "clean up",
+        "mechanical change",
+    ]
+    .iter()
+    .any(|cue| haystack.contains(cue));
+    if !has_refactor_cue {
+        return false;
+    }
+
+    let behavior_preserving = [
+        "no functional change",
+        "no behavior change",
+        "without functional change",
+        "without behavior change",
+        "behavior preserving",
+        "behaviour preserving",
+        "behavior-preserving",
+        "behaviour-preserving",
+        "pure refactor",
+    ]
+    .iter()
+    .any(|cue| haystack.contains(cue));
+
+    let functional_change = [
+        "fix",
+        "fixed",
+        "bug",
+        "feature",
+        "implemented",
+        "add support",
+        "added support",
+        "new behavior",
+        "new behaviour",
+    ]
+    .iter()
+    .any(|cue| haystack.contains(cue));
+
+    behavior_preserving || !functional_change
+}
+
 fn build_implementation_canonical_text(
     title: &str,
     summary: &str,
@@ -13630,6 +13710,7 @@ fn build_implementation_canonical_text(
 }
 
 fn build_remember_implementation_candidate(
+    title: &str,
     summary: &str,
     prompt: &str,
     notes: &[String],
@@ -13638,7 +13719,15 @@ fn build_remember_implementation_candidate(
     command_output: Option<&str>,
 ) -> mem_api::CaptureCandidateInput {
     let canonical_text = build_implementation_canonical_text("", summary, &[], notes);
-    let mut tags = vec!["implementation".to_string(), "implemented".to_string()];
+    let memory_type = if is_refactor_completion(title, summary, prompt, notes, &[]) {
+        mem_api::MemoryType::Refactor
+    } else {
+        mem_api::MemoryType::Implementation
+    };
+    let mut tags = match memory_type {
+        mem_api::MemoryType::Refactor => vec!["refactor".to_string(), "refactored".to_string()],
+        _ => vec!["implementation".to_string(), "implemented".to_string()],
+    };
     for file in files_changed {
         if let Some(prefix) = file.split('/').next().filter(|prefix| !prefix.is_empty()) {
             tags.push(prefix.to_string());
@@ -13650,7 +13739,7 @@ fn build_remember_implementation_candidate(
     mem_api::CaptureCandidateInput {
         canonical_text,
         summary: summary.trim().to_string(),
-        memory_type: mem_api::MemoryType::Implementation,
+        memory_type,
         confidence: if tests.iter().any(|test| test.status == "passed") {
             0.9
         } else {
@@ -13729,11 +13818,22 @@ fn build_finish_execution_implementation_request(
         &report.completed_item_texts,
         notes,
     );
-    let mut tags = vec![
-        "implementation".to_string(),
-        "implemented".to_string(),
-        format!("plan-thread:{}", report.thread_key),
-    ];
+    let memory_type = if is_refactor_completion(
+        &report.plan_title,
+        summary,
+        &report.plan_title,
+        notes,
+        &report.completed_item_texts,
+    ) {
+        mem_api::MemoryType::Refactor
+    } else {
+        mem_api::MemoryType::Implementation
+    };
+    let mut tags = match memory_type {
+        mem_api::MemoryType::Refactor => vec!["refactor".to_string(), "refactored".to_string()],
+        _ => vec!["implementation".to_string(), "implemented".to_string()],
+    };
+    tags.push(format!("plan-thread:{}", report.thread_key));
     tags.sort();
     tags.dedup();
 
@@ -13755,7 +13855,7 @@ fn build_finish_execution_implementation_request(
         structured_candidates: vec![mem_api::CaptureCandidateInput {
             canonical_text: canonical_text.clone(),
             summary: summary.to_string(),
-            memory_type: mem_api::MemoryType::Implementation,
+            memory_type,
             confidence: 0.95,
             importance: 4,
             tags,
@@ -14602,6 +14702,10 @@ mod tests {
             parse_memory_type_arg("documentation").unwrap(),
             mem_api::MemoryType::Documentation
         );
+        assert_eq!(
+            parse_memory_type_arg("refactor").unwrap(),
+            mem_api::MemoryType::Refactor
+        );
     }
 
     #[test]
@@ -15075,6 +15179,96 @@ mod tests {
                 .contains("Add implementation memory type")
         );
         assert!(request.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn remember_request_auto_detects_refactor_type() {
+        let writer_id = "writer";
+        let args = RememberArgs {
+            project: Some("memory".to_string()),
+            title: Some("Refactor query helpers".to_string()),
+            prompt: Some("Refactor query helpers with no functional change.".to_string()),
+            summary: Some("Moved query helper code without behavior change.".to_string()),
+            notes: vec!["Refactored crates/mem-search/src/lib.rs.".to_string()],
+            files_changed: vec!["crates/mem-search/src/lib.rs".to_string()],
+            auto_files: false,
+            tests_passed: Vec::new(),
+            tests_failed: Vec::new(),
+            command_output_file: None,
+            memory_type: None,
+            dry_run: false,
+        };
+
+        let request = build_remember_request(args, "memory", writer_id, None).unwrap();
+
+        assert_eq!(
+            request.structured_candidates[0].memory_type,
+            mem_api::MemoryType::Refactor
+        );
+        assert!(
+            request.structured_candidates[0]
+                .tags
+                .contains(&"refactor".to_string())
+        );
+    }
+
+    #[test]
+    fn mixed_fix_and_refactor_remember_request_stays_implementation() {
+        let args = RememberArgs {
+            project: Some("memory".to_string()),
+            title: Some("Fix and refactor query helpers".to_string()),
+            prompt: Some("Fix ranking and refactor helper layout.".to_string()),
+            summary: Some("Fixed ranking while extracting helpers.".to_string()),
+            notes: Vec::new(),
+            files_changed: vec!["crates/mem-search/src/lib.rs".to_string()],
+            auto_files: false,
+            tests_passed: Vec::new(),
+            tests_failed: Vec::new(),
+            command_output_file: None,
+            memory_type: None,
+            dry_run: false,
+        };
+
+        let request = build_remember_request(args, "memory", "writer", None).unwrap();
+
+        assert_eq!(
+            request.structured_candidates[0].memory_type,
+            mem_api::MemoryType::Implementation
+        );
+    }
+
+    #[test]
+    fn finish_execution_request_auto_detects_refactor_type() {
+        let writer = super::WriterIdentity {
+            id: "writer".to_string(),
+            name: Some("Writer".to_string()),
+        };
+        let report = PlanExecutionFinishReport {
+            project: "memory".to_string(),
+            thread_key: "query-refactor".to_string(),
+            plan_title: "Refactor query helpers".to_string(),
+            total_items: 1,
+            completed_items: 1,
+            completed_item_texts: vec![
+                "Extract query helpers with no functional change".to_string(),
+            ],
+            remaining_items: Vec::new(),
+            verified_complete: true,
+        };
+
+        let request = build_finish_execution_implementation_request(
+            "memory",
+            &writer,
+            &report,
+            "Refactored query helpers without behavior change",
+            &[],
+            Some("abc123"),
+        );
+
+        assert_eq!(
+            request.structured_candidates[0].memory_type,
+            mem_api::MemoryType::Refactor
+        );
     }
 
     #[test]

@@ -788,6 +788,7 @@ pub fn parse_memory_type(value: &str) -> MemoryType {
         "task" => MemoryType::Task,
         "plan" => MemoryType::Plan,
         "implementation" => MemoryType::Implementation,
+        "refactor" => MemoryType::Refactor,
         "user" => MemoryType::User,
         "feedback" => MemoryType::Feedback,
         "project" => MemoryType::Project,
@@ -2133,6 +2134,7 @@ mod tests {
             parse_memory_type("documentation"),
             MemoryType::Documentation
         );
+        assert_eq!(parse_memory_type("refactor"), MemoryType::Refactor);
     }
 
     #[test]

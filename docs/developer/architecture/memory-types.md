@@ -65,6 +65,7 @@ Memory Layer currently supports these curated memory types:
 - `task`
 - `plan`
 - `implementation`
+- `refactor`
 - `user`
 - `feedback`
 - `project`
@@ -392,6 +393,39 @@ Examples:
 - “Implemented first-class implementation memories.”
 - “Recorded watcher manager status and service role detail in the TUI footer.”
 
+### `refactor`
+
+Use this for behavior-preserving code restructuring.
+
+Contains:
+
+- moves, renames, extracted helpers, or reorganized modules
+- cleanup and mechanical reshaping with no intended functional change
+- provenance files that help future agents find the new code shape
+
+Should not contain:
+
+- feature work with new behavior
+- bug fixes or incident resolutions
+- architecture decisions unless the structural fact itself changed
+
+Typical triggers:
+
+- explicit `memory remember --type refactor`
+- `memory remember` or `memory checkpoint finish-execution` when title, summary, notes, or completed plan items clearly mention refactor/no-functional-change work
+- inferred curation when raw task evidence uses refactor or behavior-preserving language
+
+Important current behavior:
+
+- refactor memories can be queried or filtered with `--type refactor`
+- curation can auto-update the strongest affected implementation, architecture, convention, documentation, debugging, environment, or older refactor memory when shared provenance and refactor language make the effect clear
+- other strong affected memories are related from the refactor memory with `supersedes` rather than tombstoned automatically
+
+Examples:
+
+- “Refactored query ranking helpers into smaller functions with no functional change.”
+- “Moved watcher status rendering into a dedicated TUI helper without changing behavior.”
+
 ### `user`
 
 Use this for durable user preferences or instructions that should guide future agent behavior.
@@ -472,9 +506,9 @@ Current important examples:
 - `memory checkpoint start-task`
   - writes a structured `task` candidate for direct no-plan work
 - `memory checkpoint finish-execution`
-  - writes a structured `implementation` candidate after successful verification
+  - writes a structured `implementation` or `refactor` candidate after successful verification
 - `memory remember`
-  - now writes a structured `implementation` candidate by default
+  - now writes a structured `implementation` candidate by default, or a `refactor` candidate when behavior-preserving refactor language is detected
 - `scan`
   - converts accepted scan candidates into explicit typed structured candidates
 
@@ -499,10 +533,12 @@ Current inference behavior is intentionally simple and deterministic. Examples:
 - docs, README, guide, screenshot, frontpage, or GitHub Pages language tends toward `documentation`
 - setup/config language tends toward `environment`
 - generic completed-work text now falls back to `implementation`
+- refactor/no-functional-change text tends toward `refactor`
 
 This inferred path is how secondary memories can coexist with a primary structured one. A completed task can therefore yield:
 
 - one `implementation` memory for what shipped
+- one `refactor` memory for behavior-preserving code restructuring
 - one `debugging` memory for the durable troubleshooting lesson
 
 ## How Types Link To The Database
@@ -588,6 +624,7 @@ At a high level, the classifier works like this:
 
 - very high text similarity becomes `duplicates`
 - supersession language plus enough overlap becomes `supersedes`
+- refactor memories with shared source files/tags and enough overlap can `supersede` affected implementation, architecture, convention, documentation, debugging, environment, or older refactor memories
 - dependency language plus enough overlap becomes `depends_on`
 - shared files or strong shared tag overlap becomes `supports`
 - weaker but still meaningful overlap becomes `related_to`
@@ -639,6 +676,9 @@ Important current special cases:
 - `implementation`
   - multiple implementation memories may exist over time
   - exact finish-execution reruns are made idempotent to avoid duplicate inserts for the same verified outcome
+- `refactor`
+  - records behavior-preserving code restructuring separately from functional implementation work
+  - can version the strongest affected existing memory and relate other affected memories with `supersedes`
 - `documentation`
   - behaves like a normal durable memory type
   - multiline Markdown is preserved for structured documentation candidates
@@ -693,6 +733,20 @@ Use `debugging` for:
 - the root cause and reliable fix pattern
 
 A finished bug fix can legitimately produce both.
+
+### `implementation` vs `refactor`
+
+Use `implementation` for:
+
+- new or changed runtime behavior
+- feature outcomes
+- bug fixes whose delivered behavior matters
+
+Use `refactor` for:
+
+- code movement, renaming, extraction, cleanup, or mechanical reshaping
+- changes explicitly described as no-functional-change or behavior-preserving
+- updates that make older code-location memories stale without changing the product behavior
 
 ### `decision` vs `convention`
 

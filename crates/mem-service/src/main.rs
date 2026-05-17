@@ -5316,6 +5316,7 @@ async fn fetch_durable_resume_context(
                 | mem_api::MemoryType::Convention
                 | mem_api::MemoryType::Documentation
                 | mem_api::MemoryType::Environment
+                | mem_api::MemoryType::Refactor
         )
     });
     items.truncate(limit);
@@ -5875,6 +5876,7 @@ fn select_resume_context(
                 | mem_api::MemoryType::Convention
                 | mem_api::MemoryType::Documentation
                 | mem_api::MemoryType::Debugging
+                | mem_api::MemoryType::Refactor
         ) && !selected.iter().any(|existing| existing.id == item.id)
     }) {
         selected.push(item.clone());
@@ -5893,6 +5895,7 @@ fn select_resume_context(
                 | mem_api::MemoryType::Convention
                 | mem_api::MemoryType::Documentation
                 | mem_api::MemoryType::Environment
+                | mem_api::MemoryType::Refactor
         ) && !selected.iter().any(|existing| existing.id == item.id)
     }) {
         selected.push(item.clone());

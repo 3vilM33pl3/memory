@@ -53,7 +53,7 @@ Use this for actionable implementation work that begins directly from a user req
 
 The command curates the raw capture it just wrote and verifies that an active `task` memory with the expected `task-thread:<thread_key>` tag exists before reporting success. If that postcondition fails, the command exits with an actionable error instead of silently leaving only raw capture evidence.
 
-After the direct task is complete, use `memory remember --type implementation` or the repo-local remember skill to record what was actually delivered.
+After the direct task is complete, use `memory remember --type implementation`, `memory remember --type refactor`, or the repo-local remember skill to record what was actually delivered.
 
 ### Finish Execution
 
@@ -66,9 +66,9 @@ memory checkpoint finish-execution --project memory --dry-run
 
 Verifies that every checkbox item in the active approved plan is complete before the work is presented as finished.
 
-When verification succeeds, `finish-execution` also records a durable `implementation` memory for the completed outcome.
+When verification succeeds, `finish-execution` also records a durable `implementation` memory for the completed outcome, or a `refactor` memory when the completed plan is clearly behavior-preserving code restructuring.
 
-Use `--implementation-summary` and repeatable `--implementation-note` flags when you want the recorded implementation memory to say something more explicit than the default summary derived from the completed checkbox items.
+Use `--implementation-summary` and repeatable `--implementation-note` flags when you want the recorded implementation or refactor memory to say something more explicit than the default summary derived from the completed checkbox items.
 
 ## Related Docs
 
