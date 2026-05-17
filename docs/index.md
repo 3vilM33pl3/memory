@@ -62,6 +62,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 - [Dev Stack vs Installed Stack](developer/dev-stack.md)
 - [How Skills Work](developer/skills/how-skills-work.md)
 - [Architecture Overview](developer/architecture/overview.md)
+- [Code Map](developer/architecture/code-map.md)
 - [Memory Types Reference](developer/architecture/memory-types.md)
 - [How Memory Layer Works](developer/architecture/how-it-works.md)
 - [Embeddings and Search](developer/architecture/embeddings-and-search.md)
