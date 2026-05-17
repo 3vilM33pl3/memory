@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 const proxyTarget = process.env.VITE_PROXY_TARGET ?? "http://127.0.0.1:4140";
@@ -20,5 +20,9 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+  },
+  test: {
+    environment: "jsdom",
+    setupFiles: "./src/vitest.setup.ts",
   },
 });

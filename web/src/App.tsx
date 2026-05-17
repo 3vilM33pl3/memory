@@ -32,6 +32,8 @@ import {
   setEmbeddingCreationEnabled,
   setLlmAuditEnabled,
 } from "./api";
+import { RichText } from "./components/RichText";
+import { ReviewTab } from "./features/review/ReviewTab";
 import type {
   ActivityEvent,
   AgentSnapshotResponse,
@@ -1719,76 +1721,19 @@ export default function App() {
         </section>
       ) : null}
 
-      {/* ── Review ── */}
       {tab === "review" ? (
-        <section className="panel-grid">
-          <div className="panel detail-scroll">
-            <div className="detail-header">
-              <div>
-                <h2>Curation review</h2>
-                <p>
-                  Policy {replacementPolicy?.replacement_policy ?? "unknown"} · {proposals.length} pending
-                  {proposals.length ? ` · selected ${selectedProposalIndex + 1}/${proposals.length}` : ""}
-                  {effectiveRepoRoot ? ` · ${effectiveRepoRoot}` : ""}
-                </p>
-              </div>
-              <div className="proposal-actions">
-                <button onClick={() => void refreshReview()} type="button">Refresh</button>
-                <button onClick={() => void handleCyclePolicy()} type="button" disabled={!effectiveRepoRoot}>Cycle policy</button>
-              </div>
-            </div>
-            {!effectiveRepoRoot ? (
-              <p className="warning-list">Set a repo root to change policy. Approve/reject still works for queued proposals.</p>
-            ) : null}
-            <div className="list-view">
-              {proposals.length ? proposals.map((proposal) => (
-                <button
-                  key={proposal.id}
-                  type="button"
-                  className={`list-item ${activeProposal?.id === proposal.id ? "selected" : ""}`}
-                  onClick={() => setSelectedProposalIndex(proposals.findIndex((item) => item.id === proposal.id))}
-                >
-                  <div>
-                    <strong>{proposal.target_summary}</strong>
-                    <p>{proposal.candidate_summary}</p>
-                  </div>
-                  <div className="meta-stack">
-                    <span className="badge">{proposal.candidate_memory_type}</span>
-                    <span>{proposal.score}</span>
-                  </div>
-                </button>
-              )) : <p className="muted">No pending replacement proposals.</p>}
-            </div>
-          </div>
-          <div className="panel detail-scroll">
-            {activeProposal ? (
-              <>
-                <h2>Proposal detail</h2>
-                <section className="detail-section">
-                  <h3>Target</h3>
-                  <p>{activeProposal.target_summary}</p>
-                </section>
-                <section className="detail-section">
-                  <h3>Candidate</h3>
-                  <p><strong>{activeProposal.candidate_summary}</strong></p>
-                  <RichText text={activeProposal.candidate_canonical_text} />
-                </section>
-                <div className="stats-row">
-                  <span className="badge">{activeProposal.candidate_memory_type}</span>
-                  <span className="badge">{activeProposal.policy}</span>
-                  <span>score {activeProposal.score}</span>
-                  {activeProposal.reasons.map((reason) => <span key={reason}>{reason}</span>)}
-                </div>
-                <div className="proposal-actions">
-                  <button className="approve-btn" onClick={() => void handleApproveProposal(activeProposal.id)} type="button">Approve</button>
-                  <button className="reject-btn" onClick={() => void handleRejectProposal(activeProposal.id)} type="button">Reject</button>
-                </div>
-              </>
-            ) : (
-              <p className="muted">Queued ambiguous curation candidates will appear here.</p>
-            )}
-          </div>
-        </section>
+        <ReviewTab
+          effectiveRepoRoot={effectiveRepoRoot}
+          proposals={proposals}
+          activeProposal={activeProposal}
+          selectedProposalIndex={selectedProposalIndex}
+          replacementPolicy={replacementPolicy}
+          onRefresh={() => void refreshReview()}
+          onCyclePolicy={() => void handleCyclePolicy()}
+          onSelectProposal={setSelectedProposalIndex}
+          onApproveProposal={(proposalId) => void handleApproveProposal(proposalId)}
+          onRejectProposal={(proposalId) => void handleRejectProposal(proposalId)}
+        />
       ) : null}
 
       {/* ── Watchers ── */}
@@ -2555,66 +2500,6 @@ const WEB_HELP: Record<Tab, { title: string; purpose: string; layout: string[]; 
     workflows: ["Preview before exporting or importing.", "Include provenance fields only when the bundle audience should see them."],
   },
 };
-
-function RichText({ text }: { text: string }) {
-  const lines = text.split(/\r?\n/);
-  const blocks: ReactNode[] = [];
-  let listItems: string[] = [];
-  let codeLines: string[] = [];
-  let inCode = false;
-
-  const flushList = () => {
-    if (!listItems.length) return;
-    const items = listItems;
-    listItems = [];
-    blocks.push(<ul key={`list-${blocks.length}`} className="rich-list">{items.map((item) => <li key={item}>{item}</li>)}</ul>);
-  };
-  const flushCode = () => {
-    if (!codeLines.length) return;
-    const code = codeLines.join("\n");
-    codeLines = [];
-    blocks.push(<pre key={`code-${blocks.length}`}>{code}</pre>);
-  };
-
-  for (const raw of lines) {
-    const line = raw.trimEnd();
-    if (line.trim().startsWith("```")) {
-      if (inCode) {
-        inCode = false;
-        flushCode();
-      } else {
-        flushList();
-        inCode = true;
-      }
-      continue;
-    }
-    if (inCode) {
-      codeLines.push(line);
-      continue;
-    }
-    if (!line.trim()) {
-      flushList();
-      continue;
-    }
-    const heading = line.match(/^(#{1,4})\s+(.+)$/);
-    if (heading) {
-      flushList();
-      blocks.push(<h4 key={`heading-${blocks.length}`}>{heading[2]}</h4>);
-      continue;
-    }
-    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
-    if (bullet) {
-      listItems.push(bullet[1]);
-      continue;
-    }
-    flushList();
-    blocks.push(<p key={`p-${blocks.length}`}>{line}</p>);
-  }
-  flushList();
-  flushCode();
-
-  return <div className="rich-text">{blocks.length ? blocks : <p className="muted">No text.</p>}</div>;
-}
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return "n/a";
