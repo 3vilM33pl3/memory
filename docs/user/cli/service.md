@@ -63,6 +63,10 @@ memory health
 memory doctor
 ```
 
+## API Token Security
+
+The HTTP API does not trust `Origin` or `Referer` headers as authentication, even when they point at localhost. API clients must send the configured service token with `x-api-token`. The bundled same-origin web UI bootstraps that token from the service and attaches it to its own API requests.
+
 ## Platform Notes
 
 On macOS, `memory service enable` manages the LaunchAgent.

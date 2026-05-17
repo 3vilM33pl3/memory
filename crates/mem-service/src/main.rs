@@ -440,6 +440,7 @@ fn build_http_app(state: AppState) -> Router {
     let mut app = Router::new()
         .route("/healthz", get(healthz))
         .route("/ws", get(websocket))
+        .route("/v1/web/auth-token", get(web_auth_token))
         .route("/v1/admin/shutdown", post(admin_shutdown))
         .route("/v1/runtime/status", get(runtime_status))
         .route("/v1/query", post(query))
@@ -2060,6 +2061,21 @@ async fn config_path_fingerprint(path: Option<&FsPath>) -> Result<ConfigFingerpr
 
 async fn healthz(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
     Ok(Json(health_payload(&state).await.map_err(ApiError::io)?))
+}
+
+#[derive(Debug, Serialize)]
+struct WebAuthTokenResponse {
+    api_token: String,
+    header: &'static str,
+}
+
+async fn web_auth_token(
+    State(state): State<AppState>,
+) -> Result<Json<WebAuthTokenResponse>, ApiError> {
+    Ok(Json(WebAuthTokenResponse {
+        api_token: state.api_token,
+        header: "x-api-token",
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -8300,6 +8316,61 @@ mod tests {
     }
 
     #[test]
+    fn api_auth_requires_explicit_token_even_for_local_origins() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(
+            require_token(&headers, "service-token", "127.0.0.1:4040")
+                .expect_err("missing token should fail")
+                .message,
+            "missing x-api-token header"
+        );
+
+        headers.insert(header::ORIGIN, "http://127.0.0.1".parse().unwrap());
+        assert_eq!(
+            require_token(&headers, "service-token", "127.0.0.1:4040")
+                .expect_err("local origin should not authenticate")
+                .message,
+            "missing x-api-token header"
+        );
+
+        headers.clear();
+        headers.insert(header::REFERER, "http://localhost/app".parse().unwrap());
+        assert_eq!(
+            require_token(&headers, "service-token", "127.0.0.1:4040")
+                .expect_err("local referer should not authenticate")
+                .message,
+            "missing x-api-token header"
+        );
+    }
+
+    #[test]
+    fn api_auth_accepts_only_matching_x_api_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-token", "service-token".parse().unwrap());
+        require_token(&headers, "service-token", "127.0.0.1:4040").expect("matching token");
+
+        headers.insert("x-api-token", "wrong".parse().unwrap());
+        assert_eq!(
+            require_token(&headers, "service-token", "127.0.0.1:4040")
+                .expect_err("wrong token should fail")
+                .message,
+            "invalid api token"
+        );
+    }
+
+    #[test]
+    fn web_auth_token_response_names_x_api_token_header() {
+        let response = WebAuthTokenResponse {
+            api_token: "service-token".to_string(),
+            header: "x-api-token",
+        };
+
+        let json = serde_json::to_value(&response).expect("serialize response");
+        assert_eq!(json["api_token"], "service-token");
+        assert_eq!(json["header"], "x-api-token");
+    }
+
+    #[test]
     fn up_to_speed_briefing_includes_token_summary() {
         let token_usage = TokenUsageSummary {
             action_count: 2,
@@ -8522,7 +8593,7 @@ mod tests {
     }
 }
 
-fn require_token(headers: &HeaderMap, expected: &str, bind_addr: &str) -> Result<(), ApiError> {
+fn require_token(headers: &HeaderMap, expected: &str, _bind_addr: &str) -> Result<(), ApiError> {
     if let Some(provided) = headers
         .get("x-api-token")
         .and_then(|value| value.to_str().ok())
@@ -8533,13 +8604,7 @@ fn require_token(headers: &HeaderMap, expected: &str, bind_addr: &str) -> Result
         return Ok(());
     }
 
-    if is_local_browser_request(headers, bind_addr) {
-        return Ok(());
-    }
-
-    Err(ApiError::unauthorized(
-        "missing x-api-token header or trusted local browser origin",
-    ))
+    Err(ApiError::unauthorized("missing x-api-token header"))
 }
 
 fn require_strict_token(headers: &HeaderMap, expected: &str) -> Result<(), ApiError> {
@@ -8553,30 +8618,6 @@ fn require_strict_token(headers: &HeaderMap, expected: &str) -> Result<(), ApiEr
         return Err(ApiError::unauthorized("invalid api token"));
     }
     Ok(())
-}
-
-fn is_local_browser_request(headers: &HeaderMap, bind_addr: &str) -> bool {
-    let configured_host = bind_addr
-        .rsplit_once(':')
-        .map(|(host, _)| host.trim_matches('[').trim_matches(']'))
-        .unwrap_or(bind_addr);
-
-    ["origin", "referer"].iter().any(|header| {
-        headers
-            .get(*header)
-            .and_then(|value| value.to_str().ok())
-            .map(|value| {
-                value.starts_with("http://127.0.0.1")
-                    || value.starts_with("http://localhost")
-                    || value.starts_with("http://[::1]")
-                    || value.starts_with("https://127.0.0.1")
-                    || value.starts_with("https://localhost")
-                    || value.starts_with("https://[::1]")
-                    || value.starts_with(&format!("http://{configured_host}"))
-                    || value.starts_with(&format!("https://{configured_host}"))
-            })
-            .unwrap_or(false)
-    })
 }
 
 #[derive(Debug)]
