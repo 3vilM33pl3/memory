@@ -25,6 +25,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode, header},
+    middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::{any, delete, get, post},
 };
@@ -74,6 +75,10 @@ use mem_service::{
     parse_status_filter, preview_project_commit_sync, sync_project_commits,
 };
 use regex::Regex;
+use rmcp::transport::{
+    StreamableHttpServerConfig, StreamableHttpService,
+    streamable_http_server::session::local::LocalSessionManager,
+};
 use serde::Deserialize;
 use serde::{Deserialize as SerdeDeserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -430,7 +435,9 @@ fn abort_tasks(tasks: &mut Vec<JoinHandle<Result<()>>>) {
 
 fn build_http_app(state: AppState) -> Router {
     let web_assets = state.web_root.clone();
-    let app = Router::new()
+    let config = state.config.clone();
+    let mcp_config = state.config.mcp.clone();
+    let mut app = Router::new()
         .route("/healthz", get(healthz))
         .route("/ws", get(websocket))
         .route("/v1/admin/shutdown", post(admin_shutdown))
@@ -517,12 +524,132 @@ fn build_http_app(state: AppState) -> Router {
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
+    if mcp_config.enabled && mcp_config.http_enabled {
+        app = app.merge(build_mcp_http_router(config));
+    }
+
     if let Some(root) = web_assets {
         let index = root.join("index.html");
         app.fallback_service(ServeDir::new(root).not_found_service(ServeFile::new(index)))
     } else {
         app.fallback(any(web_unavailable))
     }
+}
+
+#[derive(Clone)]
+struct McpHttpAuth {
+    require_token: bool,
+    api_token: String,
+    bind_addr: String,
+}
+
+fn build_mcp_http_router(config: AppConfig) -> Router {
+    let service_config = config.service.clone();
+    let mcp_config = config.mcp.clone();
+    let server_config = StreamableHttpServerConfig::default()
+        .with_allowed_hosts(mcp_allowed_hosts(&service_config.bind_addr))
+        .with_allowed_origins(mcp_allowed_origins(&service_config.bind_addr));
+    let service = StreamableHttpService::new(
+        move || Ok(mem_mcp::MemoryMcpServer::http(config.clone())),
+        Arc::new(LocalSessionManager::default()),
+        server_config,
+    );
+    let path = normalize_mcp_path(&mcp_config.http_path);
+    Router::new()
+        .nest_service(&path, service)
+        .route_layer(middleware::from_fn_with_state(
+            McpHttpAuth {
+                require_token: mcp_config.require_token,
+                api_token: service_config.api_token,
+                bind_addr: service_config.bind_addr,
+            },
+            mcp_http_auth_middleware,
+        ))
+}
+
+async fn mcp_http_auth_middleware(
+    State(auth): State<McpHttpAuth>,
+    headers: HeaderMap,
+    request: axum::extract::Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    validate_mcp_origin(&headers, &auth.bind_addr)?;
+    if auth.require_token && !mcp_token_matches(&headers, &auth.api_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(next.run(request).await)
+}
+
+fn mcp_token_matches(headers: &HeaderMap, expected: &str) -> bool {
+    headers
+        .get("x-api-token")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value == expected)
+        || headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .is_some_and(|value| value == expected)
+}
+
+fn validate_mcp_origin(headers: &HeaderMap, bind_addr: &str) -> Result<(), StatusCode> {
+    let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Ok(());
+    };
+    if mcp_allowed_origins(bind_addr)
+        .iter()
+        .any(|allowed| origin == allowed)
+    {
+        Ok(())
+    } else {
+        Err(StatusCode::FORBIDDEN)
+    }
+}
+
+fn normalize_mcp_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        "/mcp".to_string()
+    } else if trimmed.starts_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("/{trimmed}")
+    }
+}
+
+fn mcp_allowed_hosts(bind_addr: &str) -> Vec<String> {
+    let host = bind_addr
+        .rsplit_once(':')
+        .map(|(host, _)| host.trim_matches('[').trim_matches(']'))
+        .unwrap_or(bind_addr);
+    let mut hosts = vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ];
+    if !host.is_empty() && !hosts.iter().any(|value| value == host) {
+        hosts.push(host.to_string());
+    }
+    hosts
+}
+
+fn mcp_allowed_origins(bind_addr: &str) -> Vec<String> {
+    let host = bind_addr
+        .rsplit_once(':')
+        .map(|(host, _)| host.trim_matches('[').trim_matches(']'))
+        .unwrap_or(bind_addr);
+    let mut origins = vec![
+        "http://127.0.0.1".to_string(),
+        "http://localhost".to_string(),
+        "http://[::1]".to_string(),
+    ];
+    if !host.is_empty() && !matches!(host, "127.0.0.1" | "localhost" | "::1") {
+        origins.push(format!("http://{host}"));
+    }
+    origins
 }
 
 fn request_runtime_shutdown(shutdown: &Arc<Mutex<Option<oneshot::Sender<()>>>>) {
@@ -2030,9 +2157,11 @@ const GLOBAL_TUI_RESTART_MARKER: &str = "/usr/local/var/memory-layer/tui-restart
 
 const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-direct-task-start",
+    "memory-github-init",
     "memory-layer",
     "memory-plan-execution",
     "memory-project-init",
+    "memory-review-proposals",
     "memory-query-resume",
     "memory-remember",
 ];
@@ -8135,6 +8264,36 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 200);
         assert_eq!(usage.cache_write_tokens, 50);
         assert_eq!(usage.total_tokens, 1750);
+    }
+
+    #[test]
+    fn mcp_http_auth_accepts_bearer_or_x_api_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            "Bearer service-token".parse().unwrap(),
+        );
+        assert!(mcp_token_matches(&headers, "service-token"));
+
+        headers.clear();
+        headers.insert("x-api-token", "service-token".parse().unwrap());
+        assert!(mcp_token_matches(&headers, "service-token"));
+
+        headers.insert("x-api-token", "wrong".parse().unwrap());
+        assert!(!mcp_token_matches(&headers, "service-token"));
+    }
+
+    #[test]
+    fn mcp_origin_validation_rejects_cross_origin() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, "http://127.0.0.1".parse().unwrap());
+        assert!(validate_mcp_origin(&headers, "127.0.0.1:4040").is_ok());
+
+        headers.insert(header::ORIGIN, "https://example.com".parse().unwrap());
+        assert_eq!(
+            validate_mcp_origin(&headers, "127.0.0.1:4040"),
+            Err(StatusCode::FORBIDDEN)
+        );
     }
 
     #[test]

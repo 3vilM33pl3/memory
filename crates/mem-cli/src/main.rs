@@ -236,6 +236,20 @@ Examples:
 See also:
   docs/user/cli/service.md";
 
+const MCP_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Use mcp run from stdio MCP clients. It writes only MCP JSON-RPC frames to stdout.
+  Use mcp status for a read-only check of service reachability and exposed MCP surface.
+  HTTP MCP is mounted by memory service when [mcp].enabled and [mcp].http_enabled are true.
+
+Examples:
+  memory mcp run --project memory
+  memory mcp status --project memory
+  memory mcp status --project memory --json
+
+See also:
+  docs/user/cli/mcp.md";
+
 const EVAL_GROUP_AFTER_HELP: &str = "\
 Agent notes:
   Use eval commands to produce reproducible evidence that memory changes retrieval, grounding, cost, or task success.
@@ -818,6 +832,19 @@ Examples:
 See also:
   docs/user/cli/curate.md";
 
+const PROPOSALS_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Review pending memory replacement proposals produced by curation.
+  List/show are read-only. Approve/reject mutate memory state and require an explicit review decision.
+
+Examples:
+  memory proposals list --project memory --json
+  memory proposals show --project memory --id 00000000-0000-0000-0000-000000000000
+  memory proposals approve --project memory --id 00000000-0000-0000-0000-000000000000 --json
+
+See also:
+  docs/user/cli/proposals.md";
+
 const EMBEDDINGS_GROUP_AFTER_HELP: &str = "\
 Agent notes:
   Manage semantic retrieval spaces. list/activate are global backend operations; reindex/reembed/prune operate per project.
@@ -1017,6 +1044,8 @@ enum Command {
     Upgrade(UpgradeArgs),
     #[command(about = "Manage the Memory Layer backend service.", after_help = SERVICE_GROUP_AFTER_HELP)]
     Service(ServiceArgs),
+    #[command(about = "Run and inspect the built-in Memory MCP server.", after_help = MCP_GROUP_AFTER_HELP)]
+    Mcp(McpArgs),
     #[command(about = "Manage project watchers and watcher daemons.", after_help = WATCHER_GROUP_AFTER_HELP)]
     Watcher(WatcherArgs),
     #[command(about = "Inspect configuration and environment health.", after_help = DOCTOR_AFTER_HELP)]
@@ -1053,6 +1082,8 @@ enum Command {
     Remember(RememberArgs),
     #[command(about = "Curate raw captures into canonical memory.", after_help = CURATE_AFTER_HELP)]
     Curate(CurateArgs),
+    #[command(about = "Review pending memory replacement proposals.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
+    Proposals(ProposalsArgs),
     #[command(about = "Rebuild and maintain embedding spaces.", after_help = EMBEDDINGS_GROUP_AFTER_HELP)]
     Embeddings(EmbeddingsArgs),
     #[command(about = "Check backend service health.", after_help = HEALTH_AFTER_HELP)]
@@ -1224,6 +1255,41 @@ struct ServiceEnsureApiTokenArgs {
     #[arg(long)]
     dry_run: bool,
     /// Emit the result as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Run and inspect the built-in Memory MCP server.",
+    after_help = MCP_GROUP_AFTER_HELP
+)]
+struct McpArgs {
+    #[command(subcommand)]
+    command: McpCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum McpCommand {
+    #[command(about = "Run a stdio MCP server for local clients.", after_help = MCP_GROUP_AFTER_HELP)]
+    Run(McpRunArgs),
+    #[command(about = "Check service reachability and exposed MCP surface.", after_help = MCP_GROUP_AFTER_HELP)]
+    Status(McpStatusArgs),
+}
+
+#[derive(Debug, Args)]
+struct McpRunArgs {
+    /// Default project slug for stdio tool calls that omit the project argument.
+    #[arg(long)]
+    project: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct McpStatusArgs {
+    /// Project slug to verify; defaults to the current repo when available.
+    #[arg(long)]
+    project: Option<String>,
+    /// Emit the status report as JSON.
     #[arg(long)]
     json: bool,
 }
@@ -2062,6 +2128,67 @@ struct CurateArgs {
 
 #[derive(Debug, Args)]
 #[command(
+    about = "Review pending memory replacement proposals.",
+    after_help = PROPOSALS_GROUP_AFTER_HELP
+)]
+struct ProposalsArgs {
+    #[command(subcommand)]
+    command: ProposalsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProposalsCommand {
+    #[command(about = "List pending replacement proposals.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
+    List(ProposalsListArgs),
+    #[command(about = "Show one pending replacement proposal.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
+    Show(ProposalsShowArgs),
+    #[command(about = "Approve a pending replacement proposal.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
+    Approve(ProposalsResolveArgs),
+    #[command(about = "Reject a pending replacement proposal.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
+    Reject(ProposalsResolveArgs),
+}
+
+#[derive(Debug, Args)]
+struct ProposalsListArgs {
+    /// Project slug to inspect.
+    #[arg(long)]
+    project: String,
+    /// Limit the number of proposals printed in text or JSON output.
+    #[arg(long)]
+    limit: Option<usize>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProposalsShowArgs {
+    /// Project slug to inspect.
+    #[arg(long)]
+    project: String,
+    /// Pending proposal id.
+    #[arg(long)]
+    id: Uuid,
+    /// Emit the proposal as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ProposalsResolveArgs {
+    /// Project slug to update.
+    #[arg(long)]
+    project: String,
+    /// Pending proposal id.
+    #[arg(long)]
+    id: Uuid,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
     about = "Manage embedding indexes and spaces for semantic retrieval.",
     after_help = EMBEDDINGS_GROUP_AFTER_HELP
 )]
@@ -2405,6 +2532,25 @@ async fn main() -> Result<()> {
             command: ServiceCommand::Run,
         }) => unreachable!("service run is handled before config loading"),
         Command::Service(_) => unreachable!("service management is handled before config loading"),
+        Command::Mcp(args) => match args.command {
+            McpCommand::Run(args) => {
+                let cwd = env::current_dir().context("read current directory")?;
+                mem_mcp::run_stdio(config, args.project, &cwd).await?;
+            }
+            McpCommand::Status(args) => {
+                let cwd = env::current_dir().context("read current directory")?;
+                let project = match args.project {
+                    Some(project) => Some(project),
+                    None => resolve_project_slug(None, &cwd).ok(),
+                };
+                let report = mem_mcp::status_report(config, project).await;
+                if args.json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("{}", mem_mcp::format_status_text(&report));
+                }
+            }
+        },
         Command::Watcher(WatcherArgs {
             command:
                 WatcherCommand::Enable(_) | WatcherCommand::Disable(_) | WatcherCommand::Status(_),
@@ -3277,6 +3423,10 @@ async fn main() -> Result<()> {
                 .send()
                 .await?;
             print_json_response(response).await?;
+        }
+        Command::Proposals(args) => {
+            let api = ApiClient::new(client, config);
+            handle_proposals_command(args, &api).await?;
         }
         Command::Embeddings(args) => match args.command {
             EmbeddingsCommand::List => {
@@ -4987,13 +5137,7 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
         }
     }
     if !env_path.exists() && legacy_env_path.exists() {
-        fs::copy(&legacy_env_path, &env_path).with_context(|| {
-            format!(
-                "copy {} to {}",
-                legacy_env_path.display(),
-                env_path.display()
-            )
-        })?;
+        migrate_legacy_env_or_create_token(&legacy_env_path, &env_path)?;
     }
     if !home_project_path.exists() {
         fs::write(
@@ -5026,6 +5170,25 @@ fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
     }
     ensure_claude_md_memory_section(repo_root, project)?;
     Ok(())
+}
+
+fn migrate_legacy_env_or_create_token(legacy_env_path: &Path, env_path: &Path) -> Result<()> {
+    match fs::copy(legacy_env_path, env_path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            ensure_shared_service_api_token(env_path, None, true).with_context(|| {
+                format!("create replacement service token in {}", env_path.display())
+            })?;
+            Ok(())
+        }
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "copy {} to {}",
+                legacy_env_path.display(),
+                env_path.display()
+            )
+        }),
+    }
 }
 
 fn root_gitignore_contains_mem(repo_root: &Path) -> Result<bool> {
@@ -5296,13 +5459,7 @@ fn initialize_repo(
             }
         }
         if !force && !env_path.exists() && legacy_env_path.exists() {
-            fs::copy(&legacy_env_path, &env_path).with_context(|| {
-                format!(
-                    "copy {} to {}",
-                    legacy_env_path.display(),
-                    env_path.display()
-                )
-            })?;
+            migrate_legacy_env_or_create_token(&legacy_env_path, &env_path)?;
         }
         if force || !home_project_path.exists() {
             fs::write(&home_project_path, &project_contents)
@@ -5374,7 +5531,7 @@ fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String
     }
     let overlay_path = project_paths.dev_config_path();
     let runtime_dev_dir = project_paths.runtime_dir().join("dev");
-    let capnp_unix_socket = runtime_dev_dir.join("memory-layer.capnp.sock");
+    let capnp_unix_socket = dev_capnp_unix_socket_path(&project_paths);
     let state_file_path = runtime_dev_dir.join("automation-state.json");
     let audit_log_path = runtime_dev_dir.join("automation.log");
 
@@ -5437,6 +5594,15 @@ fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String
         overlay_path.display(),
         runtime_dev_dir.display()
     ))
+}
+
+fn dev_capnp_unix_socket_path(project_paths: &mem_platform::ProjectPaths) -> PathBuf {
+    let identity = project_paths
+        .key
+        .rsplit_once('-')
+        .map(|(_, hash)| hash)
+        .unwrap_or(&project_paths.key);
+    env::temp_dir().join(format!("memory-layer-dev-{identity}.sock"))
 }
 
 /// Tables we willingly copy from the global config into the dev overlay. The
@@ -8012,6 +8178,8 @@ fn watcher_command_requires_config_load(command: &WatcherCommand) -> bool {
 const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-layer",
     "memory-project-init",
+    "memory-github-init",
+    "memory-review-proposals",
     "memory-query-resume",
     "memory-plan-execution",
     "memory-direct-task-start",
@@ -9506,6 +9674,114 @@ async fn print_json_response(response: reqwest::Response) -> Result<()> {
     }
     println!("{body}");
     Ok(())
+}
+
+async fn handle_proposals_command(args: ProposalsArgs, api: &ApiClient) -> Result<()> {
+    match args.command {
+        ProposalsCommand::List(args) => {
+            let mut response = api.replacement_proposals(&args.project).await?;
+            if let Some(limit) = args.limit {
+                response.proposals.truncate(limit);
+            }
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                print_replacement_proposals(&response);
+            }
+        }
+        ProposalsCommand::Show(args) => {
+            let response = api.replacement_proposals(&args.project).await?;
+            let proposal = find_replacement_proposal(response.proposals, args.id)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&proposal)?);
+            } else {
+                print_replacement_proposal_detail(&proposal);
+            }
+        }
+        ProposalsCommand::Approve(args) => {
+            let response = api
+                .approve_replacement_proposal(&args.project, args.id)
+                .await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                println!(
+                    "Approved replacement proposal {}: {} -> {}",
+                    response.proposal_id, response.target_summary, response.candidate_summary
+                );
+            }
+        }
+        ProposalsCommand::Reject(args) => {
+            let response = api
+                .reject_replacement_proposal(&args.project, args.id)
+                .await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                println!(
+                    "Rejected replacement proposal {} for {}.",
+                    response.proposal_id, response.target_summary
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn find_replacement_proposal(
+    proposals: Vec<mem_api::ReplacementProposalRecord>,
+    id: Uuid,
+) -> Result<mem_api::ReplacementProposalRecord> {
+    proposals
+        .into_iter()
+        .find(|proposal| proposal.id == id)
+        .with_context(|| format!("pending replacement proposal {id} was not found"))
+}
+
+fn print_replacement_proposals(response: &mem_api::ReplacementProposalListResponse) {
+    if response.proposals.is_empty() {
+        println!(
+            "No pending replacement proposals for `{}`.",
+            response.project
+        );
+        return;
+    }
+    println!(
+        "Pending replacement proposals for `{}`: {}",
+        response.project,
+        response.proposals.len()
+    );
+    for (index, proposal) in response.proposals.iter().enumerate() {
+        println!(
+            "\n{}. {} [{} score {}]",
+            index + 1,
+            proposal.candidate_summary,
+            proposal.candidate_memory_type,
+            proposal.score
+        );
+        println!("   id: {}", proposal.id);
+        println!("   target: {}", proposal.target_summary);
+        if !proposal.reasons.is_empty() {
+            println!("   why: {}", proposal.reasons.join(", "));
+        }
+    }
+}
+
+fn print_replacement_proposal_detail(proposal: &mem_api::ReplacementProposalRecord) {
+    println!("Proposal: {}", proposal.id);
+    println!("Project: {}", proposal.project);
+    println!("Target memory: {}", proposal.target_memory_id);
+    println!("Target summary: {}", proposal.target_summary);
+    println!("Candidate summary: {}", proposal.candidate_summary);
+    println!(
+        "Type / Score / Policy: {} / {} / {}",
+        proposal.candidate_memory_type, proposal.score, proposal.policy
+    );
+    if !proposal.reasons.is_empty() {
+        println!("Why proposed: {}", proposal.reasons.join(", "));
+    }
+    println!("Created: {}", proposal.created_at.to_rfc3339());
+    println!("\nCandidate text:\n{}", proposal.candidate_canonical_text);
 }
 
 fn format_api_error(status: reqwest::StatusCode, body: &str) -> String {
@@ -13679,9 +13955,9 @@ mod tests {
         build_plan_execution_request, build_remember_request, build_task_start_request,
         chat_completion_content, derive_plan_thread_key, derive_plan_title,
         durable_plan_source_path, ensure_checkbox_plan, ensure_direct_llm_eval_config,
-        ensure_shared_service_api_token, initialize_repo, is_placeholder_database_url,
-        mask_database_url, newest_tui_restart_notice, parse_memory_type_arg,
-        parse_no_memory_grounded_answer, parse_plan_checkboxes,
+        ensure_shared_service_api_token, initialize_dev_overlay, initialize_repo,
+        is_placeholder_database_url, mask_database_url, newest_tui_restart_notice,
+        parse_memory_type_arg, parse_no_memory_grounded_answer, parse_plan_checkboxes,
         project_skill_inventory_with_template, read_skill_version, render_agent_project_config,
         render_claude_md_memory_section, repair_repo_bootstrap, resolve_project_slug,
         resolve_repo_root, resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
@@ -13831,6 +14107,7 @@ mod tests {
             "init" => Some("init.md"),
             "upgrade" => Some("upgrade.md"),
             "service" => Some("service.md"),
+            "mcp" => Some("mcp.md"),
             "doctor" => Some("doctor.md"),
             "commits" => Some("commits.md"),
             "repo" => Some("repo.md"),
@@ -13847,6 +14124,7 @@ mod tests {
             "capture" => Some("capture.md"),
             "remember" => Some("remember.md"),
             "curate" => Some("curate.md"),
+            "proposals" => Some("proposals.md"),
             "embeddings" => Some("embeddings.md"),
             "health" => Some("health.md"),
             "stats" => Some("stats.md"),
@@ -13956,18 +14234,21 @@ mod tests {
         let bash = rendered_completion(clap_complete::Shell::Bash);
         assert!(bash.contains("wizard"));
         assert!(bash.contains("completion"));
+        assert!(bash.contains("proposals"));
         assert!(bash.contains("watcher"));
         assert!(bash.contains("manager"));
         assert!(bash.contains("--project"));
 
         let zsh = rendered_completion(clap_complete::Shell::Zsh);
         assert!(zsh.contains("_memory"));
+        assert!(zsh.contains("proposals"));
         assert!(zsh.contains("watcher"));
         assert!(zsh.contains("manager"));
         assert!(zsh.contains("completion"));
 
         let fish = rendered_completion(clap_complete::Shell::Fish);
         assert!(fish.contains("complete -c memory"));
+        assert!(fish.contains("proposals"));
         assert!(fish.contains("watcher"));
         assert!(fish.contains("manager"));
         assert!(fish.contains("completion"));
@@ -14031,6 +14312,37 @@ mod tests {
         assert!(output.contains("Use before answering project-specific questions"));
         assert!(output.contains("insufficient_evidence"));
         assert!(output.contains("docs/user/cli/query.md"));
+    }
+
+    #[test]
+    fn proposals_help_includes_review_guidance() {
+        let output = rendered_help(&["memory", "proposals", "--help"]);
+        assert!(output.contains("Review pending memory replacement proposals"));
+        assert!(output.contains("Approve/reject mutate memory state"));
+        assert!(output.contains("docs/user/cli/proposals.md"));
+    }
+
+    #[test]
+    fn proposals_show_parses_uuid_and_json_flag() {
+        let cli = Cli::parse_from([
+            "memory",
+            "proposals",
+            "show",
+            "--project",
+            "memory",
+            "--id",
+            "00000000-0000-0000-0000-000000000000",
+            "--json",
+        ]);
+        let super::Command::Proposals(args) = cli.command else {
+            panic!("expected proposals command");
+        };
+        let super::ProposalsCommand::Show(args) = args.command else {
+            panic!("expected proposals show command");
+        };
+        assert_eq!(args.project, "memory");
+        assert_eq!(args.id, Uuid::nil());
+        assert!(args.json);
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -14852,6 +15164,16 @@ mod tests {
         );
         assert!(
             repo_root
+                .join(".agents/skills/memory-github-init/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
+                .join(".agents/skills/memory-review-proposals/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
                 .join(".agents/skills/memory-plan-execution/SKILL.md")
                 .is_file()
         );
@@ -14914,6 +15236,62 @@ mod tests {
         assert_eq!(
             fs::read_to_string(repo_root.join(".mem/.gitignore")).unwrap(),
             "*\n!.gitignore\n!project.toml\n"
+        );
+
+        restore_env_var("XDG_CONFIG_HOME", old_config);
+        restore_env_var("XDG_STATE_HOME", old_state);
+        restore_env_var("XDG_CACHE_HOME", old_cache);
+        let _ = fs::remove_dir_all(repo_root);
+        let _ = fs::remove_dir_all(xdg_root);
+    }
+
+    #[test]
+    fn dev_init_uses_short_capnp_unix_socket_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let repo_root = unique_temp_dir("mem-dev-init");
+        let xdg_root = unique_temp_dir("mem-dev-init-xdg");
+        let old_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_state = std::env::var("XDG_STATE_HOME").ok();
+        let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
+            std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
+            std::env::set_var("XDG_CACHE_HOME", xdg_root.join("cache"));
+        }
+        fs::create_dir_all(&repo_root).unwrap();
+        initialize_repo(&repo_root, "memory", false, false).unwrap();
+
+        initialize_dev_overlay(
+            &repo_root,
+            &super::DevInitArgs {
+                force: false,
+                dry_run: false,
+                bind_addr: "127.0.0.1:4250".to_string(),
+                capnp_tcp_addr: "127.0.0.1:4251".to_string(),
+                copy_from_global: false,
+                no_copy_from_global: true,
+            },
+        )
+        .unwrap();
+
+        let paths = mem_platform::project_paths(&repo_root, "memory").unwrap();
+        let dev_config = fs::read_to_string(paths.dev_config_path()).unwrap();
+        let socket_path = dev_config
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("capnp_unix_socket = ")
+                    .map(|value| value.trim_matches('"').to_string())
+            })
+            .unwrap();
+        let socket_file_name = Path::new(&socket_path)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap();
+        assert!(socket_file_name.starts_with("memory-layer-dev-"));
+        assert!(
+            socket_path.len() < 100,
+            "socket path should fit Unix SUN_LEN: {socket_path}"
         );
 
         restore_env_var("XDG_CONFIG_HOME", old_config);
@@ -14987,6 +15365,11 @@ mod tests {
         );
         assert!(
             repo_root
+                .join(".agents/skills/memory-github-init/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
                 .join(".agents/skills/memory-plan-execution/SKILL.md")
                 .is_file()
         );
@@ -15047,6 +15430,11 @@ mod tests {
         );
         assert!(
             repo_root
+                .join(".agents/skills/memory-github-init/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            repo_root
                 .join(".agents/skills/memory-plan-execution/SKILL.md")
                 .is_file()
         );
@@ -15098,6 +15486,9 @@ mod tests {
 
         let umbrella =
             fs::read_to_string(repo_root.join(".agents/skills/memory-layer/SKILL.md")).unwrap();
+        let github_init =
+            fs::read_to_string(repo_root.join(".agents/skills/memory-github-init/SKILL.md"))
+                .unwrap();
         let query_resume =
             fs::read_to_string(repo_root.join(".agents/skills/memory-query-resume/SKILL.md"))
                 .unwrap();
@@ -15105,6 +15496,9 @@ mod tests {
             fs::read_to_string(repo_root.join(".agents/skills/memory-remember/SKILL.md")).unwrap();
 
         assert!(umbrella.contains("Code explanation memory rule"));
+        assert!(umbrella.contains("memory-github-init"));
+        assert!(github_init.contains("Memory GitHub Init Skill"));
+        assert!(github_init.contains("dry-run"));
         assert!(umbrella.contains("Store a distilled memory, not the whole chat answer"));
         assert!(query_resume.contains("explain code, a file, a module"));
         assert!(query_resume.contains("store the distilled reusable explanation"));
@@ -15439,6 +15833,7 @@ mod tests {
                 api_token: "ml_testtoken".to_string(),
                 request_timeout: Duration::from_secs(30),
             },
+            mcp: mem_api::McpConfig::default(),
             database: mem_api::DatabaseConfig {
                 url: "postgresql://memory:test@localhost:5432/memory".to_string(),
             },
@@ -15547,7 +15942,17 @@ mod tests {
 
     #[test]
     fn skill_upgrade_replaces_outdated_skill_and_creates_backup() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let repo = unique_temp_dir("mem-skill-upgrade");
+        let xdg_root = unique_temp_dir("mem-skill-upgrade-xdg");
+        let old_config = std::env::var("XDG_CONFIG_HOME").ok();
+        let old_state = std::env::var("XDG_STATE_HOME").ok();
+        let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
+            std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
+            std::env::set_var("XDG_CACHE_HOME", xdg_root.join("cache"));
+        }
         let project_root = repo.join("project");
         let template_root = repo.join("memory-layer/skill-template");
         for name in super::MEMORY_SKILL_NAMES {
@@ -15578,7 +15983,11 @@ mod tests {
         );
         assert_eq!(report.inventory.status, SkillBundleStatus::Warn);
 
+        restore_env_var("XDG_CONFIG_HOME", old_config);
+        restore_env_var("XDG_STATE_HOME", old_state);
+        restore_env_var("XDG_CACHE_HOME", old_cache);
         let _ = fs::remove_dir_all(repo);
+        let _ = fs::remove_dir_all(xdg_root);
     }
 
     #[test]

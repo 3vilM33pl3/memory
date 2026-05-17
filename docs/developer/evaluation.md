@@ -20,6 +20,10 @@ aggregate comparisons and makes statistical tests meaningful.
 the suite supplies a shell command template, so the harness can run Codex,
 Claude, a fake local agent, or any other noninteractive runner.
 
+MemoryAgentBench is integrated separately as an external native benchmark
+adapter. See `evals/external/memory-agent-bench/README.md` for the pinned
+checkout, Memory Layer agent adapter, and small Accurate Retrieval pilot.
+
 For each item, `memory eval run`:
 
 - resolves the fixture directory relative to the suite root

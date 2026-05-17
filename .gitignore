@@ -13,3 +13,5 @@
 /web/dist
 /web/*.tsbuildinfo
 /demo/output
+__pycache__/
+*.pyc

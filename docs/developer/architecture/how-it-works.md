@@ -15,10 +15,12 @@ If you want installation instructions instead, use [Getting Started](../../user/
 - [Core Service Boundaries](#core-service-boundaries)
 - [Database Model](#database-model)
 - [Write Path: Explicit Remember](#write-path-explicit-remember)
+- [Write Capture Curation Flow](#write-capture-curation-flow)
 - [Write Path: Raw Capture And Curation Separation](#write-path-raw-capture-and-curation-separation)
 - [Capture Payload Ingestion](#capture-payload-ingestion)
 - [Curation Pipeline](#curation-pipeline)
 - [Search And Query Pipeline](#search-and-query-pipeline)
+- [Query Retrieval Flow](#query-retrieval-flow)
 - [TUI And Streaming Updates](#tui-and-streaming-updates)
 - [Watcher Model](#watcher-model)
 - [Scan Flow](#scan-flow)
@@ -71,6 +73,8 @@ The repository is a Rust workspace with these crates:
   The user-facing CLI, TUI, wizard, doctor, scan flow, and repo bootstrap logic.
 - `crates/mem-service`
   The backend service. It owns HTTP routes, the Cap'n Proto streaming transport, migrations on startup, and orchestration of capture/query/curate operations.
+- `crates/mem-mcp`
+  The read-only MCP adapter. It exposes tools, resource templates, prompts, stdio transport, and the service-mounted Streamable HTTP transport while reusing the existing service HTTP API.
 - `crates/mem-ingest`
   Normalization of captured task payloads into candidate facts.
 - `crates/mem-curate`
@@ -248,6 +252,59 @@ The critical integrity rule is that canonical memory is not just loose text. It 
 
 The simplest write path is `memory remember`.
 
+### Write Capture Curation Flow
+
+The diagram below shows the common write path and the watcher-driven variant. The key point is that raw evidence is stored before curation decides what becomes durable memory.
+
+```mermaid
+flowchart TD
+    subgraph Sources["Capture sources"]
+        Skill["Agent skill<br/>remember-task"]
+        CLI["memory remember<br/>or capture task"]
+        Watcher["watcher manager<br/>and watchers"]
+        Scan["scan and import flows"]
+    end
+
+    Payload["Capture payload<br/>task, notes, files, tests, candidates"]
+    CaptureAPI["POST /v1/capture/task"]
+    Raw["raw_captures<br/>sessions and tasks"]
+    Ingest["mem-ingest<br/>normalize candidate facts"]
+    Curate["mem-curate<br/>classify, dedupe, replace, reject"]
+
+    subgraph Canonical["Canonical memory materialization"]
+        Entries["memory_entries<br/>versioned canonical memories"]
+        SourcesTable["memory_sources<br/>provenance"]
+        Tags["memory_tags"]
+        Chunks["memory_chunks"]
+        Embeddings["memory_chunk_embeddings<br/>per embedding space"]
+        Relations["memory_relations<br/>precomputed related memory links"]
+    end
+
+    Activities["activity events<br/>TUI and web updates"]
+    Queryable["Queryable project memory"]
+
+    Skill --> Payload
+    CLI --> Payload
+    Watcher --> Payload
+    Scan --> Payload
+    Payload --> CaptureAPI
+    CaptureAPI --> Raw
+    Raw --> Ingest
+    Ingest --> Curate
+    Curate --> Entries
+    Curate --> SourcesTable
+    Curate --> Tags
+    Curate --> Chunks
+    Chunks --> Embeddings
+    Curate --> Relations
+    Entries --> Queryable
+    SourcesTable --> Queryable
+    Tags --> Queryable
+    Chunks --> Queryable
+    Relations --> Queryable
+    Curate --> Activities
+```
+
 That path looks like this:
 
 1. The CLI resolves the project slug.
@@ -346,6 +403,35 @@ The relation classifier is deterministic. It uses canonical-text overlap, shared
 ## Search And Query Pipeline
 
 The query path is handled by `mem-search`.
+
+### Query Retrieval Flow
+
+This diagram shows how the query pipeline combines retrieval signals before producing cited results and optional generated answers.
+
+```mermaid
+flowchart LR
+    Request["Query request<br/>project, question, filters"] --> Normalize["Normalize and interpret query"]
+
+    Normalize --> Lexical["Lexical retrieval<br/>PostgreSQL full-text"]
+    Normalize --> Semantic["Semantic retrieval<br/>pgvector active embedding space"]
+    Normalize --> Graph["Graph retrieval<br/>symbols, references, paths"]
+
+    Lexical --> Merge["Merge candidates"]
+    Semantic --> Merge
+    Graph --> Merge
+
+    Merge --> Relations["Relation boost<br/>memory_relations"]
+    Relations --> Rerank["Rust rerank<br/>scores and explanations"]
+    Rerank --> Evidence["Top memories<br/>snippets and provenance"]
+
+    Evidence --> Deterministic["Deterministic answer<br/>fallback synthesis"]
+    Evidence --> LLMAnswer["Optional LLM answer<br/>citations required"]
+    Deterministic --> Response["Query response<br/>answer, results, diagnostics"]
+    LLMAnswer --> Response
+
+    Response --> Activity["query activity<br/>timing, token usage, diagnostics"]
+    Response --> UI["CLI, TUI, or web UI"]
+```
 
 The current implementation is PostgreSQL-first. It uses:
 

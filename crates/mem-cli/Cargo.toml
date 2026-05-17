@@ -17,6 +17,7 @@ mem-analyze = { path = "../mem-analyze" }
 mem-api = { path = "../mem-api" }
 mem-eval = { path = "../mem-eval" }
 mem-graph = { path = "../mem-graph" }
+mem-mcp = { path = "../mem-mcp" }
 mem-platform = { path = "../mem-platform" }
 mem-service = { path = "../mem-service" }
 mem-watch = { path = "../mem-watch" }

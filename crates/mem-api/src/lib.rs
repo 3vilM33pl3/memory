@@ -2215,6 +2215,8 @@ fn current_exe_is_in_cargo_target() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub service: ServiceConfig,
+    #[serde(default)]
+    pub mcp: McpConfig,
     pub database: DatabaseConfig,
     #[serde(default)]
     pub features: FeatureFlags,
@@ -2690,6 +2692,32 @@ pub struct ServiceConfig {
     #[serde(default = "default_request_timeout")]
     #[serde(with = "humantime_serde")]
     pub request_timeout: Duration,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub http_enabled: bool,
+    #[serde(default = "default_mcp_http_path")]
+    pub http_path: String,
+    #[serde(default = "default_true")]
+    pub require_token: bool,
+    #[serde(default = "default_true")]
+    pub read_only: bool,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            http_enabled: true,
+            http_path: default_mcp_http_path(),
+            require_token: true,
+            read_only: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3226,6 +3254,10 @@ fn default_cluster_priority() -> i32 {
 
 fn default_api_token() -> String {
     "dev-memory-token".to_string()
+}
+
+fn default_mcp_http_path() -> String {
+    "/mcp".to_string()
 }
 
 fn default_capnp_unix_socket() -> String {
@@ -4094,6 +4126,28 @@ mod tests {
 
         assert_eq!(config.database.url, "postgresql://from-env");
         assert_eq!(config.service.api_token, "from-env");
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn mcp_config_defaults_to_read_only_http_mount() {
+        let _guard = env_lock().lock().unwrap();
+        let temp_dir = unique_temp_dir("mem-api-mcp-config");
+        let config_path = temp_dir.join("memory-layer.toml");
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(
+            &config_path,
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
+        )
+        .unwrap();
+
+        let config = AppConfig::load_with_profile(Some(config_path), Profile::Prod).unwrap();
+
+        assert!(config.mcp.enabled);
+        assert!(config.mcp.http_enabled);
+        assert_eq!(config.mcp.http_path, "/mcp");
+        assert!(config.mcp.require_token);
+        assert!(config.mcp.read_only);
         let _ = fs::remove_dir_all(temp_dir);
     }
 
