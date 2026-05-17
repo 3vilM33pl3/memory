@@ -1118,8 +1118,7 @@ fn is_refactor_affected_target(
 ) -> bool {
     refactor_can_affect(other)
         && has_refactor_language(&current.canonical_text)
-        && (shared_files > 0 && (similarity >= 0.25 || shared_tags > 0)
-            || shared_files > 0 && similarity >= 0.15
+        && (shared_files > 0 && (similarity >= 0.15 || shared_tags > 0)
             || shared_tags >= 2 && similarity >= 0.35)
 }
 

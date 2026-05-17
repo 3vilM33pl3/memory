@@ -928,6 +928,7 @@ mod tests {
                 api_token: "ml_testtoken".to_string(),
                 request_timeout: std::time::Duration::from_secs(30),
             },
+            mcp: mem_api::McpConfig::default(),
             database: mem_api::DatabaseConfig {
                 url: "postgresql://memory:test@localhost:5432/memory".to_string(),
             },

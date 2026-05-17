@@ -451,9 +451,9 @@ impl MemoryMcpServer {
             .iter()
             .map(|item| {
                 format!(
-                    "- {} {}: {}",
+                    "- {} {:?}: {}",
                     item.recorded_at.to_rfc3339(),
-                    format!("{:?}", item.kind),
+                    item.kind,
                     item.summary
                 )
             })
