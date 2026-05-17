@@ -1,3 +1,4 @@
+mod commands;
 mod commits;
 mod plan_execution;
 mod resume;
@@ -2841,52 +2842,7 @@ async fn main() -> Result<()> {
         }
         Command::Bundle(args) => {
             let api = ApiClient::new(client, config);
-            match args.command {
-                BundleCommand::Export(args) => {
-                    let options = ProjectMemoryExportOptions {
-                        include_archived: args.include_archived,
-                        include_tags: true,
-                        include_relations: true,
-                        include_source_file_paths: args.include_source_file_paths,
-                        include_git_commits: args.include_git_commits,
-                        include_source_excerpts: args.include_source_excerpts,
-                    };
-                    let preview = api.export_bundle_preview(&args.project, &options).await?;
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "project": args.project,
-                            "output": args.out.display().to_string(),
-                            "preview": preview,
-                            "dry_run": args.dry_run,
-                        }))?
-                    );
-                    if !args.dry_run {
-                        let bytes = api.export_bundle(&args.project, &options).await?;
-                        fs::write(&args.out, bytes)
-                            .with_context(|| format!("write {}", args.out.display()))?;
-                    }
-                }
-                BundleCommand::Import(args) => {
-                    let bytes = fs::read(&args.bundle)
-                        .with_context(|| format!("read {}", args.bundle.display()))?;
-                    if args.dry_run {
-                        let preview = api.import_bundle_preview(&args.project, bytes).await?;
-                        if args.json {
-                            println!("{}", serde_json::to_string_pretty(&preview)?);
-                        } else {
-                            print_bundle_import_preview(&preview);
-                        }
-                    } else {
-                        let response = api.import_bundle(&args.project, bytes).await?;
-                        if args.json {
-                            println!("{}", serde_json::to_string_pretty(&response)?);
-                        } else {
-                            print_bundle_import_response(&response);
-                        }
-                    }
-                }
-            }
+            commands::bundle::handle(args, &api).await?;
         }
         Command::Checkpoint(args) => {
             let cwd = env::current_dir().context("read current directory")?;
@@ -3480,7 +3436,7 @@ async fn main() -> Result<()> {
         }
         Command::Proposals(args) => {
             let api = ApiClient::new(client, config);
-            handle_proposals_command(args, &api).await?;
+            commands::proposals::handle(args, &api).await?;
         }
         Command::Embeddings(args) => match args.command {
             EmbeddingsCommand::List => {
@@ -9743,114 +9699,6 @@ async fn print_json_response(response: reqwest::Response) -> Result<()> {
     }
     println!("{body}");
     Ok(())
-}
-
-async fn handle_proposals_command(args: ProposalsArgs, api: &ApiClient) -> Result<()> {
-    match args.command {
-        ProposalsCommand::List(args) => {
-            let mut response = api.replacement_proposals(&args.project).await?;
-            if let Some(limit) = args.limit {
-                response.proposals.truncate(limit);
-            }
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&response)?);
-            } else {
-                print_replacement_proposals(&response);
-            }
-        }
-        ProposalsCommand::Show(args) => {
-            let response = api.replacement_proposals(&args.project).await?;
-            let proposal = find_replacement_proposal(response.proposals, args.id)?;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&proposal)?);
-            } else {
-                print_replacement_proposal_detail(&proposal);
-            }
-        }
-        ProposalsCommand::Approve(args) => {
-            let response = api
-                .approve_replacement_proposal(&args.project, args.id)
-                .await?;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&response)?);
-            } else {
-                println!(
-                    "Approved replacement proposal {}: {} -> {}",
-                    response.proposal_id, response.target_summary, response.candidate_summary
-                );
-            }
-        }
-        ProposalsCommand::Reject(args) => {
-            let response = api
-                .reject_replacement_proposal(&args.project, args.id)
-                .await?;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&response)?);
-            } else {
-                println!(
-                    "Rejected replacement proposal {} for {}.",
-                    response.proposal_id, response.target_summary
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn find_replacement_proposal(
-    proposals: Vec<mem_api::ReplacementProposalRecord>,
-    id: Uuid,
-) -> Result<mem_api::ReplacementProposalRecord> {
-    proposals
-        .into_iter()
-        .find(|proposal| proposal.id == id)
-        .with_context(|| format!("pending replacement proposal {id} was not found"))
-}
-
-fn print_replacement_proposals(response: &mem_api::ReplacementProposalListResponse) {
-    if response.proposals.is_empty() {
-        println!(
-            "No pending replacement proposals for `{}`.",
-            response.project
-        );
-        return;
-    }
-    println!(
-        "Pending replacement proposals for `{}`: {}",
-        response.project,
-        response.proposals.len()
-    );
-    for (index, proposal) in response.proposals.iter().enumerate() {
-        println!(
-            "\n{}. {} [{} score {}]",
-            index + 1,
-            proposal.candidate_summary,
-            proposal.candidate_memory_type,
-            proposal.score
-        );
-        println!("   id: {}", proposal.id);
-        println!("   target: {}", proposal.target_summary);
-        if !proposal.reasons.is_empty() {
-            println!("   why: {}", proposal.reasons.join(", "));
-        }
-    }
-}
-
-fn print_replacement_proposal_detail(proposal: &mem_api::ReplacementProposalRecord) {
-    println!("Proposal: {}", proposal.id);
-    println!("Project: {}", proposal.project);
-    println!("Target memory: {}", proposal.target_memory_id);
-    println!("Target summary: {}", proposal.target_summary);
-    println!("Candidate summary: {}", proposal.candidate_summary);
-    println!(
-        "Type / Score / Policy: {} / {} / {}",
-        proposal.candidate_memory_type, proposal.score, proposal.policy
-    );
-    if !proposal.reasons.is_empty() {
-        println!("Why proposed: {}", proposal.reasons.join(", "));
-    }
-    println!("Created: {}", proposal.created_at.to_rfc3339());
-    println!("\nCandidate text:\n{}", proposal.candidate_canonical_text);
 }
 
 fn format_api_error(status: reqwest::StatusCode, body: &str) -> String {
