@@ -14,5 +14,9 @@ serde_json.workspace = true
 sqlx.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+mem-test-support = { path = "../mem-test-support" }
+tokio.workspace = true
+
 [lints]
 workspace = true

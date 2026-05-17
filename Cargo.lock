@@ -1611,8 +1611,10 @@ dependencies = [
  "chrono",
  "mem-api",
  "mem-ingest",
+ "mem-test-support",
  "serde_json",
  "sqlx",
+ "tokio",
  "uuid",
 ]
 
@@ -1637,9 +1639,11 @@ dependencies = [
  "anyhow",
  "chrono",
  "mem-analyze",
+ "mem-test-support",
  "serde",
  "serde_json",
  "sqlx",
+ "tokio",
  "uuid",
 ]
 
@@ -1732,6 +1736,16 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "mem-test-support"
+version = "0.8.7"
+dependencies = [
+ "anyhow",
+ "sqlx",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

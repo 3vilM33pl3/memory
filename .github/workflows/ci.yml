@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
+      db: ${{ steps.filter.outputs.db }}
       web: ${{ steps.filter.outputs.web }}
       evals: ${{ steps.filter.outputs.evals }}
       package: ${{ steps.filter.outputs.package }}
@@ -33,6 +34,16 @@ jobs:
               - "crates/**"
               - "migrations/**"
               - "memory-layer.toml.example"
+            db:
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "crates/mem-api/**"
+              - "crates/mem-curate/**"
+              - "crates/mem-graph/**"
+              - "crates/mem-search/**"
+              - "crates/mem-service/**"
+              - "crates/mem-test-support/**"
+              - "migrations/**"
             web:
               - "web/**"
             evals:
@@ -88,6 +99,34 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  db-integration:
+    name: DB Integration
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.db == 'true'
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: memory
+          POSTGRES_PASSWORD: memory
+          POSTGRES_DB: memory_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U memory -d memory_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MEMORY_LAYER_TEST_DATABASE_URL: postgres://memory:memory@localhost:5432/memory_test
+      MEMORY_LAYER_TEST_REQUIRE_DB: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p mem-test-support -p mem-graph -p mem-curate --locked
 
   offline-eval:
     name: Offline Eval Smoke
