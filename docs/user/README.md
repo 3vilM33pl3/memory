@@ -21,7 +21,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - **Ask useful questions:** [Query Command](cli/query.md), [Source Provenance Verification](cli/verify-provenance.md), [Code Graph Extraction](cli/graph.md), [Embedding Operations](cli/embeddings.md)
 - **Operate agents:** [Agents Tab](tui/agents.md), [Watcher Health](cli/watchers.md), [Activity Tab](tui/activity.md), [Get Up To Speed](cli/up-to-speed.md), [MCP Server](cli/mcp.md)
 - **Measure impact:** [Beginner Guide To Evaluations](evaluation-guide.md), [Automated Evaluation](cli/eval.md)
-- **Troubleshoot:** [Doctor Diagnostics](cli/doctor.md), [Health](cli/health.md), [Stats](cli/stats.md), [Errors Tab](tui/errors.md)
+- **Troubleshoot:** [Status](cli/status.md), [Doctor Diagnostics](cli/doctor.md), [Health](cli/health.md), [Stats](cli/stats.md), [Errors Tab](tui/errors.md)
 
 ## Reference
 
@@ -41,6 +41,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Init Bootstrap](cli/init.md)
 - [Skill Upgrade](cli/upgrade.md)
 - [Service Commands](cli/service.md)
+- [Status Command](cli/status.md)
 - [Doctor Diagnostics](cli/doctor.md)
 - [Health And Stats](cli/health.md)
 - [Stats Command](cli/stats.md)

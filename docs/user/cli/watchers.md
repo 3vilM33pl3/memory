@@ -51,6 +51,8 @@ Manual foreground watchers can still be run with:
 memory watcher run --project my-project
 ```
 
+Treat the legacy service-managed and foreground watcher commands as advanced flows. For normal Codex-linked operation, prefer the watcher manager and use `memory status --project my-project` for a combined service, watcher, MCP, and doctor snapshot.
+
 ## Watcher Health States
 
 Memory Layer tracks watcher health with a heartbeat and watchdog.

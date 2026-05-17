@@ -2,7 +2,7 @@
 
 Use `doctor` when Memory Layer is installed but something is not working the way you expect.
 
-`doctor` is the main setup diagnostic command.
+`memory status` is the recommended first diagnostic command because it aggregates the service, watcher, MCP, and doctor views. Use `doctor` when you want the deeper setup checklist or when `status` points at a fix.
 
 ## Table of Contents
 

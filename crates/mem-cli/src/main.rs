@@ -76,6 +76,7 @@ Agent contract:
 
 Examples:
   memory wizard --global
+  memory status --project memory
   memory query --project memory --question \"What changed recently?\" --json
   memory resume --project memory --json
   memory checkpoint start-task --project memory --title \"Task title\" --prompt \"Original user request\"
@@ -933,12 +934,26 @@ Examples:
 See also:
   docs/user/cli/embeddings.md";
 
+const STATUS_AFTER_HELP: &str = "\
+Agent notes:
+  Recommended first diagnostic command for users and agents.
+  Aggregates service reachability, config, watcher state, MCP status, skill bundle checks, and doctor diagnostics.
+  JSON mode keeps the aggregate payload on stdout; any future progress or warnings must go to stderr.
+
+Examples:
+  memory status --project memory
+  memory status --project memory --json
+
+See also:
+  docs/user/cli/status.md";
+
 const HEALTH_AFTER_HELP: &str = "\
 Agent notes:
-  Read-only backend health check. Use doctor for full environment diagnosis.
+  Compatibility read-only backend health check. Prefer status for first diagnosis and doctor for full environment repair guidance.
 
 Examples:
   memory health
+  memory status --project memory
   memory stats
 
 See also:
@@ -946,10 +961,11 @@ See also:
 
 const STATS_AFTER_HELP: &str = "\
 Agent notes:
-  Read-only memory and project summary. Use health for service reachability.
+  Compatibility read-only memory and project summary. Prefer status when diagnosing an install.
 
 Examples:
   memory stats
+  memory status --project memory
   memory health
 
 See also:
@@ -1062,6 +1078,8 @@ enum Command {
     Watcher(WatcherArgs),
     #[command(about = "Inspect configuration and environment health.", after_help = DOCTOR_AFTER_HELP)]
     Doctor(DoctorArgs),
+    #[command(about = "Show the aggregate Memory Layer diagnostic status.", after_help = STATUS_AFTER_HELP)]
+    Status(StatusArgs),
     #[command(about = "Import and inspect git commit history.", after_help = COMMITS_GROUP_AFTER_HELP)]
     Commits(CommitsArgs),
     #[command(about = "Build and inspect the local repository index.", after_help = REPO_GROUP_AFTER_HELP)]
@@ -1121,6 +1139,16 @@ struct CompletionArgs {
     /// Shell to generate completions for.
     #[arg(value_enum)]
     shell: Shell,
+}
+
+#[derive(Debug, Args)]
+struct StatusArgs {
+    /// Project slug to inspect; defaults to repo metadata or current directory name.
+    #[arg(long)]
+    project: Option<String>,
+    /// Emit the aggregate status report as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2590,6 +2618,24 @@ async fn main() -> Result<()> {
                 WatcherCommand::Enable(_) | WatcherCommand::Disable(_) | WatcherCommand::Status(_),
         }) => unreachable!("watcher lifecycle commands are handled before config loading"),
         Command::Doctor(_) => unreachable!("doctor is handled before config loading"),
+        Command::Status(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let repo_root = resolve_repo_root(&cwd)?;
+            let project = resolve_project_slug(args.project, &cwd)?;
+            let report = build_cli_status_report(
+                cli_config_path,
+                &client,
+                config.clone(),
+                &repo_root,
+                project,
+            )
+            .await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print_cli_status_report(&report);
+            }
+        }
         Command::Commits(args) => {
             let cwd = env::current_dir().context("read current directory")?;
             let repo_root = resolve_repo_root(&cwd)?;
@@ -3852,6 +3898,61 @@ struct DoctorReport {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct CliStatusReport {
+    project: String,
+    repo_root: String,
+    config_path: String,
+    summary: CliStatusSummary,
+    service: StatusTextProbe,
+    health: StatusJsonProbe,
+    stats: StatusJsonProbe,
+    watcher_manager: StatusTextProbe,
+    project_watcher: StatusTextProbe,
+    mcp: mem_mcp::MpcStatusReport,
+    doctor: DoctorReport,
+    output_contract: CliOutputContract,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CliStatusSummary {
+    overall: DoctorStatus,
+    doctor_failures: usize,
+    doctor_warnings: usize,
+    service_reachable: bool,
+    stats_reachable: bool,
+    mcp_service_reachable: bool,
+    mcp_project_ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StatusTextProbe {
+    ok: bool,
+    summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct StatusJsonProbe {
+    ok: bool,
+    status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CliOutputContract {
+    stdout: &'static str,
+    stderr: &'static str,
+    json_errors: &'static str,
+    exit_codes: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct DoctorCheckResult {
     id: String,
     status: DoctorStatus,
@@ -3876,6 +3977,236 @@ enum DoctorStatus {
 impl DoctorReport {
     fn push(&mut self, result: DoctorCheckResult) {
         self.checks.push(result);
+    }
+}
+
+async fn build_cli_status_report(
+    config_path: Option<PathBuf>,
+    client: &Client,
+    config: AppConfig,
+    repo_root: &Path,
+    project: String,
+) -> Result<CliStatusReport> {
+    let config_path = config_path.unwrap_or_else(default_global_config_path);
+    let service = text_probe("service", backend_service_status(&config_path));
+    let health = fetch_status_json_probe(client, &config, "/healthz", false).await;
+    let stats = fetch_status_json_probe(client, &config, "/v1/stats", true).await;
+    let watcher_manager = text_probe(
+        "watcher manager",
+        watch_manager_service_status(Profile::detect()),
+    );
+    let project_watcher = text_probe("project watcher", watch_service_status(repo_root, &project));
+    let mcp = mem_mcp::status_report(config.clone(), Some(project.clone())).await;
+    let doctor = run_doctor(Some(config_path.clone()), repo_root, &project, false).await?;
+    let doctor_failures = doctor
+        .checks
+        .iter()
+        .filter(|check| check.status == DoctorStatus::Fail)
+        .count();
+    let doctor_warnings = doctor
+        .checks
+        .iter()
+        .filter(|check| check.status == DoctorStatus::Warn)
+        .count();
+    let overall = if doctor_failures > 0 || !health.ok || !mcp.service_reachable {
+        DoctorStatus::Fail
+    } else if doctor_warnings > 0 || !stats.ok || !mcp.project_overview_ok {
+        DoctorStatus::Warn
+    } else {
+        DoctorStatus::Ok
+    };
+
+    Ok(CliStatusReport {
+        project,
+        repo_root: repo_root.display().to_string(),
+        config_path: config_path.display().to_string(),
+        summary: CliStatusSummary {
+            overall,
+            doctor_failures,
+            doctor_warnings,
+            service_reachable: health.ok,
+            stats_reachable: stats.ok,
+            mcp_service_reachable: mcp.service_reachable,
+            mcp_project_ok: mcp.project_overview_ok,
+        },
+        service,
+        health,
+        stats,
+        watcher_manager,
+        project_watcher,
+        mcp,
+        doctor,
+        output_contract: CliOutputContract {
+            stdout: "machine-readable JSON or final human-readable command output only",
+            stderr: "warnings, progress, and diagnostics that are not part of parsed output",
+            json_errors: "HTTP failures use the shared diagnostic error shape when the service provides one",
+            exit_codes: "non-zero on command failure; stable category-specific exit codes are not implemented yet",
+        },
+    })
+}
+
+async fn fetch_status_json_probe(
+    client: &Client,
+    config: &AppConfig,
+    path: &str,
+    auth: bool,
+) -> StatusJsonProbe {
+    let mut request = client.get(service_url(config, path));
+    if auth {
+        match write_headers(config) {
+            Ok(headers) => {
+                request = request.headers(headers);
+            }
+            Err(error) => {
+                return StatusJsonProbe {
+                    ok: false,
+                    status: None,
+                    payload: None,
+                    error: Some(error.to_string()),
+                };
+            }
+        }
+    }
+    match request.send().await {
+        Ok(response) => {
+            let status = response.status();
+            match response.text().await {
+                Ok(body) if status.is_success() => match serde_json::from_str(&body) {
+                    Ok(payload) => StatusJsonProbe {
+                        ok: true,
+                        status: Some(status.as_u16()),
+                        payload: Some(payload),
+                        error: None,
+                    },
+                    Err(error) => StatusJsonProbe {
+                        ok: false,
+                        status: Some(status.as_u16()),
+                        payload: None,
+                        error: Some(format!("response was not valid JSON: {error}")),
+                    },
+                },
+                Ok(body) => StatusJsonProbe {
+                    ok: false,
+                    status: Some(status.as_u16()),
+                    payload: None,
+                    error: Some(format_api_error(status, &body)),
+                },
+                Err(error) => StatusJsonProbe {
+                    ok: false,
+                    status: Some(status.as_u16()),
+                    payload: None,
+                    error: Some(error.to_string()),
+                },
+            }
+        }
+        Err(error) => StatusJsonProbe {
+            ok: false,
+            status: None,
+            payload: None,
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+fn text_probe(label: &str, result: Result<String>) -> StatusTextProbe {
+    match result {
+        Ok(output) => StatusTextProbe {
+            ok: true,
+            summary: first_non_empty_line(&output).unwrap_or_else(|| format!("{label} ok")),
+            details: Some(output),
+            error: None,
+        },
+        Err(error) => StatusTextProbe {
+            ok: false,
+            summary: format!("{label} unavailable"),
+            details: None,
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+fn first_non_empty_line(value: &str) -> Option<String> {
+    value
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn print_cli_status_report(report: &CliStatusReport) {
+    println!(
+        "Memory Layer status: {}",
+        doctor_status_label(report.summary.overall)
+    );
+    println!("Project: {}", report.project);
+    println!("Repo root: {}", report.repo_root);
+    println!("Config: {}", report.config_path);
+    println!("Service install: {}", report.service.summary);
+    println!(
+        "HTTP health: {}",
+        status_probe_summary(
+            report.health.ok,
+            report.health.status,
+            report.health.error.as_deref()
+        )
+    );
+    println!(
+        "Stats API: {}",
+        status_probe_summary(
+            report.stats.ok,
+            report.stats.status,
+            report.stats.error.as_deref()
+        )
+    );
+    println!("Watcher manager: {}", report.watcher_manager.summary);
+    println!("Project watcher: {}", report.project_watcher.summary);
+    println!(
+        "MCP: service={} project={} http={} tools={}",
+        yes_no(report.mcp.service_reachable),
+        yes_no(report.mcp.project_overview_ok),
+        if report.mcp.http_enabled {
+            report.mcp.http_path.as_str()
+        } else {
+            "disabled"
+        },
+        report.mcp.tools.len(),
+    );
+    println!(
+        "Doctor: {} failure(s), {} warning(s), {} check(s)",
+        report.summary.doctor_failures,
+        report.summary.doctor_warnings,
+        report.doctor.checks.len(),
+    );
+    println!(
+        "Output contract: parsed output stays on stdout; warnings/progress go to stderr; category-specific exit codes are deferred."
+    );
+    if report.summary.overall != DoctorStatus::Ok {
+        println!("Next: memory doctor --project {}", report.project);
+    }
+}
+
+fn status_probe_summary(ok: bool, status: Option<u16>, error: Option<&str>) -> String {
+    if ok {
+        return status
+            .map(|status| format!("ok HTTP {status}"))
+            .unwrap_or_else(|| "ok".to_string());
+    }
+    let mut summary = status
+        .map(|status| format!("failed HTTP {status}"))
+        .unwrap_or_else(|| "failed".to_string());
+    if let Some(error) = error {
+        summary.push_str(": ");
+        summary.push_str(error);
+    }
+    summary
+}
+
+fn doctor_status_label(status: DoctorStatus) -> &'static str {
+    match status {
+        DoctorStatus::Ok => "ok",
+        DoctorStatus::Warn => "warn",
+        DoctorStatus::Fail => "fail",
+        DoctorStatus::Skipped => "skipped",
     }
 }
 
@@ -14196,6 +14527,7 @@ mod tests {
             "service" => Some("service.md"),
             "mcp" => Some("mcp.md"),
             "doctor" => Some("doctor.md"),
+            "status" => Some("status.md"),
             "commits" => Some("commits.md"),
             "repo" => Some("repo.md"),
             "graph" => Some("graph.md"),
@@ -14351,6 +14683,7 @@ mod tests {
         assert!(output.contains("checkpoint start-execution"));
         assert!(output.contains("checkpoint start-task"));
         assert!(output.contains("checkpoint finish-execution"));
+        assert!(output.contains("memory status --project memory"));
         assert!(output.contains("Examples:"));
         assert!(output.contains("docs/user/README.md"));
         assert!(output.contains("Ask a project-specific question against curated memory"));
@@ -14409,6 +14742,16 @@ mod tests {
         assert!(output.contains("Repository root used to resolve relative source paths"));
         assert!(output.contains("--dry-run --json"));
         assert!(output.contains("docs/user/cli/verify-provenance.md"));
+    }
+
+    #[test]
+    fn status_help_defines_agent_output_contract() {
+        let output = rendered_help(&["memory", "status", "--help"]);
+        assert!(output.contains("Show the aggregate Memory Layer diagnostic status"));
+        assert!(output.contains("Recommended first diagnostic command"));
+        assert!(output.contains("aggregate payload on stdout"));
+        assert!(output.contains("warnings must go to stderr"));
+        assert!(output.contains("docs/user/cli/status.md"));
     }
 
     #[test]

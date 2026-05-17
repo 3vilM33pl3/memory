@@ -41,6 +41,7 @@ It is designed for the real workflow: several agents, several projects, multiple
 
 - [Wizard And Bootstrap](user/cli/wizard.md)
 - [Service Commands](user/cli/service.md)
+- [Status Command](user/cli/status.md)
 - [Doctor Diagnostics](user/cli/doctor.md)
 - [Query Command](user/cli/query.md)
 - [Code Graph Extraction](user/cli/graph.md)
