@@ -13,12 +13,17 @@ aggregate comparisons and makes statistical tests meaningful.
   stored in Postgres in the first implementation. Keep official artifacts with
   release or research notes because they include suite checksum, run group,
   repeat index, latency, and token usage.
+- Eval suites are code execution inputs. `command_task`, `agent_build_task`,
+  and `agent_build_sequence` run suite-defined shell commands, so real runs
+  require `memory eval run --allow-shell`. Dry runs validate shape without
+  executing shell commands.
 
 ## Agent Build Tasks
 
 `agent_build_task` is the build-simulation path. It is intentionally generic:
 the suite supplies a shell command template, so the harness can run Codex,
 Claude, a fake local agent, or any other noninteractive runner.
+Review suite scripts and fixtures before passing `--allow-shell`.
 
 MemoryAgentBench is integrated separately as an external native benchmark
 adapter. See `evals/external/memory-agent-bench/README.md` for the pinned

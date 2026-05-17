@@ -26,4 +26,5 @@ $memory_cmd eval run \
   --condition full-memory \
   --profile llm \
   --repeat 1 \
+  --allow-shell \
   --text

@@ -45,6 +45,20 @@ Each JSONL row is one eval item. Supported `eval_type` values are:
 - `agent_build_task`: copies a fixture project, runs a noninteractive agent command, then scores the resulting workspace with deterministic checks.
 - `agent_build_sequence`: copies one fixture project, runs a sequence of agent prompts against the same workspace, then scores every step and the final accumulated result.
 
+## Shell Trust Boundary
+
+Eval suites are code execution inputs, not passive data files.
+
+These item types can execute arbitrary shell commands from the suite:
+
+- `command_task`
+- `agent_build_task`
+- `agent_build_sequence`
+
+Real runs of suites containing those item types require `--allow-shell`.
+Review the suite directory, scripts, fixtures, and JSONL before using that flag.
+`--dry-run` does not execute shell commands and does not require `--allow-shell`.
+
 Every item may also include optional benchmark metadata:
 
 ```json
@@ -162,6 +176,7 @@ memory eval run \
   --condition no-memory \
   --condition full-memory \
   --profile offline \
+  --allow-shell \
   --text
 ```
 
@@ -175,6 +190,7 @@ memory eval run \
   --condition full-memory \
   --profile llm \
   --repeat 1 \
+  --allow-shell \
   --text
 ```
 
@@ -188,6 +204,7 @@ cargo run --bin memory -- eval run \
   --condition full-memory \
   --profile llm \
   --repeat 1 \
+  --allow-shell \
   --text
 ```
 
@@ -266,7 +283,8 @@ memory eval run \
   --condition full-memory \
   --profile llm \
   --repeat 5 \
-  --fail-on-unreviewed-labels
+  --fail-on-unreviewed-labels \
+  --allow-shell
 ```
 
 The `no-memory` condition uses the configured OpenAI-compatible `[llm]` client
@@ -278,6 +296,17 @@ because there is intentionally no retrieval channel.
 Use `--profile offline` for CI-safe checks. Offline runs do not call the direct
 no-memory LLM baseline and can be used to validate suite shape and scoring.
 Official evidence runs should use the default `llm` profile.
+
+## External Retriever Direction
+
+External retriever support should stay separate from production query code. The intended research interface is an executable contract:
+
+- Memory writes a JSON request containing the item id, question or prompt, project, condition, and fixture context.
+- The executable returns JSON with ranked results, citations, answer text when applicable, timing, token usage, and diagnostic notes.
+- Scoring consumes that external-run artifact beside normal Memory run artifacts.
+- External retriever failures are scored as eval failures or skips, not routed through production retrieval.
+
+This keeps experiments reproducible while avoiding accidental coupling between benchmark adapters and the Memory service query path.
 
 `lexical`, `semantic`, `graph`, and `full-memory` now request explicit
 retrieval modes from the query API. This means condition names are enforced by

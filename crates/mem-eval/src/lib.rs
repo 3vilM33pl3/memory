@@ -124,6 +124,40 @@ impl EvalItem {
             Self::AgentBuildSequence(item) => &item.metadata,
         }
     }
+
+    pub fn requires_shell(&self) -> bool {
+        match self {
+            Self::RetrievalQa(_) | Self::GroundedAnswer(_) | Self::ResumeQuality(_) => false,
+            Self::CommandTask(item) => !item.command.trim().is_empty(),
+            Self::AgentBuildTask(item) => {
+                !item.agent_command.trim().is_empty()
+                    || item
+                        .setup_commands
+                        .iter()
+                        .any(|command| !command.trim().is_empty())
+                    || item
+                        .score_commands
+                        .iter()
+                        .any(|command| !command.trim().is_empty())
+            }
+            Self::AgentBuildSequence(item) => {
+                !item.agent_command.trim().is_empty()
+                    || item
+                        .setup_commands
+                        .iter()
+                        .any(|command| !command.trim().is_empty())
+                    || item.steps.iter().any(|step| {
+                        step.score_commands
+                            .iter()
+                            .any(|command| !command.trim().is_empty())
+                    })
+            }
+        }
+    }
+}
+
+pub fn suite_requires_shell(suite: &EvalSuite) -> bool {
+    suite.items.iter().any(EvalItem::requires_shell)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1817,6 +1851,47 @@ mod tests {
 
         assert!(!gate.passed);
         assert_eq!(gate.reasons.len(), 5);
+    }
+
+    #[test]
+    fn detects_shell_required_suite_items() {
+        let safe_item = EvalItem::RetrievalQa(RetrievalQaItem {
+            id: "safe".to_string(),
+            metadata: EvalItemMetadata::default(),
+            project: None,
+            question: "What is safe?".to_string(),
+            top_k: 8,
+            expected_memory_ids: Vec::new(),
+            expected_tags: Vec::new(),
+            expected_files: Vec::new(),
+        });
+        let shell_item = EvalItem::CommandTask(CommandTaskItem {
+            id: "shell".to_string(),
+            metadata: EvalItemMetadata::default(),
+            project: None,
+            prompt: "Run a command".to_string(),
+            command: "echo ok".to_string(),
+            expected_exit_code: 0,
+        });
+        let suite = EvalSuite {
+            manifest: EvalSuiteManifest {
+                name: "shell suite".to_string(),
+                description: None,
+                suite_version: None,
+                label_status: None,
+                fixture: None,
+                default_profile: None,
+                min_items: None,
+                default_repeats: None,
+                project: None,
+                items: default_items_path(),
+            },
+            root: PathBuf::from("."),
+            items: vec![safe_item, shell_item],
+        };
+
+        assert!(suite.items[1].requires_shell());
+        assert!(suite_requires_shell(&suite));
     }
 
     #[test]

@@ -41,5 +41,6 @@ $memory_cmd eval run \
   $condition_args \
   --profile llm \
   --repeat "$repeat" \
+  --allow-shell \
   $judge_flag \
   --text

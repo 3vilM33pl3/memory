@@ -106,6 +106,7 @@ memory eval run \
   --condition no-memory \
   --condition full-memory \
   --profile offline \
+  --allow-shell \
   --text
 ```
 
@@ -119,6 +120,7 @@ memory eval run \
   --condition full-memory \
   --profile llm \
   --repeat 1 \
+  --allow-shell \
   --text
 ```
 
@@ -167,6 +169,7 @@ memory eval run \
   --condition full-memory \
   --profile llm \
   --repeat 5 \
+  --allow-shell \
   --text
 ```
 

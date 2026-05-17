@@ -259,7 +259,7 @@ Agent notes:
 Examples:
   memory eval scaffold --project memory --out evals/suites/memory-smoke
   memory eval doctor --suite evals/examples/memory-smoke
-  memory eval run --suite evals/examples/app-build-smoke --condition no-memory --condition full-memory --profile offline --text
+  memory eval run --suite evals/examples/app-build-smoke --condition no-memory --condition full-memory --profile offline --allow-shell --text
   memory eval run --suite evals/examples/memory-smoke --condition full-memory --repeat 5
   memory eval compare --baseline target/memory-evals/run-a.json --candidate target/memory-evals/run-b.json --text
   memory eval compare --baseline 'target/memory-evals/*no-memory*.json' --candidate 'target/memory-evals/*full-memory*.json' --out target/memory-evals/comparison.json
@@ -286,13 +286,14 @@ Agent notes:
   Runs a suite under one or more conditions and writes immutable JSON artifacts under target/memory-evals by default.
   Default profile is llm. Use --profile offline for deterministic CI-safe checks.
   Use --dry-run to validate suite parsing without LLM calls or shell command execution.
+  Suites with command_task, agent_build_task, or agent_build_sequence execute shell commands and require --allow-shell for real runs.
   agent_build_task items copy fixtures to target/memory-evals/build-runs and capture prompts, stdout, stderr, and scoring summaries.
 
 Examples:
   memory eval run --suite evals/examples/memory-smoke --condition full-memory --dry-run
-  memory eval run --suite evals/examples/app-build-smoke --condition no-memory --condition full-memory --profile offline --text
+  memory eval run --suite evals/examples/app-build-smoke --condition no-memory --condition full-memory --profile offline --allow-shell --text
   memory eval run --suite evals/examples/memory-smoke --condition no-memory --condition full-memory --repeat 5
-  memory eval run --suite evals/suites/memory-improvement-v1 --condition no-memory --condition full-memory --llm-judge --repeat 5
+  memory eval run --suite evals/suites/memory-improvement-v1 --condition no-memory --condition full-memory --allow-shell --llm-judge --repeat 5
 
 See also:
   docs/user/cli/eval.md";
@@ -1902,6 +1903,9 @@ struct EvalRunArgs {
     /// Fail when the suite manifest is not marked reviewed.
     #[arg(long)]
     fail_on_unreviewed_labels: bool,
+    /// Allow suite-defined shell commands to execute.
+    #[arg(long)]
+    allow_shell: bool,
     /// Preview work without LLM calls or command execution.
     #[arg(long)]
     dry_run: bool,
@@ -10378,6 +10382,16 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
                 "status": "ok",
                 "message": checksum,
             }));
+            let shell_required = mem_eval::suite_requires_shell(&suite);
+            checks.push(serde_json::json!({
+                "name": "suite.shell",
+                "status": if shell_required { "warn" } else { "ok" },
+                "message": if shell_required {
+                    "suite contains shell-executing items; eval run requires --allow-shell unless --dry-run is used"
+                } else {
+                    "suite has no shell-executing items"
+                },
+            }));
             let reviewed = suite.manifest.label_status.as_deref() == Some("reviewed");
             checks.push(serde_json::json!({
                 "name": "suite.labels",
@@ -10523,6 +10537,7 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
         }
         EvalCommand::Run(args) => {
             let suite = mem_eval::load_suite(&args.suite)?;
+            ensure_eval_shell_allowed(&suite, args.allow_shell, args.dry_run)?;
             if args.fail_on_unreviewed_labels
                 && suite.manifest.label_status.as_deref() != Some("reviewed")
             {
@@ -10606,6 +10621,8 @@ async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Res
                 "repeat": repeat,
                 "write_transcripts": args.write_transcripts,
                 "llm_judge": args.llm_judge,
+                "allow_shell": args.allow_shell,
+                "shell_required": mem_eval::suite_requires_shell(&suite),
                 "total_tokens": total_tokens,
                 "runs": runs,
             });
@@ -10703,6 +10720,20 @@ struct EvalRunContext {
     memory_base_url: String,
     memory_config_path: Option<PathBuf>,
     llm_judge: bool,
+}
+
+fn ensure_eval_shell_allowed(
+    suite: &mem_eval::EvalSuite,
+    allow_shell: bool,
+    dry_run: bool,
+) -> Result<()> {
+    if dry_run || allow_shell || !mem_eval::suite_requires_shell(suite) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "eval suite `{}` contains shell-executing items (command_task, agent_build_task, or agent_build_sequence). Review the suite files, then rerun with --allow-shell to execute them. Use --dry-run to validate parsing without shell execution.",
+        suite.manifest.name
+    )
 }
 
 async fn run_eval_suite(
@@ -14373,8 +14404,8 @@ mod tests {
         build_plan_execution_request, build_remember_request, build_task_start_request,
         chat_completion_content, derive_plan_thread_key, derive_plan_title,
         durable_plan_source_path, ensure_checkbox_plan, ensure_direct_llm_eval_config,
-        ensure_shared_service_api_token, initialize_dev_overlay, initialize_repo,
-        is_placeholder_database_url, mask_database_url, newest_tui_restart_notice,
+        ensure_eval_shell_allowed, ensure_shared_service_api_token, initialize_dev_overlay,
+        initialize_repo, is_placeholder_database_url, mask_database_url, newest_tui_restart_notice,
         parse_memory_type_arg, parse_no_memory_grounded_answer, parse_plan_checkboxes,
         project_skill_inventory_with_template, read_skill_version, render_agent_project_config,
         render_claude_md_memory_section, repair_repo_bootstrap, resolve_project_slug,
@@ -14752,6 +14783,38 @@ mod tests {
         assert!(output.contains("aggregate payload on stdout"));
         assert!(output.contains("warnings must go to stderr"));
         assert!(output.contains("docs/user/cli/status.md"));
+    }
+
+    #[test]
+    fn eval_shell_suites_require_explicit_allow_shell() {
+        let suite = mem_eval::EvalSuite {
+            manifest: mem_eval::EvalSuiteManifest {
+                name: "shell suite".to_string(),
+                description: None,
+                suite_version: None,
+                label_status: None,
+                fixture: None,
+                default_profile: None,
+                min_items: None,
+                default_repeats: None,
+                project: Some("memory".to_string()),
+                items: "items.jsonl".to_string(),
+            },
+            root: PathBuf::from("."),
+            items: vec![mem_eval::EvalItem::CommandTask(mem_eval::CommandTaskItem {
+                id: "cmd".to_string(),
+                metadata: mem_eval::EvalItemMetadata::default(),
+                project: None,
+                prompt: "Run command".to_string(),
+                command: "echo ok".to_string(),
+                expected_exit_code: 0,
+            })],
+        };
+
+        let error = ensure_eval_shell_allowed(&suite, false, false).unwrap_err();
+        assert!(error.to_string().contains("--allow-shell"));
+        assert!(ensure_eval_shell_allowed(&suite, true, false).is_ok());
+        assert!(ensure_eval_shell_allowed(&suite, false, true).is_ok());
     }
 
     #[test]
