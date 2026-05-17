@@ -20,10 +20,7 @@ use mem_api::{
     CurateRequest, CurateResponse, ProjectOverviewResponse, TestResult, WatcherHeartbeatRequest,
     WatcherPresenceSummary, WatcherUnregisterRequest, load_repo_replacement_policy,
 };
-use reqwest::{
-    Client,
-    header::{HeaderMap, ORIGIN},
-};
+use reqwest::{Client, header::HeaderMap};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -788,23 +785,8 @@ fn service_url(config: &AppConfig, path: &str) -> String {
 
 fn write_headers(config: &AppConfig) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
-    if let Some(origin) = trusted_local_origin(&config.service.bind_addr) {
-        headers.insert(ORIGIN, origin.parse()?);
-    } else {
-        headers.insert("x-api-token", config.service.api_token.parse()?);
-    }
+    headers.insert("x-api-token", config.service.api_token.parse()?);
     Ok(headers)
-}
-
-fn trusted_local_origin(bind_addr: &str) -> Option<&'static str> {
-    let host = bind_addr
-        .rsplit_once(':')
-        .map(|(host, _)| host.trim_matches('[').trim_matches(']'))
-        .unwrap_or(bind_addr);
-    match host {
-        "127.0.0.1" | "localhost" | "::1" => Some("http://127.0.0.1"),
-        _ => None,
-    }
 }
 
 async fn send_json<T: serde::de::DeserializeOwned>(response: reqwest::Response) -> Result<T> {
@@ -904,18 +886,20 @@ mod tests {
     }
 
     #[test]
-    fn write_headers_adds_local_origin_for_loopback_service() {
+    fn write_headers_sends_token_for_loopback_service() {
         let mut config = test_app_config();
         config.service.bind_addr = "127.0.0.1:4040".to_string();
         config.service.api_token = "ml_testtoken".to_string();
 
         let headers = write_headers(&config).expect("build loopback headers");
 
-        assert!(headers.get("x-api-token").is_none());
         assert_eq!(
-            headers.get("origin").and_then(|value| value.to_str().ok()),
-            Some("http://127.0.0.1")
+            headers
+                .get("x-api-token")
+                .and_then(|value| value.to_str().ok()),
+            Some("ml_testtoken")
         );
+        assert!(headers.get("origin").is_none());
     }
 
     fn test_app_config() -> AppConfig {
