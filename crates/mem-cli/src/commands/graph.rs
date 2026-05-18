@@ -1,0 +1,88 @@
+#![allow(unused_imports)]
+
+use anyhow::{Context, Result};
+use clap::CommandFactory;
+use clap_complete::generate;
+use mem_api::*;
+use mem_service as service_runtime;
+use mem_watch::{WatcherRunArgs, flush_path, load_state, run_once, run_watcher_daemon, to_status};
+use reqwest::Client;
+use std::{
+    env, fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
+
+use crate::commands::runtime::*;
+use crate::writer_identity::{resolve_writer_identity, resolve_writer_identity_for_tool};
+use crate::{
+    commits as git_commits, resume as checkpoint_store, scan as scan_runtime, tui as tui_runtime,
+    wizard as wizard_runtime,
+};
+
+pub(crate) async fn handle(args: GraphArgs, client: Client, config: AppConfig) -> Result<()> {
+    let cwd = env::current_dir().context("read current directory")?;
+    let repo_root = resolve_repo_root(&cwd)?;
+    match args.command {
+        GraphCommand::Extract(args) => {
+            let project = resolve_project_slug(args.project, &cwd)?;
+            let index = scan_runtime::load_graph_index(
+                &repo_root,
+                &project,
+                args.since.as_deref(),
+                &config,
+                args.rebuild_index,
+                args.dry_run,
+            )?;
+            let request = mem_graph::GraphExtractionRequest {
+                project: index.project,
+                repo_root: index.repo_root,
+                git_head: index.head,
+                since: index.since,
+                force: args.force,
+                dry_run: args.dry_run,
+                index_reused: index.index_reused,
+                analysis: index.analysis,
+            };
+            let report = if args.dry_run {
+                mem_graph::build_extraction_preview(&request)
+            } else {
+                let pool = connect_graph_database(&config).await?;
+                mem_graph::run_migrations(&pool).await?;
+                mem_graph::PostgresGraphRepository::new(pool)
+                    .extract(request)
+                    .await?
+            };
+            if !report.dry_run {
+                let api = ApiClient::new(client.clone(), config.clone());
+                let activity_request = build_graph_activity_request(&report);
+                if let Err(error) = api.log_graph_activity(&activity_request).await {
+                    eprintln!(
+                        "warning: failed to log graph extraction activity for `{}`: {error}",
+                        report.project
+                    );
+                }
+            }
+            if args.text {
+                print_graph_extract_report(&report, &index.index_path);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+        }
+        GraphCommand::Status(args) => {
+            let project = resolve_project_slug(args.project, &cwd)?;
+            let pool = connect_graph_database(&config).await?;
+            mem_graph::run_migrations(&pool).await?;
+            let status = mem_graph::PostgresGraphRepository::new(pool)
+                .latest_status(&project)
+                .await?;
+            if args.text {
+                print_graph_status(&status, &project);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            }
+        }
+    }
+
+    Ok(())
+}
