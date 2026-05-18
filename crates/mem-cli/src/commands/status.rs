@@ -10,7 +10,7 @@ use crate::commands::{
     status_support::{build_cli_status_report, print_cli_status_report},
 };
 
-pub(crate) async fn handle(
+pub(super) async fn handle(
     args: StatusArgs,
     cli_config_path: Option<PathBuf>,
     client: Client,

@@ -13,7 +13,7 @@ use crate::{
     writer_identity::resolve_writer_identity,
 };
 
-pub(crate) async fn handle(
+pub(super) async fn handle(
     args: AutomationArgs,
     client: Client,
     config: AppConfig,

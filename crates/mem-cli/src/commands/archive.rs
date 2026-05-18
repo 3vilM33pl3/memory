@@ -8,7 +8,7 @@ use crate::commands::{
     runtime::ArchiveArgs,
 };
 
-pub(crate) async fn handle(args: ArchiveArgs, client: Client, config: AppConfig) -> Result<()> {
+pub(super) async fn handle(args: ArchiveArgs, client: Client, config: AppConfig) -> Result<()> {
     let response = client
         .post(service_url(&config, "/v1/archive"))
         .headers(write_headers(&config)?)

@@ -14,7 +14,7 @@ use crate::commands::{
     },
 };
 
-pub(crate) async fn handle(args: &ServiceArgs, cli_config: Option<PathBuf>) -> Result<()> {
+pub(super) async fn handle(args: &ServiceArgs, cli_config: Option<PathBuf>) -> Result<()> {
     let config_path = cli_config
         .clone()
         .unwrap_or_else(default_global_config_path);

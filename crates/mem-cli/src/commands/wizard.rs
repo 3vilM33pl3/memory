@@ -6,7 +6,7 @@ use crate::commands::{
 };
 use crate::wizard as wizard_runtime;
 
-pub(crate) async fn handle(args: &WizardArgs) -> Result<()> {
+pub(super) async fn handle(args: &WizardArgs) -> Result<()> {
     let cwd = env::current_dir().context("read current directory")?;
     let repo_root = resolve_repo_root(&cwd)?;
     let project = if repo_root == cwd || repo_root.join(".git").exists() {

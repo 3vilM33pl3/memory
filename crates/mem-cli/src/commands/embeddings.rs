@@ -8,7 +8,7 @@ use crate::commands::{
     runtime::{EmbeddingsArgs, EmbeddingsCommand},
 };
 
-pub(crate) async fn handle(args: EmbeddingsArgs, client: Client, config: AppConfig) -> Result<()> {
+pub(super) async fn handle(args: EmbeddingsArgs, client: Client, config: AppConfig) -> Result<()> {
     match args.command {
         EmbeddingsCommand::List => {
             let api = ApiClient::new(client.clone(), config.clone());

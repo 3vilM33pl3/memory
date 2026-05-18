@@ -44,7 +44,7 @@ pub(crate) fn resolve_project_slug(project: Option<String>, cwd: &Path) -> Resul
     Ok(name.to_string())
 }
 
-pub(crate) fn build_remember_request(
+pub(in crate::commands) fn build_remember_request(
     args: RememberArgs,
     project: &str,
     writer_id: &str,

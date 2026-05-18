@@ -8,7 +8,7 @@ use crate::commands::{
     runtime::PruneHistoryArgs,
 };
 
-pub(crate) async fn handle(
+pub(super) async fn handle(
     args: PruneHistoryArgs,
     client: Client,
     config: AppConfig,

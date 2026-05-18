@@ -7,7 +7,7 @@ use crate::commands::{
     skill_support::resolve_repo_root,
 };
 
-pub(crate) async fn handle(args: &DevArgs) -> Result<()> {
+pub(super) async fn handle(args: &DevArgs) -> Result<()> {
     match &args.command {
         DevCommand::Init(init_args) => {
             let cwd = env::current_dir().context("read current directory")?;

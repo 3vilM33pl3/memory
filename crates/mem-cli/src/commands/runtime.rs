@@ -1001,7 +1001,7 @@ See also:
     about = "Project memory CLI for setup, retrieval, capture, curation, and operations.",
     after_help = ROOT_AFTER_HELP
 )]
-pub(crate) struct Cli {
+pub(in crate::commands) struct Cli {
     /// Use a specific config file instead of the discovered default.
     #[arg(long, env = "MEMORY_LAYER_CONFIG")]
     pub(crate) config: Option<PathBuf>,
@@ -1017,7 +1017,7 @@ pub(crate) struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum Command {
+pub(in crate::commands) enum Command {
     #[command(about = "Run the interactive setup wizard.", after_help = WIZARD_AFTER_HELP)]
     Wizard(WizardArgs),
     #[command(about = "Bootstrap a repo-local Memory Layer setup.", after_help = INIT_AFTER_HELP)]
@@ -1089,14 +1089,14 @@ pub(crate) enum Command {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct CompletionArgs {
+pub(in crate::commands) struct CompletionArgs {
     /// Shell to generate completions for.
     #[arg(value_enum)]
     pub(crate) shell: Shell,
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct StatusArgs {
+pub(in crate::commands) struct StatusArgs {
     /// Project slug to inspect; defaults to repo metadata or current directory name.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1106,20 +1106,20 @@ pub(crate) struct StatusArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct DevArgs {
+pub(in crate::commands) struct DevArgs {
     #[command(subcommand)]
     pub(crate) command: DevCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum DevCommand {
+pub(in crate::commands) enum DevCommand {
     /// Create the user-local project dev overlay and dev runtime directory.
     #[command(after_help = DEV_INIT_AFTER_HELP)]
     Init(DevInitArgs),
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct DevInitArgs {
+pub(in crate::commands) struct DevInitArgs {
     /// Overwrite an existing dev overlay instead of preserving it.
     #[arg(long)]
     pub(crate) force: bool,
@@ -1147,7 +1147,7 @@ pub(crate) struct DevInitArgs {
     about = "Run the interactive setup wizard for global or repo-local Memory Layer configuration.",
     after_help = WIZARD_AFTER_HELP
 )]
-pub(crate) struct WizardArgs {
+pub(in crate::commands) struct WizardArgs {
     /// Override the project slug used for repo-local setup.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1164,7 +1164,7 @@ pub(crate) struct WizardArgs {
     about = "Create or refresh the repo-local Memory Layer bootstrap files.",
     after_help = INIT_AFTER_HELP
 )]
-pub(crate) struct InitArgs {
+pub(in crate::commands) struct InitArgs {
     /// Override the project slug written into the repo-local bootstrap files.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1181,7 +1181,7 @@ pub(crate) struct InitArgs {
     about = "Upgrade repo-local Memory Layer skill files from the installed template.",
     after_help = UPGRADE_AFTER_HELP
 )]
-pub(crate) struct UpgradeArgs {
+pub(in crate::commands) struct UpgradeArgs {
     /// Replace all known Memory skills, including newer or same-version local copies.
     #[arg(long)]
     pub(crate) force: bool,
@@ -1198,13 +1198,13 @@ pub(crate) struct UpgradeArgs {
     about = "Manage the Memory Layer backend service for local or packaged installs.",
     after_help = SERVICE_GROUP_AFTER_HELP
 )]
-pub(crate) struct ServiceArgs {
+pub(in crate::commands) struct ServiceArgs {
     #[command(subcommand)]
     pub(crate) command: ServiceCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum ServiceCommand {
+pub(in crate::commands) enum ServiceCommand {
     #[command(about = "Run the backend service in the foreground.", after_help = SERVICE_RUN_AFTER_HELP)]
     Run,
     #[command(about = "Enable and start the packaged backend service.", after_help = SERVICE_ENABLE_AFTER_HELP)]
@@ -1220,14 +1220,14 @@ pub(crate) enum ServiceCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct ServiceLifecycleArgs {
+pub(in crate::commands) struct ServiceLifecycleArgs {
     /// Preview the service manager actions without changing service state.
     #[arg(long)]
     pub(crate) dry_run: bool,
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct ServiceRestartAllArgs {
+pub(in crate::commands) struct ServiceRestartAllArgs {
     /// Preview active service discovery and restart actions without changing service state.
     #[arg(long)]
     pub(crate) dry_run: bool,
@@ -1240,7 +1240,7 @@ pub(crate) struct ServiceRestartAllArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct ServiceEnsureApiTokenArgs {
+pub(in crate::commands) struct ServiceEnsureApiTokenArgs {
     /// Operate on the shared machine-level env file instead of a repo-local override.
     #[arg(long)]
     pub(crate) shared: bool,
@@ -1260,13 +1260,13 @@ pub(crate) struct ServiceEnsureApiTokenArgs {
     about = "Run and inspect the built-in Memory MCP server.",
     after_help = MCP_GROUP_AFTER_HELP
 )]
-pub(crate) struct McpArgs {
+pub(in crate::commands) struct McpArgs {
     #[command(subcommand)]
     pub(crate) command: McpCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum McpCommand {
+pub(in crate::commands) enum McpCommand {
     #[command(about = "Run a stdio MCP server for local clients.", after_help = MCP_GROUP_AFTER_HELP)]
     Run(McpRunArgs),
     #[command(about = "Check service reachability and exposed MCP surface.", after_help = MCP_GROUP_AFTER_HELP)]
@@ -1274,14 +1274,14 @@ pub(crate) enum McpCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct McpRunArgs {
+pub(in crate::commands) struct McpRunArgs {
     /// Default project slug for stdio tool calls that omit the project argument.
     #[arg(long)]
     pub(crate) project: Option<String>,
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct McpStatusArgs {
+pub(in crate::commands) struct McpStatusArgs {
     /// Project slug to verify; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1295,7 +1295,7 @@ pub(crate) struct McpStatusArgs {
     about = "Inspect configuration, connectivity, watchers, and skill runtime prerequisites.",
     after_help = DOCTOR_AFTER_HELP
 )]
-pub(crate) struct DoctorArgs {
+pub(in crate::commands) struct DoctorArgs {
     /// Limit checks to one project context instead of the inferred current repo.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1312,13 +1312,13 @@ pub(crate) struct DoctorArgs {
     about = "Manage project watcher daemons and watcher registration.",
     after_help = WATCHER_GROUP_AFTER_HELP
 )]
-pub(crate) struct WatcherArgs {
+pub(in crate::commands) struct WatcherArgs {
     #[command(subcommand)]
     pub(crate) command: WatcherCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum WatcherCommand {
+pub(in crate::commands) enum WatcherCommand {
     #[command(about = "Run the watcher daemon in the foreground.", after_help = WATCHER_RUN_AFTER_HELP)]
     Run(WatcherRunCliArgs),
     #[command(about = "Enable the watcher for a project.", after_help = WATCHER_ENABLE_AFTER_HELP)]
@@ -1332,14 +1332,14 @@ pub(crate) enum WatcherCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct WatchProjectArgs {
+pub(in crate::commands) struct WatchProjectArgs {
     /// Project slug to inspect; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct WatcherManageArgs {
+pub(in crate::commands) struct WatcherManageArgs {
     /// Project slug to manage; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1349,7 +1349,7 @@ pub(crate) struct WatcherManageArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct WatcherRunCliArgs {
+pub(in crate::commands) struct WatcherRunCliArgs {
     /// Project slug to watch; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1371,13 +1371,13 @@ pub(crate) struct WatcherRunCliArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct WatcherManagerArgs {
+pub(in crate::commands) struct WatcherManagerArgs {
     #[command(subcommand)]
     pub(crate) command: WatcherManagerCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum WatcherManagerCommand {
+pub(in crate::commands) enum WatcherManagerCommand {
     #[command(about = "Run the watcher manager in the foreground.", after_help = WATCHER_MANAGER_RUN_AFTER_HELP)]
     Run,
     #[command(about = "Enable the persistent user watcher manager service.", after_help = WATCHER_MANAGER_ENABLE_AFTER_HELP)]
@@ -1393,7 +1393,7 @@ pub(crate) enum WatcherManagerCommand {
     about = "Query curated project memory for a project-specific question.",
     after_help = QUERY_AFTER_HELP
 )]
-pub(crate) struct QueryArgs {
+pub(in crate::commands) struct QueryArgs {
     /// Project slug to query.
     #[arg(long)]
     pub(crate) project: String,
@@ -1427,7 +1427,7 @@ pub(crate) struct QueryArgs {
     about = "Verify memory source provenance against the filesystem.",
     after_help = VERIFY_PROVENANCE_AFTER_HELP
 )]
-pub(crate) struct VerifyProvenanceArgs {
+pub(in crate::commands) struct VerifyProvenanceArgs {
     /// Project slug whose memory sources should be verified.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1447,7 +1447,7 @@ pub(crate) struct VerifyProvenanceArgs {
     about = "Show the full version history for a memory, including tombstones.",
     after_help = HISTORY_AFTER_HELP
 )]
-pub(crate) struct HistoryArgs {
+pub(in crate::commands) struct HistoryArgs {
     /// Any version's id (including a tombstone). The chain resolves via
     /// canonical_id so passing any version id returns the same history.
     pub(crate) memory_id: Uuid,
@@ -1461,7 +1461,7 @@ pub(crate) struct HistoryArgs {
     about = "Prune tombstoned canonical memories and superseded versions older than the configured thresholds.",
     after_help = PRUNE_HISTORY_AFTER_HELP
 )]
-pub(crate) struct PruneHistoryArgs {
+pub(in crate::commands) struct PruneHistoryArgs {
     /// Limit the sweep to one project. Defaults to every project in the DB.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1486,13 +1486,13 @@ pub(crate) struct PruneHistoryArgs {
     about = "Import and inspect git commit history for a project.",
     after_help = COMMITS_GROUP_AFTER_HELP
 )]
-pub(crate) struct CommitsArgs {
+pub(in crate::commands) struct CommitsArgs {
     #[command(subcommand)]
     pub(crate) command: CommitsCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum CommitsCommand {
+pub(in crate::commands) enum CommitsCommand {
     #[command(about = "Import git commits into the project backend.", after_help = COMMITS_SYNC_AFTER_HELP)]
     Sync(CommitSyncArgs),
     #[command(about = "List imported commits for a project.", after_help = COMMITS_LIST_AFTER_HELP)]
@@ -1502,7 +1502,7 @@ pub(crate) enum CommitsCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct CommitSyncArgs {
+pub(in crate::commands) struct CommitSyncArgs {
     /// Project slug to sync into; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1521,7 +1521,7 @@ pub(crate) struct CommitSyncArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct CommitListArgs {
+pub(in crate::commands) struct CommitListArgs {
     /// Project slug to list commits for; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1537,7 +1537,7 @@ pub(crate) struct CommitListArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct CommitShowArgs {
+pub(in crate::commands) struct CommitShowArgs {
     /// Commit SHA or imported commit identifier to show.
     pub(crate) commit: String,
     /// Project slug to read from; defaults to the current repo when available.
@@ -1553,13 +1553,13 @@ pub(crate) struct CommitShowArgs {
     about = "Build and inspect the repository index used by scan and analysis flows.",
     after_help = REPO_GROUP_AFTER_HELP
 )]
-pub(crate) struct RepoArgs {
+pub(in crate::commands) struct RepoArgs {
     #[command(subcommand)]
     pub(crate) command: RepoCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum RepoCommand {
+pub(in crate::commands) enum RepoCommand {
     #[command(about = "Build or refresh the local repository index.", after_help = REPO_INDEX_AFTER_HELP)]
     Index(IndexRepoArgs),
     #[command(about = "Show local repository index status and analyzer coverage.", after_help = REPO_STATUS_AFTER_HELP)]
@@ -1567,7 +1567,7 @@ pub(crate) enum RepoCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct IndexRepoArgs {
+pub(in crate::commands) struct IndexRepoArgs {
     /// Project slug to index; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1583,7 +1583,7 @@ pub(crate) struct IndexRepoArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct IndexStatusArgs {
+pub(in crate::commands) struct IndexStatusArgs {
     /// Project slug to inspect; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1597,13 +1597,13 @@ pub(crate) struct IndexStatusArgs {
     about = "Extract and inspect the code graph produced from parser-backed repository analysis.",
     after_help = GRAPH_GROUP_AFTER_HELP
 )]
-pub(crate) struct GraphArgs {
+pub(in crate::commands) struct GraphArgs {
     #[command(subcommand)]
     pub(crate) command: GraphCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum GraphCommand {
+pub(in crate::commands) enum GraphCommand {
     #[command(about = "Extract code graph facts from the local repository index.", after_help = GRAPH_EXTRACT_AFTER_HELP)]
     Extract(GraphExtractArgs),
     #[command(about = "Show the latest persisted code graph extraction status.", after_help = GRAPH_STATUS_AFTER_HELP)]
@@ -1611,7 +1611,7 @@ pub(crate) enum GraphCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct GraphExtractArgs {
+pub(in crate::commands) struct GraphExtractArgs {
     /// Project slug to extract; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1633,7 +1633,7 @@ pub(crate) struct GraphExtractArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct GraphStatusArgs {
+pub(in crate::commands) struct GraphStatusArgs {
     /// Project slug to inspect; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1647,13 +1647,13 @@ pub(crate) struct GraphStatusArgs {
     about = "Export and import portable memory bundles.",
     after_help = BUNDLE_GROUP_AFTER_HELP
 )]
-pub(crate) struct BundleArgs {
+pub(in crate::commands) struct BundleArgs {
     #[command(subcommand)]
     pub(crate) command: BundleCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum BundleCommand {
+pub(in crate::commands) enum BundleCommand {
     #[command(about = "Export a project memory bundle to a zip archive.", after_help = BUNDLE_EXPORT_AFTER_HELP)]
     Export(ExportArgs),
     #[command(about = "Import a project memory bundle from a zip archive.", after_help = BUNDLE_IMPORT_AFTER_HELP)]
@@ -1661,7 +1661,7 @@ pub(crate) enum BundleCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct ExportArgs {
+pub(in crate::commands) struct ExportArgs {
     /// Project slug to export from.
     #[arg(long)]
     pub(crate) project: String,
@@ -1686,7 +1686,7 @@ pub(crate) struct ExportArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct ImportArgs {
+pub(in crate::commands) struct ImportArgs {
     /// Project slug to import into.
     #[arg(long)]
     pub(crate) project: String,
@@ -1705,7 +1705,7 @@ pub(crate) struct ImportArgs {
     about = "Build a project resume pack from checkpoints, timeline, and durable memory.",
     after_help = RESUME_AFTER_HELP
 )]
-pub(crate) struct ResumeArgs {
+pub(in crate::commands) struct ResumeArgs {
     /// Project slug to resume; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1722,7 +1722,7 @@ pub(crate) struct ResumeArgs {
     about = "List persisted project activity events.",
     after_help = ACTIVITIES_AFTER_HELP
 )]
-pub(crate) struct ActivitiesArgs {
+pub(in crate::commands) struct ActivitiesArgs {
     /// Project slug; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1742,7 +1742,7 @@ pub(crate) struct ActivitiesArgs {
     about = "Generate a new-agent get-up-to-speed briefing.",
     after_help = UP_TO_SPEED_AFTER_HELP
 )]
-pub(crate) struct UpToSpeedArgs {
+pub(in crate::commands) struct UpToSpeedArgs {
     /// Project slug; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1759,13 +1759,13 @@ pub(crate) struct UpToSpeedArgs {
 
 #[derive(Debug, Args)]
 #[command(about = "Run automated Memory quality evaluations.", after_help = EVAL_GROUP_AFTER_HELP)]
-pub(crate) struct EvalArgs {
+pub(in crate::commands) struct EvalArgs {
     #[command(subcommand)]
     pub(crate) command: EvalCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum EvalCommand {
+pub(in crate::commands) enum EvalCommand {
     #[command(
         about = "Check whether an eval suite and environment are ready.",
         after_help = EVAL_DOCTOR_AFTER_HELP
@@ -1799,7 +1799,7 @@ pub(crate) enum EvalCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct EvalDoctorArgs {
+pub(in crate::commands) struct EvalDoctorArgs {
     /// Suite directory or suite.toml path to validate.
     #[arg(long)]
     pub(crate) suite: PathBuf,
@@ -1809,7 +1809,7 @@ pub(crate) struct EvalDoctorArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct EvalScaffoldArgs {
+pub(in crate::commands) struct EvalScaffoldArgs {
     /// Project slug; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1828,7 +1828,7 @@ pub(crate) struct EvalScaffoldArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct EvalRunArgs {
+pub(in crate::commands) struct EvalRunArgs {
     /// Suite directory or suite.toml path.
     #[arg(long)]
     pub(crate) suite: PathBuf,
@@ -1868,7 +1868,7 @@ pub(crate) struct EvalRunArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct EvalCompareArgs {
+pub(in crate::commands) struct EvalCompareArgs {
     /// Baseline run JSON file or glob. Repeat for multiple run artifacts.
     #[arg(long)]
     pub(crate) baseline: Vec<PathBuf>,
@@ -1884,7 +1884,7 @@ pub(crate) struct EvalCompareArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct EvalReportArgs {
+pub(in crate::commands) struct EvalReportArgs {
     /// Comparison JSON file from memory eval compare.
     #[arg(long)]
     pub(crate) comparison: PathBuf,
@@ -1900,7 +1900,7 @@ pub(crate) struct EvalReportArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct EvalGateArgs {
+pub(in crate::commands) struct EvalGateArgs {
     /// Comparison JSON file from memory eval compare.
     #[arg(long)]
     pub(crate) comparison: PathBuf,
@@ -1917,13 +1917,13 @@ pub(crate) struct EvalGateArgs {
     about = "Manage project checkpoints and plan-backed execution transitions.",
     after_help = CHECKPOINT_GROUP_AFTER_HELP
 )]
-pub(crate) struct CheckpointArgs {
+pub(in crate::commands) struct CheckpointArgs {
     #[command(subcommand)]
     pub(crate) command: CheckpointCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum CheckpointCommand {
+pub(in crate::commands) enum CheckpointCommand {
     #[command(about = "Save a checkpoint for the current project state.", after_help = CHECKPOINT_SAVE_AFTER_HELP)]
     Save(CheckpointSaveArgs),
     #[command(about = "Show the current saved checkpoint.", after_help = CHECKPOINT_SHOW_AFTER_HELP)]
@@ -1937,7 +1937,7 @@ pub(crate) enum CheckpointCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct CheckpointSaveArgs {
+pub(in crate::commands) struct CheckpointSaveArgs {
     /// Project slug to checkpoint; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1953,14 +1953,14 @@ pub(crate) struct CheckpointSaveArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct CheckpointShowArgs {
+pub(in crate::commands) struct CheckpointShowArgs {
     /// Project slug to inspect; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct CheckpointStartExecutionArgs {
+pub(in crate::commands) struct CheckpointStartExecutionArgs {
     /// Project slug to update; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -1985,7 +1985,7 @@ pub(crate) struct CheckpointStartExecutionArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct CheckpointStartTaskArgs {
+pub(in crate::commands) struct CheckpointStartTaskArgs {
     /// Project slug to update; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -2007,7 +2007,7 @@ pub(crate) struct CheckpointStartTaskArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct CheckpointFinishExecutionArgs {
+pub(in crate::commands) struct CheckpointFinishExecutionArgs {
     /// Project slug to verify; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -2039,19 +2039,19 @@ pub(crate) struct CheckpointFinishExecutionArgs {
     about = "Capture structured task evidence from a file payload.",
     after_help = CAPTURE_GROUP_AFTER_HELP
 )]
-pub(crate) struct CaptureArgs {
+pub(in crate::commands) struct CaptureArgs {
     #[command(subcommand)]
     pub(crate) command: CaptureCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum CaptureCommand {
+pub(in crate::commands) enum CaptureCommand {
     #[command(about = "Send one structured task capture payload to the backend.", after_help = CAPTURE_TASK_AFTER_HELP)]
     Task(CaptureTaskArgs),
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct CaptureTaskArgs {
+pub(in crate::commands) struct CaptureTaskArgs {
     /// JSON file containing the capture payload.
     #[arg(long)]
     pub(crate) file: PathBuf,
@@ -2065,7 +2065,7 @@ pub(crate) struct CaptureTaskArgs {
     about = "Scan a repository for durable-memory candidates using the local index and analyzers.",
     after_help = SCAN_AFTER_HELP
 )]
-pub(crate) struct ScanArgs {
+pub(in crate::commands) struct ScanArgs {
     /// Project slug to scan; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -2088,7 +2088,7 @@ pub(crate) struct ScanArgs {
     about = "Capture recent work and curate it into durable project memory.",
     after_help = REMEMBER_AFTER_HELP
 )]
-pub(crate) struct RememberArgs {
+pub(in crate::commands) struct RememberArgs {
     /// Project slug to write into; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -2133,7 +2133,7 @@ pub(crate) struct RememberArgs {
     about = "Curate raw captures into canonical memory entries.",
     after_help = CURATE_AFTER_HELP
 )]
-pub(crate) struct CurateArgs {
+pub(in crate::commands) struct CurateArgs {
     /// Project slug to curate.
     #[arg(long)]
     pub(crate) project: String,
@@ -2150,13 +2150,13 @@ pub(crate) struct CurateArgs {
     about = "Review pending memory replacement proposals.",
     after_help = PROPOSALS_GROUP_AFTER_HELP
 )]
-pub(crate) struct ProposalsArgs {
+pub(in crate::commands) struct ProposalsArgs {
     #[command(subcommand)]
     pub(crate) command: ProposalsCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum ProposalsCommand {
+pub(in crate::commands) enum ProposalsCommand {
     #[command(about = "List pending replacement proposals.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
     List(ProposalsListArgs),
     #[command(about = "Show one pending replacement proposal.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
@@ -2168,7 +2168,7 @@ pub(crate) enum ProposalsCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct ProposalsListArgs {
+pub(in crate::commands) struct ProposalsListArgs {
     /// Project slug to inspect.
     #[arg(long)]
     pub(crate) project: String,
@@ -2181,7 +2181,7 @@ pub(crate) struct ProposalsListArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct ProposalsShowArgs {
+pub(in crate::commands) struct ProposalsShowArgs {
     /// Project slug to inspect.
     #[arg(long)]
     pub(crate) project: String,
@@ -2194,7 +2194,7 @@ pub(crate) struct ProposalsShowArgs {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct ProposalsResolveArgs {
+pub(in crate::commands) struct ProposalsResolveArgs {
     /// Project slug to update.
     #[arg(long)]
     pub(crate) project: String,
@@ -2211,13 +2211,13 @@ pub(crate) struct ProposalsResolveArgs {
     about = "Manage embedding indexes and spaces for semantic retrieval.",
     after_help = EMBEDDINGS_GROUP_AFTER_HELP
 )]
-pub(crate) struct EmbeddingsArgs {
+pub(in crate::commands) struct EmbeddingsArgs {
     #[command(subcommand)]
     pub(crate) command: EmbeddingsCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum EmbeddingsCommand {
+pub(in crate::commands) enum EmbeddingsCommand {
     #[command(about = "List configured embedding backends and show which is active.", after_help = EMBEDDINGS_LIST_AFTER_HELP)]
     List,
     #[command(about = "Switch which configured embedding backend is used for search.", after_help = EMBEDDINGS_ACTIVATE_AFTER_HELP)]
@@ -2231,20 +2231,20 @@ pub(crate) enum EmbeddingsCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct EmbeddingsActivateArgs {
+pub(in crate::commands) struct EmbeddingsActivateArgs {
     /// Name of the configured backend to activate.
     pub(crate) name: String,
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct ProjectArgs {
+pub(in crate::commands) struct ProjectArgs {
     /// Project slug to operate on.
     #[arg(long)]
     pub(crate) project: String,
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct EmbeddingsProjectArgs {
+pub(in crate::commands) struct EmbeddingsProjectArgs {
     /// Project slug to operate on.
     #[arg(long)]
     pub(crate) project: String,
@@ -2263,7 +2263,7 @@ pub(crate) struct EmbeddingsProjectArgs {
     about = "Archive low-confidence, low-importance memories in a project.",
     after_help = ARCHIVE_AFTER_HELP
 )]
-pub(crate) struct ArchiveArgs {
+pub(in crate::commands) struct ArchiveArgs {
     /// Project slug to archive within.
     #[arg(long)]
     pub(crate) project: String,
@@ -2283,7 +2283,7 @@ pub(crate) struct ArchiveArgs {
     about = "Open the terminal UI for browsing memories, querying memory, and inspecting project state.",
     after_help = TUI_AFTER_HELP
 )]
-pub(crate) struct TuiArgs {
+pub(in crate::commands) struct TuiArgs {
     /// Project slug to open initially; defaults to the current repo when available.
     #[arg(long)]
     pub(crate) project: Option<String>,
@@ -2294,13 +2294,13 @@ pub(crate) struct TuiArgs {
     about = "Inspect or flush automation state for a project.",
     after_help = AUTOMATION_GROUP_AFTER_HELP
 )]
-pub(crate) struct AutomationArgs {
+pub(in crate::commands) struct AutomationArgs {
     #[command(subcommand)]
     pub(crate) command: AutomationCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum AutomationCommand {
+pub(in crate::commands) enum AutomationCommand {
     #[command(about = "Show the current automation state for a project.", after_help = AUTOMATION_STATUS_AFTER_HELP)]
     Status(ProjectArgs),
     #[command(about = "Flush pending automation work into capture and optional curation.", after_help = AUTOMATION_FLUSH_AFTER_HELP)]
@@ -2308,7 +2308,7 @@ pub(crate) enum AutomationCommand {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct AutomationFlushArgs {
+pub(in crate::commands) struct AutomationFlushArgs {
     #[command(flatten)]
     pub(crate) project: ProjectArgs,
     /// Run curation after flushing capture state.
@@ -2319,7 +2319,7 @@ pub(crate) struct AutomationFlushArgs {
     pub(crate) dry_run: bool,
 }
 
-pub(crate) async fn run() -> Result<()> {
+pub(super) async fn run() -> Result<()> {
     if env::args()
         .nth(1)
         .is_some_and(|arg| arg == "--version" || arg == "-V")
@@ -2494,7 +2494,7 @@ pub(crate) fn write_shared_env_file(path: &Path, key: &str, value: &str) -> Resu
     set_private_file_permissions(path)
 }
 
-pub(crate) const DEV_API_TOKEN: &str = "dev-memory-token";
+pub(in crate::commands) const DEV_API_TOKEN: &str = "dev-memory-token";
 const SERVICE_API_TOKEN_KEY: &str = "MEMORY_LAYER__SERVICE__API_TOKEN";
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -2639,7 +2639,7 @@ pub(crate) fn default_shared_capnp_unix_socket() -> String {
     platform::default_shared_capnp_unix_socket()
 }
 
-pub(crate) fn backend_start_hint(config_path: &Path) -> String {
+pub(in crate::commands) fn backend_start_hint(config_path: &Path) -> String {
     if backend_service_available() {
         "memory service enable".to_string()
     } else {
@@ -2652,12 +2652,12 @@ pub(crate) fn backend_service_available() -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn packaged_service_available() -> bool {
+pub(in crate::commands) fn packaged_service_available() -> bool {
     platform::packaged_system_service_available()
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn run_systemctl_system<const N: usize>(args: [&str; N]) -> Result<()> {
+pub(in crate::commands) fn run_systemctl_system<const N: usize>(args: [&str; N]) -> Result<()> {
     let output = ProcessCommand::new("systemctl")
         .args(args)
         .output()

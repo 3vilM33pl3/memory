@@ -8,7 +8,7 @@ use crate::commands::{
     runtime::HistoryArgs,
 };
 
-pub(crate) async fn handle(args: HistoryArgs, client: Client, config: AppConfig) -> Result<()> {
+pub(super) async fn handle(args: HistoryArgs, client: Client, config: AppConfig) -> Result<()> {
     let payload: mem_api::MemoryHistoryResponse = get_json(
         client
             .get(service_url(

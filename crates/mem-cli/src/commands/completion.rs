@@ -5,7 +5,7 @@ use std::io::{self, Write};
 
 use crate::commands::runtime::{Cli, CompletionArgs};
 
-pub(crate) async fn handle(args: &CompletionArgs) -> Result<()> {
+pub(super) async fn handle(args: &CompletionArgs) -> Result<()> {
     let mut command = Cli::command();
     let mut output = Vec::new();
     generate(args.shell, &mut command, "memory", &mut output);

@@ -24,7 +24,7 @@ use crate::commands::{
     runtime::{EvalArgs, EvalCommand},
 };
 
-pub(crate) async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Result<()> {
+pub(super) async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Result<()> {
     match args.command {
         EvalCommand::Doctor(args) => {
             let suite = mem_eval::load_suite(&args.suite)?;

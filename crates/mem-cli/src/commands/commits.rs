@@ -14,7 +14,7 @@ use crate::{
     commits as git_commits,
 };
 
-pub(crate) async fn handle(args: CommitsArgs, client: Client, config: AppConfig) -> Result<()> {
+pub(super) async fn handle(args: CommitsArgs, client: Client, config: AppConfig) -> Result<()> {
     let cwd = env::current_dir().context("read current directory")?;
     let repo_root = resolve_repo_root(&cwd)?;
     let api = ApiClient::new(client, config);

@@ -6,7 +6,7 @@ use crate::commands::{
     skill_support::resolve_repo_root,
 };
 
-pub(crate) async fn handle(args: &InitArgs) -> Result<()> {
+pub(super) async fn handle(args: &InitArgs) -> Result<()> {
     let cwd = env::current_dir().context("read current directory")?;
     let project = resolve_project_slug(args.project.clone(), &cwd)?;
     let repo_root = resolve_repo_root(&cwd)?;

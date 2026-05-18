@@ -1710,7 +1710,7 @@ pub(crate) fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
 
-pub(crate) fn watcher_command_requires_config_load(command: &WatcherCommand) -> bool {
+pub(in crate::commands) fn watcher_command_requires_config_load(command: &WatcherCommand) -> bool {
     matches!(
         command,
         WatcherCommand::Run(_)

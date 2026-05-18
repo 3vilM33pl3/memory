@@ -8,7 +8,7 @@ use crate::commands::{
     status_support::{print_doctor_report, run_doctor},
 };
 
-pub(crate) async fn handle(args: &DoctorArgs, cli_config: Option<PathBuf>) -> Result<()> {
+pub(super) async fn handle(args: &DoctorArgs, cli_config: Option<PathBuf>) -> Result<()> {
     let cwd = env::current_dir().context("read current directory")?;
     let repo_root = resolve_repo_root(&cwd)?;
     let project = resolve_project_slug(args.project.clone(), &cwd).unwrap_or_else(|_| {

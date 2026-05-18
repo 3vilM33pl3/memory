@@ -124,7 +124,10 @@ pub(crate) fn ensure_mem_gitignore(path: &Path, force: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn initialize_dev_overlay(repo_root: &Path, args: &DevInitArgs) -> Result<String> {
+pub(in crate::commands) fn initialize_dev_overlay(
+    repo_root: &Path,
+    args: &DevInitArgs,
+) -> Result<String> {
     let project = mem_api::project_slug_for_repo(repo_root);
     let project_paths = mem_platform::project_paths(repo_root, &project)
         .ok_or_else(|| anyhow::anyhow!("could not resolve user project config paths"))?;
@@ -217,7 +220,7 @@ pub(crate) fn dev_capnp_unix_socket_path(project_paths: &mem_platform::ProjectPa
 /// excluded so the dev stack always diverges where it matters.
 const SHARED_GLOBAL_SECTIONS: &[&str] = &["database", "llm", "embeddings", "features", "writer"];
 
-pub(crate) fn resolve_shared_global_snippet(args: &DevInitArgs) -> Result<String> {
+fn resolve_shared_global_snippet(args: &DevInitArgs) -> Result<String> {
     let Some(global_path) = mem_api::discover_global_config_path() else {
         if args.copy_from_global {
             anyhow::bail!(

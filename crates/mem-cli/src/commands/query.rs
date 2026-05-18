@@ -8,7 +8,7 @@ use crate::commands::{
     runtime::QueryArgs,
 };
 
-pub(crate) async fn handle(args: QueryArgs, client: Client, config: AppConfig) -> Result<()> {
+pub(super) async fn handle(args: QueryArgs, client: Client, config: AppConfig) -> Result<()> {
     let request = QueryRequest {
         project: args.project,
         query: args.question,

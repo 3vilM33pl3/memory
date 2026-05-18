@@ -7,7 +7,7 @@ use crate::commands::{
     runtime::{McpArgs, McpCommand},
 };
 
-pub(crate) async fn handle(args: McpArgs, config: AppConfig) -> Result<()> {
+pub(super) async fn handle(args: McpArgs, config: AppConfig) -> Result<()> {
     match args.command {
         McpCommand::Run(args) => {
             let cwd = env::current_dir().context("read current directory")?;

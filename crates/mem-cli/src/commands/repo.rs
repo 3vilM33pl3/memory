@@ -12,7 +12,7 @@ use crate::{
     scan as scan_runtime,
 };
 
-pub(crate) async fn handle(args: RepoArgs, config: AppConfig) -> Result<()> {
+pub(super) async fn handle(args: RepoArgs, config: AppConfig) -> Result<()> {
     let cwd = env::current_dir().context("read current directory")?;
     let repo_root = resolve_repo_root(&cwd)?;
     match args.command {

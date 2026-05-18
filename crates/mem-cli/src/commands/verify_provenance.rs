@@ -9,7 +9,7 @@ use crate::commands::{
     runtime::VerifyProvenanceArgs,
 };
 
-pub(crate) async fn handle(
+pub(super) async fn handle(
     args: VerifyProvenanceArgs,
     client: Client,
     config: AppConfig,

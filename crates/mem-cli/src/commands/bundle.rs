@@ -9,7 +9,7 @@ use crate::commands::{
     runtime::{BundleArgs, BundleCommand},
 };
 
-pub(crate) async fn handle(args: BundleArgs, api: &ApiClient) -> Result<()> {
+pub(super) async fn handle(args: BundleArgs, api: &ApiClient) -> Result<()> {
     match args.command {
         BundleCommand::Export(args) => {
             let options = ProjectMemoryExportOptions {

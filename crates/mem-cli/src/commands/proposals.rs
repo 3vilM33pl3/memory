@@ -6,7 +6,7 @@ use crate::commands::{
     runtime::{ProposalsArgs, ProposalsCommand},
 };
 
-pub(crate) async fn handle(args: ProposalsArgs, api: &ApiClient) -> Result<()> {
+pub(super) async fn handle(args: ProposalsArgs, api: &ApiClient) -> Result<()> {
     match args.command {
         ProposalsCommand::List(args) => {
             let mut response = api.replacement_proposals(&args.project).await?;

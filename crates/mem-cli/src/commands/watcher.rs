@@ -19,7 +19,7 @@ use crate::{
     writer_identity::resolve_writer_identity_for_tool,
 };
 
-pub(crate) async fn handle_pre_config(
+pub(super) async fn handle_pre_config(
     args: &WatcherArgs,
     cli_config: Option<PathBuf>,
 ) -> Result<bool> {
@@ -83,7 +83,7 @@ pub(crate) async fn handle_pre_config(
     Ok(watcher_command_requires_config_load(&args.command))
 }
 
-pub(crate) async fn handle(
+pub(super) async fn handle(
     args: WatcherArgs,
     config: AppConfig,
     cli_config_path: Option<PathBuf>,

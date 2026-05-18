@@ -25,7 +25,7 @@ use crate::plan_execution::{
 use crate::resume as checkpoint_store;
 use crate::writer_identity::resolve_writer_identity;
 
-pub(crate) async fn handle(
+pub(super) async fn handle(
     args: CheckpointArgs,
     client: Client,
     config: AppConfig,

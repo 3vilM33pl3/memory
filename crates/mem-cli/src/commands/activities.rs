@@ -8,7 +8,7 @@ use crate::commands::{
     runtime::ActivitiesArgs,
 };
 
-pub(crate) async fn handle(args: ActivitiesArgs, client: Client, config: AppConfig) -> Result<()> {
+pub(super) async fn handle(args: ActivitiesArgs, client: Client, config: AppConfig) -> Result<()> {
     let cwd = env::current_dir().context("read current directory")?;
     let project = resolve_project_slug(args.project, &cwd)?;
     let api = ApiClient::new(client, config);

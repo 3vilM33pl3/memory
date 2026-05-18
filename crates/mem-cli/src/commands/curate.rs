@@ -11,7 +11,7 @@ use crate::commands::{
     skill_support::resolve_repo_root,
 };
 
-pub(crate) async fn handle(args: CurateArgs, client: Client, config: AppConfig) -> Result<()> {
+pub(super) async fn handle(args: CurateArgs, client: Client, config: AppConfig) -> Result<()> {
     let cwd = env::current_dir().context("read current directory")?;
     let repo_root = resolve_repo_root(&cwd)?;
     let replacement_policy = repo_replacement_policy(&repo_root);
