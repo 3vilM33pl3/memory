@@ -1,23 +1,22 @@
-#![allow(unused_imports)]
-
 use anyhow::{Context, Result};
-use clap::CommandFactory;
-use clap_complete::generate;
-use mem_api::*;
-use mem_service as service_runtime;
-use mem_watch::{WatcherRunArgs, flush_path, load_state, run_once, run_watcher_daemon, to_status};
-use reqwest::Client;
-use std::{
-    env, fs,
-    io::{self, Write},
-    path::{Path, PathBuf},
-};
+use mem_api::{AppConfig, Profile};
+use mem_watch::{WatcherRunArgs, run_watcher_daemon};
+use std::{env, path::PathBuf};
 
-use crate::commands::runtime::*;
-use crate::writer_identity::{resolve_writer_identity, resolve_writer_identity_for_tool};
 use crate::{
-    commits as git_commits, resume as checkpoint_store, scan as scan_runtime, tui as tui_runtime,
-    wizard as wizard_runtime,
+    commands::{
+        memory_ops::resolve_project_slug,
+        runtime::{WatcherArgs, WatcherCommand, WatcherManagerCommand, default_global_config_path},
+        skill_support::resolve_repo_root,
+        watch_support::{
+            disable_watch_manager_service, disable_watch_service, enable_watch_manager_service,
+            enable_watch_service, preview_disable_watch_manager_service,
+            preview_disable_watch_service, preview_enable_watch_manager_service,
+            preview_enable_watch_service, run_watcher_manager, watch_manager_service_status,
+            watch_service_status, watcher_command_requires_config_load,
+        },
+    },
+    writer_identity::resolve_writer_identity_for_tool,
 };
 
 pub(crate) async fn handle_pre_config(

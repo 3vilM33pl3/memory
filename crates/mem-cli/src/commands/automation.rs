@@ -1,23 +1,16 @@
-#![allow(unused_imports)]
-
 use anyhow::{Context, Result};
-use clap::CommandFactory;
-use clap_complete::generate;
-use mem_api::*;
-use mem_service as service_runtime;
-use mem_watch::{WatcherRunArgs, flush_path, load_state, run_once, run_watcher_daemon, to_status};
+use mem_api::AppConfig;
+use mem_watch::{flush_path, load_state, run_once, to_status};
 use reqwest::Client;
-use std::{
-    env, fs,
-    io::{self, Write},
-    path::{Path, PathBuf},
-};
+use std::{env, path::PathBuf};
 
-use crate::commands::runtime::*;
-use crate::writer_identity::{resolve_writer_identity, resolve_writer_identity_for_tool};
 use crate::{
-    commits as git_commits, resume as checkpoint_store, scan as scan_runtime, tui as tui_runtime,
-    wizard as wizard_runtime,
+    commands::{
+        api::ApiClient,
+        memory_ops::{preview_automation_flush, resolve_project_slug},
+        runtime::{AutomationArgs, AutomationCommand},
+    },
+    writer_identity::resolve_writer_identity,
 };
 
 pub(crate) async fn handle(

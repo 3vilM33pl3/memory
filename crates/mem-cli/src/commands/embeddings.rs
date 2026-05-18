@@ -1,23 +1,11 @@
-#![allow(unused_imports)]
-
-use anyhow::{Context, Result};
-use clap::CommandFactory;
-use clap_complete::generate;
-use mem_api::*;
-use mem_service as service_runtime;
-use mem_watch::{WatcherRunArgs, flush_path, load_state, run_once, run_watcher_daemon, to_status};
+use anyhow::Result;
+use mem_api::{AppConfig, ReembedRequest, ReindexRequest};
 use reqwest::Client;
-use std::{
-    env, fs,
-    io::{self, Write},
-    path::{Path, PathBuf},
-};
 
-use crate::commands::runtime::*;
-use crate::writer_identity::{resolve_writer_identity, resolve_writer_identity_for_tool};
-use crate::{
-    commits as git_commits, resume as checkpoint_store, scan as scan_runtime, tui as tui_runtime,
-    wizard as wizard_runtime,
+use crate::commands::{
+    api::{ApiClient, print_embedding_backends, print_json_response},
+    output::{service_url, write_headers},
+    runtime::{EmbeddingsArgs, EmbeddingsCommand},
 };
 
 pub(crate) async fn handle(args: EmbeddingsArgs, client: Client, config: AppConfig) -> Result<()> {
