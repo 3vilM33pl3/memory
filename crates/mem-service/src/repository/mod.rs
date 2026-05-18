@@ -1,3 +1,7 @@
+pub(crate) mod events;
+pub(crate) mod handlers;
+pub(crate) mod stream;
+
 use std::{collections::HashSet, path::PathBuf};
 
 use mem_api::{

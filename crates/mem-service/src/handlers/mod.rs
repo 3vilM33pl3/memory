@@ -1,9 +1,3 @@
 pub(crate) mod activity;
-pub(crate) mod bundle;
 pub(crate) mod curation;
-pub(crate) mod embeddings;
-pub(crate) mod memory;
-pub(crate) mod project;
-pub(crate) mod provenance;
 pub(crate) mod query;
-pub(crate) mod system;
