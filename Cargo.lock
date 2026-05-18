@@ -1720,6 +1720,7 @@ dependencies = [
  "mem-mcp",
  "mem-platform",
  "mem-search",
+ "mem-test-support",
  "mem-watch",
  "regex",
  "reqwest",

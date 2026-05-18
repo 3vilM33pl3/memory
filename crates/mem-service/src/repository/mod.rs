@@ -1,5 +1,5 @@
 pub(crate) mod events;
-pub(crate) mod handlers;
+pub mod handlers;
 pub(crate) mod stream;
 
 use std::{collections::HashSet, path::PathBuf};

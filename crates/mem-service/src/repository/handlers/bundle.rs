@@ -404,7 +404,7 @@ pub(crate) async fn preview_bundle_import(
     })
 }
 
-pub(crate) async fn upsert_project_slug(pool: &PgPool, slug: &str) -> Result<Uuid, ApiError> {
+pub async fn upsert_project_slug(pool: &PgPool, slug: &str) -> Result<Uuid, sqlx::Error> {
     let row = sqlx::query(
         r#"
         INSERT INTO projects (id, slug, name, root_path)
@@ -415,9 +415,8 @@ pub(crate) async fn upsert_project_slug(pool: &PgPool, slug: &str) -> Result<Uui
     )
     .bind(slug)
     .fetch_one(pool)
-    .await
-    .map_err(ApiError::sql)?;
-    row.try_get("id").map_err(ApiError::sql)
+    .await?;
+    row.try_get("id")
 }
 
 pub(crate) async fn project_bundle_export_preview(
@@ -492,7 +491,9 @@ pub(crate) async fn project_bundle_import(
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     let loaded = load_bundle_archive(&body)?;
     let pool = state.pool()?;
-    let target_project_id = upsert_project_slug(pool, &slug).await?;
+    let target_project_id = upsert_project_slug(pool, &slug)
+        .await
+        .map_err(ApiError::sql)?;
     let import_id = Uuid::new_v4();
 
     sqlx::query(

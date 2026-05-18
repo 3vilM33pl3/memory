@@ -1190,10 +1190,68 @@ pub fn split_search_chunks(summary: &str, canonical_text: &str) -> Vec<String> {
     }
 }
 
+#[doc(hidden)]
+pub mod test_support {
+    use std::sync::Arc;
+
+    use anyhow::Result;
+    use pgvector::Vector;
+
+    use super::{
+        EmbeddingRegistry, EmbeddingRegistryEntry, EmbeddingService,
+        embedding_backend::{EmbeddingBackend, EmbeddingSpace},
+    };
+    use crate::EmbeddingPurpose;
+
+    #[derive(Clone)]
+    struct StaticEmbeddingBackend {
+        space: EmbeddingSpace,
+        value: f32,
+    }
+
+    #[async_trait::async_trait]
+    impl EmbeddingBackend for StaticEmbeddingBackend {
+        fn space(&self) -> &EmbeddingSpace {
+            &self.space
+        }
+
+        async fn embed(&self, input: &[String], _purpose: EmbeddingPurpose) -> Result<Vec<Vector>> {
+            Ok(input
+                .iter()
+                .enumerate()
+                .map(|(index, _)| Vector::from(vec![self.value, index as f32]))
+                .collect())
+        }
+    }
+
+    fn static_embedding_service(name: &str, value: f32) -> EmbeddingService {
+        EmbeddingService {
+            backend: Arc::new(StaticEmbeddingBackend {
+                space: EmbeddingSpace::new("test", "http://127.0.0.1", name),
+                value,
+            }),
+            batch_size: 16,
+        }
+    }
+
+    pub fn static_embedding_registry(backends: &[(&str, f32)]) -> EmbeddingRegistry {
+        EmbeddingRegistry {
+            entries: backends
+                .iter()
+                .map(|(name, value)| EmbeddingRegistryEntry {
+                    name: (*name).to_string(),
+                    service: static_embedding_service(name, *value),
+                    create_enabled: true,
+                })
+                .collect(),
+            active: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[test]
     fn parse_memory_type_accepts_newer_types() {
@@ -1272,98 +1330,6 @@ mod tests {
             ActivateError::UnknownBackend(name) => assert_eq!(name, "does-not-exist"),
         }
         assert!(registry.active_name().is_none());
-    }
-
-    #[derive(Clone)]
-    struct StaticEmbeddingBackend {
-        space: EmbeddingSpace,
-        value: f32,
-    }
-
-    #[async_trait::async_trait]
-    impl EmbeddingBackend for StaticEmbeddingBackend {
-        fn space(&self) -> &EmbeddingSpace {
-            &self.space
-        }
-
-        async fn embed(&self, input: &[String], _purpose: EmbeddingPurpose) -> Result<Vec<Vector>> {
-            Ok(input
-                .iter()
-                .enumerate()
-                .map(|(index, _)| Vector::from(vec![self.value, index as f32]))
-                .collect())
-        }
-    }
-
-    fn static_embedding_service(name: &str, value: f32) -> EmbeddingService {
-        EmbeddingService {
-            backend: Arc::new(StaticEmbeddingBackend {
-                space: EmbeddingSpace::new("test", "http://127.0.0.1", name),
-                value,
-            }),
-            batch_size: 16,
-        }
-    }
-
-    fn static_registry(backends: &[(&str, f32)]) -> EmbeddingRegistry {
-        EmbeddingRegistry {
-            entries: backends
-                .iter()
-                .map(|(name, value)| EmbeddingRegistryEntry {
-                    name: (*name).to_string(),
-                    service: static_embedding_service(name, *value),
-                    create_enabled: true,
-                })
-                .collect(),
-            active: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn backend_scoped_reindex_preserves_other_backend_embeddings() {
-        let Some(pool) = mem_test_support::migrated_pool().await else {
-            return;
-        };
-
-        let slug = mem_test_support::unique_project_slug("embedding-reindex");
-        let project_id = Uuid::new_v4();
-        let memory_id = Uuid::new_v4();
-
-        repository::insert_embedding_reindex_fixture(&pool, &slug, project_id, memory_id).await;
-
-        let first_registry = static_registry(&[("first", 1.0)]);
-        let first_space = first_registry
-            .get("first")
-            .expect("first backend")
-            .embedding_space_key();
-        rebuild_chunks(&pool, &slug, &first_registry, None)
-            .await
-            .expect("initial reindex");
-        let first_count_before =
-            repository::count_embeddings_for_space(&pool, memory_id, &first_space).await;
-        assert!(first_count_before > 0);
-
-        let second_registry = static_registry(&[("first", 1.0), ("second", 2.0)]);
-        let second_space = second_registry
-            .get("second")
-            .expect("second backend")
-            .embedding_space_key();
-        rebuild_chunks(&pool, &slug, &second_registry, Some("second"))
-            .await
-            .expect("backend-scoped reindex");
-
-        assert_eq!(
-            repository::count_embeddings_for_space(&pool, memory_id, &first_space).await,
-            first_count_before,
-            "backend-scoped reindex must not delete embeddings for other spaces"
-        );
-        assert_eq!(
-            repository::count_embeddings_for_space(&pool, memory_id, &second_space).await,
-            first_count_before,
-            "backend-scoped reindex should fill the selected backend on existing chunks"
-        );
-
-        repository::cleanup_test_project(&pool, &slug).await;
     }
 
     #[test]
@@ -1589,49 +1555,5 @@ mod tests {
                 .any(|item| item == "graph match x3 boost 2.50")
         );
         assert_eq!(ranked.graph_connections.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn graph_candidates_return_memory_by_file_provenance() {
-        let Some(pool) = mem_test_support::migrated_pool().await else {
-            return;
-        };
-
-        let slug = mem_test_support::unique_project_slug("graph-query");
-        let project_id = Uuid::new_v4();
-        let memory_id = Uuid::new_v4();
-        let run_id = Uuid::new_v4();
-        let node_id = Uuid::new_v4();
-        let symbol_id = Uuid::new_v4();
-
-        repository::insert_graph_query_fixture(
-            &pool, &slug, project_id, memory_id, run_id, node_id, symbol_id,
-        )
-        .await;
-
-        let response = query_memory(
-            &pool,
-            &QueryRequest {
-                project: slug.clone(),
-                query: "GraphTarget".to_string(),
-                filters: Default::default(),
-                top_k: 5,
-                min_confidence: None,
-                history: false,
-                retrieval_mode: None,
-                answer_mode: None,
-            },
-            None,
-        )
-        .await
-        .expect("query memory");
-
-        assert_eq!(response.diagnostics.graph_status, "active");
-        assert_eq!(response.diagnostics.graph_candidates, 1);
-        assert_eq!(response.results[0].memory_id, memory_id);
-        assert!(response.results[0].debug.graph_boost > 0.0);
-        assert_eq!(response.results[0].graph_connections.len(), 1);
-
-        repository::cleanup_test_project(&pool, &slug).await;
     }
 }

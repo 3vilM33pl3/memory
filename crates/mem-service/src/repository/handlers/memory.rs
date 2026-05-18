@@ -1,7 +1,7 @@
 use crate::prelude::*;
 use crate::*;
 
-pub(crate) async fn fetch_memory_entry(
+pub async fn fetch_memory_entry(
     pool: &PgPool,
     id: Uuid,
 ) -> Result<Option<MemoryEntryResponse>, sqlx::Error> {
