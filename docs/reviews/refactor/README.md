@@ -11,6 +11,10 @@ The review was written against an older `main`, so a few findings need current-c
 - The TUI already has `?` help. Treat that finding as stale unless follow-up work improves discoverability or structure.
 - The localhost auth bypass, DB test gaps, large-file maintainability risk, scattered SQL, eval shell risk, and contributor-readiness concerns still map to useful work.
 
+## Status (2026-05-18)
+
+All 12 plans below landed as commits in the v0.9.0 release window. An audit against current `main` is in [AUDIT-2026-05-18.md](AUDIT-2026-05-18.md): five plans shipped well, two are partial, and five landed cosmetically (the structural god-file splits — `mem-cli/main.rs`, `mem-service/main.rs`, `tui.rs`, `App.tsx` — saw scaffolding but minimal code movement, and three of them actually grew). The follow-up pack at the bottom of this file (`13`–`19`) picks up the missing pieces with explicit LOC budgets.
+
 ## Recommended Order
 
 1. [Service Auth Hardening](01-service-auth-hardening.md)
@@ -26,6 +30,26 @@ The review was written against an older `main`, so a few findings need current-c
 11. [Eval Safety And Research Extensibility](11-eval-safety-and-research-extensibility.md)
 12. [Contributor PR Readiness](12-contributor-pr-readiness.md)
 
+## Follow-Up Plan Pack
+
+Derived from [AUDIT-2026-05-18.md](AUDIT-2026-05-18.md). Each finishes work the original pack started cosmetically or deferred. Grouped by impact, not numeric order.
+
+### P1 — High impact, contributor unblock
+
+- [13. CLI Command Split — Finish](13-cli-command-split-finish.md) — drive `crates/mem-cli/src/main.rs` from 16,644 LOC to ≤ 3,000.
+- [14. Service Route Split — Finish](14-service-route-split-finish.md) — drive `crates/mem-service/src/main.rs` from 9,007 LOC to ≤ 1,500; extract real `handlers/` modules.
+- [18. Memory Provenance Ranking Integration](18-provenance-ranking-integration.md) — wire the existing verifier signal into the ranker so stale memories are actually de-ranked. Closes the original review's §7 Scenario E.
+
+### P2 — Cleanup that unlocks future work
+
+- [15. Repository Layer — Extend Across Crates](15-repository-layer-extend.md) — finish the SQL extraction in mem-curate, mem-graph, mem-search; cover writes.
+- [17. Web App Decomposition — Finish](17-web-app-decomposition-finish.md) — extract the 10 remaining tabs from `App.tsx`; target ≤ 600 LOC.
+
+### P3 — Quality of life
+
+- [16. TUI Architecture Split — Finish](16-tui-architecture-split-finish.md) — per-tab modules with their own state sub-structs; target `tui.rs` ≤ 3,000 LOC.
+- [19. Eval — External Retriever Command](19-eval-retriever-cmd.md) — land the deferred `--retriever-cmd` interface for the researcher persona.
+
 ## Pull Request Guidance
 
 - Each file is one intended PR or short PR sequence.
@@ -33,3 +57,4 @@ The review was written against an older `main`, so a few findings need current-c
 - Keep PRs easy to review: move code first, then change behavior in a follow-up.
 - For every plan, update or add focused tests before broad cleanup.
 - If a plan touches public CLI behavior, update `docs/user/cli/` in the same PR.
+- Follow-up plans (`13`–`19`) inherit the same "move first, change behavior later" rule. They also carry explicit LOC budgets in their acceptance criteria — those budgets exist because the original pack's structural plans lacked numeric targets and landed cosmetically (see [AUDIT-2026-05-18.md](AUDIT-2026-05-18.md) §4).
