@@ -1,27 +1,29 @@
-#![allow(unused_imports)]
-
 use anyhow::{Context, Result};
-use clap::CommandFactory;
-use clap_complete::generate;
-use mem_api::*;
-use mem_service as service_runtime;
-use mem_watch::{WatcherRunArgs, flush_path, load_state, run_once, run_watcher_daemon, to_status};
+use mem_api::{AppConfig, PlanActivityAction};
 use reqwest::Client;
-use std::{
-    env, fs,
-    io::{self, Write},
-    path::{Path, PathBuf},
-};
+use std::env;
 
-use crate::commands::runtime::*;
+use crate::commands::{
+    api::ApiClient,
+    init_support::repo_replacement_policy,
+    memory_ops::{
+        ImplementationMemoryPreview, ImplementationMemoryResult,
+        build_finish_execution_implementation_request, build_plan_activity_request,
+        build_plan_execution_finish_report, build_plan_execution_request, build_task_start_request,
+        derive_finish_execution_implementation_summary, load_plan_content,
+        plan_detail_from_markdown, preview_checkpoint, repo_git_head,
+        resolve_active_plan_selection, resolve_project_slug, save_checkpoint_with_activity,
+        verify_task_start_memory,
+    },
+    output::print_plan_execution_finish_report,
+    runtime::{CheckpointArgs, CheckpointCommand},
+    skill_support::resolve_repo_root,
+};
 use crate::plan_execution::{
     derive_plan_thread_key, derive_plan_title, ensure_checkbox_plan, parse_plan_checkboxes,
 };
-use crate::writer_identity::{resolve_writer_identity, resolve_writer_identity_for_tool};
-use crate::{
-    commits as git_commits, resume as checkpoint_store, scan as scan_runtime, tui as tui_runtime,
-    wizard as wizard_runtime,
-};
+use crate::resume as checkpoint_store;
+use crate::writer_identity::resolve_writer_identity;
 
 pub(crate) async fn handle(
     args: CheckpointArgs,

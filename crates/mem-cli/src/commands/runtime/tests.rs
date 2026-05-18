@@ -9,6 +9,37 @@ use std::{
 use clap::{Command, CommandFactory, Parser, error::ErrorKind};
 use uuid::Uuid;
 
+use crate::commands::eval_support::{
+    EvalRunContext, agent_build_prompt, chat_completion_content, ensure_direct_llm_eval_config,
+    ensure_eval_shell_allowed, parse_no_memory_grounded_answer, token_usage_from_chat_body,
+    token_usage_from_json_value, validate_agent_build_memory_evidence,
+};
+use crate::commands::{
+    init_support::{initialize_dev_overlay, initialize_repo},
+    memory_ops::{
+        PlanExecutionFinishReport, build_finish_execution_implementation_request,
+        build_plan_execution_finish_report, build_plan_execution_request, build_remember_request,
+        build_task_start_request, parse_memory_type_arg, resolve_project_slug,
+    },
+    output::{build_graph_activity_request, write_headers},
+    service_support::{
+        TuiRestartMarker, newest_tui_restart_notice, parse_systemd_unit_names,
+        set_cluster_enabled_in_shared_config,
+    },
+    skill_support::{
+        MEMORY_SKILL_NAMES, SkillBundleStatus, SkillUpgradeAction, SkillVersionStatus,
+        project_skill_inventory_with_template, read_skill_version, render_agent_project_config,
+        render_claude_md_memory_section, resolve_repo_root, upgrade_project_skills_with_template,
+    },
+    status_support::{
+        is_placeholder_database_url, mask_database_url, repair_repo_bootstrap,
+        root_gitignore_contains_mem,
+    },
+    watch_support::{
+        should_start_agent_watcher, watcher_command_requires_config_load, write_file_if_changed,
+    },
+};
+
 use crate::plan_execution::{
     derive_plan_thread_key, derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
     parse_plan_checkboxes,
@@ -16,20 +47,8 @@ use crate::plan_execution::{
 use crate::writer_identity::{WriterIdentity, resolve_writer_identity};
 
 use super::{
-    Cli, DEV_API_TOKEN, EvalRunContext, PlanExecutionFinishReport, RememberArgs,
-    SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, SkillBundleStatus, SkillUpgradeAction,
-    SkillVersionStatus, TuiRestartMarker, WatcherCommand, WatcherManagerArgs,
-    WatcherManagerCommand, agent_build_prompt, build_finish_execution_implementation_request,
-    build_graph_activity_request, build_plan_execution_finish_report, build_plan_execution_request,
-    build_remember_request, build_task_start_request, chat_completion_content,
-    ensure_direct_llm_eval_config, ensure_eval_shell_allowed, ensure_shared_service_api_token,
-    initialize_dev_overlay, initialize_repo, is_placeholder_database_url, mask_database_url,
-    newest_tui_restart_notice, parse_memory_type_arg, parse_no_memory_grounded_answer,
-    project_skill_inventory_with_template, read_skill_version, render_agent_project_config,
-    render_claude_md_memory_section, repair_repo_bootstrap, resolve_project_slug,
-    resolve_repo_root, root_gitignore_contains_mem, shared_env_lookup, should_start_agent_watcher,
-    token_usage_from_chat_body, upgrade_project_skills_with_template,
-    watcher_command_requires_config_load, write_file_if_changed, write_headers,
+    Cli, DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, WatcherCommand,
+    WatcherManagerArgs, WatcherManagerCommand, ensure_shared_service_api_token, shared_env_lookup,
 };
 use mem_api::AppConfig;
 
@@ -48,7 +67,9 @@ use super::{
 };
 
 #[cfg(not(target_os = "macos"))]
-use super::{parse_systemd_unit_names, render_watch_unit, watch_unit_name};
+use crate::commands::watch_support::{
+    render_watch_manager_unit, render_watch_unit, watch_unit_name,
+};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -933,7 +954,7 @@ fn token_usage_from_json_value_supports_codex_nested_events() {
     )
     .unwrap();
 
-    let usage = crate::token_usage_from_json_value(&value).unwrap();
+    let usage = token_usage_from_json_value(&value).unwrap();
 
     assert_eq!(usage.input_tokens, 100);
     assert_eq!(usage.output_tokens, 25);
@@ -1056,7 +1077,7 @@ fn agent_build_memory_evidence_verifies_required_queries() {
         required_content: Vec::new(),
     };
 
-    let evidence = crate::validate_agent_build_memory_evidence(
+    let evidence = validate_agent_build_memory_evidence(
         &workspace,
         &item,
         mem_eval::EvalCondition::FullMemory,
@@ -1090,12 +1111,9 @@ fn agent_build_no_memory_fails_on_memory_evidence_artifacts() {
         required_content: Vec::new(),
     };
 
-    let evidence = crate::validate_agent_build_memory_evidence(
-        &workspace,
-        &item,
-        mem_eval::EvalCondition::NoMemory,
-    )
-    .unwrap();
+    let evidence =
+        validate_agent_build_memory_evidence(&workspace, &item, mem_eval::EvalCondition::NoMemory)
+            .unwrap();
 
     assert!(!evidence.ok);
     assert!(evidence.notes[0].contains("forbidden Memory evidence"));
@@ -1737,7 +1755,7 @@ fn watch_unit_uses_repo_root_and_project() {
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn watch_manager_unit_uses_manager_subcommand() {
-    let unit = super::render_watch_manager_unit(Path::new("/tmp/memory-layer.toml")).unwrap();
+    let unit = render_watch_manager_unit(Path::new("/tmp/memory-layer.toml")).unwrap();
     assert!(unit.contains("watcher manager run"));
     assert!(unit.contains("Restart=always"));
 }
@@ -1745,10 +1763,10 @@ fn watch_manager_unit_uses_manager_subcommand() {
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn agent_watcher_start_logic_reuses_loaded_active_units() {
-    assert!(!super::should_start_agent_watcher(true, true, true));
-    assert!(super::should_start_agent_watcher(true, true, false));
-    assert!(super::should_start_agent_watcher(true, false, false));
-    assert!(super::should_start_agent_watcher(false, true, true));
+    assert!(!should_start_agent_watcher(true, true, true));
+    assert!(should_start_agent_watcher(true, true, false));
+    assert!(should_start_agent_watcher(true, false, false));
+    assert!(should_start_agent_watcher(false, true, true));
 }
 
 #[cfg(target_os = "macos")]
@@ -1885,7 +1903,7 @@ fn cluster_enabled_is_added_when_missing() {
     let path = dir.join("memory-layer.toml");
     fs::write(&path, "[service]\nbind_addr = \"127.0.0.1:4040\"\n").unwrap();
 
-    super::set_cluster_enabled_in_shared_config(&path, true).unwrap();
+    set_cluster_enabled_in_shared_config(&path, true).unwrap();
 
     let content = fs::read_to_string(&path).unwrap();
     assert!(content.contains("[cluster]"));
@@ -1928,7 +1946,7 @@ fn cluster_enabled_is_updated_in_existing_section() {
     )
     .unwrap();
 
-    super::set_cluster_enabled_in_shared_config(&path, true).unwrap();
+    set_cluster_enabled_in_shared_config(&path, true).unwrap();
 
     let content = fs::read_to_string(&path).unwrap();
     assert!(content.contains("[cluster]\nenabled = true\npriority = 50"));
@@ -2082,19 +2100,19 @@ fn skill_inventory_marks_outdated_and_missing_skills() {
     let repo = unique_temp_dir("mem-skill-inventory");
     let project_root = repo.join("project");
     let template_root = repo.join("memory-layer/skill-template");
-    for name in super::MEMORY_SKILL_NAMES {
+    for name in MEMORY_SKILL_NAMES {
         write_test_skill(&template_root.join(name), "0.2.0");
     }
     write_test_skill(
         &project_root
             .join(".agents/skills")
-            .join(super::MEMORY_SKILL_NAMES[0]),
+            .join(MEMORY_SKILL_NAMES[0]),
         "0.1.0",
     );
     write_test_skill(
         &project_root
             .join(".agents/skills")
-            .join(super::MEMORY_SKILL_NAMES[1]),
+            .join(MEMORY_SKILL_NAMES[1]),
         "0.2.0",
     );
 
@@ -2119,13 +2137,13 @@ fn skill_upgrade_dry_run_does_not_replace_project_skill() {
     let repo = unique_temp_dir("mem-skill-upgrade-dry-run");
     let project_root = repo.join("project");
     let template_root = repo.join("memory-layer/skill-template");
-    for name in super::MEMORY_SKILL_NAMES {
+    for name in MEMORY_SKILL_NAMES {
         write_test_skill(&template_root.join(name), "0.2.0");
         write_test_skill(&project_root.join(".agents/skills").join(name), "0.1.0");
     }
     let first_skill = project_root
         .join(".agents/skills")
-        .join(super::MEMORY_SKILL_NAMES[0])
+        .join(MEMORY_SKILL_NAMES[0])
         .join("SKILL.md");
     let before = fs::read_to_string(&first_skill).unwrap();
 
@@ -2157,7 +2175,7 @@ fn skill_upgrade_replaces_outdated_skill_and_creates_backup() {
     }
     let project_root = repo.join("project");
     let template_root = repo.join("memory-layer/skill-template");
-    for name in super::MEMORY_SKILL_NAMES {
+    for name in MEMORY_SKILL_NAMES {
         write_test_skill(&template_root.join(name), "0.2.0");
         write_test_skill(&project_root.join(".agents/skills").join(name), "0.1.0");
     }
@@ -2172,14 +2190,14 @@ fn skill_upgrade_replaces_outdated_skill_and_creates_backup() {
         read_skill_version(
             &project_root
                 .join(".agents/skills")
-                .join(super::MEMORY_SKILL_NAMES[0])
+                .join(MEMORY_SKILL_NAMES[0])
         )
         .unwrap(),
         Some("0.2.0".to_string())
     );
     assert!(
         PathBuf::from(backup_root)
-            .join(super::MEMORY_SKILL_NAMES[0])
+            .join(MEMORY_SKILL_NAMES[0])
             .join("SKILL.md")
             .is_file()
     );
@@ -2197,7 +2215,7 @@ fn skill_inventory_reports_ok_for_matching_bundle_version() {
     let repo = unique_temp_dir("mem-skill-bundle-ok");
     let project_root = repo.join("project");
     let template_root = repo.join("memory-layer/skill-template");
-    for name in super::MEMORY_SKILL_NAMES {
+    for name in MEMORY_SKILL_NAMES {
         write_test_skill(&template_root.join(name), env!("CARGO_PKG_VERSION"));
         write_test_skill(
             &project_root.join(".agents/skills").join(name),

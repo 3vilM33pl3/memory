@@ -3,7 +3,7 @@ use clap::CommandFactory;
 use clap_complete::generate;
 use std::io::{self, Write};
 
-use crate::commands::runtime::*;
+use crate::commands::runtime::{Cli, CompletionArgs};
 
 pub(crate) async fn handle(args: &CompletionArgs) -> Result<()> {
     let mut command = Cli::command();

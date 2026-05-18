@@ -19,7 +19,7 @@ use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::ApiClient;
+use crate::commands::api::ApiClient;
 
 const PROMPT_VERSION: &str = "scan-v1";
 const MAX_CANDIDATES: usize = 12;

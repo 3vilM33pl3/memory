@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use uuid::Uuid;
 
-use crate::{ApiClient, ProposalsArgs, ProposalsCommand};
+use crate::commands::{
+    api::ApiClient,
+    runtime::{ProposalsArgs, ProposalsCommand},
+};
 
 pub(crate) async fn handle(args: ProposalsArgs, api: &ApiClient) -> Result<()> {
     match args.command {

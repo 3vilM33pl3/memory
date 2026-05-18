@@ -24,13 +24,23 @@ use ratatui::{
 };
 use reqwest::Client;
 
-use super::{
-    ApiClient, DoctorReport, DoctorStatus, backend_service_available, default_global_config_path,
-    default_local_service_overrides, default_shared_capnp_unix_socket, enable_backend_service,
-    enable_watch_manager_service, enable_watch_service, ensure_shared_service_api_token_for_config,
-    mask_database_url, preview_enable_watch_manager_service, read_local_service_overrides,
-    render_agent_project_config, render_project_metadata, repair_repo_bootstrap, run_doctor,
-    shared_env_lookup, shared_env_path_for_config, write_shared_env_file,
+use crate::commands::{
+    api::ApiClient,
+    runtime::{
+        backend_service_available, default_global_config_path, default_shared_capnp_unix_socket,
+        ensure_shared_service_api_token_for_config, preview_shared_service_api_token_for_config,
+        shared_env_lookup, shared_env_path_for_config, write_shared_env_file,
+    },
+    service_support::{enable_backend_service, preview_enable_backend_service},
+    skill_support::{render_agent_project_config, render_project_metadata},
+    status_support::{
+        DoctorReport, DoctorStatus, default_local_service_overrides, mask_database_url,
+        read_local_service_overrides, repair_repo_bootstrap, run_doctor,
+    },
+    watch_support::{
+        enable_watch_manager_service, enable_watch_service, preview_enable_watch_manager_service,
+        preview_enable_watch_service,
+    },
 };
 use crate::scan::{self, ScanReport};
 
@@ -1487,7 +1497,7 @@ async fn apply_draft(draft: &WizardDraft, dry_run: bool) -> Result<WizardResult>
             ));
         }
         let token_result = if dry_run {
-            super::preview_shared_service_api_token_for_config(
+            preview_shared_service_api_token_for_config(
                 &draft.global_config_path,
                 Some(&draft.api_token),
                 true,
@@ -1563,7 +1573,7 @@ async fn apply_draft(draft: &WizardDraft, dry_run: bool) -> Result<WizardResult>
         if draft.enable_watcher_service.is_yes() {
             let service_output = if cfg!(target_os = "macos") || !draft.includes_global() {
                 if dry_run {
-                    super::preview_enable_watch_service(repo_root, &draft.project)?
+                    preview_enable_watch_service(repo_root, &draft.project)?
                 } else {
                     enable_watch_service(repo_root, &draft.project)?
                 }
@@ -1594,7 +1604,7 @@ async fn apply_draft(draft: &WizardDraft, dry_run: bool) -> Result<WizardResult>
         && backend_service_available()
     {
         let backend_output = if dry_run {
-            super::preview_enable_backend_service(&draft.global_config_path)
+            preview_enable_backend_service(&draft.global_config_path)
         } else {
             enable_backend_service(&draft.global_config_path).await?
         };

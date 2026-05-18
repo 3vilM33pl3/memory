@@ -42,3 +42,7 @@ pub(crate) mod verify_provenance;
 pub(crate) mod watch_support;
 pub(crate) mod watcher;
 pub(crate) mod wizard;
+
+pub(crate) async fn run() -> anyhow::Result<()> {
+    runtime::run().await
+}

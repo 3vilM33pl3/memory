@@ -1,58 +1,21 @@
-#![allow(unused_imports)]
-
-use crate::{commits, resume, scan, tui, wizard};
-use std::collections::BTreeMap;
-#[cfg(unix)]
-use std::os::unix::{fs::PermissionsExt, net::UnixStream};
 use std::{
     env, fs,
-    io::{self, IsTerminal, Read, Write},
-    net::{SocketAddr, TcpStream},
+    io::{self, IsTerminal},
     path::{Path, PathBuf},
-    process::{Command as ProcessCommand, Stdio},
-    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
-use clap::{Args, Parser, Subcommand};
-use clap_complete::Shell;
-use mem_agenttop::LightweightAgentSession;
-use mem_api::{
-    ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
-    CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
-    CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse, GraphActivityRequest,
-    MemoryEntryResponse, MemoryType, PlanActivityAction, PlanActivityRequest, Profile,
-    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundlePreview,
-    ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
-    ProjectOverviewResponse, ProvenanceVerificationRequest, ProvenanceVerificationResponse,
-    PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse,
-    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, ReplacementPolicy,
-    ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult, TokenUsage, UpToSpeedRequest,
-    UpToSpeedResponse, discover_global_config_path, discover_repo_env_path, effective_llm_base_url,
-    is_ollama_provider, is_supported_llm_provider, llm_max_output_tokens_field,
-    llm_requires_api_key, load_repo_replacement_policy, read_repo_project_slug,
-    resolve_llm_api_key,
-};
-use mem_platform as platform;
-use mem_watch::{
-    build_capture_request as build_automation_capture_request,
-    detect_changed_files as watch_detect_changed_files,
-    fetch_project_overview as fetch_automation_overview, load_state, should_capture, should_curate,
-    update_session_from_repo,
-};
-use reqwest::{Client, header::HeaderMap};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use sqlx::{Row, postgres::PgPoolOptions};
-use uuid::Uuid;
+use mem_api::{ReplacementPolicy, load_repo_replacement_policy};
 
-use crate::commands::runtime::*;
-use crate::plan_execution::{
-    durable_plan_source_path, ensure_checkbox_plan, normalize_plan_markdown_for_hash,
-    parse_plan_checkboxes,
+use crate::commands::{
+    runtime::DevInitArgs,
+    service_support::prompt_yes_no,
+    skill_support::{
+        discover_skill_template_dir, ensure_claude_md_memory_section, render_agent_project_config,
+        render_init_summary, render_project_metadata, render_repo_config, sync_memory_skill_bundle,
+    },
+    status_support::migrate_legacy_env_or_create_token,
 };
-use crate::writer_identity::{WriterIdentity, resolve_writer_identity};
 
 pub(crate) fn repo_replacement_policy(repo_root: &Path) -> ReplacementPolicy {
     load_repo_replacement_policy(repo_root).unwrap_or_default()

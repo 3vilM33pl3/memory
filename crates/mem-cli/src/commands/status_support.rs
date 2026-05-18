@@ -1,58 +1,46 @@
-#![allow(unused_imports)]
-
-use crate::{commits, resume, scan, tui, wizard};
-use std::collections::BTreeMap;
 #[cfg(unix)]
-use std::os::unix::{fs::PermissionsExt, net::UnixStream};
+use std::os::unix::net::UnixStream;
 use std::{
-    env, fs,
-    io::{self, IsTerminal, Read, Write},
+    fs,
+    io::{self},
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
-    process::{Command as ProcessCommand, Stdio},
-    time::{Duration, Instant},
+    process::Command as ProcessCommand,
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
-use clap::{Args, Parser, Subcommand};
-use clap_complete::Shell;
-use mem_agenttop::LightweightAgentSession;
 use mem_api::{
-    ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
-    CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
-    CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse, GraphActivityRequest,
-    MemoryEntryResponse, MemoryType, PlanActivityAction, PlanActivityRequest, Profile,
-    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundlePreview,
-    ProjectMemoryExportOptions, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
-    ProjectOverviewResponse, ProvenanceVerificationRequest, ProvenanceVerificationResponse,
-    PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryFilters, QueryRequest, QueryResponse,
-    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, ReplacementPolicy,
-    ResumeRequest, ResumeResponse, ScanActivityRequest, TestResult, TokenUsage, UpToSpeedRequest,
-    UpToSpeedResponse, discover_global_config_path, discover_repo_env_path, effective_llm_base_url,
-    is_ollama_provider, is_supported_llm_provider, llm_max_output_tokens_field,
-    llm_requires_api_key, load_repo_replacement_policy, read_repo_project_slug,
-    resolve_llm_api_key,
+    AppConfig, Profile, discover_global_config_path, discover_repo_env_path,
+    effective_llm_base_url, is_ollama_provider, llm_requires_api_key, resolve_llm_api_key,
 };
-use mem_platform as platform;
-use mem_watch::{
-    build_capture_request as build_automation_capture_request,
-    detect_changed_files as watch_detect_changed_files,
-    fetch_project_overview as fetch_automation_overview, load_state, should_capture, should_curate,
-    update_session_from_repo,
-};
-use reqwest::{Client, header::HeaderMap};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use mem_watch::load_state;
+use reqwest::Client;
+use serde::Serialize;
 use sqlx::{Row, postgres::PgPoolOptions};
-use uuid::Uuid;
 
-use crate::commands::runtime::*;
-use crate::plan_execution::{
-    durable_plan_source_path, ensure_checkbox_plan, normalize_plan_markdown_for_hash,
-    parse_plan_checkboxes,
+use crate::commands::{
+    api::{ApiClient, format_api_error},
+    init_support::{ensure_mem_gitignore, initialize_repo},
+    memory_ops::detect_changed_files,
+    output::{service_url, write_headers},
+    runtime::{
+        DEV_API_TOKEN, backend_start_hint, default_global_config_path,
+        ensure_shared_service_api_token, shared_env_path_for_config,
+    },
+    service_support::backend_service_status,
+    skill_support::{
+        SkillBundleStatus, SkillUpgradeAction, discover_skill_template_dir,
+        ensure_claude_md_memory_section, format_skill_inventory_summary, missing_memory_skill_dirs,
+        project_skill_inventory, render_agent_project_config, render_project_metadata,
+        render_repo_config, sync_memory_skill_bundle, upgrade_project_skills,
+    },
+    watch_support::{
+        WATCH_MANAGER_UNIT_NAME, run_systemctl_user, user_systemd_unit_dir,
+        watch_manager_service_status, watch_service_status, yes_no,
+    },
 };
-use crate::writer_identity::{WriterIdentity, resolve_writer_identity};
+use crate::writer_identity::resolve_writer_identity;
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct DoctorReport {

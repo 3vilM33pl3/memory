@@ -49,8 +49,14 @@ use tokio::{
 };
 
 use crate::{
-    ApiClient, SkillBundleStatus, SkillInventoryReport, SourceKindString, TuiRestartNotice,
-    enable_relay_discovery_and_restart_backend, load_tui_restart_notice, project_skill_inventory,
+    commands::{
+        api::ApiClient,
+        memory_ops::SourceKindString,
+        service_support::{
+            TuiRestartNotice, enable_relay_discovery_and_restart_backend, load_tui_restart_notice,
+        },
+        skill_support::{SkillBundleStatus, SkillInventoryReport, project_skill_inventory},
+    },
     resume,
 };
 
@@ -9211,7 +9217,10 @@ mod tests {
         skill_bundle_status_color, tui_status_color, tui_status_detail, tui_status_label,
         watcher_bar_status_label,
     };
-    use crate::{SkillBundleStatus, TuiRestartNotice, project_skill_inventory};
+    use crate::commands::{
+        service_support::TuiRestartNotice,
+        skill_support::{SkillBundleStatus, project_skill_inventory},
+    };
     use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
     use mem_api::{
         ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,

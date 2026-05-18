@@ -3,8 +3,10 @@ use std::fs;
 use anyhow::{Context, Result};
 use mem_api::ProjectMemoryExportOptions;
 
-use crate::{
-    ApiClient, BundleArgs, BundleCommand, print_bundle_import_preview, print_bundle_import_response,
+use crate::commands::{
+    api::ApiClient,
+    output::{print_bundle_import_preview, print_bundle_import_response},
+    runtime::{BundleArgs, BundleCommand},
 };
 
 pub(crate) async fn handle(args: BundleArgs, api: &ApiClient) -> Result<()> {

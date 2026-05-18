@@ -1,7 +1,12 @@
 use anyhow::{Context, Result};
 use std::{env, path::PathBuf};
 
-use crate::commands::runtime::*;
+use crate::commands::{
+    memory_ops::resolve_project_slug,
+    runtime::DoctorArgs,
+    skill_support::resolve_repo_root,
+    status_support::{print_doctor_report, run_doctor},
+};
 
 pub(crate) async fn handle(args: &DoctorArgs, cli_config: Option<PathBuf>) -> Result<()> {
     let cwd = env::current_dir().context("read current directory")?;

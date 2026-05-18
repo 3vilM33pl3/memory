@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use std::env;
 
-use crate::commands::runtime::*;
+use crate::commands::{
+    runtime::UpgradeArgs,
+    skill_support::{print_skill_upgrade_report, resolve_repo_root, upgrade_project_skills},
+};
 
 pub(crate) async fn handle(args: &UpgradeArgs) -> Result<()> {
     let cwd = env::current_dir().context("read current directory")?;

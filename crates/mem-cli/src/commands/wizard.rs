@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use std::env;
 
-use crate::commands::runtime::*;
+use crate::commands::{
+    memory_ops::resolve_project_slug, runtime::WizardArgs, skill_support::resolve_repo_root,
+};
 use crate::wizard as wizard_runtime;
 
 pub(crate) async fn handle(args: &WizardArgs) -> Result<()> {

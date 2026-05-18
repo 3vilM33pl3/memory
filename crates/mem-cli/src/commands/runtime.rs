@@ -14,6 +14,8 @@ use reqwest::Client;
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::commands::{api::ApiClient, skill_support::set_private_file_permissions};
+
 const ROOT_AFTER_HELP: &str = "\
 Agent contract:
   Use this CLI from Codex, Claude, or scripts to read and write durable project memory.
@@ -2677,24 +2679,6 @@ pub(crate) fn run_systemctl_system<const N: usize>(args: [&str; N]) -> Result<()
         stdout.trim()
     )
 }
-
-pub(crate) use crate::commands::status_support::*;
-
-pub(crate) use crate::commands::init_support::*;
-
-pub(crate) use crate::commands::service_support::*;
-
-pub(crate) use crate::commands::watch_support::*;
-
-pub(crate) use crate::commands::skill_support::*;
-
-pub(crate) use crate::commands::api::*;
-
-pub(crate) use crate::commands::eval_support::*;
-
-pub(crate) use crate::commands::output::*;
-
-pub(crate) use crate::commands::memory_ops::*;
 
 #[cfg(test)]
 mod tests;
