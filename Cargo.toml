@@ -55,7 +55,7 @@ pgvector = { version = "0.4.1", features = ["sqlx"] }
 tree-sitter = "0.24.7"
 tree-sitter-rust = "0.23.3"
 tree-sitter-python = "0.23.6"
-tree-sitter-javascript = "0.23.1"
+tree-sitter-javascript = "0.25.0"
 tree-sitter-typescript = "0.23.2"
 regex = "1.12.2"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
