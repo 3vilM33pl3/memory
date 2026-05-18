@@ -1,4 +1,4 @@
-use crate::{resume, scan, wizard};
+use crate::{resume, scan};
 use std::collections::BTreeMap;
 #[cfg(unix)]
 use std::os::unix::{fs::PermissionsExt, net::UnixStream};
@@ -13,8 +13,8 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use clap::{Args, CommandFactory, Parser, Subcommand};
-use clap_complete::{Shell, generate};
+use clap::{Args, Parser, Subcommand};
+use clap_complete::Shell;
 use mem_agenttop::LightweightAgentSession;
 use mem_api::{
     ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
@@ -33,7 +33,6 @@ use mem_api::{
     resolve_llm_api_key,
 };
 use mem_platform as platform;
-use mem_service as service_runtime;
 use mem_watch::{
     build_capture_request as build_automation_capture_request,
     detect_changed_files as watch_detect_changed_files,
@@ -2375,195 +2374,36 @@ pub(crate) async fn run() -> Result<()> {
 
     match &command {
         Command::Wizard(args) => {
-            let cwd = env::current_dir().context("read current directory")?;
-            let repo_root = resolve_repo_root(&cwd)?;
-            let project = if repo_root == cwd || repo_root.join(".git").exists() {
-                resolve_project_slug(args.project.clone(), &repo_root).ok()
-            } else {
-                args.project.clone()
-            };
-            wizard::run(&cwd, &repo_root, project, args.global, args.dry_run).await?;
+            crate::commands::wizard::handle(args).await?;
             return Ok(());
         }
         Command::Init(args) => {
-            let cwd = env::current_dir().context("read current directory")?;
-            let project = resolve_project_slug(args.project.clone(), &cwd)?;
-            let repo_root = resolve_repo_root(&cwd)?;
-            let output = initialize_repo(&repo_root, &project, args.force, args.dry_run)?;
-            println!("{output}");
+            crate::commands::init::handle(args).await?;
             return Ok(());
         }
         Command::Upgrade(args) => {
-            let cwd = env::current_dir().context("read current directory")?;
-            let repo_root = resolve_repo_root(&cwd)?;
-            let report = upgrade_project_skills(&repo_root, args.force, args.dry_run)?;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
-            } else {
-                print_skill_upgrade_report(&report);
-            }
+            crate::commands::upgrade::handle(args).await?;
             return Ok(());
         }
         Command::Completion(args) => {
-            let mut command = Cli::command();
-            let mut output = Vec::new();
-            generate(args.shell, &mut command, "memory", &mut output);
-            if let Err(error) = io::stdout().write_all(&output)
-                && error.kind() != io::ErrorKind::BrokenPipe
-            {
-                return Err(error).context("write completion script");
-            }
+            crate::commands::completion::handle(args).await?;
             return Ok(());
         }
         Command::Dev(args) => {
-            match &args.command {
-                DevCommand::Init(init_args) => {
-                    let cwd = env::current_dir().context("read current directory")?;
-                    let repo_root = resolve_repo_root(&cwd)?;
-                    let output = initialize_dev_overlay(&repo_root, init_args)?;
-                    println!("{output}");
-                }
-            }
+            crate::commands::dev::handle(args).await?;
             return Ok(());
         }
         Command::Service(args) => {
-            let config_path = cli_config
-                .clone()
-                .unwrap_or_else(default_global_config_path);
-            match &args.command {
-                ServiceCommand::Run => {
-                    service_runtime::run_service(cli_config.clone()).await?;
-                }
-                ServiceCommand::Enable(args) => {
-                    if args.dry_run {
-                        println!("{}", preview_enable_backend_service(&config_path));
-                    } else {
-                        let token_result =
-                            ensure_shared_service_api_token_for_config(&config_path, None, true)?;
-                        if token_result.changed {
-                            println!("{}", token_result.summary_line());
-                        }
-                        println!("{}", enable_backend_service(&config_path).await?);
-                    }
-                }
-                ServiceCommand::Disable(args) => {
-                    if args.dry_run {
-                        println!("{}", preview_disable_backend_service(&config_path));
-                    } else {
-                        println!("{}", disable_backend_service()?);
-                    }
-                }
-                ServiceCommand::Status => println!("{}", backend_service_status(&config_path)?),
-                ServiceCommand::RestartAll(args) => {
-                    let report = restart_all_memory_services(args.dry_run, args.mark_tui_restart)?;
-                    if args.json {
-                        println!("{}", serde_json::to_string_pretty(&report)?);
-                    } else {
-                        println!("{}", report.summary());
-                    }
-                }
-                ServiceCommand::EnsureApiToken(args) => {
-                    let _ = args.shared;
-                    let result = if args.dry_run {
-                        preview_shared_service_api_token_for_config(
-                            &config_path,
-                            None,
-                            args.rotate_placeholder,
-                        )?
-                    } else {
-                        ensure_shared_service_api_token_for_config(
-                            &config_path,
-                            None,
-                            args.rotate_placeholder,
-                        )?
-                    };
-                    if args.json {
-                        println!("{}", serde_json::to_string_pretty(&result)?);
-                    } else {
-                        println!("{}", result.summary_line());
-                    }
-                }
-            }
+            crate::commands::service::handle(args, cli_config.clone()).await?;
             return Ok(());
         }
         Command::Watcher(args) => {
-            let cwd = env::current_dir().context("read current directory")?;
-            let repo_root = resolve_repo_root(&cwd)?;
-            match &args.command {
-                WatcherCommand::Run(_) => {}
-                WatcherCommand::Manager(args) => match &args.command {
-                    WatcherManagerCommand::Run => {}
-                    WatcherManagerCommand::Enable(args) => {
-                        let output = if args.dry_run {
-                            preview_enable_watch_manager_service()?
-                        } else {
-                            enable_watch_manager_service(
-                                &cli_config
-                                    .clone()
-                                    .unwrap_or_else(default_global_config_path),
-                            )?
-                        };
-                        println!("{output}");
-                        return Ok(());
-                    }
-                    WatcherManagerCommand::Disable(args) => {
-                        let output = if args.dry_run {
-                            preview_disable_watch_manager_service()?
-                        } else {
-                            disable_watch_manager_service(Profile::detect())?
-                        };
-                        println!("{output}");
-                        return Ok(());
-                    }
-                    WatcherManagerCommand::Status => {
-                        println!("{}", watch_manager_service_status(Profile::detect())?);
-                        return Ok(());
-                    }
-                },
-                WatcherCommand::Enable(args) => {
-                    let project = resolve_project_slug(args.project.clone(), &cwd)?;
-                    let output = if args.dry_run {
-                        preview_enable_watch_service(&repo_root, &project)?
-                    } else {
-                        enable_watch_service(&repo_root, &project)?
-                    };
-                    println!("{output}");
-                }
-                WatcherCommand::Disable(args) => {
-                    let project = resolve_project_slug(args.project.clone(), &cwd)?;
-                    let output = if args.dry_run {
-                        preview_disable_watch_service(&project)?
-                    } else {
-                        disable_watch_service(&project)?
-                    };
-                    println!("{output}");
-                }
-                WatcherCommand::Status(args) => {
-                    let project = resolve_project_slug(args.project.clone(), &cwd)?;
-                    let output = watch_service_status(&repo_root, &project)?;
-                    println!("{output}");
-                }
-            }
-            if !watcher_command_requires_config_load(&args.command) {
+            if !crate::commands::watcher::handle_pre_config(args, cli_config.clone()).await? {
                 return Ok(());
             }
         }
         Command::Doctor(args) => {
-            let cwd = env::current_dir().context("read current directory")?;
-            let repo_root = resolve_repo_root(&cwd)?;
-            let project = resolve_project_slug(args.project.clone(), &cwd).unwrap_or_else(|_| {
-                repo_root
-                    .file_name()
-                    .and_then(|v| v.to_str())
-                    .unwrap_or("memory")
-                    .to_string()
-            });
-            let report = run_doctor(cli_config.clone(), &repo_root, &project, args.fix).await?;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
-            } else {
-                print_doctor_report(&report);
-            }
+            crate::commands::doctor::handle(args, cli_config.clone()).await?;
             return Ok(());
         }
         _ => {}
@@ -2638,14 +2478,8 @@ pub(crate) async fn run() -> Result<()> {
         Command::Embeddings(args) => {
             crate::commands::embeddings::handle(args, client, config).await?
         }
-        Command::Health => {
-            let response = client.get(service_url(&config, "/healthz")).send().await?;
-            print_json_response(response).await?;
-        }
-        Command::Stats => {
-            let response = client.get(service_url(&config, "/v1/stats")).send().await?;
-            print_json_response(response).await?;
-        }
+        Command::Health => crate::commands::health::handle(client, config).await?,
+        Command::Stats => crate::commands::stats::handle(client, config).await?,
         Command::Archive(args) => crate::commands::archive::handle(args, client, config).await?,
         Command::Automation(args) => {
             crate::commands::automation::handle(args, client, config, cli_writer_id).await?
@@ -5212,7 +5046,7 @@ pub(crate) struct ServiceRestartReport {
 }
 
 impl ServiceRestartReport {
-    fn summary(&self) -> String {
+    pub(crate) fn summary(&self) -> String {
         let mut lines = vec![format!(
             "Memory Layer service restart{}:",
             if self.dry_run { " dry run" } else { "" }
