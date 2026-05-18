@@ -46,8 +46,8 @@ use sqlx::{Row, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 use crate::plan_execution::{
-    derive_plan_thread_key, derive_plan_title, durable_plan_source_path, ensure_checkbox_plan,
-    normalize_plan_markdown_for_hash, parse_plan_checkboxes,
+    durable_plan_source_path, ensure_checkbox_plan, normalize_plan_markdown_for_hash,
+    parse_plan_checkboxes,
 };
 use crate::writer_identity::{WriterIdentity, resolve_writer_identity};
 
@@ -13268,6 +13268,8 @@ mod tests {
     use clap::{Command, CommandFactory, Parser, error::ErrorKind};
     use uuid::Uuid;
 
+    use crate::plan_execution::{derive_plan_thread_key, derive_plan_title};
+
     use super::{
         Cli, DEV_API_TOKEN, EvalRunContext, PlanExecutionFinishReport, RememberArgs,
         SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, SkillBundleStatus, SkillUpgradeAction,
@@ -13275,17 +13277,16 @@ mod tests {
         WatcherManagerCommand, agent_build_prompt, build_finish_execution_implementation_request,
         build_graph_activity_request, build_plan_execution_finish_report,
         build_plan_execution_request, build_remember_request, build_task_start_request,
-        chat_completion_content, derive_plan_thread_key, derive_plan_title,
-        durable_plan_source_path, ensure_checkbox_plan, ensure_direct_llm_eval_config,
-        ensure_eval_shell_allowed, ensure_shared_service_api_token, initialize_dev_overlay,
-        initialize_repo, is_placeholder_database_url, mask_database_url, newest_tui_restart_notice,
-        parse_memory_type_arg, parse_no_memory_grounded_answer, parse_plan_checkboxes,
-        project_skill_inventory_with_template, read_skill_version, render_agent_project_config,
-        render_claude_md_memory_section, repair_repo_bootstrap, resolve_project_slug,
-        resolve_repo_root, resolve_writer_identity, root_gitignore_contains_mem, shared_env_lookup,
-        should_start_agent_watcher, token_usage_from_chat_body,
-        upgrade_project_skills_with_template, watcher_command_requires_config_load,
-        write_file_if_changed, write_headers,
+        chat_completion_content, durable_plan_source_path, ensure_checkbox_plan,
+        ensure_direct_llm_eval_config, ensure_eval_shell_allowed, ensure_shared_service_api_token,
+        initialize_dev_overlay, initialize_repo, is_placeholder_database_url, mask_database_url,
+        newest_tui_restart_notice, parse_memory_type_arg, parse_no_memory_grounded_answer,
+        parse_plan_checkboxes, project_skill_inventory_with_template, read_skill_version,
+        render_agent_project_config, render_claude_md_memory_section, repair_repo_bootstrap,
+        resolve_project_slug, resolve_repo_root, resolve_writer_identity,
+        root_gitignore_contains_mem, shared_env_lookup, should_start_agent_watcher,
+        token_usage_from_chat_body, upgrade_project_skills_with_template,
+        watcher_command_requires_config_load, write_file_if_changed, write_headers,
     };
     use mem_api::AppConfig;
 
