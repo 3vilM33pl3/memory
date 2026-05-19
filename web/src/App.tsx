@@ -10,7 +10,7 @@ import { QueryTab } from "./features/query/QueryTab";
 import { ReviewTab } from "./features/review/ReviewTab";
 import { ResumeTab } from "./features/resume/ResumeTab";
 import { WatchersTab } from "./features/watchers/WatchersTab";
-import { useWebAppController } from "./hooks/useWebAppController";
+import { useAppShell } from "./hooks/useAppShell";
 import { MORE_TABS, PRIMARY_TABS, type Tab } from "./tabs";
 
 export default function App() {
@@ -121,7 +121,7 @@ export default function App() {
     handlePreviewImport,
     handleApplyImport,
     statusMessage,
-  } = useWebAppController();
+  } = useAppShell();
 
   return (
     <div className="app-shell">

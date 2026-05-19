@@ -1,11 +1,9 @@
 import type { RefObject } from "react";
 
 import { RichText } from "../../components/RichText";
-import type { MemoryEntryResponse, MemoryHistoryResponse, MemoryStatus, MemoryType, ProjectMemoryListItem } from "../../types";
+import type { MemoryEntryResponse, MemoryHistoryResponse, MemoryType, ProjectMemoryListItem } from "../../types";
 import { formatDateTime } from "../../utils/format";
-
-export type MemoryTypeFilter = "all" | MemoryType;
-export type StatusFilter = "all" | MemoryStatus;
+import type { MemoryTypeFilter, StatusFilter } from "./types";
 
 export const MEMORY_TYPES: MemoryType[] = [
   "architecture",
