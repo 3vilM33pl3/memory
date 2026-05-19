@@ -1,5 +1,5 @@
 use super::super::app::*;
-use super::super::theme::{themed_block, Theme};
+use super::super::theme::{Theme, themed_block};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -71,7 +71,9 @@ pub(in crate::tui) fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App,
                 .bg(Theme::PANEL_ALT)
                 .add_modifier(Modifier::BOLD),
         );
-        let rows = app.review.replacement_proposals
+        let rows = app
+            .review
+            .replacement_proposals
             .iter()
             .enumerate()
             .map(|(idx, proposal)| {

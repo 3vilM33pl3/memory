@@ -1,5 +1,5 @@
 use super::super::app::*;
-use super::super::theme::{themed_block, Theme};
+use super::super::theme::{Theme, themed_block};
 use crate::commands::memory_ops::SourceKindString;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},

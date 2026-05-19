@@ -1,10 +1,10 @@
-pub(super) mod memories;
+pub(super) mod activity;
 pub(super) mod agents;
-pub(super) mod project;
-pub(super) mod review;
-pub(super) mod watchers;
 pub(super) mod embeddings;
+pub(super) mod errors;
+pub(super) mod memories;
+pub(super) mod project;
 pub(super) mod query;
 pub(super) mod resume;
-pub(super) mod activity;
-pub(super) mod errors;
+pub(super) mod review;
+pub(super) mod watchers;

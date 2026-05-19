@@ -1,5 +1,5 @@
 use super::super::app::*;
-use super::super::theme::{themed_block, themed_focus_block, Theme};
+use super::super::theme::{Theme, themed_block, themed_focus_block};
 use crate::commands::memory_ops::SourceKindString;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
@@ -48,13 +48,19 @@ pub(in crate::tui) fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, 
     }
 
     let answer_text = if app.query.query_loading {
-        let elapsed = app.query.query_started_at
+        let elapsed = app
+            .query
+            .query_started_at
             .map(|started| started.elapsed().as_millis() as u64)
             .unwrap_or_default();
-        let pending = app.query.query_pending_question
+        let pending = app
+            .query
+            .query_pending_question
             .as_deref()
             .unwrap_or(app.query.query_text.as_str());
-        let previous = app.query.query_response
+        let previous = app
+            .query
+            .query_response
             .as_ref()
             .map(|response| response.results.len())
             .unwrap_or(0);
@@ -209,7 +215,9 @@ pub(in crate::tui) fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, 
             .bg(Theme::PANEL_ALT)
             .add_modifier(Modifier::BOLD),
     );
-    let cited_numbers = app.query.query_response
+    let cited_numbers = app
+        .query
+        .query_response
         .as_ref()
         .map(|response| &response.answer_generation.cited_result_numbers);
     let rows = app
@@ -248,7 +256,8 @@ pub(in crate::tui) fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, 
     let mut state = app.query.query_table_state.clone();
     frame.render_stateful_widget(table, lower[0], &mut state);
 
-    let detail_text = if let Some(result) = app.query_results().get(app.query.query_selected_index) {
+    let detail_text = if let Some(result) = app.query_results().get(app.query.query_selected_index)
+    {
         let result_number = app.query.query_selected_index + 1;
         let cited_in_answer = app.query.query_response.as_ref().is_some_and(|response| {
             response

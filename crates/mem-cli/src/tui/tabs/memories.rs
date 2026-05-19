@@ -1,5 +1,5 @@
 use super::super::app::*;
-use super::super::theme::{themed_focus_block, Theme};
+use super::super::theme::{Theme, themed_focus_block};
 use ratatui::{
     layout::{Constraint, Rect},
     style::{Modifier, Style},

@@ -1,5 +1,5 @@
 use super::super::app::*;
-use super::super::theme::{themed_block, Theme};
+use super::super::theme::{Theme, themed_block};
 use ratatui::{
     layout::Rect,
     style::Style,

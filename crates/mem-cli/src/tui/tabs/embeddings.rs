@@ -1,5 +1,5 @@
 use super::super::app::*;
-use super::super::theme::{themed_block, Theme};
+use super::super::theme::{Theme, themed_block};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -22,7 +22,11 @@ pub(in crate::tui) fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &
         .and_then(|s| s.active.clone())
         .unwrap_or_else(|| "(none)".to_string());
     let create_display = snapshot
-        .and_then(|snapshot| snapshot.backends.get(app.embeddings.embeddings_selected_index))
+        .and_then(|snapshot| {
+            snapshot
+                .backends
+                .get(app.embeddings.embeddings_selected_index)
+        })
         .map(|backend| {
             format!(
                 "{} for {}",

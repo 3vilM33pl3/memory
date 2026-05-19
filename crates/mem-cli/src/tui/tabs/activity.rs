@@ -1,5 +1,5 @@
 use super::super::app::*;
-use super::super::theme::{themed_block, Theme};
+use super::super::theme::{Theme, themed_block};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -60,7 +60,11 @@ pub(in crate::tui) fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &Ap
     let mut state = app.activity.activity_table_state.clone();
     frame.render_stateful_widget(table, chunks[0], &mut state);
 
-    let detail_lines = if let Some(entry) = app.activity.activity_events.get(app.activity.activity_selected_index) {
+    let detail_lines = if let Some(entry) = app
+        .activity
+        .activity_events
+        .get(app.activity.activity_selected_index)
+    {
         activity_detail_lines(entry)
     } else {
         vec![Line::from(Span::styled(

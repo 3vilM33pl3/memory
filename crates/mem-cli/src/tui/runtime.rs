@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::app::*;
 use anyhow::Result;
 use crossterm::{
     event::{KeyCode, KeyEvent},
@@ -14,9 +15,6 @@ use crossterm::{
 use mem_api::{NamedCount, Profile, ProjectOverviewResponse};
 use mem_platform::preferred_user_state_dir;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use serde_json;
-
-use super::app::*;
 
 pub(super) fn should_quit(key: KeyEvent, app: &App) -> bool {
     matches!(app.input_mode, InputMode::Normal) && matches!(key.code, KeyCode::Char('q'))

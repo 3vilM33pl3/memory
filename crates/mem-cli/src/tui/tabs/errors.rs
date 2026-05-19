@@ -1,5 +1,5 @@
 use super::super::app::*;
-use super::super::theme::{themed_block, Theme};
+use super::super::theme::{Theme, themed_block};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -9,7 +9,10 @@ use ratatui::{
 
 pub(in crate::tui) fn draw_errors_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let items = collect_error_items(app);
-    let selected_index = app.errors.errors_selected_index.min(items.len().saturating_sub(1));
+    let selected_index = app
+        .errors
+        .errors_selected_index
+        .min(items.len().saturating_sub(1));
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])

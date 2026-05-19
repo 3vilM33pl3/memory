@@ -11,7 +11,8 @@ use std::{
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use mem_agenttop::AgentSnapshot;
+#[cfg(test)]
+pub(in crate::tui) use mem_agenttop::AgentSnapshot;
 use mem_api::{
     ActivityDetails, ActivityEvent, MemoryEntryResponse, Profile, ProjectMemoriesResponse,
     QueryFilters, QueryRequest, QueryResponse, QueryResult, ReplacementPolicy, ResumeCheckpoint,
