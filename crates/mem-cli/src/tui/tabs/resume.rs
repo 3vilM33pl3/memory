@@ -1,5 +1,7 @@
 use super::super::app::*;
 use super::super::theme::{Theme, themed_block};
+use super::{TabAction, TabContext, TabRenderContext};
+use crossterm::event::{Event, KeyCode};
 use ratatui::{
     layout::Rect,
     style::Style,
@@ -7,7 +9,12 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
 };
 
-pub(in crate::tui) fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(in crate::tui) fn draw_resume_tab(
+    frame: &mut ratatui::Frame<'_>,
+    ctx: &TabRenderContext<'_>,
+    area: Rect,
+) {
+    let app = ctx.app;
     let lines = if let Some(response) = &app.resume.resume_response {
         let mut lines = Vec::new();
         if app.resume.resume_loading {
@@ -187,4 +194,47 @@ pub(in crate::tui) fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App,
             app.resume.resume_scroll
         )));
     frame.render_widget(paragraph, area);
+}
+
+pub(in crate::tui) fn update(
+    event: &Event,
+    state: &mut ResumeTabState,
+    _ctx: &mut TabContext,
+) -> TabAction {
+    match event {
+        Event::Key(key) => match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                scroll_resume(state, 1);
+                TabAction::Redraw
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                scroll_resume(state, -1);
+                TabAction::Redraw
+            }
+            KeyCode::PageDown => {
+                scroll_resume(state, 8);
+                TabAction::Redraw
+            }
+            KeyCode::PageUp => {
+                scroll_resume(state, -8);
+                TabAction::Redraw
+            }
+            KeyCode::Home => {
+                state.resume_scroll = 0;
+                TabAction::Redraw
+            }
+            _ => TabAction::None,
+        },
+        _ => TabAction::None,
+    }
+}
+
+fn scroll_resume(state: &mut ResumeTabState, delta: i16) {
+    state.resume_scroll = if delta.is_negative() {
+        state.resume_scroll.saturating_sub(delta.unsigned_abs())
+    } else {
+        state
+            .resume_scroll
+            .saturating_add(u16::try_from(delta).unwrap_or(0))
+    };
 }

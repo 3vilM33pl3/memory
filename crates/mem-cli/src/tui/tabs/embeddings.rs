@@ -1,5 +1,7 @@
 use super::super::app::*;
 use super::super::theme::{Theme, themed_block};
+use super::{TabAction, TabContext, TabRenderContext};
+use crossterm::event::{Event, KeyCode};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -7,7 +9,12 @@ use ratatui::{
     widgets::{Paragraph, Row, Table, Wrap},
 };
 
-pub(in crate::tui) fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(in crate::tui) fn draw_embeddings_tab(
+    frame: &mut ratatui::Frame<'_>,
+    ctx: &TabRenderContext<'_>,
+    area: Rect,
+) {
+    let app = ctx.app;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(6), Constraint::Min(8)])
@@ -226,4 +233,44 @@ pub(in crate::tui) fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &
     )));
     let mut state = app.embeddings.embeddings_table_state.clone();
     frame.render_stateful_widget(table, chunks[1], &mut state);
+}
+
+pub(in crate::tui) fn update(
+    event: &Event,
+    state: &mut EmbeddingsTabState,
+    _ctx: &mut TabContext,
+) -> TabAction {
+    match event {
+        Event::Key(key) => match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                move_embeddings_selection(state, 1);
+                TabAction::Redraw
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                move_embeddings_selection(state, -1);
+                TabAction::Redraw
+            }
+            _ => TabAction::None,
+        },
+        _ => TabAction::None,
+    }
+}
+
+fn move_embeddings_selection(state: &mut EmbeddingsTabState, delta: isize) {
+    let len = state
+        .embedding_backends_snapshot
+        .as_ref()
+        .map(|s| s.backends.len())
+        .unwrap_or(0);
+    if len == 0 {
+        state.embeddings_selected_index = 0;
+        state.embeddings_table_state.select(None);
+        return;
+    }
+    let cur = state.embeddings_selected_index as isize;
+    let next = ((cur + delta) % len as isize + len as isize) % len as isize;
+    state.embeddings_selected_index = next as usize;
+    state
+        .embeddings_table_state
+        .select(Some(state.embeddings_selected_index));
 }

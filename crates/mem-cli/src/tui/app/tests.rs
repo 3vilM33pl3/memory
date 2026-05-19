@@ -1,5 +1,5 @@
 use chrono::{Local, TimeZone, Utc};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{Event, KeyCode, KeyEvent};
 
 #[cfg_attr(target_os = "macos", allow(unused_imports))]
 use super::{
@@ -1684,6 +1684,92 @@ fn new_test_app() -> App {
         Profile::Prod,
         tx,
     )
+}
+
+fn tab_key(code: KeyCode) -> Event {
+    Event::Key(KeyEvent::new(code, crossterm::event::KeyModifiers::NONE))
+}
+
+#[test]
+fn tab_update_functions_handle_representative_local_keys() {
+    let mut app = new_test_app();
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::memories::update(&tab_key(KeyCode::Enter), &mut app.memories, &mut ctx),
+        crate::tui::tabs::TabAction::Redraw
+    );
+    assert_eq!(app.memories.memories_focus, MemoriesFocus::Detail);
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::agents::update(&tab_key(KeyCode::PageDown), &mut app.agents, &mut ctx),
+        crate::tui::tabs::TabAction::Redraw
+    );
+    assert_eq!(app.agents.agent_detail_scroll, 8);
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::activity::update(
+            &tab_key(KeyCode::PageDown),
+            &mut app.activity,
+            &mut ctx,
+        ),
+        crate::tui::tabs::TabAction::Redraw
+    );
+    assert_eq!(app.activity.activity_detail_scroll, 8);
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::errors::update(&tab_key(KeyCode::PageDown), &mut app.errors, &mut ctx),
+        crate::tui::tabs::TabAction::Redraw
+    );
+    assert_eq!(app.errors.errors_detail_scroll, 8);
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::project::update(&tab_key(KeyCode::Down), &mut app.project_tab, &mut ctx,),
+        crate::tui::tabs::TabAction::Redraw
+    );
+    assert_eq!(app.project_tab.project_scroll, 1);
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::watchers::update(&tab_key(KeyCode::Down), &mut app.watchers, &mut ctx,),
+        crate::tui::tabs::TabAction::Redraw
+    );
+    assert_eq!(app.watchers.watcher_scroll, 1);
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::resume::update(&tab_key(KeyCode::Down), &mut app.resume, &mut ctx),
+        crate::tui::tabs::TabAction::Redraw
+    );
+    assert_eq!(app.resume.resume_scroll, 1);
+
+    app.embeddings.embedding_backends_snapshot = Some(embeddings_test_response());
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::embeddings::update(
+            &tab_key(KeyCode::Down),
+            &mut app.embeddings,
+            &mut ctx,
+        ),
+        crate::tui::tabs::TabAction::Redraw
+    );
+    assert_eq!(app.embeddings.embeddings_selected_index, 1);
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::review::update(&tab_key(KeyCode::Down), &mut app.review, &mut ctx),
+        crate::tui::tabs::TabAction::Redraw
+    );
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::query::update(&tab_key(KeyCode::Down), &mut app.query, &mut ctx),
+        crate::tui::tabs::TabAction::None
+    );
 }
 
 #[test]

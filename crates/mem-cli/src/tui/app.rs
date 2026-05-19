@@ -1359,6 +1359,25 @@ impl App {
             return Ok(false);
         }
 
+        let tab_action = super::tabs::dispatch_update(self.active_tab, &Event::Key(key), self);
+        if !tab_action.handled() {
+            // Existing central key handling remains the behavior owner until
+            // individual tabs migrate their key blocks into update().
+        } else {
+            match tab_action {
+                super::tabs::TabAction::None => {}
+                super::tabs::TabAction::Redraw => {
+                    self.chrome.needs_redraw = true;
+                    return Ok(false);
+                }
+                super::tabs::TabAction::SwitchTab(tab) => {
+                    self.set_active_tab(tab);
+                    return Ok(false);
+                }
+                super::tabs::TabAction::Quit => return Ok(true),
+            }
+        }
+
         match key.code {
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') if key.modifiers.is_empty() => {
                 self.set_active_tab(self.active_tab.next());

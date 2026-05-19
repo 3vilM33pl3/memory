@@ -1,5 +1,7 @@
 use super::super::app::*;
 use super::super::theme::{Theme, themed_block};
+use super::{TabAction, TabContext, TabRenderContext};
+use crossterm::event::{Event, KeyCode};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -7,7 +9,12 @@ use ratatui::{
     widgets::{Paragraph, Row, Table, Wrap},
 };
 
-pub(in crate::tui) fn draw_errors_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(in crate::tui) fn draw_errors_tab(
+    frame: &mut ratatui::Frame<'_>,
+    ctx: &TabRenderContext<'_>,
+    area: Rect,
+) {
+    let app = ctx.app;
     let items = collect_error_items(app);
     let selected_index = app
         .errors
@@ -75,4 +82,52 @@ pub(in crate::tui) fn draw_errors_tab(frame: &mut ratatui::Frame<'_>, app: &App,
             app.errors.errors_detail_scroll
         )));
     frame.render_widget(detail, chunks[1]);
+}
+
+pub(in crate::tui) fn update(
+    event: &Event,
+    state: &mut ErrorsTabState,
+    ctx: &mut TabContext,
+) -> TabAction {
+    match event {
+        Event::Key(key) => match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                move_error_selection(state, ctx.error_count, 1);
+                TabAction::Redraw
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                move_error_selection(state, ctx.error_count, -1);
+                TabAction::Redraw
+            }
+            KeyCode::PageDown => {
+                state.errors_detail_scroll = state.errors_detail_scroll.saturating_add(8);
+                TabAction::Redraw
+            }
+            KeyCode::PageUp => {
+                state.errors_detail_scroll = state.errors_detail_scroll.saturating_sub(8);
+                TabAction::Redraw
+            }
+            KeyCode::Home => {
+                state.errors_detail_scroll = 0;
+                TabAction::Redraw
+            }
+            _ => TabAction::None,
+        },
+        _ => TabAction::None,
+    }
+}
+
+fn move_error_selection(state: &mut ErrorsTabState, len: usize, delta: isize) {
+    if len == 0 {
+        state.errors_selected_index = 0;
+        state.errors_table_state.select(None);
+        return;
+    }
+    let next = (state.errors_selected_index as isize + delta)
+        .clamp(0, len.saturating_sub(1) as isize) as usize;
+    if next != state.errors_selected_index {
+        state.errors_selected_index = next;
+        state.errors_table_state.select(Some(next));
+        state.errors_detail_scroll = 0;
+    }
 }

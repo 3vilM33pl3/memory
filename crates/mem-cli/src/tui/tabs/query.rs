@@ -1,5 +1,6 @@
 use super::super::app::*;
 use super::super::theme::{Theme, themed_block, themed_focus_block};
+use super::{TabAction, TabContext, TabRenderContext};
 use crate::commands::memory_ops::SourceKindString;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
@@ -8,7 +9,12 @@ use ratatui::{
     widgets::{Paragraph, Row, Table, Wrap},
 };
 
-pub(in crate::tui) fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(in crate::tui) fn draw_query_tab(
+    frame: &mut ratatui::Frame<'_>,
+    ctx: &TabRenderContext<'_>,
+    area: Rect,
+) {
+    let app = ctx.app;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -433,4 +439,12 @@ pub(in crate::tui) fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, 
         .wrap(Wrap { trim: false })
         .block(themed_block("Returned Memory Detail"));
     frame.render_widget(detail, lower[1]);
+}
+
+pub(in crate::tui) fn update(
+    _event: &crossterm::event::Event,
+    _state: &mut QueryTabState,
+    _ctx: &mut TabContext,
+) -> TabAction {
+    TabAction::None
 }

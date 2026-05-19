@@ -1,5 +1,7 @@
 use super::super::app::*;
 use super::super::theme::{Theme, themed_block};
+use super::{TabAction, TabContext, TabRenderContext};
+use crossterm::event::{Event, KeyCode};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -7,7 +9,12 @@ use ratatui::{
     widgets::{Paragraph, Row, Table, Wrap},
 };
 
-pub(in crate::tui) fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(in crate::tui) fn draw_review_tab(
+    frame: &mut ratatui::Frame<'_>,
+    ctx: &TabRenderContext<'_>,
+    area: Rect,
+) {
+    let app = ctx.app;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -142,4 +149,70 @@ pub(in crate::tui) fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App,
         .block(themed_block("Actions")),
         chunks[2],
     );
+}
+
+pub(in crate::tui) fn update(
+    event: &Event,
+    state: &mut ReviewTabState,
+    _ctx: &mut TabContext,
+) -> TabAction {
+    match event {
+        Event::Key(key) => match key.code {
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Char(']') => {
+                select_replacement_proposal(state, 1);
+                TabAction::Redraw
+            }
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('[') => {
+                select_replacement_proposal(state, -1);
+                TabAction::Redraw
+            }
+            KeyCode::PageDown => {
+                select_replacement_proposal(state, 8);
+                TabAction::Redraw
+            }
+            KeyCode::PageUp => {
+                select_replacement_proposal(state, -8);
+                TabAction::Redraw
+            }
+            KeyCode::Home => {
+                jump_replacement_proposal(state, 0);
+                TabAction::Redraw
+            }
+            KeyCode::End => {
+                let len = state.replacement_proposals.len();
+                jump_replacement_proposal(state, len.saturating_sub(1));
+                TabAction::Redraw
+            }
+            _ => TabAction::None,
+        },
+        _ => TabAction::None,
+    }
+}
+
+fn select_replacement_proposal(state: &mut ReviewTabState, delta: isize) {
+    let len = state.replacement_proposals.len();
+    if len == 0 {
+        state.replacement_selected_index = 0;
+        state.review_table_state.select(None);
+        return;
+    }
+    let cur = state.replacement_selected_index as isize;
+    let next = ((cur + delta) % len as isize + len as isize) % len as isize;
+    state.replacement_selected_index = next as usize;
+    state
+        .review_table_state
+        .select(Some(state.replacement_selected_index));
+}
+
+fn jump_replacement_proposal(state: &mut ReviewTabState, index: usize) {
+    let len = state.replacement_proposals.len();
+    if len == 0 {
+        state.replacement_selected_index = 0;
+        state.review_table_state.select(None);
+        return;
+    }
+    state.replacement_selected_index = index.min(len - 1);
+    state
+        .review_table_state
+        .select(Some(state.replacement_selected_index));
 }

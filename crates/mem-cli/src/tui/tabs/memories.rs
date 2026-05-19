@@ -1,12 +1,19 @@
 use super::super::app::*;
 use super::super::theme::{Theme, themed_focus_block};
+use super::{TabAction, TabContext, TabRenderContext};
+use crossterm::event::{Event, KeyCode};
 use ratatui::{
     layout::{Constraint, Rect},
     style::{Modifier, Style},
     widgets::{Paragraph, Row, Table, Wrap},
 };
 
-pub(in crate::tui) fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(in crate::tui) fn draw_memories_tab(
+    frame: &mut ratatui::Frame<'_>,
+    ctx: &TabRenderContext<'_>,
+    area: Rect,
+) {
+    let app = ctx.app;
     let chunks = split_memories_area(area);
 
     let header = Row::new(["Summary", "Type", "Status", "Conf", "Updated"]).style(
@@ -66,4 +73,40 @@ pub(in crate::tui) fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &Ap
         .wrap(Wrap { trim: false })
         .block(detail_block);
     frame.render_widget(detail, chunks[1]);
+}
+
+pub(in crate::tui) fn update(
+    event: &Event,
+    state: &mut MemoriesTabState,
+    _ctx: &mut TabContext,
+) -> TabAction {
+    match event {
+        Event::Key(key) => match key.code {
+            KeyCode::PageDown => {
+                state.memory_detail_scroll = state.memory_detail_scroll.saturating_add(8);
+                TabAction::Redraw
+            }
+            KeyCode::PageUp => {
+                state.memory_detail_scroll = state.memory_detail_scroll.saturating_sub(8);
+                TabAction::Redraw
+            }
+            KeyCode::Home => {
+                state.memory_detail_scroll = 0;
+                TabAction::Redraw
+            }
+            KeyCode::Enter => {
+                state.memories_focus = match state.memories_focus {
+                    MemoriesFocus::List => MemoriesFocus::Detail,
+                    MemoriesFocus::Detail => MemoriesFocus::List,
+                };
+                TabAction::Redraw
+            }
+            KeyCode::Esc => {
+                state.memories_focus = MemoriesFocus::List;
+                TabAction::Redraw
+            }
+            _ => TabAction::None,
+        },
+        _ => TabAction::None,
+    }
 }

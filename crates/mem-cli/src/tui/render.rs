@@ -25,10 +25,10 @@ use super::{
     app::*,
     markdown::render_markdown_lines,
     tabs::{
-        activity::draw_activity_tab, agents::draw_agents_tab, embeddings::draw_embeddings_tab,
-        errors::draw_errors_tab, memories::draw_memories_tab, project::draw_project_tab,
-        query::draw_query_tab, resume::draw_resume_tab, review::draw_review_tab,
-        watchers::draw_watchers_tab,
+        TabRenderContext, activity::draw_activity_tab, agents::draw_agents_tab,
+        embeddings::draw_embeddings_tab, errors::draw_errors_tab, memories::draw_memories_tab,
+        project::draw_project_tab, query::draw_query_tab, resume::draw_resume_tab,
+        review::draw_review_tab, watchers::draw_watchers_tab,
     },
     theme::{Theme, themed_block, themed_focus_block},
 };
@@ -3770,17 +3770,18 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     if app.chrome.help.help_open {
         draw_help_tab(frame, app, chunks[2]);
     } else if app.service.health_ok {
+        let tab_ctx = TabRenderContext::new(app);
         match app.active_tab {
-            TabKind::Resume => draw_resume_tab(frame, app, chunks[2]),
-            TabKind::Memories => draw_memories_tab(frame, app, chunks[2]),
-            TabKind::Agents => draw_agents_tab(frame, app, chunks[2]),
-            TabKind::Query => draw_query_tab(frame, app, chunks[2]),
-            TabKind::Activity => draw_activity_tab(frame, app, chunks[2]),
-            TabKind::Errors => draw_errors_tab(frame, app, chunks[2]),
-            TabKind::Project => draw_project_tab(frame, app, chunks[2]),
-            TabKind::Review => draw_review_tab(frame, app, chunks[2]),
-            TabKind::Watchers => draw_watchers_tab(frame, app, chunks[2]),
-            TabKind::Embeddings => draw_embeddings_tab(frame, app, chunks[2]),
+            TabKind::Resume => draw_resume_tab(frame, &tab_ctx, chunks[2]),
+            TabKind::Memories => draw_memories_tab(frame, &tab_ctx, chunks[2]),
+            TabKind::Agents => draw_agents_tab(frame, &tab_ctx, chunks[2]),
+            TabKind::Query => draw_query_tab(frame, &tab_ctx, chunks[2]),
+            TabKind::Activity => draw_activity_tab(frame, &tab_ctx, chunks[2]),
+            TabKind::Errors => draw_errors_tab(frame, &tab_ctx, chunks[2]),
+            TabKind::Project => draw_project_tab(frame, &tab_ctx, chunks[2]),
+            TabKind::Review => draw_review_tab(frame, &tab_ctx, chunks[2]),
+            TabKind::Watchers => draw_watchers_tab(frame, &tab_ctx, chunks[2]),
+            TabKind::Embeddings => draw_embeddings_tab(frame, &tab_ctx, chunks[2]),
         }
     } else {
         draw_backend_recovery(frame, app, chunks[2]);

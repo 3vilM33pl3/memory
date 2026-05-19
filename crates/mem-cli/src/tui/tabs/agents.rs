@@ -1,12 +1,19 @@
 use super::super::app::*;
 use super::super::theme::{Theme, themed_block};
+use super::{TabAction, TabContext, TabRenderContext};
+use crossterm::event::{Event, KeyCode};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     widgets::{Paragraph, Row, Table, Wrap},
 };
 
-pub(in crate::tui) fn draw_agents_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(in crate::tui) fn draw_agents_tab(
+    frame: &mut ratatui::Frame<'_>,
+    ctx: &TabRenderContext<'_>,
+    area: Rect,
+) {
+    let app = ctx.app;
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
@@ -88,4 +95,56 @@ pub(in crate::tui) fn draw_agents_tab(frame: &mut ratatui::Frame<'_>, app: &App,
             app.agents.agent_detail_scroll
         )));
     frame.render_widget(detail, chunks[1]);
+}
+
+pub(in crate::tui) fn update(
+    event: &Event,
+    state: &mut AgentsTabState,
+    _ctx: &mut TabContext,
+) -> TabAction {
+    match event {
+        Event::Key(key) => match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                move_agent_selection(state, 1);
+                TabAction::Redraw
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                move_agent_selection(state, -1);
+                TabAction::Redraw
+            }
+            KeyCode::PageDown => {
+                state.agent_detail_scroll = state.agent_detail_scroll.saturating_add(8);
+                TabAction::Redraw
+            }
+            KeyCode::PageUp => {
+                state.agent_detail_scroll = state.agent_detail_scroll.saturating_sub(8);
+                TabAction::Redraw
+            }
+            KeyCode::Home => {
+                state.agent_detail_scroll = 0;
+                TabAction::Redraw
+            }
+            _ => TabAction::None,
+        },
+        _ => TabAction::None,
+    }
+}
+
+fn move_agent_selection(state: &mut AgentsTabState, delta: isize) {
+    let Some(snapshot) = &state.agent_snapshot else {
+        state.agent_selected_index = 0;
+        state.agent_table_state.select(None);
+        return;
+    };
+    let len = snapshot.sessions.len();
+    if len == 0 {
+        state.agent_selected_index = 0;
+        state.agent_table_state.select(None);
+        return;
+    }
+    let next = (state.agent_selected_index as isize + delta).clamp(0, len as isize - 1);
+    state.agent_selected_index = next as usize;
+    state
+        .agent_table_state
+        .select(Some(state.agent_selected_index));
 }

@@ -1,5 +1,7 @@
 use super::super::app::*;
 use super::super::theme::{Theme, themed_block};
+use super::{TabAction, TabContext, TabRenderContext};
+use crossterm::event::{Event, KeyCode};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -7,7 +9,12 @@ use ratatui::{
     widgets::{Paragraph, Row, Table, Wrap},
 };
 
-pub(in crate::tui) fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(in crate::tui) fn draw_activity_tab(
+    frame: &mut ratatui::Frame<'_>,
+    ctx: &TabRenderContext<'_>,
+    area: Rect,
+) {
+    let app = ctx.app;
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(11), Constraint::Min(8)])
@@ -82,4 +89,51 @@ pub(in crate::tui) fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &Ap
             app.activity.activity_detail_scroll
         )));
     frame.render_widget(detail, chunks[1]);
+}
+
+pub(in crate::tui) fn update(
+    event: &Event,
+    state: &mut ActivityTabState,
+    _ctx: &mut TabContext,
+) -> TabAction {
+    match event {
+        Event::Key(key) => match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                move_activity_selection(state, 1);
+                TabAction::Redraw
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                move_activity_selection(state, -1);
+                TabAction::Redraw
+            }
+            KeyCode::PageDown => {
+                state.activity_detail_scroll = state.activity_detail_scroll.saturating_add(8);
+                TabAction::Redraw
+            }
+            KeyCode::PageUp => {
+                state.activity_detail_scroll = state.activity_detail_scroll.saturating_sub(8);
+                TabAction::Redraw
+            }
+            KeyCode::Home => {
+                state.activity_detail_scroll = 0;
+                TabAction::Redraw
+            }
+            _ => TabAction::None,
+        },
+        _ => TabAction::None,
+    }
+}
+
+fn move_activity_selection(state: &mut ActivityTabState, delta: isize) {
+    if state.activity_events.is_empty() {
+        return;
+    }
+    let next = (state.activity_selected_index as isize + delta)
+        .clamp(0, state.activity_events.len().saturating_sub(1) as isize) as usize;
+    if next != state.activity_selected_index {
+        state.activity_selected_index = next;
+        state
+            .activity_table_state
+            .select(Some(state.activity_selected_index));
+    }
 }
