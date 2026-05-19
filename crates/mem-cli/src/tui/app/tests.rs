@@ -198,6 +198,24 @@ fn test_query_response_with_timings() -> QueryResponse {
     }
 }
 
+fn test_query_response_with_two_results() -> QueryResponse {
+    let mut response = test_query_response_with_timings();
+    response.results.push(QueryResult {
+        memory_id: Uuid::new_v4(),
+        summary: "Second implementation memory".to_string(),
+        memory_type: MemoryType::Implementation,
+        score: 8.5,
+        snippet: "Second cached result snippet".to_string(),
+        match_kind: QueryMatchKind::Lexical,
+        score_explanation: vec!["secondary match".to_string()],
+        debug: QueryResultDebug::default(),
+        tags: vec!["implementation".to_string()],
+        sources: Vec::new(),
+        graph_connections: Vec::new(),
+    });
+    response
+}
+
 fn test_query_request(query: &str) -> QueryRequest {
     QueryRequest {
         project: "memory".to_string(),
@@ -1770,6 +1788,90 @@ fn tab_update_functions_handle_representative_local_keys() {
         crate::tui::tabs::query::update(&tab_key(KeyCode::Down), &mut app.query, &mut ctx),
         crate::tui::tabs::TabAction::None
     );
+}
+
+#[test]
+fn query_tab_down_arrow_advances_selection_when_results_exist() {
+    let mut app = new_test_app();
+    app.query.query_response = Some(test_query_response_with_two_results());
+    app.query.query_selected_detail = Some(test_memory_detail("stale detail"));
+    app.query.query_detail_loading = true;
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::query::update(&tab_key(KeyCode::Down), &mut app.query, &mut ctx),
+        crate::tui::tabs::TabAction::QuerySelectionChanged
+    );
+
+    assert_eq!(app.query.query_selected_index, 1);
+    assert_eq!(app.query.query_table_state.selected(), Some(1));
+    assert!(app.query.query_selected_detail.is_none());
+    assert!(!app.query.query_detail_loading);
+}
+
+#[test]
+fn query_tab_j_advances_selection_when_results_exist() {
+    let mut app = new_test_app();
+    app.query.query_response = Some(test_query_response_with_two_results());
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::query::update(&tab_key(KeyCode::Char('j')), &mut app.query, &mut ctx),
+        crate::tui::tabs::TabAction::QuerySelectionChanged
+    );
+
+    assert_eq!(app.query.query_selected_index, 1);
+    assert_eq!(app.query.query_table_state.selected(), Some(1));
+}
+
+#[test]
+fn query_tab_up_arrow_clamped_at_zero() {
+    let mut app = new_test_app();
+    app.query.query_response = Some(test_query_response_with_two_results());
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::query::update(&tab_key(KeyCode::Up), &mut app.query, &mut ctx),
+        crate::tui::tabs::TabAction::None
+    );
+
+    assert_eq!(app.query.query_selected_index, 0);
+    assert_eq!(app.query.query_table_state.selected(), Some(0));
+}
+
+#[test]
+fn query_tab_k_retreats_selection_when_possible() {
+    let mut app = new_test_app();
+    app.query.query_response = Some(test_query_response_with_two_results());
+    app.query.query_selected_index = 1;
+    app.query.query_table_state.select(Some(1));
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::query::update(&tab_key(KeyCode::Char('k')), &mut app.query, &mut ctx),
+        crate::tui::tabs::TabAction::QuerySelectionChanged
+    );
+
+    assert_eq!(app.query.query_selected_index, 0);
+    assert_eq!(app.query.query_table_state.selected(), Some(0));
+}
+
+#[test]
+fn query_tab_navigation_no_op_with_empty_results() {
+    let mut app = new_test_app();
+    app.query.query_response = Some(QueryResponse {
+        results: Vec::new(),
+        ..test_query_response_with_timings()
+    });
+
+    let mut ctx = crate::tui::tabs::TabContext::new(&app);
+    assert_eq!(
+        crate::tui::tabs::query::update(&tab_key(KeyCode::Down), &mut app.query, &mut ctx),
+        crate::tui::tabs::TabAction::None
+    );
+
+    assert_eq!(app.query.query_selected_index, 0);
+    assert_eq!(app.query.query_table_state.selected(), Some(0));
 }
 
 #[test]

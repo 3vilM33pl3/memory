@@ -14,16 +14,12 @@ use crossterm::event::Event;
 use super::app::{App, TabKind};
 
 pub(in crate::tui) struct TabContext {
-    pub(in crate::tui) project: String,
-    pub(in crate::tui) active_tab: TabKind,
     pub(in crate::tui) error_count: usize,
 }
 
 impl TabContext {
     pub(in crate::tui) fn new(app: &App) -> Self {
         Self {
-            project: app.project.clone(),
-            active_tab: app.active_tab,
             error_count: super::app::error_count(app),
         }
     }
@@ -43,8 +39,7 @@ impl<'a> TabRenderContext<'a> {
 pub(in crate::tui) enum TabAction {
     None,
     Redraw,
-    SwitchTab(TabKind),
-    Quit,
+    QuerySelectionChanged,
 }
 
 impl TabAction {
@@ -59,12 +54,6 @@ pub(in crate::tui) fn dispatch_update(
     app: &mut App,
 ) -> TabAction {
     let mut ctx = TabContext::new(app);
-    let _ = (&ctx.project, ctx.active_tab);
-    let _ = (
-        TabAction::Redraw,
-        TabAction::SwitchTab(active_tab),
-        TabAction::Quit,
-    );
     match active_tab {
         TabKind::Memories => memories::update(event, &mut app.memories, &mut ctx),
         TabKind::Agents => agents::update(event, &mut app.agents, &mut ctx),

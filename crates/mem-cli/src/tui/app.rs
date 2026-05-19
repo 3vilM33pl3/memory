@@ -1370,11 +1370,11 @@ impl App {
                     self.chrome.needs_redraw = true;
                     return Ok(false);
                 }
-                super::tabs::TabAction::SwitchTab(tab) => {
-                    self.set_active_tab(tab);
+                super::tabs::TabAction::QuerySelectionChanged => {
+                    self.fetch_selected_query_detail(api);
+                    self.chrome.needs_redraw = true;
                     return Ok(false);
                 }
-                super::tabs::TabAction::Quit => return Ok(true),
             }
         }
 
@@ -1453,12 +1453,6 @@ impl App {
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Agents => {
                 self.move_agent_selection(-1);
-            }
-            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Query => {
-                self.move_query_selection(1, api);
-            }
-            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Query => {
-                self.move_query_selection(-1, api);
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Activity => {
                 self.move_activity_selection(1);
@@ -2432,22 +2426,6 @@ impl App {
                 self.chrome.status_message = format!("Query failed: {error}");
                 self.chrome.ui_status = UiStatus::Error;
             }
-        }
-    }
-
-    fn move_query_selection(&mut self, delta: isize, api: &ApiClient) {
-        if self.query_results().is_empty() {
-            return;
-        }
-        let next = (self.query.query_selected_index as isize + delta)
-            .clamp(0, self.query_results().len().saturating_sub(1) as isize)
-            as usize;
-        if next != self.query.query_selected_index {
-            self.query.query_selected_index = next;
-            self.query
-                .query_table_state
-                .select(Some(self.query.query_selected_index));
-            self.fetch_selected_query_detail(api);
         }
     }
 

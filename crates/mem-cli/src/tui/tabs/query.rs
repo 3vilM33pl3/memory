@@ -2,6 +2,7 @@ use super::super::app::*;
 use super::super::theme::{Theme, themed_block, themed_focus_block};
 use super::{TabAction, TabContext, TabRenderContext};
 use crate::commands::memory_ops::SourceKindString;
+use crossterm::event::{Event, KeyCode};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Modifier, Style},
@@ -442,9 +443,39 @@ pub(in crate::tui) fn draw_query_tab(
 }
 
 pub(in crate::tui) fn update(
-    _event: &crossterm::event::Event,
-    _state: &mut QueryTabState,
+    event: &Event,
+    state: &mut QueryTabState,
     _ctx: &mut TabContext,
 ) -> TabAction {
-    TabAction::None
+    match event {
+        Event::Key(key) => match key.code {
+            KeyCode::Down | KeyCode::Char('j') => move_query_selection(state, 1),
+            KeyCode::Up | KeyCode::Char('k') => move_query_selection(state, -1),
+            _ => TabAction::None,
+        },
+        _ => TabAction::None,
+    }
+}
+
+fn move_query_selection(state: &mut QueryTabState, delta: isize) -> TabAction {
+    let result_count = state
+        .query_response
+        .as_ref()
+        .map(|response| response.results.len())
+        .unwrap_or_default();
+    if result_count == 0 {
+        return TabAction::None;
+    }
+
+    let next = (state.query_selected_index as isize + delta)
+        .clamp(0, result_count.saturating_sub(1) as isize) as usize;
+    if next == state.query_selected_index {
+        return TabAction::None;
+    }
+
+    state.query_selected_index = next;
+    state.query_table_state.select(Some(next));
+    state.query_selected_detail = None;
+    state.query_detail_loading = false;
+    TabAction::QuerySelectionChanged
 }
