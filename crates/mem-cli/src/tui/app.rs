@@ -63,7 +63,7 @@ use crate::{
 use super::markdown::render_markdown_lines;
 use super::theme::{Theme, themed_block, themed_focus_block};
 
-const STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+pub(super) const STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> Result<()> {
     let (background_tx, mut background_rx) = mpsc::unbounded_channel();
@@ -79,8 +79,8 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
     );
     start_agent_snapshot_worker(
         app.background_tx.clone(),
-        app.agents_tab_visible.clone(),
-        app.agent_wake_rx
+        app.agents.agents_tab_visible.clone(),
+        app.agents.agent_wake_rx
             .take()
             .expect("agent_wake_rx present on fresh App"),
     );
@@ -94,8 +94,8 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
         api.clone(),
         app.project.clone(),
         app.background_tx.clone(),
-        app.embeddings_tab_visible.clone(),
-        app.embeddings_wake_rx
+        app.embeddings.embeddings_tab_visible.clone(),
+        app.embeddings.embeddings_wake_rx
             .take()
             .expect("embeddings_wake_rx present on fresh App"),
     );
@@ -192,12 +192,12 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
 }
 
 /// Fast cadence used while the Agents tab is visible.
-const AGENT_POLL_ACTIVE: Duration = Duration::from_secs(5);
+pub(super) const AGENT_POLL_ACTIVE: Duration = Duration::from_secs(5);
 /// Slow cadence used when no tab displays agent_snapshot. Switching to the
 /// Agents tab sends a wake signal so the user doesn't wait this long.
-const AGENT_POLL_IDLE: Duration = Duration::from_secs(30);
+pub(super) const AGENT_POLL_IDLE: Duration = Duration::from_secs(30);
 
-fn start_agent_snapshot_worker(
+pub(super) fn start_agent_snapshot_worker(
     tx: mpsc::UnboundedSender<BackgroundEvent>,
     agents_tab_visible: Arc<AtomicBool>,
     wake_rx: std_mpsc::Receiver<()>,
@@ -227,10 +227,10 @@ fn start_agent_snapshot_worker(
     });
 }
 
-const EMBEDDINGS_POLL_ACTIVE: Duration = Duration::from_secs(5);
-const EMBEDDINGS_POLL_IDLE: Duration = Duration::from_secs(60);
+pub(super) const EMBEDDINGS_POLL_ACTIVE: Duration = Duration::from_secs(5);
+pub(super) const EMBEDDINGS_POLL_IDLE: Duration = Duration::from_secs(60);
 
-fn start_embedding_backends_worker(
+pub(super) fn start_embedding_backends_worker(
     api: ApiClient,
     project: String,
     tx: mpsc::UnboundedSender<BackgroundEvent>,
@@ -268,7 +268,7 @@ fn start_embedding_backends_worker(
     });
 }
 
-fn start_manager_status_worker(
+pub(super) fn start_manager_status_worker(
     tx: mpsc::UnboundedSender<BackgroundEvent>,
     profile: Profile,
     startup_at: DateTime<Utc>,
@@ -290,7 +290,7 @@ fn start_manager_status_worker(
     });
 }
 
-fn spawn_stream_connect(
+pub(super) fn spawn_stream_connect(
     api: ApiClient,
     project: String,
     memory_id: Option<uuid::Uuid>,
@@ -333,76 +333,22 @@ async fn load_project_refresh(
     }
 }
 
-struct App {
+pub(super) struct App {
     project: String,
     repo_root: PathBuf,
     active_tab: TabKind,
-    all_memories: Vec<ProjectMemoryListItem>,
-    filtered_memories: Vec<ProjectMemoryListItem>,
-    total_memories: i64,
+    memories: MemoriesTabState,
+    query: QueryTabState,
+    agents: AgentsTabState,
+    resume: ResumeTabState,
+    activity: ActivityTabState,
+    errors: ErrorsTabState,
+    project_tab: ProjectTabState,
+    review: ReviewTabState,
+    watchers: WatchersTabState,
+    embeddings: EmbeddingsTabState,
     overview: ProjectOverviewResponse,
-    selected_detail: Option<MemoryEntryResponse>,
-    /// History of the selected memory, loaded on demand via the `H`
-    /// keystroke. When Some, the detail pane renders the version chain
-    /// instead of the usual single-version detail.
-    selected_history: Option<mem_api::MemoryHistoryResponse>,
-    selected_index: usize,
-    table_state: TableState,
-    query_text: String,
-    query_history: Vec<QueryHistoryEntry>,
-    query_history_cursor: Option<usize>,
-    query_response: Option<QueryResponse>,
-    query_last_duration_ms: Option<u64>,
-    query_roundtrip_timing: Option<QueryRoundtripTiming>,
-    query_selected_detail: Option<MemoryEntryResponse>,
-    query_selected_index: usize,
-    query_table_state: TableState,
-    query_loading: bool,
-    query_started_at: Option<Instant>,
-    query_pending_question: Option<String>,
-    query_error: Option<String>,
-    query_request_id: u64,
-    query_detail_loading: bool,
-    query_detail_request_id: u64,
-    agent_snapshot: Option<AgentSnapshot>,
-    agent_loading: bool,
-    agent_error: Option<String>,
-    agent_selected_index: usize,
-    agent_table_state: TableState,
-    agent_detail_scroll: u16,
-    agent_initial_selection_done: bool,
-    resume_response: Option<ResumeResponse>,
-    resume_loading: bool,
-    resume_loaded: bool,
-    resume_error: Option<String>,
-    resume_scroll: u16,
-    activity_events: Vec<ActivityEntry>,
-    activity_selected_index: usize,
-    activity_table_state: TableState,
-    activity_loading: bool,
-    activity_error: Option<String>,
-    activity_detail_scroll: u16,
-    llm_audit_status: Option<LlmAuditStatusResponse>,
-    llm_audit_loading: bool,
-    llm_audit_toggling: bool,
-    llm_audit_error: Option<String>,
-    errors_selected_index: usize,
-    errors_table_state: TableState,
-    errors_detail_scroll: u16,
-    up_to_speed_response: Option<UpToSpeedResponse>,
-    up_to_speed_loading: bool,
-    up_to_speed_error: Option<String>,
-    memories_focus: MemoriesFocus,
-    memory_detail_scroll: u16,
-    project_scroll: u16,
-    watcher_scroll: u16,
-    help_open: bool,
-    help_tab: TabKind,
-    help_scroll: u16,
-    replacement_policy: ReplacementPolicy,
-    replacement_proposals: Vec<ReplacementProposalRecord>,
-    replacement_selected_index: usize,
-    review_table_state: TableState,
+    help: HelpState,
     versions: ToolVersions,
     skill_inventory: SkillInventoryReport,
     startup_at: DateTime<Utc>,
@@ -420,20 +366,107 @@ struct App {
     profile: Profile,
     filters: Filters,
     input_mode: InputMode,
-    startup_resume_autoselect_pending: bool,
     background_tx: mpsc::UnboundedSender<BackgroundEvent>,
-    /// Signals the agent-snapshot worker whether the Agents tab is visible;
-    /// the worker switches between a fast and slow polling cadence based on
-    /// this flag.
+    needs_redraw: bool,
+}
+
+pub(super) struct MemoriesTabState {
+    all_memories: Vec<ProjectMemoryListItem>,
+    filtered_memories: Vec<ProjectMemoryListItem>,
+    total_memories: i64,
+    selected_detail: Option<MemoryEntryResponse>,
+    selected_history: Option<mem_api::MemoryHistoryResponse>,
+    selected_index: usize,
+    table_state: TableState,
+    memories_focus: MemoriesFocus,
+    memory_detail_scroll: u16,
+}
+
+pub(super) struct QueryTabState {
+    query_text: String,
+    query_history: Vec<QueryHistoryEntry>,
+    query_history_cursor: Option<usize>,
+    query_response: Option<QueryResponse>,
+    query_last_duration_ms: Option<u64>,
+    query_roundtrip_timing: Option<QueryRoundtripTiming>,
+    query_selected_detail: Option<MemoryEntryResponse>,
+    query_selected_index: usize,
+    query_table_state: TableState,
+    query_loading: bool,
+    query_started_at: Option<Instant>,
+    query_pending_question: Option<String>,
+    query_error: Option<String>,
+    query_request_id: u64,
+    query_detail_loading: bool,
+    query_detail_request_id: u64,
+}
+
+pub(super) struct AgentsTabState {
+    agent_snapshot: Option<AgentSnapshot>,
+    agent_loading: bool,
+    agent_error: Option<String>,
+    agent_selected_index: usize,
+    agent_table_state: TableState,
+    agent_detail_scroll: u16,
+    agent_initial_selection_done: bool,
     agents_tab_visible: Arc<AtomicBool>,
-    /// Wakes the agent-snapshot worker immediately when the user switches
-    /// into the Agents tab, so they don't have to wait out the idle
-    /// cadence.
     agent_wake_tx: std_mpsc::Sender<()>,
-    /// Receiver handed to the worker on startup. `Option` so `run()` can
-    /// take it via `.take()` once without requiring the field to be `Clone`.
     agent_wake_rx: Option<std_mpsc::Receiver<()>>,
-    // --- Embeddings tab state ---
+}
+
+pub(super) struct ResumeTabState {
+    resume_response: Option<ResumeResponse>,
+    resume_loading: bool,
+    resume_loaded: bool,
+    resume_error: Option<String>,
+    resume_scroll: u16,
+    startup_resume_autoselect_pending: bool,
+}
+
+pub(super) struct ActivityTabState {
+    activity_events: Vec<ActivityEntry>,
+    activity_selected_index: usize,
+    activity_table_state: TableState,
+    activity_loading: bool,
+    activity_error: Option<String>,
+    activity_detail_scroll: u16,
+    llm_audit_status: Option<LlmAuditStatusResponse>,
+    llm_audit_loading: bool,
+    llm_audit_toggling: bool,
+    llm_audit_error: Option<String>,
+    up_to_speed_response: Option<UpToSpeedResponse>,
+    up_to_speed_loading: bool,
+    up_to_speed_error: Option<String>,
+}
+
+pub(super) struct ErrorsTabState {
+    errors_selected_index: usize,
+    errors_table_state: TableState,
+    errors_detail_scroll: u16,
+}
+
+pub(super) struct ProjectTabState {
+    project_scroll: u16,
+}
+
+pub(super) struct WatchersTabState {
+    watcher_scroll: u16,
+}
+
+pub(super) struct HelpState {
+    help_open: bool,
+    help_tab: TabKind,
+    help_scroll: u16,
+}
+
+pub(super) struct ReviewTabState {
+    replacement_policy: ReplacementPolicy,
+    replacement_proposals: Vec<ReplacementProposalRecord>,
+    replacement_selected_index: usize,
+    review_table_state: TableState,
+}
+
+pub(super) struct EmbeddingsTabState {
     embedding_backends_snapshot: Option<mem_api::EmbeddingBackendsResponse>,
     embedding_backends_error: Option<String>,
     embeddings_selected_index: usize,
@@ -445,10 +478,9 @@ struct App {
     embeddings_toggling: Option<String>,
     embeddings_creation_toggling: bool,
     embeddings_operation: Option<String>,
-    needs_redraw: bool,
 }
 
-struct ToolVersions {
+pub(super) struct ToolVersions {
     mem_cli: String,
     mem_service: String,
     watch_manager: String,
@@ -456,14 +488,14 @@ struct ToolVersions {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BackendConnectionState {
+pub(super) enum BackendConnectionState {
     Connecting,
     Connected,
     Unavailable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum UiStatus {
+pub(super) enum UiStatus {
     Loading,
     Busy,
     Ready,
@@ -472,7 +504,7 @@ enum UiStatus {
 }
 
 #[derive(Clone, Debug)]
-struct ManagerFooterStatus {
+pub(super) struct ManagerFooterStatus {
     state: ManagerState,
     tracked_sessions: usize,
     warning_count: usize,
@@ -484,7 +516,7 @@ struct ManagerFooterStatus {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ManagerState {
+pub(super) enum ManagerState {
     Active,
     Installed,
     Off,
@@ -492,13 +524,13 @@ enum ManagerState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ManagerMode {
+pub(super) enum ManagerMode {
     Service,
     Foreground,
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct ManagerStateFile {
+pub(super) struct ManagerStateFile {
     #[serde(default)]
     mode: String,
     #[serde(default)]
@@ -513,12 +545,12 @@ struct ManagerStateFile {
     warnings: Vec<String>,
 }
 
-enum ActivityEntry {
+pub(super) enum ActivityEntry {
     Backend(Box<ActivityEvent>),
     Query(QueryActivityEntry),
 }
 
-struct QueryActivityEntry {
+pub(super) struct QueryActivityEntry {
     recorded_at: DateTime<Utc>,
     project: String,
     request: QueryRequest,
@@ -527,13 +559,13 @@ struct QueryActivityEntry {
 }
 
 #[derive(Clone)]
-enum QueryLogOutcome {
+pub(super) enum QueryLogOutcome {
     Success(Box<QueryResponse>),
     Error(String),
 }
 
 #[derive(Clone)]
-struct QueryHistoryEntry {
+pub(super) struct QueryHistoryEntry {
     question: String,
     response: Option<QueryResponse>,
     error: Option<String>,
@@ -543,14 +575,14 @@ struct QueryHistoryEntry {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct QueryRoundtripTiming {
+pub(super) struct QueryRoundtripTiming {
     query_api_ms: u64,
     initial_detail_ms: Option<u64>,
     ui_ready_ms: u64,
 }
 
 #[derive(Clone)]
-struct ProjectRefreshResult {
+pub(super) struct ProjectRefreshResult {
     mode: RefreshMode,
     health: Result<serde_json::Value, String>,
     overview: Result<ProjectOverviewResponse, String>,
@@ -559,7 +591,7 @@ struct ProjectRefreshResult {
     skill_inventory: SkillInventoryReport,
 }
 
-enum BackgroundEvent {
+pub(super) enum BackgroundEvent {
     ProjectRefreshLoaded(Box<ProjectRefreshResult>),
     StreamConnectCompleted {
         result: Result<Box<StreamSession>, String>,
@@ -625,13 +657,13 @@ enum BackgroundEvent {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RefreshMode {
+pub(super) enum RefreshMode {
     Startup,
     Full,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MemoriesFocus {
+pub(super) enum MemoriesFocus {
     List,
     Detail,
 }
@@ -665,69 +697,102 @@ impl App {
             project: project.clone(),
             repo_root: repo_root.clone(),
             active_tab: TabKind::Memories,
-            all_memories: Vec::new(),
-            filtered_memories: Vec::new(),
-            total_memories: 0,
+            memories: MemoriesTabState {
+                all_memories: Vec::new(),
+                filtered_memories: Vec::new(),
+                total_memories: 0,
+                selected_detail: None,
+                selected_history: None,
+                selected_index: 0,
+                table_state,
+                memories_focus: MemoriesFocus::List,
+                memory_detail_scroll: 0,
+            },
+            query: QueryTabState {
+                query_text: String::new(),
+                query_history: Vec::new(),
+                query_history_cursor: None,
+                query_response: None,
+                query_last_duration_ms: None,
+                query_roundtrip_timing: None,
+                query_selected_detail: None,
+                query_selected_index: 0,
+                query_table_state,
+                query_loading: false,
+                query_started_at: None,
+                query_pending_question: None,
+                query_error: None,
+                query_request_id: 0,
+                query_detail_loading: false,
+                query_detail_request_id: 0,
+            },
+            agents: AgentsTabState {
+                agent_snapshot: None,
+                agent_loading: true,
+                agent_error: None,
+                agent_selected_index: 0,
+                agent_table_state,
+                agent_detail_scroll: 0,
+                agent_initial_selection_done: false,
+                agents_tab_visible: Arc::new(AtomicBool::new(false)),
+                agent_wake_tx,
+                agent_wake_rx: Some(agent_wake_rx),
+            },
+            resume: ResumeTabState {
+                resume_response: None,
+                resume_loading: false,
+                resume_loaded: false,
+                resume_error: None,
+                resume_scroll: 0,
+                startup_resume_autoselect_pending: true,
+            },
+            activity: ActivityTabState {
+                activity_events: Vec::new(),
+                activity_selected_index: 0,
+                activity_table_state,
+                activity_loading: false,
+                activity_error: None,
+                activity_detail_scroll: 0,
+                llm_audit_status: None,
+                llm_audit_loading: false,
+                llm_audit_toggling: false,
+                llm_audit_error: None,
+                up_to_speed_response: None,
+                up_to_speed_loading: false,
+                up_to_speed_error: None,
+            },
+            errors: ErrorsTabState {
+                errors_selected_index: 0,
+                errors_table_state,
+                errors_detail_scroll: 0,
+            },
+            project_tab: ProjectTabState { project_scroll: 0 },
+            review: ReviewTabState {
+                replacement_policy: load_repo_replacement_policy(&repo_root).unwrap_or_default(),
+                replacement_proposals: Vec::new(),
+                replacement_selected_index: 0,
+                review_table_state,
+            },
+            watchers: WatchersTabState { watcher_scroll: 0 },
+            embeddings: EmbeddingsTabState {
+                embedding_backends_snapshot: None,
+                embedding_backends_error: None,
+                embeddings_selected_index: 0,
+                embeddings_table_state,
+                embeddings_tab_visible: Arc::new(AtomicBool::new(false)),
+                embeddings_wake_tx,
+                embeddings_wake_rx: Some(embeddings_wake_rx),
+                embeddings_toggle_message: None,
+                embeddings_toggling: None,
+                embeddings_creation_toggling: false,
+                embeddings_operation: None,
+            },
             overview: empty_overview(project),
-            selected_detail: None,
-            selected_history: None,
-            selected_index: 0,
-            table_state,
-            query_text: String::new(),
-            query_history: Vec::new(),
-            query_history_cursor: None,
-            query_response: None,
-            query_last_duration_ms: None,
-            query_roundtrip_timing: None,
-            query_selected_detail: None,
-            query_selected_index: 0,
-            query_table_state,
-            query_loading: false,
-            query_started_at: None,
-            query_pending_question: None,
-            query_error: None,
-            query_request_id: 0,
-            query_detail_loading: false,
-            query_detail_request_id: 0,
-            agent_snapshot: None,
-            agent_loading: true,
-            agent_error: None,
-            agent_selected_index: 0,
-            agent_table_state,
-            agent_detail_scroll: 0,
-            agent_initial_selection_done: false,
-            resume_response: None,
-            resume_loading: false,
-            resume_loaded: false,
-            resume_error: None,
-            resume_scroll: 0,
-            activity_events: Vec::new(),
-            activity_selected_index: 0,
-            activity_table_state,
-            activity_loading: false,
-            activity_error: None,
-            activity_detail_scroll: 0,
-            llm_audit_status: None,
-            llm_audit_loading: false,
-            llm_audit_toggling: false,
-            llm_audit_error: None,
-            errors_selected_index: 0,
-            errors_table_state,
-            errors_detail_scroll: 0,
-            up_to_speed_response: None,
-            up_to_speed_loading: false,
-            up_to_speed_error: None,
-            memories_focus: MemoriesFocus::List,
-            memory_detail_scroll: 0,
-            project_scroll: 0,
-            watcher_scroll: 0,
-            help_open: false,
-            help_tab: TabKind::Memories,
-            help_scroll: 0,
-            replacement_policy: load_repo_replacement_policy(&repo_root).unwrap_or_default(),
-            replacement_proposals: Vec::new(),
-            replacement_selected_index: 0,
-            review_table_state,
+            help: HelpState {
+                help_open: false,
+                help_tab: TabKind::Memories,
+                help_scroll: 0,
+            },
             versions,
             skill_inventory: project_skill_inventory(&repo_root, false),
             startup_at: Utc::now(),
@@ -745,22 +810,7 @@ impl App {
             profile,
             filters: Filters::default(),
             input_mode: InputMode::Normal,
-            startup_resume_autoselect_pending: true,
             background_tx,
-            agents_tab_visible: Arc::new(AtomicBool::new(false)),
-            agent_wake_tx,
-            agent_wake_rx: Some(agent_wake_rx),
-            embedding_backends_snapshot: None,
-            embedding_backends_error: None,
-            embeddings_selected_index: 0,
-            embeddings_table_state,
-            embeddings_tab_visible: Arc::new(AtomicBool::new(false)),
-            embeddings_wake_tx,
-            embeddings_wake_rx: Some(embeddings_wake_rx),
-            embeddings_toggle_message: None,
-            embeddings_toggling: None,
-            embeddings_creation_toggling: false,
-            embeddings_operation: None,
             needs_redraw: true,
         }
     }
@@ -770,17 +820,17 @@ impl App {
         let became_embeddings =
             tab == TabKind::Embeddings && self.active_tab != TabKind::Embeddings;
         self.active_tab = tab;
-        self.agents_tab_visible
+        self.agents.agents_tab_visible
             .store(tab == TabKind::Agents, Ordering::Relaxed);
-        self.embeddings_tab_visible
+        self.embeddings.embeddings_tab_visible
             .store(tab == TabKind::Embeddings, Ordering::Relaxed);
         if became_agents {
             // Wake the worker so the newly-opened tab shows fresh data
             // rather than whatever the idle cadence last produced.
-            let _ = self.agent_wake_tx.send(());
+            let _ = self.agents.agent_wake_tx.send(());
         }
         if became_embeddings {
-            let _ = self.embeddings_wake_tx.send(());
+            let _ = self.embeddings.embeddings_wake_tx.send(());
         }
     }
 
@@ -792,8 +842,8 @@ impl App {
         } else {
             UiStatus::Busy
         };
-        self.selected_detail = None;
-        self.replacement_policy = load_repo_replacement_policy(&self.repo_root).unwrap_or_default();
+        self.memories.selected_detail = None;
+        self.review.replacement_policy = load_repo_replacement_policy(&self.repo_root).unwrap_or_default();
     }
 
     fn request_refresh(&mut self, api: &ApiClient, mode: RefreshMode) {
@@ -846,9 +896,8 @@ impl App {
             return;
         }
         self.stream_connecting = true;
-        let memory_id = self
-            .filtered_memories
-            .get(self.selected_index)
+        let memory_id = self.memories.filtered_memories
+            .get(self.memories.selected_index)
             .map(|item| item.id);
         spawn_stream_connect(
             api.clone(),
@@ -859,11 +908,11 @@ impl App {
     }
 
     fn request_activities(&mut self, api: &ApiClient) {
-        if self.activity_loading {
+        if self.activity.activity_loading {
             return;
         }
-        self.activity_loading = true;
-        self.activity_error = None;
+        self.activity.activity_loading = true;
+        self.activity.activity_error = None;
         self.needs_redraw = true;
         let api = api.clone();
         let project = self.project.clone();
@@ -880,11 +929,11 @@ impl App {
     }
 
     fn request_llm_audit_status(&mut self, api: &ApiClient) {
-        if self.llm_audit_loading {
+        if self.activity.llm_audit_loading {
             return;
         }
-        self.llm_audit_loading = true;
-        self.llm_audit_error = None;
+        self.activity.llm_audit_loading = true;
+        self.activity.llm_audit_error = None;
         self.needs_redraw = true;
         let api = api.clone();
         let tx = self.background_tx.clone();
@@ -898,16 +947,15 @@ impl App {
     }
 
     fn toggle_llm_audit(&mut self, api: &ApiClient) {
-        if self.llm_audit_toggling {
+        if self.activity.llm_audit_toggling {
             return;
         }
-        let enabled = !self
-            .llm_audit_status
+        let enabled = !self.activity.llm_audit_status
             .as_ref()
             .map(|status| status.enabled)
             .unwrap_or(false);
-        self.llm_audit_toggling = true;
-        self.llm_audit_error = None;
+        self.activity.llm_audit_toggling = true;
+        self.activity.llm_audit_error = None;
         self.status_message = format!(
             "{} LLM audit/debug logging...",
             if enabled { "Enabling" } else { "Disabling" }
@@ -926,11 +974,11 @@ impl App {
     }
 
     fn request_up_to_speed(&mut self, api: &ApiClient, include_llm_summary: bool) {
-        if self.up_to_speed_loading {
+        if self.activity.up_to_speed_loading {
             return;
         }
-        self.up_to_speed_loading = true;
-        self.up_to_speed_error = None;
+        self.activity.up_to_speed_loading = true;
+        self.activity.up_to_speed_error = None;
         self.status_message = "Generating get-up-to-speed briefing...".to_string();
         self.ui_status = UiStatus::Busy;
         self.needs_redraw = true;
@@ -1024,23 +1072,23 @@ impl App {
                 total,
                 items,
             }) => {
-                self.total_memories = total;
-                self.all_memories = items;
+                self.memories.total_memories = total;
+                self.memories.all_memories = items;
                 self.apply_filters();
                 self.status_message = format!(
                     "Loaded {} visible memories ({} total).",
-                    self.filtered_memories.len(),
-                    self.total_memories
+                    self.memories.filtered_memories.len(),
+                    self.memories.total_memories
                 );
                 loaded_memories = true;
             }
             Err(error) => {
                 had_error = true;
-                self.all_memories.clear();
-                self.filtered_memories.clear();
-                self.total_memories = 0;
-                self.selected_detail = None;
-                self.table_state.select(None);
+                self.memories.all_memories.clear();
+                self.memories.filtered_memories.clear();
+                self.memories.total_memories = 0;
+                self.memories.selected_detail = None;
+                self.memories.table_state.select(None);
                 if self.health_ok {
                     self.status_message = error.to_string();
                 }
@@ -1049,30 +1097,29 @@ impl App {
 
         match result.proposals {
             Ok(response) => {
-                self.replacement_proposals = response.proposals;
-                if self.replacement_proposals.is_empty() {
-                    self.replacement_selected_index = 0;
-                    self.review_table_state.select(None);
+                self.review.replacement_proposals = response.proposals;
+                if self.review.replacement_proposals.is_empty() {
+                    self.review.replacement_selected_index = 0;
+                    self.review.review_table_state.select(None);
                 } else {
-                    self.replacement_selected_index = self
-                        .replacement_selected_index
-                        .min(self.replacement_proposals.len() - 1);
-                    self.review_table_state
-                        .select(Some(self.replacement_selected_index));
+                    self.review.replacement_selected_index = self.review.replacement_selected_index
+                        .min(self.review.replacement_proposals.len() - 1);
+                    self.review.review_table_state
+                        .select(Some(self.review.replacement_selected_index));
                 }
             }
             Err(error) => {
                 had_error = true;
-                self.replacement_proposals.clear();
-                self.replacement_selected_index = 0;
-                self.review_table_state.select(None);
+                self.review.replacement_proposals.clear();
+                self.review.replacement_selected_index = 0;
+                self.review.review_table_state.select(None);
                 self.status_message = error.to_string();
             }
         }
 
         self.ui_status = if had_error {
             UiStatus::Error
-        } else if self.resume_loading || self.query_loading {
+        } else if self.resume.resume_loading || self.query.query_loading {
             UiStatus::Busy
         } else {
             UiStatus::Ready
@@ -1118,13 +1165,13 @@ impl App {
     }
 
     fn request_resume_refresh(&mut self, api: &ApiClient, allow_autoselect: bool) {
-        if self.resume_loading {
+        if self.resume.resume_loading {
             return;
         }
         let checkpoint = self.resume_checkpoint();
-        self.resume_loading = true;
-        self.resume_error = None;
-        if self.resume_response.is_some() {
+        self.resume.resume_loading = true;
+        self.resume.resume_error = None;
+        if self.resume.resume_response.is_some() {
             self.status_message = "Refreshing resume...".to_string();
         } else {
             self.status_message = "Loading resume...".to_string();
@@ -1184,14 +1231,14 @@ impl App {
                 has_changes,
                 allow_autoselect,
             } => {
-                self.resume_loading = false;
+                self.resume.resume_loading = false;
                 match *response {
                     Ok(response) => {
-                        self.resume_response = Some(response);
-                        self.resume_loaded = true;
-                        self.resume_error = None;
+                        self.resume.resume_response = Some(response);
+                        self.resume.resume_loaded = true;
+                        self.resume.resume_error = None;
                         if allow_autoselect
-                            && self.startup_resume_autoselect_pending
+                            && self.resume.startup_resume_autoselect_pending
                             && checkpoint_present
                             && has_changes
                         {
@@ -1205,9 +1252,9 @@ impl App {
                         self.ui_status = UiStatus::Ready;
                     }
                     Err(error) => {
-                        self.resume_error = Some(error.clone());
-                        if self.resume_response.is_none() {
-                            self.resume_loaded = false;
+                        self.resume.resume_error = Some(error.clone());
+                        if self.resume.resume_response.is_none() {
+                            self.resume.resume_loaded = false;
                         }
                         self.status_message = format!("Resume unavailable: {error}");
                         self.ui_status = UiStatus::Error;
@@ -1216,21 +1263,20 @@ impl App {
             }
             BackgroundEvent::AgentsLoaded { snapshot } => match snapshot {
                 Ok(snapshot) => {
-                    self.agent_loading = false;
-                    self.agent_error = None;
-                    self.agent_snapshot = Some(snapshot);
-                    let session_count = self
-                        .agent_snapshot
+                    self.agents.agent_loading = false;
+                    self.agents.agent_error = None;
+                    self.agents.agent_snapshot = Some(snapshot);
+                    let session_count = self.agents.agent_snapshot
                         .as_ref()
                         .map(|snapshot| snapshot.sessions.len())
                         .unwrap_or(0);
                     if session_count == 0 {
-                        self.agent_selected_index = 0;
-                        self.agent_table_state.select(None);
+                        self.agents.agent_selected_index = 0;
+                        self.agents.agent_table_state.select(None);
                     } else {
-                        if !self.agent_initial_selection_done {
-                            self.agent_selected_index =
-                                self.agent_snapshot
+                        if !self.agents.agent_initial_selection_done {
+                            self.agents.agent_selected_index =
+                                self.agents.agent_snapshot
                                     .as_ref()
                                     .and_then(|snapshot| {
                                         snapshot.sessions.iter().position(|session| {
@@ -1238,19 +1284,18 @@ impl App {
                                         })
                                     })
                                     .unwrap_or(0);
-                            self.agent_initial_selection_done = true;
+                            self.agents.agent_initial_selection_done = true;
                         } else {
-                            self.agent_selected_index = self
-                                .agent_selected_index
+                            self.agents.agent_selected_index = self.agents.agent_selected_index
                                 .min(session_count.saturating_sub(1));
                         }
-                        self.agent_table_state
-                            .select(Some(self.agent_selected_index));
+                        self.agents.agent_table_state
+                            .select(Some(self.agents.agent_selected_index));
                     }
                 }
                 Err(error) => {
-                    self.agent_loading = false;
-                    self.agent_error = Some(error);
+                    self.agents.agent_loading = false;
+                    self.agents.agent_error = Some(error);
                 }
             },
             BackgroundEvent::ManagerStatusLoaded {
@@ -1273,11 +1318,11 @@ impl App {
                 }
             }
             BackgroundEvent::ActivitiesLoaded { response } => {
-                self.activity_loading = false;
+                self.activity.activity_loading = false;
                 match *response {
                     Ok(response) => {
-                        self.activity_error = None;
-                        self.activity_events = response
+                        self.activity.activity_error = None;
+                        self.activity.activity_events = response
                             .items
                             .into_iter()
                             .map(|event| ActivityEntry::Backend(Box::new(event)))
@@ -1285,34 +1330,34 @@ impl App {
                         self.finish_activity_insert();
                         self.status_message = format!(
                             "Loaded {} persisted activity event(s).",
-                            self.activity_events.len()
+                            self.activity.activity_events.len()
                         );
                     }
                     Err(error) => {
-                        self.activity_error = Some(error.clone());
+                        self.activity.activity_error = Some(error.clone());
                         self.status_message = format!("Activities unavailable: {error}");
                     }
                 }
             }
             BackgroundEvent::LlmAuditStatusLoaded { response } => {
-                self.llm_audit_loading = false;
+                self.activity.llm_audit_loading = false;
                 match response {
                     Ok(status) => {
-                        self.llm_audit_error = None;
-                        self.llm_audit_status = Some(status);
+                        self.activity.llm_audit_error = None;
+                        self.activity.llm_audit_status = Some(status);
                     }
                     Err(error) => {
-                        self.llm_audit_error = Some(error.clone());
+                        self.activity.llm_audit_error = Some(error.clone());
                         self.status_message = format!("LLM audit status unavailable: {error}");
                     }
                 }
             }
             BackgroundEvent::LlmAuditToggled { enabled, response } => {
-                self.llm_audit_toggling = false;
+                self.activity.llm_audit_toggling = false;
                 match response {
                     Ok(status) => {
-                        self.llm_audit_error = None;
-                        self.llm_audit_status = Some(status);
+                        self.activity.llm_audit_error = None;
+                        self.activity.llm_audit_status = Some(status);
                         self.status_message = format!(
                             "LLM audit/debug logging {}.",
                             if enabled { "enabled" } else { "disabled" }
@@ -1320,23 +1365,23 @@ impl App {
                         self.ui_status = UiStatus::Ready;
                     }
                     Err(error) => {
-                        self.llm_audit_error = Some(error.clone());
+                        self.activity.llm_audit_error = Some(error.clone());
                         self.status_message = format!("LLM audit toggle failed: {error}");
                         self.ui_status = UiStatus::Error;
                     }
                 }
             }
             BackgroundEvent::UpToSpeedLoaded { response } => {
-                self.up_to_speed_loading = false;
+                self.activity.up_to_speed_loading = false;
                 match *response {
                     Ok(response) => {
-                        self.up_to_speed_error = None;
-                        self.up_to_speed_response = Some(response);
+                        self.activity.up_to_speed_error = None;
+                        self.activity.up_to_speed_response = Some(response);
                         self.status_message = "Get-up-to-speed briefing generated.".to_string();
                         self.ui_status = UiStatus::Ready;
                     }
                     Err(error) => {
-                        self.up_to_speed_error = Some(error.clone());
+                        self.activity.up_to_speed_error = Some(error.clone());
                         self.status_message = format!("Get-up-to-speed failed: {error}");
                         self.ui_status = UiStatus::Error;
                     }
@@ -1344,30 +1389,30 @@ impl App {
             }
             BackgroundEvent::EmbeddingBackendsLoaded { snapshot } => match snapshot {
                 Ok(snapshot) => {
-                    self.embedding_backends_error = None;
+                    self.embeddings.embedding_backends_error = None;
                     let selected_index = active_embedding_backend_index(&snapshot).or_else(|| {
-                        clamped_embedding_backend_index(self.embeddings_selected_index, &snapshot)
+                        clamped_embedding_backend_index(self.embeddings.embeddings_selected_index, &snapshot)
                     });
-                    self.embedding_backends_snapshot = Some(snapshot);
+                    self.embeddings.embedding_backends_snapshot = Some(snapshot);
                     if let Some(index) = selected_index {
-                        self.embeddings_selected_index = index;
-                        self.embeddings_table_state
-                            .select(Some(self.embeddings_selected_index));
+                        self.embeddings.embeddings_selected_index = index;
+                        self.embeddings.embeddings_table_state
+                            .select(Some(self.embeddings.embeddings_selected_index));
                     } else {
-                        self.embeddings_selected_index = 0;
-                        self.embeddings_table_state.select(None);
+                        self.embeddings.embeddings_selected_index = 0;
+                        self.embeddings.embeddings_table_state.select(None);
                     }
                 }
                 Err(error) => {
-                    self.embedding_backends_error = Some(error);
+                    self.embeddings.embedding_backends_error = Some(error);
                 }
             },
             BackgroundEvent::EmbeddingBackendToggled { name, result } => {
-                self.embeddings_toggling = None;
+                self.embeddings.embeddings_toggling = None;
                 match result {
                     Ok(snapshot) => {
-                        self.embedding_backends_error = None;
-                        self.embeddings_toggle_message =
+                        self.embeddings.embedding_backends_error = None;
+                        self.embeddings.embeddings_toggle_message =
                             if snapshot.active.as_deref() == Some(name.as_str()) {
                                 Some(format!("Activated {name}"))
                             } else {
@@ -1376,22 +1421,22 @@ impl App {
                         let selected_index =
                             active_embedding_backend_index(&snapshot).or_else(|| {
                                 clamped_embedding_backend_index(
-                                    self.embeddings_selected_index,
+                                    self.embeddings.embeddings_selected_index,
                                     &snapshot,
                                 )
                             });
-                        self.embedding_backends_snapshot = Some(snapshot);
+                        self.embeddings.embedding_backends_snapshot = Some(snapshot);
                         if let Some(index) = selected_index {
-                            self.embeddings_selected_index = index;
-                            self.embeddings_table_state
-                                .select(Some(self.embeddings_selected_index));
+                            self.embeddings.embeddings_selected_index = index;
+                            self.embeddings.embeddings_table_state
+                                .select(Some(self.embeddings.embeddings_selected_index));
                         } else {
-                            self.embeddings_selected_index = 0;
-                            self.embeddings_table_state.select(None);
+                            self.embeddings.embeddings_selected_index = 0;
+                            self.embeddings.embeddings_table_state.select(None);
                         }
                     }
                     Err(error) => {
-                        self.embeddings_toggle_message = Some(format!("Toggle failed: {error}"));
+                        self.embeddings.embeddings_toggle_message = Some(format!("Toggle failed: {error}"));
                     }
                 }
             }
@@ -1400,102 +1445,102 @@ impl App {
                 enabled,
                 result,
             } => {
-                self.embeddings_creation_toggling = false;
+                self.embeddings.embeddings_creation_toggling = false;
                 match result {
                     Ok(snapshot) => {
-                        self.embedding_backends_error = None;
-                        self.embeddings_toggle_message = Some(format!(
+                        self.embeddings.embedding_backends_error = None;
+                        self.embeddings.embeddings_toggle_message = Some(format!(
                             "Automatic embedding creation {} for {name}",
                             if enabled { "on" } else { "off" },
                         ));
                         let selected_index =
                             active_embedding_backend_index(&snapshot).or_else(|| {
                                 clamped_embedding_backend_index(
-                                    self.embeddings_selected_index,
+                                    self.embeddings.embeddings_selected_index,
                                     &snapshot,
                                 )
                             });
-                        self.embedding_backends_snapshot = Some(snapshot);
+                        self.embeddings.embedding_backends_snapshot = Some(snapshot);
                         if let Some(index) = selected_index {
-                            self.embeddings_selected_index = index;
-                            self.embeddings_table_state
-                                .select(Some(self.embeddings_selected_index));
+                            self.embeddings.embeddings_selected_index = index;
+                            self.embeddings.embeddings_table_state
+                                .select(Some(self.embeddings.embeddings_selected_index));
                         } else {
-                            self.embeddings_selected_index = 0;
-                            self.embeddings_table_state.select(None);
+                            self.embeddings.embeddings_selected_index = 0;
+                            self.embeddings.embeddings_table_state.select(None);
                         }
                     }
                     Err(error) => {
-                        self.embeddings_toggle_message =
+                        self.embeddings.embeddings_toggle_message =
                             Some(format!("Creation toggle failed: {error}"));
                     }
                 }
             }
             BackgroundEvent::EmbeddingReembedCompleted { name, result } => {
-                self.embeddings_operation = None;
+                self.embeddings.embeddings_operation = None;
                 match result {
                     Ok((response, snapshot)) => {
-                        self.embedding_backends_error = None;
-                        self.embeddings_toggle_message = Some(format!(
+                        self.embeddings.embedding_backends_error = None;
+                        self.embeddings.embeddings_toggle_message = Some(format!(
                             "Created {} chunk embedding(s) for {name}",
                             response.reembedded_chunks
                         ));
                         let selected_index = embedding_backend_index_by_name(&snapshot, &name)
                             .or_else(|| {
                                 clamped_embedding_backend_index(
-                                    self.embeddings_selected_index,
+                                    self.embeddings.embeddings_selected_index,
                                     &snapshot,
                                 )
                             });
-                        self.embedding_backends_snapshot = Some(snapshot);
+                        self.embeddings.embedding_backends_snapshot = Some(snapshot);
                         if let Some(index) = selected_index {
-                            self.embeddings_selected_index = index;
-                            self.embeddings_table_state
-                                .select(Some(self.embeddings_selected_index));
+                            self.embeddings.embeddings_selected_index = index;
+                            self.embeddings.embeddings_table_state
+                                .select(Some(self.embeddings.embeddings_selected_index));
                         } else {
-                            self.embeddings_selected_index = 0;
-                            self.embeddings_table_state.select(None);
+                            self.embeddings.embeddings_selected_index = 0;
+                            self.embeddings.embeddings_table_state.select(None);
                         }
                     }
                     Err(error) => {
-                        self.embeddings_toggle_message =
+                        self.embeddings.embeddings_toggle_message =
                             Some(format!("Embedding creation failed for {name}: {error}"));
                     }
                 }
             }
             BackgroundEvent::EmbeddingReindexCompleted { name, result } => {
-                self.embeddings_operation = None;
+                self.embeddings.embeddings_operation = None;
                 match result {
                     Ok((response, snapshot)) => {
-                        self.embedding_backends_error = None;
+                        self.embeddings.embedding_backends_error = None;
                         let target = if name == "all backends" {
                             "all backends"
                         } else {
                             name.as_str()
                         };
-                        self.embeddings_toggle_message = Some(format!(
+                        self.embeddings.embeddings_toggle_message = Some(format!(
                             "Reindexed {} memory entries for {target}",
                             response.reindexed_entries
                         ));
                         let selected_index = embedding_backend_index_by_name(&snapshot, &name)
                             .or_else(|| {
                                 clamped_embedding_backend_index(
-                                    self.embeddings_selected_index,
+                                    self.embeddings.embeddings_selected_index,
                                     &snapshot,
                                 )
                             });
-                        self.embedding_backends_snapshot = Some(snapshot);
+                        self.embeddings.embedding_backends_snapshot = Some(snapshot);
                         if let Some(index) = selected_index {
-                            self.embeddings_selected_index = index;
-                            self.embeddings_table_state
-                                .select(Some(self.embeddings_selected_index));
+                            self.embeddings.embeddings_selected_index = index;
+                            self.embeddings.embeddings_table_state
+                                .select(Some(self.embeddings.embeddings_selected_index));
                         } else {
-                            self.embeddings_selected_index = 0;
-                            self.embeddings_table_state.select(None);
+                            self.embeddings.embeddings_selected_index = 0;
+                            self.embeddings.embeddings_table_state.select(None);
                         }
                     }
                     Err(error) => {
-                        self.embeddings_toggle_message =
+                        self.embeddings.embeddings_toggle_message =
                             Some(format!("Reindex failed for {name}: {error}"));
                     }
                 }
@@ -1518,69 +1563,68 @@ impl App {
     }
 
     fn move_agent_selection(&mut self, delta: isize) {
-        let Some(snapshot) = &self.agent_snapshot else {
-            self.agent_selected_index = 0;
-            self.agent_table_state.select(None);
+        let Some(snapshot) = &self.agents.agent_snapshot else {
+            self.agents.agent_selected_index = 0;
+            self.agents.agent_table_state.select(None);
             return;
         };
         let len = snapshot.sessions.len();
         if len == 0 {
-            self.agent_selected_index = 0;
-            self.agent_table_state.select(None);
+            self.agents.agent_selected_index = 0;
+            self.agents.agent_table_state.select(None);
             return;
         }
-        let next = (self.agent_selected_index as isize + delta).clamp(0, len as isize - 1);
-        self.agent_selected_index = next as usize;
-        self.agent_table_state
-            .select(Some(self.agent_selected_index));
+        let next = (self.agents.agent_selected_index as isize + delta).clamp(0, len as isize - 1);
+        self.agents.agent_selected_index = next as usize;
+        self.agents.agent_table_state
+            .select(Some(self.agents.agent_selected_index));
     }
 
     fn move_embeddings_selection(&mut self, delta: isize) {
-        let len = self
-            .embedding_backends_snapshot
+        let len = self.embeddings.embedding_backends_snapshot
             .as_ref()
             .map(|s| s.backends.len())
             .unwrap_or(0);
         if len == 0 {
-            self.embeddings_selected_index = 0;
-            self.embeddings_table_state.select(None);
+            self.embeddings.embeddings_selected_index = 0;
+            self.embeddings.embeddings_table_state.select(None);
             return;
         }
         // Cyclic wrap so j/k loops within the list.
-        let cur = self.embeddings_selected_index as isize;
+        let cur = self.embeddings.embeddings_selected_index as isize;
         let next = ((cur + delta) % len as isize + len as isize) % len as isize;
-        self.embeddings_selected_index = next as usize;
-        self.embeddings_table_state
-            .select(Some(self.embeddings_selected_index));
+        self.embeddings.embeddings_selected_index = next as usize;
+        self.embeddings.embeddings_table_state
+            .select(Some(self.embeddings.embeddings_selected_index));
     }
 
     fn selected_embedding_backend_name(&self) -> Option<String> {
-        self.embedding_backends_snapshot
+        self.embeddings.embedding_backends_snapshot
             .as_ref()
             .and_then(|snapshot| {
                 snapshot
                     .backends
-                    .get(self.embeddings_selected_index)
+                    .get(self.embeddings.embeddings_selected_index)
                     .map(|b| b.name.clone())
             })
     }
 
     fn selected_embedding_backend_is_active(&self) -> bool {
-        self.embedding_backends_snapshot
+        self.embeddings.embedding_backends_snapshot
             .as_ref()
-            .and_then(|snapshot| snapshot.backends.get(self.embeddings_selected_index))
+            .and_then(|snapshot| snapshot.backends.get(self.embeddings.embeddings_selected_index))
             .is_some_and(|backend| backend.active)
     }
 
     fn selected_embedding_backend_create_enabled(&self) -> Option<bool> {
-        self.embedding_backends_snapshot
+        self.embeddings.embedding_backends_snapshot
             .as_ref()
-            .and_then(|snapshot| snapshot.backends.get(self.embeddings_selected_index))
+            .and_then(|snapshot| snapshot.backends.get(self.embeddings.embeddings_selected_index))
             .map(|backend| backend.create_enabled)
     }
 
     fn scroll_agent_detail(&mut self, delta: i16) {
-        self.agent_detail_scroll = self.agent_detail_scroll.saturating_add_signed(delta);
+        self.agents.agent_detail_scroll = self.agents.agent_detail_scroll.saturating_add_signed(delta);
     }
 
     async fn handle_key(
@@ -1609,13 +1653,13 @@ impl App {
             }
         }
 
-        self.startup_resume_autoselect_pending = false;
+        self.resume.startup_resume_autoselect_pending = false;
 
         if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
             return Ok(true);
         }
 
-        if self.help_open {
+        if self.help.help_open {
             self.handle_help_key(key);
             return Ok(false);
         }
@@ -1623,7 +1667,7 @@ impl App {
         match key.code {
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') if key.modifiers.is_empty() => {
                 self.set_active_tab(self.active_tab.next());
-                if self.active_tab == TabKind::Resume && !self.resume_loaded {
+                if self.active_tab == TabKind::Resume && !self.resume.resume_loaded {
                     self.request_resume_refresh(api, false);
                 }
             }
@@ -1631,13 +1675,13 @@ impl App {
                 if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() =>
             {
                 self.set_active_tab(self.active_tab.prev());
-                if self.active_tab == TabKind::Resume && !self.resume_loaded {
+                if self.active_tab == TabKind::Resume && !self.resume.resume_loaded {
                     self.request_resume_refresh(api, false);
                 }
             }
             KeyCode::Left if key.modifiers.is_empty() => {
                 self.set_active_tab(self.active_tab.prev());
-                if self.active_tab == TabKind::Resume && !self.resume_loaded {
+                if self.active_tab == TabKind::Resume && !self.resume.resume_loaded {
                     self.request_resume_refresh(api, false);
                 }
             }
@@ -1675,14 +1719,14 @@ impl App {
                 }
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Memories => {
-                if self.memories_focus == MemoriesFocus::Detail {
+                if self.memories.memories_focus == MemoriesFocus::Detail {
                     self.scroll_memory_detail(1);
                 } else {
                     self.move_selection(1, api, stream).await;
                 }
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Memories => {
-                if self.memories_focus == MemoriesFocus::Detail {
+                if self.memories.memories_focus == MemoriesFocus::Detail {
                     self.scroll_memory_detail(-1);
                 } else {
                     self.move_selection(-1, api, stream).await;
@@ -1720,13 +1764,13 @@ impl App {
                 self.request_activities(api);
             }
             KeyCode::PageDown if self.active_tab == TabKind::Errors => {
-                self.errors_detail_scroll = self.errors_detail_scroll.saturating_add(8);
+                self.errors.errors_detail_scroll = self.errors.errors_detail_scroll.saturating_add(8);
             }
             KeyCode::PageUp if self.active_tab == TabKind::Errors => {
-                self.errors_detail_scroll = self.errors_detail_scroll.saturating_sub(8);
+                self.errors.errors_detail_scroll = self.errors.errors_detail_scroll.saturating_sub(8);
             }
             KeyCode::Home if self.active_tab == TabKind::Errors => {
-                self.errors_detail_scroll = 0;
+                self.errors.errors_detail_scroll = 0;
             }
             KeyCode::Char('g') if self.active_tab == TabKind::Activity => {
                 self.request_up_to_speed(api, false);
@@ -1742,13 +1786,13 @@ impl App {
                 self.toggle_llm_audit(api);
             }
             KeyCode::PageDown if self.active_tab == TabKind::Activity => {
-                self.activity_detail_scroll = self.activity_detail_scroll.saturating_add(8);
+                self.activity.activity_detail_scroll = self.activity.activity_detail_scroll.saturating_add(8);
             }
             KeyCode::PageUp if self.active_tab == TabKind::Activity => {
-                self.activity_detail_scroll = self.activity_detail_scroll.saturating_sub(8);
+                self.activity.activity_detail_scroll = self.activity.activity_detail_scroll.saturating_sub(8);
             }
             KeyCode::Home if self.active_tab == TabKind::Activity => {
-                self.activity_detail_scroll = 0;
+                self.activity.activity_detail_scroll = 0;
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Project => {
                 self.scroll_project(1);
@@ -1771,12 +1815,12 @@ impl App {
             KeyCode::Enter if self.active_tab == TabKind::Embeddings => {
                 if let Some(name) = self.selected_embedding_backend_name() {
                     let deactivate = self.selected_embedding_backend_is_active();
-                    self.embeddings_toggling = Some(if deactivate {
+                    self.embeddings.embeddings_toggling = Some(if deactivate {
                         format!("turning off {name}")
                     } else {
                         name.clone()
                     });
-                    self.embeddings_toggle_message = None;
+                    self.embeddings.embeddings_toggle_message = None;
                     let tx = self.background_tx.clone();
                     let api = api.clone();
                     tokio::spawn(async move {
@@ -1795,8 +1839,8 @@ impl App {
                     && let Some(current) = self.selected_embedding_backend_create_enabled()
                 {
                     let enabled = !current;
-                    self.embeddings_creation_toggling = true;
-                    self.embeddings_toggle_message = None;
+                    self.embeddings.embeddings_creation_toggling = true;
+                    self.embeddings.embeddings_toggle_message = None;
                     let tx = self.background_tx.clone();
                     let api = api.clone();
                     tokio::spawn(async move {
@@ -1813,11 +1857,11 @@ impl App {
                 }
             }
             KeyCode::Char('e') if self.active_tab == TabKind::Embeddings => {
-                if self.embeddings_operation.is_none()
+                if self.embeddings.embeddings_operation.is_none()
                     && let Some(name) = self.selected_embedding_backend_name()
                 {
-                    self.embeddings_operation = Some(format!("creating embeddings for {name}"));
-                    self.embeddings_toggle_message = None;
+                    self.embeddings.embeddings_operation = Some(format!("creating embeddings for {name}"));
+                    self.embeddings.embeddings_toggle_message = None;
                     let project = self.project.clone();
                     let tx = self.background_tx.clone();
                     let api = api.clone();
@@ -1836,11 +1880,11 @@ impl App {
             }
             KeyCode::Char('I')
                 if self.active_tab == TabKind::Embeddings
-                    && self.embeddings_operation.is_none() =>
+                    && self.embeddings.embeddings_operation.is_none() =>
             {
                 let name = "all backends".to_string();
-                self.embeddings_operation = Some("reindexing all backends".to_string());
-                self.embeddings_toggle_message = None;
+                self.embeddings.embeddings_operation = Some("reindexing all backends".to_string());
+                self.embeddings.embeddings_toggle_message = None;
                 let project = self.project.clone();
                 let tx = self.background_tx.clone();
                 let api = api.clone();
@@ -1856,7 +1900,7 @@ impl App {
                 });
             }
             KeyCode::Char('r') if self.active_tab == TabKind::Embeddings => {
-                let _ = self.embeddings_wake_tx.send(());
+                let _ = self.embeddings.embeddings_wake_tx.send(());
             }
             KeyCode::PageDown if self.active_tab == TabKind::Memories => {
                 self.scroll_memory_detail(8);
@@ -1883,7 +1927,7 @@ impl App {
                 self.scroll_agent_detail(-8);
             }
             KeyCode::Home if self.active_tab == TabKind::Agents => {
-                self.agent_detail_scroll = 0;
+                self.agents.agent_detail_scroll = 0;
             }
             KeyCode::PageDown if self.active_tab == TabKind::Resume => {
                 self.scroll_resume(8);
@@ -1892,7 +1936,7 @@ impl App {
                 self.scroll_resume(-8);
             }
             KeyCode::Home if self.active_tab == TabKind::Resume => {
-                self.resume_scroll = 0;
+                self.resume.resume_scroll = 0;
             }
             KeyCode::PageDown if self.active_tab == TabKind::Project => {
                 self.scroll_project(8);
@@ -1901,7 +1945,7 @@ impl App {
                 self.scroll_project(-8);
             }
             KeyCode::Home if self.active_tab == TabKind::Project => {
-                self.project_scroll = 0;
+                self.project_tab.project_scroll = 0;
             }
             KeyCode::Char('p')
                 if self.active_tab == TabKind::Review && key.modifiers.is_empty() =>
@@ -1944,7 +1988,7 @@ impl App {
                 self.jump_replacement_proposal(0);
             }
             KeyCode::End if self.active_tab == TabKind::Review => {
-                let len = self.replacement_proposals.len();
+                let len = self.review.replacement_proposals.len();
                 self.jump_replacement_proposal(len.saturating_sub(1));
             }
             KeyCode::PageDown if self.active_tab == TabKind::Watchers => {
@@ -1954,7 +1998,7 @@ impl App {
                 self.scroll_watchers(-8);
             }
             KeyCode::Home if self.active_tab == TabKind::Watchers => {
-                self.watcher_scroll = 0;
+                self.watchers.watcher_scroll = 0;
             }
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.input_mode = InputMode::Search(self.filters.text.clone());
@@ -1975,7 +2019,7 @@ impl App {
                 let mut buffer = String::new();
                 buffer.push(ch);
                 self.input_mode = InputMode::Query(buffer);
-                self.query_history_cursor = None;
+                self.query.query_history_cursor = None;
                 self.status_message =
                     "Type a question, Enter to run, Up/Down for history, Esc to cancel."
                         .to_string();
@@ -2004,7 +2048,7 @@ impl App {
             }
             KeyCode::Char('c') if key.modifiers.is_empty() => {
                 let response = api
-                    .curate(&self.project, self.replacement_policy, false)
+                    .curate(&self.project, self.review.replacement_policy, false)
                     .await?;
                 self.status_message = format!(
                     "Curated {} captures into {} memories with {} replacement(s) and {} queued proposal(s).",
@@ -2061,7 +2105,7 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => self.scroll_help(-1),
             KeyCode::PageDown => self.scroll_help(8),
             KeyCode::PageUp => self.scroll_help(-8),
-            KeyCode::Home => self.help_scroll = 0,
+            KeyCode::Home => self.help.help_scroll = 0,
             KeyCode::End => self.scroll_help_end(),
             _ => {}
         }
@@ -2071,13 +2115,13 @@ impl App {
         // Second press hides the chain and returns to the single-version
         // detail view — cheap UX for users who don't want a dedicated
         // close key.
-        if self.selected_history.is_some() {
-            self.selected_history = None;
-            self.memory_detail_scroll = 0;
+        if self.memories.selected_history.is_some() {
+            self.memories.selected_history = None;
+            self.memories.memory_detail_scroll = 0;
             self.status_message = "Hid version history.".to_string();
             return;
         }
-        let Some(item) = self.filtered_memories.get(self.selected_index) else {
+        let Some(item) = self.memories.filtered_memories.get(self.memories.selected_index) else {
             self.status_message = "No memory selected.".to_string();
             return;
         };
@@ -2089,9 +2133,9 @@ impl App {
                     history.versions.len(),
                     history.canonical_id
                 );
-                self.selected_history = Some(history);
-                self.memory_detail_scroll = 0;
-                self.memories_focus = MemoriesFocus::Detail;
+                self.memories.selected_history = Some(history);
+                self.memories.memory_detail_scroll = 0;
+                self.memories.memories_focus = MemoriesFocus::Detail;
             }
             Err(error) => {
                 self.status_message = format!("History unavailable: {error}");
@@ -2111,7 +2155,7 @@ impl App {
             KeyCode::Esc => {
                 self.input_mode = InputMode::Normal;
                 if kind == TextInputKind::Query {
-                    self.query_history_cursor = None;
+                    self.query.query_history_cursor = None;
                 }
                 self.status_message = "Cancelled input mode.".to_string();
             }
@@ -2119,12 +2163,12 @@ impl App {
                 match kind {
                     TextInputKind::Search => self.filters.text = buffer.clone(),
                     TextInputKind::Tag => self.filters.tag = buffer.clone(),
-                    TextInputKind::Query => self.query_text = buffer.clone(),
+                    TextInputKind::Query => self.query.query_text = buffer.clone(),
                 }
                 self.input_mode = InputMode::Normal;
                 match kind {
                     TextInputKind::Query => {
-                        self.query_history_cursor = None;
+                        self.query.query_history_cursor = None;
                         self.run_query(api);
                     }
                     _ => {
@@ -2137,7 +2181,7 @@ impl App {
             KeyCode::Backspace => {
                 buffer.pop();
                 if kind == TextInputKind::Query {
-                    self.query_history_cursor = None;
+                    self.query.query_history_cursor = None;
                 }
                 self.input_mode = kind.wrap(buffer.clone());
             }
@@ -2154,7 +2198,7 @@ impl App {
             {
                 buffer.push(ch);
                 if kind == TextInputKind::Query {
-                    self.query_history_cursor = None;
+                    self.query.query_history_cursor = None;
                 }
                 self.input_mode = kind.wrap(buffer.clone());
             }
@@ -2167,24 +2211,23 @@ impl App {
 
     fn start_query_input(&mut self) {
         self.input_mode = InputMode::Query(String::new());
-        self.query_history_cursor = None;
+        self.query.query_history_cursor = None;
         self.status_message =
             "Type a question, Enter to run, Up/Down for history, Esc to cancel.".to_string();
     }
 
     fn remember_query_history_entry(&mut self) {
-        let question = self.query_text.trim();
+        let question = self.query.query_text.trim();
         if question.is_empty() {
             return;
         }
-        if self
-            .query_history
+        if self.query.query_history
             .iter()
             .any(|previous| previous.question == question)
         {
             return;
         }
-        self.query_history.push(QueryHistoryEntry {
+        self.query.query_history.push(QueryHistoryEntry {
             question: question.to_string(),
             response: None,
             error: None,
@@ -2192,16 +2235,15 @@ impl App {
             initial_detail: None,
             running: false,
         });
-        if self.query_history.len() > 50 {
-            self.query_history.remove(0);
+        if self.query.query_history.len() > 50 {
+            self.query.query_history.remove(0);
         }
     }
 
     fn start_query_history_run(&mut self, question: &str) {
-        self.query_text = question.to_string();
+        self.query.query_text = question.to_string();
         self.remember_query_history_entry();
-        if let Some(entry) = self
-            .query_history
+        if let Some(entry) = self.query.query_history
             .iter_mut()
             .find(|entry| entry.question == question)
         {
@@ -2220,16 +2262,14 @@ impl App {
         timing: QueryRoundtripTiming,
         initial_detail: Option<&MemoryEntryResponse>,
     ) {
-        if self
-            .query_history
+        if self.query.query_history
             .iter()
             .all(|previous| previous.question != question)
         {
-            self.query_text = question.to_string();
+            self.query.query_text = question.to_string();
             self.remember_query_history_entry();
         }
-        if let Some(entry) = self
-            .query_history
+        if let Some(entry) = self.query.query_history
             .iter_mut()
             .find(|entry| entry.question == question)
         {
@@ -2247,16 +2287,14 @@ impl App {
         error: &str,
         timing: QueryRoundtripTiming,
     ) {
-        if self
-            .query_history
+        if self.query.query_history
             .iter()
             .all(|previous| previous.question != question)
         {
-            self.query_text = question.to_string();
+            self.query.query_text = question.to_string();
             self.remember_query_history_entry();
         }
-        if let Some(entry) = self
-            .query_history
+        if let Some(entry) = self.query.query_history
             .iter_mut()
             .find(|entry| entry.question == question)
         {
@@ -2269,13 +2307,13 @@ impl App {
     }
 
     fn apply_query_history_delta(&mut self, buffer: &mut String, delta: isize) {
-        if self.query_history.is_empty() {
+        if self.query.query_history.is_empty() {
             self.status_message = "No previous queries in this TUI session.".to_string();
             return;
         }
 
-        let last = self.query_history.len().saturating_sub(1);
-        let next = match (self.query_history_cursor, delta) {
+        let last = self.query.query_history.len().saturating_sub(1);
+        let next = match (self.query.query_history_cursor, delta) {
             (None, value) if value < 0 => Some(last),
             (None, value) if value > 0 => None,
             (Some(index), value) if value < 0 => Some(index.saturating_sub(1)),
@@ -2284,10 +2322,10 @@ impl App {
             (current, _) => current,
         };
 
-        self.query_history_cursor = next;
+        self.query.query_history_cursor = next;
         match next {
             Some(index) => {
-                *buffer = self.query_history[index].question.clone();
+                *buffer = self.query.query_history[index].question.clone();
                 self.restore_query_history_entry(index);
             }
             None => {
@@ -2299,44 +2337,44 @@ impl App {
     }
 
     fn clear_visible_query_state(&mut self) {
-        self.query_loading = false;
-        self.query_started_at = None;
-        self.query_pending_question = None;
-        self.query_error = None;
-        self.query_detail_loading = false;
-        self.query_response = None;
-        self.query_last_duration_ms = None;
-        self.query_roundtrip_timing = None;
-        self.query_selected_detail = None;
-        self.query_selected_index = 0;
-        self.query_table_state.select(None);
+        self.query.query_loading = false;
+        self.query.query_started_at = None;
+        self.query.query_pending_question = None;
+        self.query.query_error = None;
+        self.query.query_detail_loading = false;
+        self.query.query_response = None;
+        self.query.query_last_duration_ms = None;
+        self.query.query_roundtrip_timing = None;
+        self.query.query_selected_detail = None;
+        self.query.query_selected_index = 0;
+        self.query.query_table_state.select(None);
     }
 
     fn restore_query_history_entry(&mut self, index: usize) {
-        let Some(entry) = self.query_history.get(index).cloned() else {
+        let Some(entry) = self.query.query_history.get(index).cloned() else {
             self.clear_visible_query_state();
             self.status_message = "Query history item is unavailable.".to_string();
             return;
         };
-        self.query_text = entry.question.clone();
-        self.query_loading = entry.running;
-        self.query_started_at = None;
-        self.query_pending_question = entry.running.then_some(entry.question.clone());
-        self.query_error = entry.error.clone();
-        self.query_response = entry.response.clone();
-        self.query_roundtrip_timing = entry.timing;
-        self.query_last_duration_ms = entry.timing.map(|timing| timing.ui_ready_ms);
-        self.query_selected_detail = if entry.response.is_some() {
+        self.query.query_text = entry.question.clone();
+        self.query.query_loading = entry.running;
+        self.query.query_started_at = None;
+        self.query.query_pending_question = entry.running.then_some(entry.question.clone());
+        self.query.query_error = entry.error.clone();
+        self.query.query_response = entry.response.clone();
+        self.query.query_roundtrip_timing = entry.timing;
+        self.query.query_last_duration_ms = entry.timing.map(|timing| timing.ui_ready_ms);
+        self.query.query_selected_detail = if entry.response.is_some() {
             entry.initial_detail.clone()
         } else {
             None
         };
-        self.query_detail_loading = false;
-        self.query_selected_index = 0;
+        self.query.query_detail_loading = false;
+        self.query.query_selected_index = 0;
         if self.query_results().is_empty() {
-            self.query_table_state.select(None);
+            self.query.query_table_state.select(None);
         } else {
-            self.query_table_state.select(Some(0));
+            self.query.query_table_state.select(Some(0));
         }
         let result_state = if entry.running {
             "still running"
@@ -2350,7 +2388,7 @@ impl App {
         self.status_message = format!(
             "Loaded query history item {}/{} {result_state}.",
             index + 1,
-            self.query_history.len()
+            self.query.query_history.len()
         );
     }
 
@@ -2360,15 +2398,15 @@ impl App {
         api: &ApiClient,
         stream: Option<&mut StreamSession>,
     ) {
-        if self.filtered_memories.is_empty() {
+        if self.memories.filtered_memories.is_empty() {
             return;
         }
-        let next = (self.selected_index as isize + delta)
-            .clamp(0, self.filtered_memories.len().saturating_sub(1) as isize)
+        let next = (self.memories.selected_index as isize + delta)
+            .clamp(0, self.memories.filtered_memories.len().saturating_sub(1) as isize)
             as usize;
-        if next != self.selected_index {
-            self.selected_index = next;
-            self.table_state.select(Some(self.selected_index));
+        if next != self.memories.selected_index {
+            self.memories.selected_index = next;
+            self.memories.table_state.select(Some(self.memories.selected_index));
             self.fetch_selected_detail(api, stream).await;
         }
     }
@@ -2378,11 +2416,11 @@ impl App {
         api: &ApiClient,
         mut stream: Option<&mut StreamSession>,
     ) {
-        self.selected_detail = None;
-        self.selected_history = None;
-        self.memory_detail_scroll = 0;
-        self.memories_focus = MemoriesFocus::List;
-        if let Some(item) = self.filtered_memories.get(self.selected_index) {
+        self.memories.selected_detail = None;
+        self.memories.selected_history = None;
+        self.memories.memory_detail_scroll = 0;
+        self.memories.memories_focus = MemoriesFocus::List;
+        if let Some(item) = self.memories.filtered_memories.get(self.memories.selected_index) {
             if let Some(stream) = stream.as_mut() {
                 if let Err(error) = stream
                     .send(StreamRequest::SubscribeMemory { memory_id: item.id })
@@ -2392,7 +2430,7 @@ impl App {
                 }
             } else {
                 match api.memory_detail(&item.id.to_string()).await {
-                    Ok(detail) => self.selected_detail = Some(detail),
+                    Ok(detail) => self.memories.selected_detail = Some(detail),
                     Err(error) => self.status_message = error.to_string(),
                 }
             }
@@ -2400,22 +2438,21 @@ impl App {
     }
 
     fn apply_filters(&mut self) {
-        self.filtered_memories = self
-            .all_memories
+        self.memories.filtered_memories = self.memories.all_memories
             .iter()
             .filter(|item| self.filters.matches(item))
             .cloned()
             .collect();
 
-        if self.filtered_memories.is_empty() {
-            self.selected_index = 0;
-            self.table_state.select(None);
-            self.selected_detail = None;
-            self.selected_history = None;
-            self.memories_focus = MemoriesFocus::List;
+        if self.memories.filtered_memories.is_empty() {
+            self.memories.selected_index = 0;
+            self.memories.table_state.select(None);
+            self.memories.selected_detail = None;
+            self.memories.selected_history = None;
+            self.memories.memories_focus = MemoriesFocus::List;
         } else {
-            self.selected_index = self.selected_index.min(self.filtered_memories.len() - 1);
-            self.table_state.select(Some(self.selected_index));
+            self.memories.selected_index = self.memories.selected_index.min(self.memories.filtered_memories.len() - 1);
+            self.memories.table_state.select(Some(self.memories.selected_index));
         }
     }
 
@@ -2425,22 +2462,22 @@ impl App {
             StreamResponse::ProjectSnapshot { overview, memories }
             | StreamResponse::ProjectChanged { overview, memories } => {
                 self.overview = overview;
-                self.total_memories = memories.total;
-                self.all_memories = memories.items;
+                self.memories.total_memories = memories.total;
+                self.memories.all_memories = memories.items;
                 self.apply_filters();
-                self.resume_loaded = false;
+                self.resume.resume_loaded = false;
                 self.status_message = format!(
                     "Streaming update: {} visible memories ({} total).",
-                    self.filtered_memories.len(),
-                    self.total_memories
+                    self.memories.filtered_memories.len(),
+                    self.memories.total_memories
                 );
                 self.ui_status = UiStatus::Ready;
             }
             StreamResponse::MemorySnapshot { detail }
             | StreamResponse::MemoryChanged { detail } => {
-                self.selected_detail = detail;
-                self.memory_detail_scroll = 0;
-                self.memories_focus = MemoriesFocus::List;
+                self.memories.selected_detail = detail;
+                self.memories.memory_detail_scroll = 0;
+                self.memories.memories_focus = MemoriesFocus::List;
             }
             StreamResponse::Activity { event } => {
                 self.record_backend_activity(event);
@@ -2458,18 +2495,18 @@ impl App {
             return;
         }
 
-        let question = self.query_text.trim();
-        self.query_request_id = self.query_request_id.saturating_add(1);
-        let request_id = self.query_request_id;
+        let question = self.query.query_text.trim();
+        self.query.query_request_id = self.query.query_request_id.saturating_add(1);
+        let request_id = self.query.query_request_id;
         let question = question.to_string();
         self.start_query_history_run(&question);
-        self.query_loading = true;
-        self.query_started_at = Some(Instant::now());
-        self.query_pending_question = Some(question.clone());
-        self.query_error = None;
-        self.query_selected_detail = None;
-        self.query_roundtrip_timing = None;
-        self.query_detail_loading = false;
+        self.query.query_loading = true;
+        self.query.query_started_at = Some(Instant::now());
+        self.query.query_pending_question = Some(question.clone());
+        self.query.query_error = None;
+        self.query.query_selected_detail = None;
+        self.query.query_roundtrip_timing = None;
+        self.query.query_detail_loading = false;
         self.status_message = format!("Searching \"{question}\"...");
         self.ui_status = UiStatus::Busy;
         let request = QueryRequest {
@@ -2522,18 +2559,18 @@ impl App {
     }
 
     fn clear_empty_query_if_needed(&mut self) -> bool {
-        if self.query_text.trim().is_empty() {
-            self.query_loading = false;
-            self.query_started_at = None;
-            self.query_pending_question = None;
-            self.query_error = None;
-            self.query_detail_loading = false;
-            self.query_response = None;
-            self.query_last_duration_ms = None;
-            self.query_roundtrip_timing = None;
-            self.query_selected_detail = None;
-            self.query_selected_index = 0;
-            self.query_table_state.select(None);
+        if self.query.query_text.trim().is_empty() {
+            self.query.query_loading = false;
+            self.query.query_started_at = None;
+            self.query.query_pending_question = None;
+            self.query.query_error = None;
+            self.query.query_detail_loading = false;
+            self.query.query_response = None;
+            self.query.query_last_duration_ms = None;
+            self.query.query_roundtrip_timing = None;
+            self.query.query_selected_detail = None;
+            self.query.query_selected_index = 0;
+            self.query.query_table_state.select(None);
             self.status_message = "Enter a query before running search.".to_string();
             return true;
         }
@@ -2548,7 +2585,7 @@ impl App {
         response: Result<QueryResponse, String>,
         initial_detail: Option<Result<MemoryEntryResponse, String>>,
     ) {
-        if request_id != self.query_request_id {
+        if request_id != self.query.query_request_id {
             match response {
                 Ok(response) => {
                     let initial_detail = initial_detail.and_then(Result::ok);
@@ -2563,11 +2600,11 @@ impl App {
             }
             return;
         }
-        self.query_loading = false;
-        self.query_started_at = None;
-        self.query_pending_question = None;
-        self.query_detail_request_id = self.query_detail_request_id.saturating_add(1);
-        self.query_detail_loading = false;
+        self.query.query_loading = false;
+        self.query.query_started_at = None;
+        self.query.query_pending_question = None;
+        self.query.query_detail_request_id = self.query.query_detail_request_id.saturating_add(1);
+        self.query.query_detail_loading = false;
         match response {
             Ok(response) => {
                 self.record_query_activity(
@@ -2575,29 +2612,29 @@ impl App {
                     timing.ui_ready_ms,
                     QueryLogOutcome::Success(Box::new(response.clone())),
                 );
-                self.resume_loaded = false;
-                self.query_error = None;
-                self.query_last_duration_ms = Some(timing.ui_ready_ms);
-                self.query_roundtrip_timing = Some(timing);
+                self.resume.resume_loaded = false;
+                self.query.query_error = None;
+                self.query.query_last_duration_ms = Some(timing.ui_ready_ms);
+                self.query.query_roundtrip_timing = Some(timing);
                 let response_for_history = response.clone();
-                self.query_response = Some(response);
-                self.query_selected_index = 0;
+                self.query.query_response = Some(response);
+                self.query.query_selected_index = 0;
                 let mut loaded_initial_detail = None;
                 if self.query_results().is_empty() {
-                    self.query_selected_detail = None;
-                    self.query_table_state.select(None);
+                    self.query.query_selected_detail = None;
+                    self.query.query_table_state.select(None);
                 } else {
-                    self.query_table_state.select(Some(0));
+                    self.query.query_table_state.select(Some(0));
                     match initial_detail {
                         Some(Ok(detail)) => {
                             loaded_initial_detail = Some(detail.clone());
-                            self.query_selected_detail = Some(detail);
+                            self.query.query_selected_detail = Some(detail);
                         }
                         Some(Err(error)) => {
-                            self.query_selected_detail = None;
+                            self.query.query_selected_detail = None;
                             self.status_message = format!("Query detail unavailable: {error}");
                         }
-                        None => self.query_selected_detail = None,
+                        None => self.query.query_selected_detail = None,
                     }
                 }
                 self.update_query_history_success(
@@ -2628,13 +2665,13 @@ impl App {
                     timing.ui_ready_ms,
                     QueryLogOutcome::Error(error.to_string()),
                 );
-                self.resume_loaded = false;
-                self.query_response = None;
-                self.query_last_duration_ms = Some(timing.ui_ready_ms);
-                self.query_roundtrip_timing = Some(timing);
-                self.query_selected_detail = None;
-                self.query_table_state.select(None);
-                self.query_error = Some(error.clone());
+                self.resume.resume_loaded = false;
+                self.query.query_response = None;
+                self.query.query_last_duration_ms = Some(timing.ui_ready_ms);
+                self.query.query_roundtrip_timing = Some(timing);
+                self.query.query_selected_detail = None;
+                self.query.query_table_state.select(None);
+                self.query.query_error = Some(error.clone());
                 self.update_query_history_error(&request.query, &error, timing);
                 self.status_message = format!("Query failed: {error}");
                 self.ui_status = UiStatus::Error;
@@ -2646,28 +2683,28 @@ impl App {
         if self.query_results().is_empty() {
             return;
         }
-        let next = (self.query_selected_index as isize + delta)
+        let next = (self.query.query_selected_index as isize + delta)
             .clamp(0, self.query_results().len().saturating_sub(1) as isize)
             as usize;
-        if next != self.query_selected_index {
-            self.query_selected_index = next;
-            self.query_table_state
-                .select(Some(self.query_selected_index));
+        if next != self.query.query_selected_index {
+            self.query.query_selected_index = next;
+            self.query.query_table_state
+                .select(Some(self.query.query_selected_index));
             self.fetch_selected_query_detail(api);
         }
     }
 
     fn fetch_selected_query_detail(&mut self, api: &ApiClient) {
-        self.query_selected_detail = None;
-        self.query_detail_loading = false;
+        self.query.query_selected_detail = None;
+        self.query.query_detail_loading = false;
         if let Some(memory_id) = self
             .query_results()
-            .get(self.query_selected_index)
+            .get(self.query.query_selected_index)
             .map(|result| result.memory_id.to_string())
         {
-            self.query_detail_request_id = self.query_detail_request_id.saturating_add(1);
-            let request_id = self.query_detail_request_id;
-            self.query_detail_loading = true;
+            self.query.query_detail_request_id = self.query.query_detail_request_id.saturating_add(1);
+            let request_id = self.query.query_detail_request_id;
+            self.query.query_detail_loading = true;
             let api = api.clone();
             let tx = self.background_tx.clone();
             tokio::spawn(async move {
@@ -2690,28 +2727,28 @@ impl App {
         memory_id: String,
         detail: Result<MemoryEntryResponse, String>,
     ) {
-        if request_id != self.query_detail_request_id {
+        if request_id != self.query.query_detail_request_id {
             return;
         }
         let selected_memory_id = self
             .query_results()
-            .get(self.query_selected_index)
+            .get(self.query.query_selected_index)
             .map(|result| result.memory_id.to_string());
         if selected_memory_id.as_deref() != Some(memory_id.as_str()) {
             return;
         }
-        self.query_detail_loading = false;
+        self.query.query_detail_loading = false;
         match detail {
-            Ok(detail) => self.query_selected_detail = Some(detail),
+            Ok(detail) => self.query.query_selected_detail = Some(detail),
             Err(error) => {
-                self.query_selected_detail = None;
+                self.query.query_selected_detail = None;
                 self.status_message = format!("Query detail unavailable: {error}");
             }
         }
     }
 
     fn query_results(&self) -> &[QueryResult] {
-        self.query_response
+        self.query.query_response
             .as_ref()
             .map(|response| response.results.as_slice())
             .unwrap_or(&[])
@@ -2723,7 +2760,7 @@ impl App {
         duration_ms: u64,
         outcome: QueryLogOutcome,
     ) {
-        self.activity_events.insert(
+        self.activity.activity_events.insert(
             0,
             ActivityEntry::Query(QueryActivityEntry {
                 recorded_at: Utc::now(),
@@ -2751,103 +2788,102 @@ impl App {
                 message.as_deref(),
             );
         }
-        self.activity_events.retain(|entry| match entry {
+        self.activity.activity_events.retain(|entry| match entry {
             ActivityEntry::Backend(existing) => existing.id != event.id,
             ActivityEntry::Query(_) => true,
         });
-        self.activity_events
+        self.activity.activity_events
             .insert(0, ActivityEntry::Backend(Box::new(event)));
         self.finish_activity_insert();
     }
 
     fn finish_activity_insert(&mut self) {
-        if self.activity_events.len() > 200 {
-            self.activity_events.truncate(200);
+        if self.activity.activity_events.len() > 200 {
+            self.activity.activity_events.truncate(200);
         }
-        self.activity_selected_index = 0;
-        if self.activity_events.is_empty() {
-            self.activity_table_state.select(None);
+        self.activity.activity_selected_index = 0;
+        if self.activity.activity_events.is_empty() {
+            self.activity.activity_table_state.select(None);
         } else {
-            self.activity_table_state.select(Some(0));
+            self.activity.activity_table_state.select(Some(0));
         }
-        self.activity_detail_scroll = 0;
+        self.activity.activity_detail_scroll = 0;
     }
 
     fn move_activity_selection(&mut self, delta: isize) {
-        if self.activity_events.is_empty() {
+        if self.activity.activity_events.is_empty() {
             return;
         }
-        let next = (self.activity_selected_index as isize + delta)
-            .clamp(0, self.activity_events.len().saturating_sub(1) as isize)
+        let next = (self.activity.activity_selected_index as isize + delta)
+            .clamp(0, self.activity.activity_events.len().saturating_sub(1) as isize)
             as usize;
-        if next != self.activity_selected_index {
-            self.activity_selected_index = next;
-            self.activity_table_state
-                .select(Some(self.activity_selected_index));
+        if next != self.activity.activity_selected_index {
+            self.activity.activity_selected_index = next;
+            self.activity.activity_table_state
+                .select(Some(self.activity.activity_selected_index));
         }
     }
 
     fn move_error_selection(&mut self, delta: isize) {
         let len = collect_error_items(self).len();
         if len == 0 {
-            self.errors_selected_index = 0;
-            self.errors_table_state.select(None);
+            self.errors.errors_selected_index = 0;
+            self.errors.errors_table_state.select(None);
             return;
         }
-        let next = (self.errors_selected_index as isize + delta)
+        let next = (self.errors.errors_selected_index as isize + delta)
             .clamp(0, len.saturating_sub(1) as isize) as usize;
-        if next != self.errors_selected_index {
-            self.errors_selected_index = next;
-            self.errors_table_state.select(Some(next));
-            self.errors_detail_scroll = 0;
+        if next != self.errors.errors_selected_index {
+            self.errors.errors_selected_index = next;
+            self.errors.errors_table_state.select(Some(next));
+            self.errors.errors_detail_scroll = 0;
         }
     }
 
     fn select_replacement_proposal(&mut self, delta: isize) {
-        let len = self.replacement_proposals.len();
+        let len = self.review.replacement_proposals.len();
         if len == 0 {
-            self.replacement_selected_index = 0;
-            self.review_table_state.select(None);
+            self.review.replacement_selected_index = 0;
+            self.review.review_table_state.select(None);
             return;
         }
         // Cyclic wrap so j/k/[ ] loops within the list.
-        let cur = self.replacement_selected_index as isize;
+        let cur = self.review.replacement_selected_index as isize;
         let next = ((cur + delta) % len as isize + len as isize) % len as isize;
-        self.replacement_selected_index = next as usize;
-        self.review_table_state
-            .select(Some(self.replacement_selected_index));
+        self.review.replacement_selected_index = next as usize;
+        self.review.review_table_state
+            .select(Some(self.review.replacement_selected_index));
     }
 
     fn jump_replacement_proposal(&mut self, index: usize) {
-        let len = self.replacement_proposals.len();
+        let len = self.review.replacement_proposals.len();
         if len == 0 {
-            self.replacement_selected_index = 0;
-            self.review_table_state.select(None);
+            self.review.replacement_selected_index = 0;
+            self.review.review_table_state.select(None);
             return;
         }
-        self.replacement_selected_index = index.min(len - 1);
-        self.review_table_state
-            .select(Some(self.replacement_selected_index));
+        self.review.replacement_selected_index = index.min(len - 1);
+        self.review.review_table_state
+            .select(Some(self.review.replacement_selected_index));
     }
 
     async fn cycle_replacement_policy(&mut self) -> Result<()> {
-        self.replacement_policy = match self.replacement_policy {
+        self.review.replacement_policy = match self.review.replacement_policy {
             ReplacementPolicy::Conservative => ReplacementPolicy::Balanced,
             ReplacementPolicy::Balanced => ReplacementPolicy::Aggressive,
             ReplacementPolicy::Aggressive => ReplacementPolicy::Conservative,
         };
-        write_replacement_policy(&self.repo_root, self.replacement_policy)?;
+        write_replacement_policy(&self.repo_root, self.review.replacement_policy)?;
         self.status_message = format!(
             "Curation replacement policy set to {}.",
-            self.replacement_policy
+            self.review.replacement_policy
         );
         Ok(())
     }
 
     async fn approve_selected_replacement_proposal(&mut self, api: &ApiClient) -> Result<()> {
-        let Some(proposal) = self
-            .replacement_proposals
-            .get(self.replacement_selected_index)
+        let Some(proposal) = self.review.replacement_proposals
+            .get(self.review.replacement_selected_index)
             .cloned()
         else {
             self.status_message = "No pending replacement proposal selected.".to_string();
@@ -2865,9 +2901,8 @@ impl App {
     }
 
     async fn reject_selected_replacement_proposal(&mut self, api: &ApiClient) -> Result<()> {
-        let Some(proposal) = self
-            .replacement_proposals
-            .get(self.replacement_selected_index)
+        let Some(proposal) = self.review.replacement_proposals
+            .get(self.review.replacement_selected_index)
             .cloned()
         else {
             self.status_message = "No pending replacement proposal selected.".to_string();
@@ -2885,7 +2920,7 @@ impl App {
     }
 
     async fn delete_selected_memory(&mut self, api: &ApiClient) -> Result<()> {
-        let Some(item) = self.filtered_memories.get(self.selected_index) else {
+        let Some(item) = self.memories.filtered_memories.get(self.memories.selected_index) else {
             self.status_message = "No selected memory to delete.".to_string();
             return Ok(());
         };
@@ -2896,58 +2931,58 @@ impl App {
     }
 
     async fn delete_selected_query_memory(&mut self, api: &ApiClient) -> Result<()> {
-        let Some(result) = self.query_results().get(self.query_selected_index) else {
+        let Some(result) = self.query_results().get(self.query.query_selected_index) else {
             self.status_message = "No selected query result to delete.".to_string();
             return Ok(());
         };
         let response = api.delete_memory(result.memory_id).await?;
         self.status_message = format!("Deleted memory: {}", response.summary);
-        self.query_selected_detail = None;
+        self.query.query_selected_detail = None;
         self.run_query(api);
         self.refresh(api, RefreshMode::Full).await;
         Ok(())
     }
 
     fn scroll_project(&mut self, delta: i16) {
-        self.project_scroll = if delta.is_negative() {
-            self.project_scroll.saturating_sub(delta.unsigned_abs())
+        self.project_tab.project_scroll = if delta.is_negative() {
+            self.project_tab.project_scroll.saturating_sub(delta.unsigned_abs())
         } else {
-            self.project_scroll
+            self.project_tab.project_scroll
                 .saturating_add(u16::try_from(delta).unwrap_or(0))
         };
     }
 
     fn scroll_resume(&mut self, delta: i16) {
-        self.resume_scroll = if delta.is_negative() {
-            self.resume_scroll.saturating_sub(delta.unsigned_abs())
+        self.resume.resume_scroll = if delta.is_negative() {
+            self.resume.resume_scroll.saturating_sub(delta.unsigned_abs())
         } else {
-            self.resume_scroll
+            self.resume.resume_scroll
                 .saturating_add(u16::try_from(delta).unwrap_or(0))
         };
     }
 
     fn scroll_watchers(&mut self, delta: i16) {
-        self.watcher_scroll = if delta.is_negative() {
-            self.watcher_scroll.saturating_sub(delta.unsigned_abs())
+        self.watchers.watcher_scroll = if delta.is_negative() {
+            self.watchers.watcher_scroll.saturating_sub(delta.unsigned_abs())
         } else {
-            self.watcher_scroll
+            self.watchers.watcher_scroll
                 .saturating_add(u16::try_from(delta).unwrap_or(0))
         };
     }
 
     fn open_help_for_active_tab(&mut self) {
-        self.help_open = true;
-        self.help_tab = self.active_tab;
-        self.help_scroll = 0;
+        self.help.help_open = true;
+        self.help.help_tab = self.active_tab;
+        self.help.help_scroll = 0;
         self.status_message = format!(
             "Showing {} help. Press h or Esc to return.",
-            self.help_tab.label()
+            self.help.help_tab.label()
         );
     }
 
     fn close_help(&mut self) {
-        self.help_open = false;
-        self.help_scroll = 0;
+        self.help.help_open = false;
+        self.help.help_scroll = 0;
         self.status_message = "Help closed.".to_string();
     }
 
@@ -2957,11 +2992,11 @@ impl App {
     }
 
     fn scroll_help_in_area(&mut self, delta: i16, frame_area: Rect) {
-        let max_scroll = help_max_scroll(self.help_tab, frame_area);
-        self.help_scroll = if delta.is_negative() {
-            self.help_scroll.saturating_sub(delta.unsigned_abs())
+        let max_scroll = help_max_scroll(self.help.help_tab, frame_area);
+        self.help.help_scroll = if delta.is_negative() {
+            self.help.help_scroll.saturating_sub(delta.unsigned_abs())
         } else {
-            self.help_scroll
+            self.help.help_scroll
                 .saturating_add(u16::try_from(delta).unwrap_or(0))
         }
         .min(max_scroll);
@@ -2969,7 +3004,7 @@ impl App {
 
     fn scroll_help_end(&mut self) {
         let area = current_frame_area().unwrap_or_else(default_frame_area);
-        self.help_scroll = help_max_scroll(self.help_tab, area);
+        self.help.help_scroll = help_max_scroll(self.help.help_tab, area);
     }
 
     fn scroll_memory_detail(&mut self, delta: i16) {
@@ -2979,44 +3014,44 @@ impl App {
 
     fn scroll_memory_detail_in_area(&mut self, delta: i16, frame_area: Rect) {
         let max_scroll = memory_detail_max_scroll(self, frame_area);
-        self.memory_detail_scroll = if delta.is_negative() {
-            self.memory_detail_scroll
+        self.memories.memory_detail_scroll = if delta.is_negative() {
+            self.memories.memory_detail_scroll
                 .saturating_sub(delta.unsigned_abs())
         } else {
-            self.memory_detail_scroll
+            self.memories.memory_detail_scroll
                 .saturating_add(u16::try_from(delta).unwrap_or(0))
         }
         .min(max_scroll);
     }
 
     fn scroll_memory_detail_home(&mut self) {
-        self.memory_detail_scroll = 0;
+        self.memories.memory_detail_scroll = 0;
     }
 
     fn scroll_memory_detail_end(&mut self) {
         let area = current_frame_area().unwrap_or_else(default_frame_area);
-        self.memory_detail_scroll = memory_detail_max_scroll(self, area);
+        self.memories.memory_detail_scroll = memory_detail_max_scroll(self, area);
     }
 
     fn toggle_memories_focus(&mut self) {
-        self.memories_focus = match self.memories_focus {
-            MemoriesFocus::List if self.selected_detail.is_some() => MemoriesFocus::Detail,
+        self.memories.memories_focus = match self.memories.memories_focus {
+            MemoriesFocus::List if self.memories.selected_detail.is_some() => MemoriesFocus::Detail,
             MemoriesFocus::Detail => MemoriesFocus::List,
             MemoriesFocus::List => MemoriesFocus::List,
         };
     }
 
     fn focus_memories_list(&mut self) {
-        self.memories_focus = MemoriesFocus::List;
+        self.memories.memories_focus = MemoriesFocus::List;
     }
 }
 
-struct StreamSession {
+pub(super) struct StreamSession {
     writer: tokio::io::WriteHalf<StreamTransport>,
     rx: mpsc::UnboundedReceiver<StreamResponse>,
 }
 
-enum StreamTransport {
+pub(super) enum StreamTransport {
     Unix(UnixStream),
     Tcp(TcpStream),
 }
@@ -3131,7 +3166,7 @@ async fn subscribe_stream_selection(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TabKind {
+pub(super) enum TabKind {
     Memories,
     Agents,
     Query,
@@ -3144,7 +3179,7 @@ enum TabKind {
     Resume,
 }
 
-const VISIBLE_TABS: [TabKind; 10] = [
+pub(super) const VISIBLE_TABS: [TabKind; 10] = [
     TabKind::Memories,
     TabKind::Agents,
     TabKind::Query,
@@ -3220,7 +3255,7 @@ impl TabKind {
 }
 
 #[derive(Clone, Default)]
-struct Filters {
+pub(super) struct Filters {
     text: String,
     tag: String,
     status: StatusFilter,
@@ -3257,7 +3292,7 @@ impl Filters {
 }
 
 #[derive(Clone, Default)]
-enum InputMode {
+pub(super) enum InputMode {
     #[default]
     Normal,
     Search(String),
@@ -3266,7 +3301,7 @@ enum InputMode {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum TextInputKind {
+pub(super) enum TextInputKind {
     Search,
     Tag,
     Query,
@@ -3283,7 +3318,7 @@ impl TextInputKind {
 }
 
 #[derive(Clone, Default)]
-enum StatusFilter {
+pub(super) enum StatusFilter {
     #[default]
     All,
     Active,
@@ -3318,7 +3353,7 @@ impl StatusFilter {
 }
 
 #[derive(Clone, Default)]
-enum TypeFilter {
+pub(super) enum TypeFilter {
     #[default]
     All,
     Architecture,
@@ -3392,7 +3427,7 @@ impl TypeFilter {
     }
 }
 
-fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
+pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     frame.render_widget(
         Block::default().style(Style::default().bg(Theme::BACKGROUND)),
         frame.area(),
@@ -3428,7 +3463,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         );
     frame.render_widget(tabs, chunks[0]);
 
-    let control_line = if app.help_open {
+    let control_line = if app.help.help_open {
         Line::from(vec![
             accent_span("back "),
             Span::styled("h/Esc  ", Style::default().fg(Theme::TEXT)),
@@ -3437,7 +3472,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             accent_span("jump "),
             Span::styled("Home/End  ", Style::default().fg(Theme::TEXT)),
             Span::styled(
-                format!("showing {} help", app.help_tab.label()),
+                format!("showing {} help", app.help.help_tab.label()),
                 Style::default().fg(Theme::MUTED),
             ),
         ])
@@ -3470,12 +3505,12 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                 Span::raw("  "),
                 accent_span("focus "),
                 Span::styled(
-                    match app.memories_focus {
+                    match app.memories.memories_focus {
                         MemoriesFocus::List => "list",
                         MemoriesFocus::Detail => "detail",
                     },
                     Style::default()
-                        .fg(match app.memories_focus {
+                        .fg(match app.memories.memories_focus {
                             MemoriesFocus::List => Theme::ACCENT,
                             MemoriesFocus::Detail => Theme::ACCENT_STRONG,
                         })
@@ -3483,7 +3518,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                 ),
                 Span::raw("  "),
                 Span::styled(
-                    match app.memories_focus {
+                    match app.memories.memories_focus {
                         MemoriesFocus::List => {
                             "Enter=detail  j/k=select  PgUp/PgDn/Home/End=scroll  clear=x curate=c reindex=i reembed=e archive=a delete=D history=H"
                         }
@@ -3595,7 +3630,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     };
     let filter_bar = Paragraph::new(vec![control_line])
         .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block(if app.help_open {
+        .block(themed_block(if app.help.help_open {
             "Help Controls"
         } else {
             match &app.input_mode {
@@ -3625,7 +3660,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         }));
     frame.render_widget(filter_bar, chunks[1]);
 
-    if app.help_open {
+    if app.help.help_open {
         draw_help_tab(frame, app, chunks[2]);
     } else if app.health_ok {
         match app.active_tab {
@@ -3657,7 +3692,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     draw_bottom_status_bar(frame, app, footer_chunks[1]);
 }
 
-fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(super) fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(
         Block::default().style(Style::default().bg(Theme::PANEL_ALT)),
         area,
@@ -3734,7 +3769,7 @@ fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect)
     );
 }
 
-fn component_status_line<'a>(
+pub(super) fn component_status_line<'a>(
     label: &'a str,
     version: &'a str,
     status: &'a str,
@@ -3770,7 +3805,7 @@ fn component_status_line<'a>(
     Line::from(spans)
 }
 
-fn draw_backend_recovery(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(super) fn draw_backend_recovery(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     if app.backend_connection_state == BackendConnectionState::Connecting {
         draw_backend_connecting(frame, area);
         return;
@@ -3806,7 +3841,7 @@ fn draw_backend_recovery(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) 
     frame.render_widget(widget, area);
 }
 
-fn draw_backend_connecting(frame: &mut ratatui::Frame<'_>, area: Rect) {
+pub(super) fn draw_backend_connecting(frame: &mut ratatui::Frame<'_>, area: Rect) {
     let lines = vec![
         Line::from(Span::styled(
             "Connecting to Memory Layer backend...",
@@ -3829,23 +3864,23 @@ fn draw_backend_connecting(frame: &mut ratatui::Frame<'_>, area: Rect) {
     frame.render_widget(widget, area);
 }
 
-fn draw_help_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let max_scroll = help_max_scroll_in_area(app.help_tab, area);
-    let scroll = app.help_scroll.min(max_scroll);
-    let help = Paragraph::new(tab_help_lines(app.help_tab))
+pub(super) fn draw_help_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let max_scroll = help_max_scroll_in_area(app.help.help_tab, area);
+    let scroll = app.help.help_scroll.min(max_scroll);
+    let help = Paragraph::new(tab_help_lines(app.help.help_tab))
         .style(Style::default().bg(Theme::PANEL))
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0))
         .block(themed_block(format!(
             "{} Help (scroll {}/{})",
-            app.help_tab.label(),
+            app.help.help_tab.label(),
             scroll,
             max_scroll
         )));
     frame.render_widget(help, area);
 }
 
-fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(super) fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = split_memories_area(area);
 
     let header = Row::new(["Summary", "Type", "Status", "Conf", "Updated"]).style(
@@ -3854,7 +3889,7 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             .bg(Theme::PANEL_ALT)
             .add_modifier(Modifier::BOLD),
     );
-    let rows = app.filtered_memories.iter().map(memory_row);
+    let rows = app.memories.filtered_memories.iter().map(memory_row);
     let table = Table::new(
         rows,
         [
@@ -3876,21 +3911,21 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     .block(themed_focus_block(
         format!(
             "Memories (showing {} / {})",
-            app.filtered_memories.len(),
-            app.total_memories
+            app.memories.filtered_memories.len(),
+            app.memories.total_memories
         ),
-        app.memories_focus == MemoriesFocus::List,
+        app.memories.memories_focus == MemoriesFocus::List,
     ));
-    let mut state = app.table_state.clone();
+    let mut state = app.memories.table_state.clone();
     frame.render_stateful_widget(table, chunks[0], &mut state);
 
     let detail_text = build_memory_detail_lines(app);
     let detail_block = themed_focus_block(
-        match app.memories_focus {
+        match app.memories.memories_focus {
             MemoriesFocus::List => "Detail".to_string(),
             MemoriesFocus::Detail => "Detail Reader".to_string(),
         },
-        app.memories_focus == MemoriesFocus::Detail,
+        app.memories.memories_focus == MemoriesFocus::Detail,
     );
     let detail_inner = detail_block.inner(chunks[1]);
     let max_scroll = if detail_inner.width == 0 || detail_inner.height == 0 {
@@ -3901,13 +3936,13 @@ fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     };
     let detail = Paragraph::new(detail_text)
         .style(Style::default().bg(Theme::PANEL))
-        .scroll((app.memory_detail_scroll.min(max_scroll), 0))
+        .scroll((app.memories.memory_detail_scroll.min(max_scroll), 0))
         .wrap(Wrap { trim: false })
         .block(detail_block);
     frame.render_widget(detail, chunks[1]);
 }
 
-fn build_history_lines(history: &mem_api::MemoryHistoryResponse) -> Vec<Line<'static>> {
+pub(super) fn build_history_lines(history: &mem_api::MemoryHistoryResponse) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     lines.push(Line::from(vec![
         label_span("Canonical: "),
@@ -3992,11 +4027,11 @@ fn build_history_lines(history: &mem_api::MemoryHistoryResponse) -> Vec<Line<'st
     lines
 }
 
-fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
-    if let Some(history) = &app.selected_history {
+pub(super) fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
+    if let Some(history) = &app.memories.selected_history {
         return build_history_lines(history);
     }
-    if let Some(detail) = &app.selected_detail {
+    if let Some(detail) = &app.memories.selected_detail {
         let mut lines = vec![
             Line::from(vec![
                 label_span("Summary: "),
@@ -4142,7 +4177,7 @@ fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
             }
         }
         lines
-    } else if app.filtered_memories.is_empty() {
+    } else if app.memories.filtered_memories.is_empty() {
         vec![Line::from(Span::styled(
             format!(
                 "No memories match the current filters for project {}.",
@@ -4158,13 +4193,13 @@ fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
     }
 }
 
-fn draw_agents_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(super) fn draw_agents_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
         .split(area);
 
-    if app.agent_loading && app.agent_snapshot.is_none() {
+    if app.agents.agent_loading && app.agents.agent_snapshot.is_none() {
         frame.render_widget(
             Paragraph::new("Loading agent sessions...")
                 .style(Style::default().fg(Theme::ACCENT).bg(Theme::PANEL_ALT))
@@ -4174,8 +4209,8 @@ fn draw_agents_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         return;
     }
 
-    if let Some(error) = &app.agent_error
-        && app.agent_snapshot.is_none()
+    if let Some(error) = &app.agents.agent_error
+        && app.agents.agent_snapshot.is_none()
     {
         frame.render_widget(
             Paragraph::new(format!("Agents unavailable: {error}"))
@@ -4187,7 +4222,7 @@ fn draw_agents_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         return;
     }
 
-    let Some(snapshot) = &app.agent_snapshot else {
+    let Some(snapshot) = &app.agents.agent_snapshot else {
         frame.render_widget(
             Paragraph::new("No agent data available yet.")
                 .style(Style::default().fg(Theme::MUTED).bg(Theme::PANEL_ALT))
@@ -4228,21 +4263,21 @@ fn draw_agents_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         snapshot.sessions.len(),
         snapshot.orphan_ports.len()
     )));
-    let mut state = app.agent_table_state.clone();
+    let mut state = app.agents.agent_table_state.clone();
     frame.render_stateful_widget(table, chunks[0], &mut state);
 
     let detail = Paragraph::new(agent_detail_lines(app, snapshot))
-        .scroll((app.agent_detail_scroll, 0))
+        .scroll((app.agents.agent_detail_scroll, 0))
         .wrap(Wrap { trim: false })
         .style(Style::default().bg(Theme::PANEL))
         .block(themed_block(format!(
             "Agent Detail (scroll {})",
-            app.agent_detail_scroll
+            app.agents.agent_detail_scroll
         )));
     frame.render_widget(detail, chunks[1]);
 }
 
-fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(super) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -4391,17 +4426,17 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             Span::styled(
                 format!(
                     "{} / {} pending (see Review tab)",
-                    app.replacement_policy, app.overview.pending_replacement_proposals
+                    app.review.replacement_policy, app.overview.pending_replacement_proposals
                 ),
                 Style::default().fg(Theme::TEXT),
             ),
         ),
     ])
-    .scroll((app.project_scroll, 0))
+    .scroll((app.project_tab.project_scroll, 0))
     .style(Style::default().bg(Theme::PANEL))
     .block(themed_block(format!(
         "Overview (scroll {})",
-        app.project_scroll
+        app.project_tab.project_scroll
     )));
     frame.render_widget(summary, chunks[0]);
 
@@ -4522,7 +4557,7 @@ fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     );
 }
 
-fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(super) fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -4532,17 +4567,17 @@ fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         ])
         .split(area);
 
-    let pending = app.replacement_proposals.len();
+    let pending = app.review.replacement_proposals.len();
     let selected_label = if pending == 0 {
         "—".to_string()
     } else {
-        format!("{}/{}", app.replacement_selected_index + 1, pending)
+        format!("{}/{}", app.review.replacement_selected_index + 1, pending)
     };
     let header = Paragraph::new(vec![
         Line::from(vec![
             label_span("Policy: "),
             Span::styled(
-                app.replacement_policy.to_string(),
+                app.review.replacement_policy.to_string(),
                 Style::default()
                     .fg(Theme::ACCENT_STRONG)
                     .add_modifier(Modifier::BOLD),
@@ -4568,7 +4603,7 @@ fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[1]);
 
-    if app.replacement_proposals.is_empty() {
+    if app.review.replacement_proposals.is_empty() {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "No pending replacement proposals. New ambiguous curation candidates will appear here.",
@@ -4586,8 +4621,7 @@ fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 .bg(Theme::PANEL_ALT)
                 .add_modifier(Modifier::BOLD),
         );
-        let rows = app
-            .replacement_proposals
+        let rows = app.review.replacement_proposals
             .iter()
             .enumerate()
             .map(|(idx, proposal)| {
@@ -4627,7 +4661,7 @@ fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         )
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block(format!("Proposals ({pending})")));
-        let mut state = app.review_table_state.clone();
+        let mut state = app.review.review_table_state.clone();
         frame.render_stateful_widget(table, body[0], &mut state);
     }
 
@@ -4658,10 +4692,9 @@ fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     );
 }
 
-fn review_detail_lines(app: &App) -> Vec<Line<'static>> {
-    let Some(proposal) = app
-        .replacement_proposals
-        .get(app.replacement_selected_index)
+pub(super) fn review_detail_lines(app: &App) -> Vec<Line<'static>> {
+    let Some(proposal) = app.review.replacement_proposals
+        .get(app.review.replacement_selected_index)
     else {
         return vec![Line::from(Span::styled(
             "Select a proposal on the left to inspect it here.",
@@ -4712,7 +4745,7 @@ fn review_detail_lines(app: &App) -> Vec<Line<'static>> {
     lines
 }
 
-fn truncate_for_list(s: &str, max: usize) -> String {
+pub(super) fn truncate_for_list(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
@@ -4722,7 +4755,7 @@ fn truncate_for_list(s: &str, max: usize) -> String {
     }
 }
 
-fn draw_watchers_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(super) fn draw_watchers_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(5), Constraint::Min(10)])
@@ -4746,23 +4779,23 @@ fn draw_watchers_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(summary, chunks[0]);
 
     let detail = Paragraph::new(watcher_detail_lines(app))
-        .scroll((app.watcher_scroll, 0))
+        .scroll((app.watchers.watcher_scroll, 0))
         .wrap(Wrap { trim: false })
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block(format!(
             "Watchers (scroll {})",
-            app.watcher_scroll
+            app.watchers.watcher_scroll
         )));
     frame.render_widget(detail, chunks[1]);
 }
 
-fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(super) fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(6), Constraint::Min(8)])
         .split(area);
 
-    let snapshot = app.embedding_backends_snapshot.as_ref();
+    let snapshot = app.embeddings.embedding_backends_snapshot.as_ref();
     let backends = snapshot.map(|s| s.backends.as_slice()).unwrap_or(&[]);
     let configured = backends.len();
     let ready = backends.iter().filter(|b| b.ready).count();
@@ -4771,7 +4804,7 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .and_then(|s| s.active.clone())
         .unwrap_or_else(|| "(none)".to_string());
     let create_display = snapshot
-        .and_then(|snapshot| snapshot.backends.get(app.embeddings_selected_index))
+        .and_then(|snapshot| snapshot.backends.get(app.embeddings.embeddings_selected_index))
         .map(|backend| {
             format!(
                 "{} for {}",
@@ -4781,7 +4814,7 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         })
         .unwrap_or_else(|| "unknown".to_string());
 
-    let message_line = if app.embeddings_creation_toggling {
+    let message_line = if app.embeddings.embeddings_creation_toggling {
         Line::from(vec![
             label_span("Status: "),
             Span::styled(
@@ -4789,7 +4822,7 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::ACCENT),
             ),
         ])
-    } else if let Some(operation) = &app.embeddings_operation {
+    } else if let Some(operation) = &app.embeddings.embeddings_operation {
         Line::from(vec![
             label_span("Status: "),
             Span::styled(
@@ -4797,7 +4830,7 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::ACCENT),
             ),
         ])
-    } else if let Some(toggling) = &app.embeddings_toggling {
+    } else if let Some(toggling) = &app.embeddings.embeddings_toggling {
         Line::from(vec![
             label_span("Status: "),
             Span::styled(
@@ -4805,7 +4838,7 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::ACCENT),
             ),
         ])
-    } else if let Some(msg) = &app.embeddings_toggle_message {
+    } else if let Some(msg) = &app.embeddings.embeddings_toggle_message {
         let color = if msg.starts_with("Toggle failed")
             || msg.starts_with("Creation toggle failed")
             || msg.starts_with("Embedding creation failed")
@@ -4819,7 +4852,7 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             label_span("Status: "),
             Span::styled(msg.clone(), Style::default().fg(color)),
         ])
-    } else if let Some(err) = &app.embedding_backends_error {
+    } else if let Some(err) = &app.embeddings.embedding_backends_error {
         Line::from(vec![
             label_span("Status: "),
             Span::styled(
@@ -4858,7 +4891,7 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(summary, chunks[0]);
 
     if backends.is_empty() {
-        let body = if app.embedding_backends_snapshot.is_some() {
+        let body = if app.embeddings.embedding_backends_snapshot.is_some() {
             "No embedding backends configured. Declare them under [[embeddings.backends]] in your memory-layer.toml."
         } else {
             "Loading embedding backends..."
@@ -4969,15 +5002,15 @@ fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         backends.len(),
         app.project
     )));
-    let mut state = app.embeddings_table_state.clone();
+    let mut state = app.embeddings.embeddings_table_state.clone();
     frame.render_stateful_widget(table, chunks[1], &mut state);
 }
 
-fn active_embedding_backend_index(snapshot: &mem_api::EmbeddingBackendsResponse) -> Option<usize> {
+pub(super) fn active_embedding_backend_index(snapshot: &mem_api::EmbeddingBackendsResponse) -> Option<usize> {
     snapshot.backends.iter().position(|backend| backend.active)
 }
 
-fn embedding_backend_index_by_name(
+pub(super) fn embedding_backend_index_by_name(
     snapshot: &mem_api::EmbeddingBackendsResponse,
     name: &str,
 ) -> Option<usize> {
@@ -4987,14 +5020,14 @@ fn embedding_backend_index_by_name(
         .position(|backend| backend.name == name)
 }
 
-fn clamped_embedding_backend_index(
+pub(super) fn clamped_embedding_backend_index(
     current: usize,
     snapshot: &mem_api::EmbeddingBackendsResponse,
 ) -> Option<usize> {
     (!snapshot.backends.is_empty()).then(|| current.min(snapshot.backends.len().saturating_sub(1)))
 }
 
-fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(super) fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -5007,7 +5040,7 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let query_input_area = chunks[0];
     let query_inner_width = query_input_area.width.saturating_sub(2);
     let query_input = query_input_display(&current_query_display(app), query_inner_width);
-    let query_title = if app.query_loading {
+    let query_title = if app.query.query_loading {
         "Question (searching)"
     } else if query_editing {
         "Question (editing)"
@@ -5023,7 +5056,7 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         .style(Style::default().bg(Theme::PANEL))
         .block(themed_focus_block(
             query_title,
-            query_editing || app.query_loading,
+            query_editing || app.query.query_loading,
         ));
     frame.render_widget(query_box, query_input_area);
     if query_editing && query_input_area.width > 2 && query_input_area.height > 2 {
@@ -5033,17 +5066,14 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         ));
     }
 
-    let answer_text = if app.query_loading {
-        let elapsed = app
-            .query_started_at
+    let answer_text = if app.query.query_loading {
+        let elapsed = app.query.query_started_at
             .map(|started| started.elapsed().as_millis() as u64)
             .unwrap_or_default();
-        let pending = app
-            .query_pending_question
+        let pending = app.query.query_pending_question
             .as_deref()
-            .unwrap_or(app.query_text.as_str());
-        let previous = app
-            .query_response
+            .unwrap_or(app.query.query_text.as_str());
+        let previous = app.query.query_response
             .as_ref()
             .map(|response| response.results.len())
             .unwrap_or(0);
@@ -5071,7 +5101,7 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::MUTED),
             )),
         ]
-    } else if let Some(error) = &app.query_error {
+    } else if let Some(error) = &app.query.query_error {
         vec![
             Line::from(vec![
                 label_span("Question: "),
@@ -5089,7 +5119,7 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                 Style::default().fg(Theme::MUTED),
             )),
         ]
-    } else if let Some(response) = &app.query_response {
+    } else if let Some(response) = &app.query.query_response {
         let mut lines = vec![
             Line::from(vec![
                 label_span("Question: "),
@@ -5152,7 +5182,7 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         ];
         lines.extend(query_timing_breakdown_lines(
             response,
-            app.query_roundtrip_timing,
+            app.query.query_roundtrip_timing,
         ));
         lines.extend([
             if let Some(reason) = &response.answer_generation.fallback_reason {
@@ -5198,8 +5228,7 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             .bg(Theme::PANEL_ALT)
             .add_modifier(Modifier::BOLD),
     );
-    let cited_numbers = app
-        .query_response
+    let cited_numbers = app.query.query_response
         .as_ref()
         .map(|response| &response.answer_generation.cited_result_numbers);
     let rows = app
@@ -5235,12 +5264,12 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         "Returned Memories ({})",
         app.query_results().len()
     )));
-    let mut state = app.query_table_state.clone();
+    let mut state = app.query.query_table_state.clone();
     frame.render_stateful_widget(table, lower[0], &mut state);
 
-    let detail_text = if let Some(result) = app.query_results().get(app.query_selected_index) {
-        let result_number = app.query_selected_index + 1;
-        let cited_in_answer = app.query_response.as_ref().is_some_and(|response| {
+    let detail_text = if let Some(result) = app.query_results().get(app.query.query_selected_index) {
+        let result_number = app.query.query_selected_index + 1;
+        let cited_in_answer = app.query.query_response.as_ref().is_some_and(|response| {
             response
                 .answer_generation
                 .cited_result_numbers
@@ -5344,7 +5373,7 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             }
         }
 
-        if let Some(detail) = &app.query_selected_detail {
+        if let Some(detail) = &app.query.query_selected_detail {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![section_span("Canonical Text")]));
             lines.push(Line::from(Span::styled(
@@ -5375,7 +5404,7 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
                     ]));
                 }
             }
-        } else if app.query_detail_loading {
+        } else if app.query.query_detail_loading {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "Loading selected memory detail...",
@@ -5416,20 +5445,20 @@ fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(detail, lower[1]);
 }
 
-fn current_query_display(app: &App) -> String {
+pub(super) fn current_query_display(app: &App) -> String {
     match &app.input_mode {
         InputMode::Query(value) => value.clone(),
-        _ => app.query_text.clone(),
+        _ => app.query.query_text.clone(),
     }
 }
 
-struct QueryInputDisplay {
+pub(super) struct QueryInputDisplay {
     text: String,
     cursor_col: u16,
     placeholder: bool,
 }
 
-fn query_input_display(value: &str, inner_width: u16) -> QueryInputDisplay {
+pub(super) fn query_input_display(value: &str, inner_width: u16) -> QueryInputDisplay {
     let width = inner_width as usize;
     if width == 0 {
         return QueryInputDisplay {
@@ -5470,10 +5499,10 @@ fn query_input_display(value: &str, inner_width: u16) -> QueryInputDisplay {
     }
 }
 
-fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let lines = if let Some(response) = &app.resume_response {
+pub(super) fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    let lines = if let Some(response) = &app.resume.resume_response {
         let mut lines = Vec::new();
-        if app.resume_loading {
+        if app.resume.resume_loading {
             lines.push(Line::from(Span::styled(
                 "Refreshing resume in the background...",
                 Style::default().fg(Theme::ACCENT),
@@ -5624,12 +5653,12 @@ fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             }
         }
         lines
-    } else if app.resume_loading {
+    } else if app.resume.resume_loading {
         vec![Line::from(Span::styled(
             "Loading resume in the background...",
             Style::default().fg(Theme::ACCENT),
         ))]
-    } else if let Some(error) = &app.resume_error {
+    } else if let Some(error) = &app.resume.resume_error {
         vec![Line::from(Span::styled(
             format!("Resume unavailable: {error}"),
             Style::default().fg(Theme::WARNING),
@@ -5642,17 +5671,17 @@ fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     };
 
     let paragraph = Paragraph::new(lines)
-        .scroll((app.resume_scroll, 0))
+        .scroll((app.resume.resume_scroll, 0))
         .wrap(Wrap { trim: false })
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block(format!(
             "Resume (scroll {})",
-            app.resume_scroll
+            app.resume.resume_scroll
         )));
     frame.render_widget(paragraph, area);
 }
 
-fn append_resume_briefing_lines(lines: &mut Vec<Line<'static>>, briefing: &str) {
+pub(super) fn append_resume_briefing_lines(lines: &mut Vec<Line<'static>>, briefing: &str) {
     for raw_line in briefing.lines() {
         let trimmed = raw_line.trim_end();
         if trimmed.is_empty() {
@@ -5677,7 +5706,7 @@ fn append_resume_briefing_lines(lines: &mut Vec<Line<'static>>, briefing: &str) 
     }
 }
 
-fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(super) fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(11), Constraint::Min(8)])
@@ -5704,7 +5733,7 @@ fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             .bg(Theme::PANEL_ALT)
             .add_modifier(Modifier::BOLD),
     );
-    let rows = app.activity_events.iter().map(activity_row);
+    let rows = app.activity.activity_events.iter().map(activity_row);
     let table = Table::new(
         rows,
         [
@@ -5725,12 +5754,12 @@ fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     )
     .block(themed_block(format!(
         "Activity ({})",
-        app.activity_events.len()
+        app.activity.activity_events.len()
     )));
-    let mut state = app.activity_table_state.clone();
+    let mut state = app.activity.activity_table_state.clone();
     frame.render_stateful_widget(table, chunks[0], &mut state);
 
-    let detail_lines = if let Some(entry) = app.activity_events.get(app.activity_selected_index) {
+    let detail_lines = if let Some(entry) = app.activity.activity_events.get(app.activity.activity_selected_index) {
         activity_detail_lines(entry)
     } else {
         vec![Line::from(Span::styled(
@@ -5740,25 +5769,25 @@ fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     };
 
     let detail = Paragraph::new(detail_lines)
-        .scroll((app.activity_detail_scroll, 0))
+        .scroll((app.activity.activity_detail_scroll, 0))
         .style(Style::default().bg(Theme::PANEL))
         .wrap(Wrap { trim: false })
         .block(themed_block(format!(
             "Activity Detail (scroll {})",
-            app.activity_detail_scroll
+            app.activity.activity_detail_scroll
         )));
     frame.render_widget(detail, chunks[1]);
 }
 
 #[derive(Clone)]
-struct ErrorItem {
+pub(super) struct ErrorItem {
     when: Option<DateTime<Utc>>,
     diagnostic: DiagnosticInfo,
 }
 
-fn draw_errors_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+pub(super) fn draw_errors_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     let items = collect_error_items(app);
-    let selected_index = app.errors_selected_index.min(items.len().saturating_sub(1));
+    let selected_index = app.errors.errors_selected_index.min(items.len().saturating_sub(1));
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
@@ -5790,7 +5819,7 @@ fn draw_errors_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
             .add_modifier(Modifier::BOLD),
     )
     .block(themed_block(format!("Errors ({})", items.len())));
-    let mut state = app.errors_table_state.clone();
+    let mut state = app.errors.errors_table_state.clone();
     if items.is_empty() {
         state.select(None);
     } else {
@@ -5813,17 +5842,17 @@ fn draw_errors_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
         ]
     };
     let detail = Paragraph::new(lines)
-        .scroll((app.errors_detail_scroll, 0))
+        .scroll((app.errors.errors_detail_scroll, 0))
         .style(Style::default().bg(Theme::PANEL))
         .wrap(Wrap { trim: false })
         .block(themed_block(format!(
             "Error Detail (scroll {})",
-            app.errors_detail_scroll
+            app.errors.errors_detail_scroll
         )));
     frame.render_widget(detail, chunks[1]);
 }
 
-fn collect_error_items(app: &App) -> Vec<ErrorItem> {
+pub(super) fn collect_error_items(app: &App) -> Vec<ErrorItem> {
     let mut items = Vec::new();
     if !app.health_ok {
         items.push(ErrorItem {
@@ -5840,26 +5869,26 @@ fn collect_error_items(app: &App) -> Vec<ErrorItem> {
         });
     }
     for (code, component, operation, message) in [
-        ("query_failed", "tui", "query", app.query_error.as_ref()),
-        ("agents_failed", "tui", "agents", app.agent_error.as_ref()),
-        ("resume_failed", "tui", "resume", app.resume_error.as_ref()),
+        ("query_failed", "tui", "query", app.query.query_error.as_ref()),
+        ("agents_failed", "tui", "agents", app.agents.agent_error.as_ref()),
+        ("resume_failed", "tui", "resume", app.resume.resume_error.as_ref()),
         (
             "activity_failed",
             "tui",
             "activity",
-            app.activity_error.as_ref(),
+            app.activity.activity_error.as_ref(),
         ),
         (
             "briefing_failed",
             "tui",
             "up_to_speed",
-            app.up_to_speed_error.as_ref(),
+            app.activity.up_to_speed_error.as_ref(),
         ),
         (
             "embeddings_failed",
             "tui",
             "embeddings",
-            app.embedding_backends_error.as_ref(),
+            app.embeddings.embedding_backends_error.as_ref(),
         ),
     ] {
         if let Some(message) = message {
@@ -5877,7 +5906,7 @@ fn collect_error_items(app: &App) -> Vec<ErrorItem> {
             });
         }
     }
-    for entry in &app.activity_events {
+    for entry in &app.activity.activity_events {
         if let ActivityEntry::Backend(event) = entry {
             match &event.details {
                 Some(ActivityDetails::Diagnostic { diagnostic }) => items.push(ErrorItem {
@@ -5941,7 +5970,7 @@ fn collect_error_items(app: &App) -> Vec<ErrorItem> {
     items
 }
 
-fn session_diagnostic(
+pub(super) fn session_diagnostic(
     code: &str,
     source: &str,
     component: &str,
@@ -5965,11 +5994,11 @@ fn session_diagnostic(
     }
 }
 
-fn error_count(app: &App) -> usize {
+pub(super) fn error_count(app: &App) -> usize {
     collect_error_items(app).len()
 }
 
-fn error_row(item: &ErrorItem) -> Row<'static> {
+pub(super) fn error_row(item: &ErrorItem) -> Row<'static> {
     Row::new(vec![
         Cell::from(Span::styled(
             item.when
@@ -5996,7 +6025,7 @@ fn error_row(item: &ErrorItem) -> Row<'static> {
     ])
 }
 
-fn error_detail_lines(item: &ErrorItem) -> Vec<Line<'static>> {
+pub(super) fn error_detail_lines(item: &ErrorItem) -> Vec<Line<'static>> {
     let diagnostic = &item.diagnostic;
     let mut lines = vec![
         Line::from(vec![
@@ -6095,7 +6124,7 @@ fn error_detail_lines(item: &ErrorItem) -> Vec<Line<'static>> {
     lines
 }
 
-fn diagnostic_severity_label(severity: &DiagnosticSeverity) -> &'static str {
+pub(super) fn diagnostic_severity_label(severity: &DiagnosticSeverity) -> &'static str {
     match severity {
         DiagnosticSeverity::Info => "info",
         DiagnosticSeverity::Warning => "warn",
@@ -6103,7 +6132,7 @@ fn diagnostic_severity_label(severity: &DiagnosticSeverity) -> &'static str {
     }
 }
 
-fn diagnostic_severity_color(severity: &DiagnosticSeverity) -> Color {
+pub(super) fn diagnostic_severity_color(severity: &DiagnosticSeverity) -> Color {
     match severity {
         DiagnosticSeverity::Info => Theme::ACCENT,
         DiagnosticSeverity::Warning => Theme::WARNING,
@@ -6111,7 +6140,7 @@ fn diagnostic_severity_color(severity: &DiagnosticSeverity) -> Color {
     }
 }
 
-fn non_empty_or(value: &str, fallback: &str) -> String {
+pub(super) fn non_empty_or(value: &str, fallback: &str) -> String {
     if value.trim().is_empty() {
         fallback.to_string()
     } else {
@@ -6119,20 +6148,20 @@ fn non_empty_or(value: &str, fallback: &str) -> String {
     }
 }
 
-fn activity_briefing_lines(app: &App) -> Vec<Line<'static>> {
-    if app.up_to_speed_loading {
+pub(super) fn activity_briefing_lines(app: &App) -> Vec<Line<'static>> {
+    if app.activity.up_to_speed_loading {
         return vec![Line::from(Span::styled(
             "Generating get-up-to-speed briefing...",
             Style::default().fg(Theme::ACCENT_STRONG),
         ))];
     }
-    if let Some(error) = &app.up_to_speed_error {
+    if let Some(error) = &app.activity.up_to_speed_error {
         return vec![Line::from(Span::styled(
             format!("Briefing failed: {error}"),
             Style::default().fg(Theme::DANGER),
         ))];
     }
-    if let Some(response) = &app.up_to_speed_response {
+    if let Some(response) = &app.activity.up_to_speed_response {
         let mut lines = vec![Line::from(Span::styled(
             response
                 .briefing
@@ -6177,9 +6206,9 @@ fn activity_briefing_lines(app: &App) -> Vec<Line<'static>> {
     ]
 }
 
-fn llm_audit_status_lines(app: &App) -> Vec<Line<'static>> {
+pub(super) fn llm_audit_status_lines(app: &App) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from("")];
-    if app.llm_audit_toggling {
+    if app.activity.llm_audit_toggling {
         lines.push(Line::from(vec![
             label_span("LLM audit: "),
             Span::styled("updating...", Style::default().fg(Theme::ACCENT_STRONG)),
@@ -6187,14 +6216,14 @@ fn llm_audit_status_lines(app: &App) -> Vec<Line<'static>> {
         ]));
         return lines;
     }
-    if app.llm_audit_loading {
+    if app.activity.llm_audit_loading {
         lines.push(Line::from(vec![
             label_span("LLM audit: "),
             Span::styled("loading...", Style::default().fg(Theme::ACCENT)),
         ]));
         return lines;
     }
-    if let Some(error) = &app.llm_audit_error {
+    if let Some(error) = &app.activity.llm_audit_error {
         lines.push(Line::from(vec![
             label_span("LLM audit: "),
             Span::styled("unknown", Style::default().fg(Theme::WARNING)),
@@ -6206,7 +6235,7 @@ fn llm_audit_status_lines(app: &App) -> Vec<Line<'static>> {
         )));
         return lines;
     }
-    let Some(status) = &app.llm_audit_status else {
+    let Some(status) = &app.activity.llm_audit_status else {
         lines.push(Line::from(vec![
             label_span("LLM audit: "),
             Span::styled("unknown", Style::default().fg(Theme::MUTED)),
@@ -6245,7 +6274,7 @@ fn llm_audit_status_lines(app: &App) -> Vec<Line<'static>> {
     lines
 }
 
-fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'static>> {
+pub(super) fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'static>> {
     if items.is_empty() {
         vec![Line::from(empty.to_string())]
     } else {
@@ -6262,15 +6291,15 @@ fn lines_for_named_counts(items: Vec<(String, i64)>, empty: &str) -> Vec<Line<'s
     }
 }
 
-fn recent_activity_lines(app: &App) -> Vec<Line<'static>> {
-    if app.activity_events.is_empty() {
+pub(super) fn recent_activity_lines(app: &App) -> Vec<Line<'static>> {
+    if app.activity.activity_events.is_empty() {
         return vec![Line::from(Span::styled(
             "No recent activity in this TUI session.",
             Style::default().fg(Theme::MUTED),
         ))];
     }
 
-    app.activity_events
+    app.activity.activity_events
         .iter()
         .take(6)
         .map(|event| {
@@ -6288,8 +6317,8 @@ fn recent_activity_lines(app: &App) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn latest_plan_display(app: &App) -> String {
-    app.all_memories
+pub(super) fn latest_plan_display(app: &App) -> String {
+    app.memories.all_memories
         .iter()
         .filter(|item| item.memory_type == MemoryType::Plan)
         .max_by(|left, right| {
@@ -6310,7 +6339,7 @@ fn latest_plan_display(app: &App) -> String {
         .unwrap_or_else(|| "none".to_string())
 }
 
-fn watcher_summary_text(app: &App) -> String {
+pub(super) fn watcher_summary_text(app: &App) -> String {
     let Some(summary) = &app.overview.watchers else {
         return "no watcher presence reported".to_string();
     };
@@ -6327,7 +6356,7 @@ fn watcher_summary_text(app: &App) -> String {
     )
 }
 
-fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
+pub(super) fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
     let Some(summary) = &app.overview.watchers else {
         return vec![
             Line::from(Span::styled(
@@ -6464,7 +6493,7 @@ fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
     lines
 }
 
-fn write_replacement_policy(repo_root: &Path, policy: ReplacementPolicy) -> Result<()> {
+pub(super) fn write_replacement_policy(repo_root: &Path, policy: ReplacementPolicy) -> Result<()> {
     let path = repo_agent_settings_path(repo_root);
     let mut value = if path.exists() {
         fs::read_to_string(&path)?
@@ -6493,7 +6522,7 @@ fn write_replacement_policy(repo_root: &Path, policy: ReplacementPolicy) -> Resu
     Ok(())
 }
 
-fn memory_row(item: &ProjectMemoryListItem) -> Row<'static> {
+pub(super) fn memory_row(item: &ProjectMemoryListItem) -> Row<'static> {
     let row_style = match item.status {
         MemoryStatus::Active => Style::default().fg(Theme::TEXT).bg(Theme::PANEL),
         MemoryStatus::Archived => Style::default().fg(Theme::MUTED).bg(Theme::PANEL),
@@ -6534,7 +6563,7 @@ fn memory_row(item: &ProjectMemoryListItem) -> Row<'static> {
     .style(row_style)
 }
 
-fn agent_row(session: &AgentSession) -> Row<'static> {
+pub(super) fn agent_row(session: &AgentSession) -> Row<'static> {
     Row::new(vec![
         Cell::from(Span::styled(
             session.project_name.clone(),
@@ -6560,7 +6589,7 @@ fn agent_row(session: &AgentSession) -> Row<'static> {
     ])
 }
 
-fn query_row(result_number: usize, item: &QueryResult, cited: bool) -> Row<'static> {
+pub(super) fn query_row(result_number: usize, item: &QueryResult, cited: bool) -> Row<'static> {
     let number = if cited {
         format!("[{result_number}]")
     } else {
@@ -6588,7 +6617,7 @@ fn query_row(result_number: usize, item: &QueryResult, cited: bool) -> Row<'stat
     ])
 }
 
-fn format_query_citation_numbers(numbers: &[usize]) -> String {
+pub(super) fn format_query_citation_numbers(numbers: &[usize]) -> String {
     if numbers.is_empty() {
         "none".to_string()
     } else {
@@ -6600,7 +6629,7 @@ fn format_query_citation_numbers(numbers: &[usize]) -> String {
     }
 }
 
-fn query_answer_method_span(method: &QueryAnswerMethod) -> Span<'static> {
+pub(super) fn query_answer_method_span(method: &QueryAnswerMethod) -> Span<'static> {
     let color = match method {
         QueryAnswerMethod::Llm => Theme::SUCCESS,
         QueryAnswerMethod::Deterministic => Theme::ACCENT,
@@ -6610,13 +6639,13 @@ fn query_answer_method_span(method: &QueryAnswerMethod) -> Span<'static> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct QueryTimingBreakdown {
+pub(super) struct QueryTimingBreakdown {
     backend_reported_ms: u64,
     transport_overhead_ms: u64,
     retrieval_other_ms: u64,
 }
 
-fn query_timing_breakdown(
+pub(super) fn query_timing_breakdown(
     response: &QueryResponse,
     timing: QueryRoundtripTiming,
 ) -> QueryTimingBreakdown {
@@ -6638,13 +6667,13 @@ fn query_timing_breakdown(
     }
 }
 
-fn format_query_timing(value: Option<u64>) -> String {
+pub(super) fn format_query_timing(value: Option<u64>) -> String {
     value
         .map(|value| format!("{value} ms"))
         .unwrap_or_else(|| "n/a".to_string())
 }
 
-fn format_query_timing_with_percent(value: u64, total: u64) -> String {
+pub(super) fn format_query_timing_with_percent(value: u64, total: u64) -> String {
     value
         .saturating_mul(100)
         .checked_div(total)
@@ -6652,7 +6681,7 @@ fn format_query_timing_with_percent(value: u64, total: u64) -> String {
         .unwrap_or_else(|| format!("{value} ms"))
 }
 
-fn query_timing_breakdown_lines(
+pub(super) fn query_timing_breakdown_lines(
     response: &QueryResponse,
     timing: Option<QueryRoundtripTiming>,
 ) -> Vec<Line<'static>> {
@@ -6781,7 +6810,7 @@ fn query_timing_breakdown_lines(
     ]
 }
 
-fn activity_row(item: &ActivityEntry) -> Row<'static> {
+pub(super) fn activity_row(item: &ActivityEntry) -> Row<'static> {
     Row::new(vec![
         Cell::from(Span::styled(
             format_timestamp_short(activity_recorded_at(item)),
@@ -6803,7 +6832,7 @@ fn activity_row(item: &ActivityEntry) -> Row<'static> {
     ])
 }
 
-fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>> {
+pub(super) fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(vec![
             label_span("Collected: "),
@@ -6827,8 +6856,7 @@ fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>>
         ]),
     ];
 
-    let selected_agent_cli = app
-        .agent_table_state
+    let selected_agent_cli = app.agents.agent_table_state
         .selected()
         .and_then(|i| snapshot.sessions.get(i))
         .map(|s| s.agent_cli);
@@ -6878,7 +6906,7 @@ fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>>
         }
     }
 
-    let Some(session) = snapshot.sessions.get(app.agent_selected_index) else {
+    let Some(session) = snapshot.sessions.get(app.agents.agent_selected_index) else {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "No agent sessions are currently visible.",
@@ -6977,7 +7005,7 @@ fn agent_detail_lines(app: &App, snapshot: &AgentSnapshot) -> Vec<Line<'static>>
     lines
 }
 
-fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
+pub(super) fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
     match entry {
         ActivityEntry::Backend(event) => backend_activity_detail_lines(event),
         ActivityEntry::Query(entry) => {
@@ -7199,7 +7227,7 @@ fn activity_detail_lines(entry: &ActivityEntry) -> Vec<Line<'static>> {
     }
 }
 
-fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
+pub(super) fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(vec![
             label_span("When: "),
@@ -7696,14 +7724,14 @@ fn backend_activity_detail_lines(event: &ActivityEvent) -> Vec<Line<'static>> {
     lines
 }
 
-fn activity_kv_line(label: &str, value: String) -> Line<'static> {
+pub(super) fn activity_kv_line(label: &str, value: String) -> Line<'static> {
     Line::from(vec![
         label_span(format!("{label}: ")),
         Span::styled(value, Style::default().fg(Theme::TEXT)),
     ])
 }
 
-fn format_query_filters(filters: &QueryFilters) -> String {
+pub(super) fn format_query_filters(filters: &QueryFilters) -> String {
     let types = if filters.types.is_empty() {
         "types=all".to_string()
     } else {
@@ -7725,7 +7753,7 @@ fn format_query_filters(filters: &QueryFilters) -> String {
     format!("{types} {tags}")
 }
 
-fn truncate_activity_text(value: &str, max_chars: usize) -> String {
+pub(super) fn truncate_activity_text(value: &str, max_chars: usize) -> String {
     let mut chars = value.chars();
     let truncated = chars.by_ref().take(max_chars).collect::<String>();
     if chars.next().is_some() {
@@ -7735,14 +7763,14 @@ fn truncate_activity_text(value: &str, max_chars: usize) -> String {
     }
 }
 
-fn activity_recorded_at(item: &ActivityEntry) -> DateTime<Utc> {
+pub(super) fn activity_recorded_at(item: &ActivityEntry) -> DateTime<Utc> {
     match item {
         ActivityEntry::Backend(event) => event.recorded_at,
         ActivityEntry::Query(entry) => entry.recorded_at,
     }
 }
 
-fn activity_summary(item: &ActivityEntry) -> String {
+pub(super) fn activity_summary(item: &ActivityEntry) -> String {
     match item {
         ActivityEntry::Backend(event) => event.summary.clone(),
         ActivityEntry::Query(entry) => {
@@ -7763,7 +7791,7 @@ fn activity_summary(item: &ActivityEntry) -> String {
     }
 }
 
-fn activity_tokens(item: &ActivityEntry) -> String {
+pub(super) fn activity_tokens(item: &ActivityEntry) -> String {
     match item {
         ActivityEntry::Backend(event) => event
             .token_usage
@@ -7782,7 +7810,7 @@ fn activity_tokens(item: &ActivityEntry) -> String {
     }
 }
 
-fn activity_duration(item: &ActivityEntry) -> String {
+pub(super) fn activity_duration(item: &ActivityEntry) -> String {
     match item {
         ActivityEntry::Backend(event) => event
             .duration_ms
@@ -7792,7 +7820,7 @@ fn activity_duration(item: &ActivityEntry) -> String {
     }
 }
 
-fn format_compact_count(value: u64) -> String {
+pub(super) fn format_compact_count(value: u64) -> String {
     if value >= 1_000_000 {
         format!("{:.1}m", value as f64 / 1_000_000.0)
     } else if value >= 1_000 {
@@ -7802,7 +7830,7 @@ fn format_compact_count(value: u64) -> String {
     }
 }
 
-fn watcher_transition_status_message(
+pub(super) fn watcher_transition_status_message(
     summary: &str,
     health: &WatcherHealth,
     previous_health: Option<&WatcherHealth>,
@@ -7819,7 +7847,7 @@ fn watcher_transition_status_message(
     }
 }
 
-fn embedding_base_url_is_default(provider: &str, base_url: &str) -> bool {
+pub(super) fn embedding_base_url_is_default(provider: &str, base_url: &str) -> bool {
     // Keep in sync with mem_search::embedding_backend::default_base_url.
     let expected = match provider {
         "openai_compatible" | "openai" => "https://api.openai.com/v1",
@@ -7832,41 +7860,41 @@ fn embedding_base_url_is_default(provider: &str, base_url: &str) -> bool {
     base_url.trim_end_matches('/') == expected
 }
 
-fn format_timestamp(value: Option<DateTime<Utc>>) -> String {
+pub(super) fn format_timestamp(value: Option<DateTime<Utc>>) -> String {
     value
         .map(format_timestamp_full)
         .unwrap_or_else(|| "n/a".to_string())
 }
 
-fn format_timestamp_full(value: DateTime<Utc>) -> String {
+pub(super) fn format_timestamp_full(value: DateTime<Utc>) -> String {
     value
         .with_timezone(&Local)
         .format("%Y-%m-%d %H:%M:%S %Z")
         .to_string()
 }
 
-fn format_timestamp_medium(value: DateTime<Utc>) -> String {
+pub(super) fn format_timestamp_medium(value: DateTime<Utc>) -> String {
     value
         .with_timezone(&Local)
         .format("%Y-%m-%d %H:%M %Z")
         .to_string()
 }
 
-fn format_timestamp_short(value: DateTime<Utc>) -> String {
+pub(super) fn format_timestamp_short(value: DateTime<Utc>) -> String {
     value
         .with_timezone(&Local)
         .format("%H:%M:%S %Z")
         .to_string()
 }
 
-fn format_timestamp_timeline(value: DateTime<Utc>) -> String {
+pub(super) fn format_timestamp_timeline(value: DateTime<Utc>) -> String {
     value
         .with_timezone(&Local)
         .format("%m-%d %H:%M %Z")
         .to_string()
 }
 
-fn display_filter(value: &str) -> String {
+pub(super) fn display_filter(value: &str) -> String {
     if value.is_empty() {
         "none".to_string()
     } else {
@@ -7874,7 +7902,7 @@ fn display_filter(value: &str) -> String {
     }
 }
 
-fn format_automation_status(status: &mem_api::AutomationStatus) -> String {
+pub(super) fn format_automation_status(status: &mem_api::AutomationStatus) -> String {
     format!(
         "enabled={} mode={} dirty_files={} last_decision={}",
         status.enabled,
@@ -7890,7 +7918,7 @@ fn format_automation_status(status: &mem_api::AutomationStatus) -> String {
     )
 }
 
-fn split_root_area(area: Rect) -> [Rect; 4] {
+pub(super) fn split_root_area(area: Rect) -> [Rect; 4] {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -7903,7 +7931,7 @@ fn split_root_area(area: Rect) -> [Rect; 4] {
     [chunks[0], chunks[1], chunks[2], chunks[3]]
 }
 
-fn split_memories_area(area: Rect) -> [Rect; 2] {
+pub(super) fn split_memories_area(area: Rect) -> [Rect; 2] {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
@@ -7911,19 +7939,19 @@ fn split_memories_area(area: Rect) -> [Rect; 2] {
     [chunks[0], chunks[1]]
 }
 
-fn current_frame_area() -> Option<Rect> {
+pub(super) fn current_frame_area() -> Option<Rect> {
     let (width, height) = crossterm::terminal::size().ok()?;
     Some(Rect::new(0, 0, width, height))
 }
 
-fn default_frame_area() -> Rect {
+pub(super) fn default_frame_area() -> Rect {
     Rect::new(0, 0, 160, 48)
 }
 
-fn memory_detail_max_scroll(app: &App, frame_area: Rect) -> u16 {
+pub(super) fn memory_detail_max_scroll(app: &App, frame_area: Rect) -> u16 {
     let root = split_root_area(frame_area);
     let detail_area = split_memories_area(root[2])[1];
-    let block = themed_focus_block("Detail", app.memories_focus == MemoriesFocus::Detail);
+    let block = themed_focus_block("Detail", app.memories.memories_focus == MemoriesFocus::Detail);
     let inner = block.inner(detail_area);
     if inner.width == 0 || inner.height == 0 {
         return 0;
@@ -7932,12 +7960,12 @@ fn memory_detail_max_scroll(app: &App, frame_area: Rect) -> u16 {
         .saturating_sub(inner.height as usize) as u16
 }
 
-fn help_max_scroll(tab: TabKind, frame_area: Rect) -> u16 {
+pub(super) fn help_max_scroll(tab: TabKind, frame_area: Rect) -> u16 {
     let root = split_root_area(frame_area);
     help_max_scroll_in_area(tab, root[2])
 }
 
-fn help_max_scroll_in_area(tab: TabKind, area: Rect) -> u16 {
+pub(super) fn help_max_scroll_in_area(tab: TabKind, area: Rect) -> u16 {
     let block = themed_block("Help");
     let inner = block.inner(area);
     if inner.width == 0 || inner.height == 0 {
@@ -7947,11 +7975,11 @@ fn help_max_scroll_in_area(tab: TabKind, area: Rect) -> u16 {
         as u16
 }
 
-fn tab_help_lines(tab: TabKind) -> Vec<Line<'static>> {
+pub(super) fn tab_help_lines(tab: TabKind) -> Vec<Line<'static>> {
     render_markdown_lines(tab_help_markdown(tab))
 }
 
-fn tab_help_markdown(tab: TabKind) -> &'static str {
+pub(super) fn tab_help_markdown(tab: TabKind) -> &'static str {
     match tab {
         TabKind::Memories => {
             r#"# Memories Help
@@ -8221,7 +8249,7 @@ Get back into flow after interruption with checkpoint, current thread, next step
     }
 }
 
-fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
+pub(super) fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
     if width == 0 {
         return 0;
     }
@@ -8239,7 +8267,7 @@ fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
         .sum()
 }
 
-fn accent_span(value: impl Into<String>) -> Span<'static> {
+pub(super) fn accent_span(value: impl Into<String>) -> Span<'static> {
     Span::styled(
         value.into(),
         Style::default()
@@ -8248,7 +8276,7 @@ fn accent_span(value: impl Into<String>) -> Span<'static> {
     )
 }
 
-fn label_span(value: impl Into<String>) -> Span<'static> {
+pub(super) fn label_span(value: impl Into<String>) -> Span<'static> {
     Span::styled(
         value.into(),
         Style::default()
@@ -8257,7 +8285,7 @@ fn label_span(value: impl Into<String>) -> Span<'static> {
     )
 }
 
-fn section_span(value: impl Into<String>) -> Span<'static> {
+pub(super) fn section_span(value: impl Into<String>) -> Span<'static> {
     Span::styled(
         value.into(),
         Style::default()
@@ -8266,7 +8294,7 @@ fn section_span(value: impl Into<String>) -> Span<'static> {
     )
 }
 
-fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
+pub(super) fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
     let (label, color) = match kind {
         ActivityKind::Checkpoint => ("checkpoint", Theme::ACCENT_STRONG),
         ActivityKind::Scan => ("scan", Theme::ACCENT_STRONG),
@@ -8295,7 +8323,7 @@ fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
     )
 }
 
-fn plan_activity_action_span(action: &PlanActivityAction) -> Span<'static> {
+pub(super) fn plan_activity_action_span(action: &PlanActivityAction) -> Span<'static> {
     let (label, color) = match action {
         PlanActivityAction::Started => ("started", Theme::ACCENT_STRONG),
         PlanActivityAction::Synced => ("synced", Theme::ACCENT),
@@ -8308,7 +8336,7 @@ fn plan_activity_action_span(action: &PlanActivityAction) -> Span<'static> {
     )
 }
 
-fn watcher_health_span(health: &WatcherHealth) -> Span<'static> {
+pub(super) fn watcher_health_span(health: &WatcherHealth) -> Span<'static> {
     let (label, color) = match health {
         WatcherHealth::Healthy => ("healthy", Theme::SUCCESS),
         WatcherHealth::Stale => ("stale", Theme::WARNING),
@@ -8321,7 +8349,7 @@ fn watcher_health_span(health: &WatcherHealth) -> Span<'static> {
     )
 }
 
-fn watcher_health_label(health: &WatcherHealth) -> &'static str {
+pub(super) fn watcher_health_label(health: &WatcherHealth) -> &'static str {
     match health {
         WatcherHealth::Healthy => "healthy",
         WatcherHealth::Stale => "stale",
@@ -8330,7 +8358,7 @@ fn watcher_health_label(health: &WatcherHealth) -> &'static str {
     }
 }
 
-fn query_match_span(kind: &QueryMatchKind) -> Span<'static> {
+pub(super) fn query_match_span(kind: &QueryMatchKind) -> Span<'static> {
     let (label, color) = match kind {
         QueryMatchKind::Lexical => ("lexical", Theme::ACCENT_STRONG),
         QueryMatchKind::Semantic => ("semantic", Theme::SUCCESS),
@@ -8342,7 +8370,7 @@ fn query_match_span(kind: &QueryMatchKind) -> Span<'static> {
     )
 }
 
-fn activity_entry_kind_span(item: &ActivityEntry) -> Span<'static> {
+pub(super) fn activity_entry_kind_span(item: &ActivityEntry) -> Span<'static> {
     match item {
         ActivityEntry::Backend(event) => {
             if let Some(ActivityDetails::Plan { action, .. }) = event.details.as_ref() {
@@ -8391,7 +8419,7 @@ fn activity_entry_kind_span(item: &ActivityEntry) -> Span<'static> {
     }
 }
 
-fn status_span(value: &str) -> Span<'static> {
+pub(super) fn status_span(value: &str) -> Span<'static> {
     let color = match value {
         "active" | "ok" | "up" => Theme::SUCCESS,
         "archived" | "unknown" => Theme::WARNING,
@@ -8403,7 +8431,7 @@ fn status_span(value: &str) -> Span<'static> {
     )
 }
 
-fn service_span(value: &str) -> Span<'static> {
+pub(super) fn service_span(value: &str) -> Span<'static> {
     let color = match value {
         "ok" | "up" => Theme::SUCCESS,
         "unknown" => Theme::WARNING,
@@ -8415,7 +8443,7 @@ fn service_span(value: &str) -> Span<'static> {
     )
 }
 
-fn tui_status_label(app: &App) -> &'static str {
+pub(super) fn tui_status_label(app: &App) -> &'static str {
     if app.restart_notice.is_some() {
         return "restart";
     }
@@ -8428,7 +8456,7 @@ fn tui_status_label(app: &App) -> &'static str {
     }
 }
 
-fn tui_status_color(app: &App) -> Color {
+pub(super) fn tui_status_color(app: &App) -> Color {
     if app.restart_notice.is_some() {
         return Theme::DANGER;
     }
@@ -8441,12 +8469,12 @@ fn tui_status_color(app: &App) -> Color {
     }
 }
 
-fn tui_status_detail(app: &App) -> Option<String> {
+pub(super) fn tui_status_detail(app: &App) -> Option<String> {
     let count = error_count(app);
     (count > 0).then(|| format!("{count} error{}", if count == 1 { "" } else { "s" }))
 }
 
-fn service_status_label(app: &App) -> &'static str {
+pub(super) fn service_status_label(app: &App) -> &'static str {
     if !app.health_ok {
         "down"
     } else {
@@ -8470,7 +8498,7 @@ fn service_status_label(app: &App) -> &'static str {
     }
 }
 
-fn service_status_color(app: &App) -> Color {
+pub(super) fn service_status_color(app: &App) -> Color {
     match service_status_label(app) {
         "up" => Theme::SUCCESS,
         "unknown" => Theme::WARNING,
@@ -8479,7 +8507,7 @@ fn service_status_color(app: &App) -> Color {
     }
 }
 
-fn service_status_detail(app: &App) -> Option<String> {
+pub(super) fn service_status_detail(app: &App) -> Option<String> {
     if !app.health_ok {
         return None;
     }
@@ -8498,7 +8526,7 @@ fn service_status_detail(app: &App) -> Option<String> {
     (!parts.is_empty()).then_some(parts.join(", "))
 }
 
-fn manager_status_label(app: &App) -> &'static str {
+pub(super) fn manager_status_label(app: &App) -> &'static str {
     match app.manager_status.as_ref().map(|status| status.state) {
         Some(ManagerState::Active) => "active",
         Some(ManagerState::Installed) => "installed",
@@ -8508,7 +8536,7 @@ fn manager_status_label(app: &App) -> &'static str {
     }
 }
 
-fn manager_status_color(app: &App) -> Color {
+pub(super) fn manager_status_color(app: &App) -> Color {
     match manager_status_label(app) {
         "active" => Theme::SUCCESS,
         "installed" => Theme::WARNING,
@@ -8518,7 +8546,7 @@ fn manager_status_color(app: &App) -> Color {
     }
 }
 
-fn manager_status_detail(app: &App) -> Option<String> {
+pub(super) fn manager_status_detail(app: &App) -> Option<String> {
     let status = app.manager_status.as_ref()?;
     let mut parts = Vec::new();
     if let Some(mode) = status.mode {
@@ -8554,7 +8582,7 @@ fn manager_status_detail(app: &App) -> Option<String> {
     Some(parts.join(", "))
 }
 
-fn watcher_bar_status_label(app: &App) -> &'static str {
+pub(super) fn watcher_bar_status_label(app: &App) -> &'static str {
     if !app.health_ok {
         return "unknown";
     }
@@ -8572,7 +8600,7 @@ fn watcher_bar_status_label(app: &App) -> &'static str {
     }
 }
 
-fn watcher_bar_status_color(app: &App) -> Color {
+pub(super) fn watcher_bar_status_color(app: &App) -> Color {
     match watcher_bar_status_label(app) {
         "ok" => Theme::SUCCESS,
         "none" => Theme::MUTED,
@@ -8582,7 +8610,7 @@ fn watcher_bar_status_color(app: &App) -> Color {
     }
 }
 
-fn watcher_bar_status_detail(app: &App) -> Option<String> {
+pub(super) fn watcher_bar_status_detail(app: &App) -> Option<String> {
     let summary = app.overview.watchers.as_ref()?;
     if summary.unhealthy_count > 0 {
         Some(format!("{} unhealthy", summary.unhealthy_count))
@@ -8593,12 +8621,12 @@ fn watcher_bar_status_detail(app: &App) -> Option<String> {
     }
 }
 
-fn memory_type_span(memory_type: &MemoryType) -> Span<'static> {
+pub(super) fn memory_type_span(memory_type: &MemoryType) -> Span<'static> {
     let label = memory_type.to_string();
     memory_type_span_from_label(&label)
 }
 
-fn memory_type_span_from_label(label: &str) -> Span<'static> {
+pub(super) fn memory_type_span_from_label(label: &str) -> Span<'static> {
     let color = match label {
         "architecture" => Color::Rgb(120, 190, 255),
         "convention" => Color::Rgb(149, 220, 180),
@@ -8620,7 +8648,7 @@ fn memory_type_span_from_label(label: &str) -> Span<'static> {
     )
 }
 
-fn agent_status_span(status: &AgentSessionStatus) -> Span<'static> {
+pub(super) fn agent_status_span(status: &AgentSessionStatus) -> Span<'static> {
     let (label, color) = match status {
         AgentSessionStatus::Working => ("working", Theme::SUCCESS),
         AgentSessionStatus::Waiting => ("waiting", Theme::WARNING),
@@ -8632,7 +8660,7 @@ fn agent_status_span(status: &AgentSessionStatus) -> Span<'static> {
     )
 }
 
-fn context_percent_style(percent: f64) -> Style {
+pub(super) fn context_percent_style(percent: f64) -> Style {
     let color = if percent >= 90.0 {
         Theme::DANGER
     } else if percent >= 70.0 {
@@ -8643,7 +8671,7 @@ fn context_percent_style(percent: f64) -> Style {
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
-fn format_context_percent(percent: f64) -> String {
+pub(super) fn format_context_percent(percent: f64) -> String {
     if percent.is_finite() && percent > 100.0 {
         "100%+".to_string()
     } else {
@@ -8651,7 +8679,7 @@ fn format_context_percent(percent: f64) -> String {
     }
 }
 
-fn normalized_percent(percent: f64) -> f64 {
+pub(super) fn normalized_percent(percent: f64) -> f64 {
     if !percent.is_finite() {
         0.0
     } else {
@@ -8659,19 +8687,19 @@ fn normalized_percent(percent: f64) -> f64 {
     }
 }
 
-fn filled_bar_cells(percent: f64, width: usize) -> usize {
+pub(super) fn filled_bar_cells(percent: f64, width: usize) -> usize {
     let width = width.max(1);
     let normalized = normalized_percent(percent);
     ((normalized / 100.0) * width as f64).round() as usize
 }
 
-fn remaining_bar_cells(percent_used: f64, width: usize) -> usize {
+pub(super) fn remaining_bar_cells(percent_used: f64, width: usize) -> usize {
     let width = width.max(1);
     let remaining = 100.0 - normalized_percent(percent_used);
     ((remaining / 100.0) * width as f64).round() as usize
 }
 
-fn interpolate_theme_color(start: Color, end: Color, factor: f64) -> Color {
+pub(super) fn interpolate_theme_color(start: Color, end: Color, factor: f64) -> Color {
     let factor = factor.clamp(0.0, 1.0);
     match (start, end) {
         (Color::Rgb(sr, sg, sb), Color::Rgb(er, eg, eb)) => {
@@ -8683,7 +8711,7 @@ fn interpolate_theme_color(start: Color, end: Color, factor: f64) -> Color {
     }
 }
 
-fn context_gradient_color(percent: f64) -> Color {
+pub(super) fn context_gradient_color(percent: f64) -> Color {
     interpolate_theme_color(
         Theme::SUCCESS,
         Theme::DANGER,
@@ -8691,7 +8719,7 @@ fn context_gradient_color(percent: f64) -> Color {
     )
 }
 
-fn usage_bar_line(
+pub(super) fn usage_bar_line(
     label: &str,
     percent: f64,
     width: usize,
@@ -8728,7 +8756,7 @@ fn usage_bar_line(
     Line::from(spans)
 }
 
-fn quota_bar_line(
+pub(super) fn quota_bar_line(
     label: &str,
     percent_used: f64,
     width: usize,
@@ -8753,18 +8781,18 @@ fn quota_bar_line(
     Line::from(spans)
 }
 
-fn rate_limit_reset_label(resets_at: Option<u64>) -> Option<String> {
+pub(super) fn rate_limit_reset_label(resets_at: Option<u64>) -> Option<String> {
     resets_at.map(|resets_at| format!("resets {}", format_epoch_reset_time(resets_at)))
 }
 
-fn format_epoch_reset_time(epoch_seconds: u64) -> String {
+pub(super) fn format_epoch_reset_time(epoch_seconds: u64) -> String {
     let Some(timestamp) = DateTime::<Utc>::from_timestamp(epoch_seconds as i64, 0) else {
         return "n/a".to_string();
     };
     format_timestamp_short(timestamp)
 }
 
-fn format_token_count(tokens: u64) -> String {
+pub(super) fn format_token_count(tokens: u64) -> String {
     if tokens >= 1_000_000 {
         format!("{:.1}M", tokens as f64 / 1_000_000.0)
     } else if tokens >= 1_000 {
@@ -8774,7 +8802,7 @@ fn format_token_count(tokens: u64) -> String {
     }
 }
 
-fn agent_task_summary(session: &AgentSession) -> String {
+pub(super) fn agent_task_summary(session: &AgentSession) -> String {
     if let Some(task) = session.current_tasks.first() {
         task.clone()
     } else if !session.initial_prompt.is_empty() {
@@ -8786,7 +8814,7 @@ fn agent_task_summary(session: &AgentSession) -> String {
     }
 }
 
-fn format_agent_child(child: &AgentChildProcess) -> String {
+pub(super) fn format_agent_child(child: &AgentChildProcess) -> String {
     match child.port {
         Some(port) => format!(
             "- {}  {}  {}  :{}",
@@ -8804,7 +8832,7 @@ fn format_agent_child(child: &AgentChildProcess) -> String {
     }
 }
 
-fn format_elapsed_from_started(started_at: u64) -> String {
+pub(super) fn format_elapsed_from_started(started_at: u64) -> String {
     if started_at == 0 {
         return "n/a".to_string();
     }
@@ -8825,7 +8853,7 @@ fn format_elapsed_from_started(started_at: u64) -> String {
     }
 }
 
-fn confidence_style(confidence: f32) -> Style {
+pub(super) fn confidence_style(confidence: f32) -> Style {
     let color = if confidence >= 0.8 {
         Theme::SUCCESS
     } else if confidence >= 0.5 {
@@ -8836,7 +8864,7 @@ fn confidence_style(confidence: f32) -> Style {
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
-fn metric_line<'a>(label: &str, value: Span<'a>) -> Line<'a> {
+pub(super) fn metric_line<'a>(label: &str, value: Span<'a>) -> Line<'a> {
     Line::from(vec![
         Span::styled(
             format!("{label}: "),
@@ -8848,7 +8876,7 @@ fn metric_line<'a>(label: &str, value: Span<'a>) -> Line<'a> {
     ])
 }
 
-fn skill_bundle_status_color(status: SkillBundleStatus) -> Color {
+pub(super) fn skill_bundle_status_color(status: SkillBundleStatus) -> Color {
     match status {
         SkillBundleStatus::Ok => Theme::SUCCESS,
         SkillBundleStatus::Warn => Theme::WARNING,
@@ -8856,7 +8884,7 @@ fn skill_bundle_status_color(status: SkillBundleStatus) -> Color {
     }
 }
 
-fn status_message_style(app: &App) -> Style {
+pub(super) fn status_message_style(app: &App) -> Style {
     let lowered = app.status_message.to_lowercase();
     let color = if lowered.contains("error") || lowered.contains("failed") {
         Theme::DANGER
@@ -8871,11 +8899,11 @@ fn status_message_style(app: &App) -> Style {
     Style::default().fg(color).bg(Theme::PANEL_ALT)
 }
 
-fn should_quit(key: KeyEvent, app: &App) -> bool {
+pub(super) fn should_quit(key: KeyEvent, app: &App) -> bool {
     matches!(app.input_mode, InputMode::Normal) && matches!(key.code, KeyCode::Char('q'))
 }
 
-fn should_attempt_stream_reconnect(
+pub(super) fn should_attempt_stream_reconnect(
     stream_connected: bool,
     stream_connecting: bool,
     last_attempt: Instant,
@@ -8883,7 +8911,7 @@ fn should_attempt_stream_reconnect(
     !stream_connected && !stream_connecting && last_attempt.elapsed() >= Duration::from_secs(1)
 }
 
-fn empty_overview(project: String) -> ProjectOverviewResponse {
+pub(super) fn empty_overview(project: String) -> ProjectOverviewResponse {
     ProjectOverviewResponse {
         project,
         service_status: "unknown".to_string(),
@@ -8922,7 +8950,7 @@ fn empty_overview(project: String) -> ProjectOverviewResponse {
     }
 }
 
-fn load_manager_footer_status(profile: Profile) -> ManagerFooterStatus {
+pub(super) fn load_manager_footer_status(profile: Profile) -> ManagerFooterStatus {
     let unit_installed = manager_unit_path(profile).is_some_and(|path| path.exists());
     let unit_enabled = manager_service_enabled(profile);
     let unit_active = manager_service_running(profile);
@@ -8976,7 +9004,7 @@ fn load_manager_footer_status(profile: Profile) -> ManagerFooterStatus {
     }
 }
 
-fn derive_manager_state(
+pub(super) fn derive_manager_state(
     unit_installed: bool,
     unit_enabled: bool,
     unit_active: bool,
@@ -8994,7 +9022,7 @@ fn derive_manager_state(
     }
 }
 
-fn foreground_manager_process_running(profile: Profile) -> bool {
+pub(super) fn foreground_manager_process_running(profile: Profile) -> bool {
     #[cfg(target_os = "macos")]
     let output = ProcessCommand::new("ps")
         .args(["-ww", "-axo", "pid=,command="])
@@ -9033,7 +9061,7 @@ fn foreground_manager_process_running(profile: Profile) -> bool {
     false
 }
 
-fn command_is_manager_for_profile(command: &str, profile: Profile) -> bool {
+pub(super) fn command_is_manager_for_profile(command: &str, profile: Profile) -> bool {
     if !(command.contains(" watcher manager run")
         || command.ends_with("watcher manager run")
         || command.contains("watcher manager run "))
@@ -9046,7 +9074,7 @@ fn command_is_manager_for_profile(command: &str, profile: Profile) -> bool {
     }
 }
 
-fn command_looks_dev_stack(command: &str) -> bool {
+pub(super) fn command_looks_dev_stack(command: &str) -> bool {
     command.contains("target/debug/memory")
         || command.contains("target/release/memory")
         || command.contains("MEMORY_LAYER_PROFILE=dev")
@@ -9057,7 +9085,7 @@ fn command_looks_dev_stack(command: &str) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn linux_manager_unit_path() -> Option<PathBuf> {
+pub(super) fn linux_manager_unit_path() -> Option<PathBuf> {
     let config_home = std::env::var("XDG_CONFIG_HOME")
         .ok()
         .map(PathBuf::from)
@@ -9074,7 +9102,7 @@ fn linux_manager_unit_path() -> Option<PathBuf> {
     )
 }
 
-fn manager_unit_path(profile: Profile) -> Option<PathBuf> {
+pub(super) fn manager_unit_path(profile: Profile) -> Option<PathBuf> {
     if profile == Profile::Dev {
         return None;
     }
@@ -9090,7 +9118,7 @@ fn manager_unit_path(profile: Profile) -> Option<PathBuf> {
     }
 }
 
-fn load_manager_state_file(profile: Profile) -> Option<ManagerStateFile> {
+pub(super) fn load_manager_state_file(profile: Profile) -> Option<ManagerStateFile> {
     let filename = match profile {
         Profile::Dev => "watcher-manager-state-dev.json",
         Profile::Prod => "watcher-manager-state.json",
@@ -9101,7 +9129,7 @@ fn load_manager_state_file(profile: Profile) -> Option<ManagerStateFile> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn systemctl_user_check(action: &str, unit: &str) -> bool {
+pub(super) fn systemctl_user_check(action: &str, unit: &str) -> bool {
     ProcessCommand::new("systemctl")
         .args(["--user", action, unit])
         .output()
@@ -9109,7 +9137,7 @@ fn systemctl_user_check(action: &str, unit: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn manager_service_enabled(profile: Profile) -> bool {
+pub(super) fn manager_service_enabled(profile: Profile) -> bool {
     if profile == Profile::Dev {
         return false;
     }
@@ -9128,7 +9156,7 @@ fn manager_service_enabled(profile: Profile) -> bool {
     }
 }
 
-fn manager_service_running(profile: Profile) -> bool {
+pub(super) fn manager_service_running(profile: Profile) -> bool {
     if profile == Profile::Dev {
         return false;
     }
@@ -9148,7 +9176,7 @@ fn manager_service_running(profile: Profile) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn launchctl_print_succeeds(label: &str) -> bool {
+pub(super) fn launchctl_print_succeeds(label: &str) -> bool {
     let Ok(output) = ProcessCommand::new("id").arg("-u").output() else {
         return false;
     };
@@ -9164,7 +9192,7 @@ fn launchctl_print_succeeds(label: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn detect_tool_versions(profile: Profile) -> ToolVersions {
+pub(super) fn detect_tool_versions(profile: Profile) -> ToolVersions {
     let version = profile.display_version(env!("CARGO_PKG_VERSION"));
     ToolVersions {
         mem_cli: version.clone(),
@@ -9174,7 +9202,7 @@ fn detect_tool_versions(profile: Profile) -> ToolVersions {
     }
 }
 
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
+pub(super) fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -9182,7 +9210,7 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     Ok(Terminal::new(backend)?)
 }
 
-fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+pub(super) fn restore_terminal(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -9295,12 +9323,12 @@ mod tests {
         app.active_tab = TabKind::Query;
 
         app.open_help_for_active_tab();
-        assert!(app.help_open);
-        assert_eq!(app.help_tab, TabKind::Query);
+        assert!(app.help.help_open);
+        assert_eq!(app.help.help_tab, TabKind::Query);
         assert_eq!(app.active_tab, TabKind::Query);
 
         app.handle_help_key(KeyEvent::from(KeyCode::Char('h')));
-        assert!(!app.help_open);
+        assert!(!app.help.help_open);
         assert_eq!(app.active_tab, TabKind::Query);
     }
 
@@ -9310,14 +9338,14 @@ mod tests {
         app.active_tab = TabKind::Embeddings;
         app.open_help_for_active_tab();
         let frame = ratatui::layout::Rect::new(0, 0, 100, 24);
-        let max_scroll = super::help_max_scroll(app.help_tab, frame);
+        let max_scroll = super::help_max_scroll(app.help.help_tab, frame);
         assert!(max_scroll > 0);
 
         app.scroll_help_in_area(500, frame);
-        assert_eq!(app.help_scroll, max_scroll);
+        assert_eq!(app.help.help_scroll, max_scroll);
 
         app.scroll_help_in_area(-500, frame);
-        assert_eq!(app.help_scroll, 0);
+        assert_eq!(app.help.help_scroll, 0);
     }
 
     #[test]
@@ -9328,8 +9356,8 @@ mod tests {
 
         app.open_help_for_active_tab();
 
-        assert!(app.help_open);
-        assert_eq!(app.help_tab, TabKind::Errors);
+        assert!(app.help.help_open);
+        assert_eq!(app.help.help_tab, TabKind::Errors);
     }
 
     #[test]
@@ -9340,7 +9368,7 @@ mod tests {
         app.open_help_for_active_tab();
 
         assert_eq!(app.active_tab, TabKind::Query);
-        assert_eq!(app.help_tab, TabKind::Query);
+        assert_eq!(app.help.help_tab, TabKind::Query);
     }
 
     #[test]
@@ -9459,12 +9487,12 @@ mod tests {
         let mut app = new_test_app();
         let older = Utc.with_ymd_and_hms(2026, 4, 1, 12, 0, 0).unwrap();
         let newer = Utc.with_ymd_and_hms(2026, 5, 1, 12, 0, 0).unwrap();
-        app.all_memories = vec![
+        app.memories.all_memories = vec![
             test_project_memory_list_item("Implemented work", MemoryType::Implementation, newer),
             test_project_memory_list_item("Older Plan", MemoryType::Plan, older),
             test_project_memory_list_item("Latest Plan", MemoryType::Plan, newer),
         ];
-        app.all_memories[2]
+        app.memories.all_memories[2]
             .tags
             .push("plan-thread:latest-plan".to_string());
 
@@ -9511,9 +9539,9 @@ mod tests {
             Profile::Prod,
             tx,
         );
-        app.query_request_id = 2;
-        app.query_loading = true;
-        app.query_pending_question = Some("newer query".to_string());
+        app.query.query_request_id = 2;
+        app.query.query_loading = true;
+        app.query.query_pending_question = Some("newer query".to_string());
         let request = QueryRequest {
             project: "memory".to_string(),
             query: "older query".to_string(),
@@ -9537,9 +9565,9 @@ mod tests {
             None,
         );
 
-        assert!(app.query_loading);
-        assert_eq!(app.query_pending_question.as_deref(), Some("newer query"));
-        assert!(app.query_error.is_none());
+        assert!(app.query.query_loading);
+        assert_eq!(app.query.query_pending_question.as_deref(), Some("newer query"));
+        assert!(app.query.query_error.is_none());
     }
 
     #[test]
@@ -9558,8 +9586,8 @@ mod tests {
             Profile::Prod,
             tx,
         );
-        app.query_request_id = 1;
-        app.query_loading = true;
+        app.query.query_request_id = 1;
+        app.query.query_loading = true;
         let request = QueryRequest {
             project: "memory".to_string(),
             query: "timing".to_string(),
@@ -9584,16 +9612,16 @@ mod tests {
             None,
         );
 
-        assert!(!app.query_loading);
-        assert_eq!(app.query_roundtrip_timing, Some(timing));
-        assert_eq!(app.query_last_duration_ms, Some(460));
+        assert!(!app.query.query_loading);
+        assert_eq!(app.query.query_roundtrip_timing, Some(timing));
+        assert_eq!(app.query.query_last_duration_ms, Some(460));
     }
 
     #[test]
     fn query_completion_stores_success_snapshot_in_history() {
         let mut app = new_test_app();
-        app.query_request_id = 1;
-        app.query_text = "cached success".to_string();
+        app.query.query_request_id = 1;
+        app.query.query_text = "cached success".to_string();
         app.start_query_history_run("cached success");
         let timing = QueryRoundtripTiming {
             query_api_ms: 210,
@@ -9610,8 +9638,8 @@ mod tests {
             Some(Ok(detail.clone())),
         );
 
-        assert_eq!(app.query_history.len(), 1);
-        let entry = &app.query_history[0];
+        assert_eq!(app.query.query_history.len(), 1);
+        let entry = &app.query.query_history[0];
         assert_eq!(entry.question, "cached success");
         assert!(entry.response.is_some());
         assert!(entry.error.is_none());
@@ -9634,7 +9662,7 @@ mod tests {
             initial_detail_ms: Some(20),
             ui_ready_ms: 235,
         };
-        app.query_history.push(QueryHistoryEntry {
+        app.query.query_history.push(QueryHistoryEntry {
             question: "cached success".to_string(),
             response: Some(test_query_response_with_timings()),
             error: None,
@@ -9648,13 +9676,13 @@ mod tests {
         app.apply_query_history_delta(&mut buffer, -1);
 
         assert_eq!(buffer, "cached success");
-        assert_eq!(app.query_text, "cached success");
-        assert!(app.query_response.is_some());
-        assert!(app.query_error.is_none());
-        assert_eq!(app.query_roundtrip_timing, Some(timing));
-        assert_eq!(app.query_table_state.selected(), Some(0));
+        assert_eq!(app.query.query_text, "cached success");
+        assert!(app.query.query_response.is_some());
+        assert!(app.query.query_error.is_none());
+        assert_eq!(app.query.query_roundtrip_timing, Some(timing));
+        assert_eq!(app.query.query_table_state.selected(), Some(0));
         assert_eq!(
-            app.query_selected_detail
+            app.query.query_selected_detail
                 .as_ref()
                 .map(|detail| detail.canonical_text.as_str()),
             Some("Restored canonical detail")
@@ -9670,7 +9698,7 @@ mod tests {
             initial_detail_ms: None,
             ui_ready_ms: 90,
         };
-        app.query_history.push(QueryHistoryEntry {
+        app.query.query_history.push(QueryHistoryEntry {
             question: "broken query".to_string(),
             response: None,
             error: Some("provider unavailable".to_string()),
@@ -9678,24 +9706,24 @@ mod tests {
             initial_detail: Some(test_memory_detail("stale detail should not show")),
             running: false,
         });
-        app.query_response = Some(test_query_response_with_timings());
+        app.query.query_response = Some(test_query_response_with_timings());
 
         let mut buffer = String::new();
         app.apply_query_history_delta(&mut buffer, -1);
 
         assert_eq!(buffer, "broken query");
-        assert!(app.query_response.is_none());
-        assert_eq!(app.query_error.as_deref(), Some("provider unavailable"));
-        assert_eq!(app.query_roundtrip_timing, Some(timing));
-        assert!(app.query_selected_detail.is_none());
-        assert_eq!(app.query_table_state.selected(), None);
+        assert!(app.query.query_response.is_none());
+        assert_eq!(app.query.query_error.as_deref(), Some("provider unavailable"));
+        assert_eq!(app.query.query_roundtrip_timing, Some(timing));
+        assert!(app.query.query_selected_detail.is_none());
+        assert_eq!(app.query.query_table_state.selected(), None);
         assert!(app.status_message.contains("with cached error"));
     }
 
     #[test]
     fn query_history_down_to_empty_clears_visible_results() {
         let mut app = new_test_app();
-        app.query_history.push(QueryHistoryEntry {
+        app.query.query_history.push(QueryHistoryEntry {
             question: "cached success".to_string(),
             response: Some(test_query_response_with_timings()),
             error: None,
@@ -9709,16 +9737,16 @@ mod tests {
         });
         let mut buffer = String::new();
         app.apply_query_history_delta(&mut buffer, -1);
-        assert!(app.query_response.is_some());
+        assert!(app.query.query_response.is_some());
 
         app.apply_query_history_delta(&mut buffer, 1);
 
         assert_eq!(buffer, "");
-        assert!(app.query_response.is_none());
-        assert!(app.query_error.is_none());
-        assert!(app.query_roundtrip_timing.is_none());
-        assert!(app.query_selected_detail.is_none());
-        assert_eq!(app.query_table_state.selected(), None);
+        assert!(app.query.query_response.is_none());
+        assert!(app.query.query_error.is_none());
+        assert!(app.query.query_roundtrip_timing.is_none());
+        assert!(app.query.query_selected_detail.is_none());
+        assert_eq!(app.query.query_table_state.selected(), None);
     }
 
     #[test]
@@ -9737,15 +9765,15 @@ mod tests {
             Profile::Prod,
             tx,
         );
-        app.query_text = "   ".to_string();
-        app.query_loading = true;
+        app.query.query_text = "   ".to_string();
+        app.query.query_loading = true;
 
         assert!(app.clear_empty_query_if_needed());
 
-        assert!(!app.query_loading);
+        assert!(!app.query.query_loading);
         assert_eq!(app.status_message, "Enter a query before running search.");
-        assert!(app.query_response.is_none());
-        assert!(app.query_error.is_none());
+        assert!(app.query.query_response.is_none());
+        assert!(app.query.query_error.is_none());
     }
 
     #[test]
@@ -9765,13 +9793,13 @@ mod tests {
             tx,
         );
 
-        app.query_text = "previous visible query".to_string();
+        app.query.query_text = "previous visible query".to_string();
         app.start_query_input();
         assert_eq!(current_query_display(&app), "");
 
-        app.query_text = "first query".to_string();
+        app.query.query_text = "first query".to_string();
         app.remember_query_history_entry();
-        app.query_text = "second query".to_string();
+        app.query.query_text = "second query".to_string();
         app.remember_query_history_entry();
 
         let mut buffer = String::new();
@@ -9933,10 +9961,10 @@ mod tests {
         });
 
         assert!(loaded);
-        assert_eq!(app.selected_index, 0);
-        assert_eq!(app.table_state.selected(), Some(0));
+        assert_eq!(app.memories.selected_index, 0);
+        assert_eq!(app.memories.table_state.selected(), Some(0));
         assert_eq!(
-            app.filtered_memories.first().map(|item| item.id),
+            app.memories.filtered_memories.first().map(|item| item.id),
             Some(first_id)
         );
     }
@@ -10238,8 +10266,8 @@ mod tests {
             snapshot: Ok(snapshot),
         });
 
-        assert_eq!(app.agent_selected_index, 1);
-        assert_eq!(app.agent_table_state.selected(), Some(1));
+        assert_eq!(app.agents.agent_selected_index, 1);
+        assert_eq!(app.agents.agent_table_state.selected(), Some(1));
     }
 
     #[test]
@@ -10272,8 +10300,8 @@ mod tests {
             snapshot: Ok(snapshot),
         });
 
-        assert_eq!(app.agent_selected_index, 0);
-        assert_eq!(app.agent_table_state.selected(), Some(0));
+        assert_eq!(app.agents.agent_selected_index, 0);
+        assert_eq!(app.agents.agent_table_state.selected(), Some(0));
     }
 
     #[test]
@@ -10339,15 +10367,15 @@ mod tests {
         app.record_backend_activity(event.clone());
         app.record_backend_activity(event);
 
-        assert_eq!(app.activity_events.len(), 1);
-        assert_eq!(activity_tokens(&app.activity_events[0]), "1.4k");
-        assert_eq!(activity_duration(&app.activity_events[0]), "42");
+        assert_eq!(app.activity.activity_events.len(), 1);
+        assert_eq!(activity_tokens(&app.activity.activity_events[0]), "1.4k");
+        assert_eq!(activity_duration(&app.activity.activity_events[0]), "42");
     }
 
     #[test]
     fn llm_audit_status_lines_render_current_state() {
         let mut app = new_test_app();
-        app.llm_audit_status = Some(LlmAuditStatusResponse {
+        app.activity.llm_audit_status = Some(LlmAuditStatusResponse {
             enabled: true,
             redacted: true,
             max_message_chars: 8000,
@@ -10390,10 +10418,10 @@ mod tests {
             }),
         });
 
-        assert!(!app.llm_audit_toggling);
-        assert!(app.llm_audit_error.is_none());
+        assert!(!app.activity.llm_audit_toggling);
+        assert!(app.activity.llm_audit_error.is_none());
         assert!(
-            app.llm_audit_status
+            app.activity.llm_audit_status
                 .as_ref()
                 .is_some_and(|status| status.enabled)
         );
@@ -10683,7 +10711,7 @@ mod tests {
             Profile::Prod,
             tx,
         );
-        app.selected_detail = Some(test_memory_detail(
+        app.memories.selected_detail = Some(test_memory_detail(
             "# Canonical\n\n- [ ] readable\n\n```text\nblock\n```",
         ));
 
@@ -10733,7 +10761,7 @@ mod tests {
                 last_updated: None,
             },
         ];
-        app.selected_detail = Some(detail);
+        app.memories.selected_detail = Some(detail);
 
         let rendered = build_memory_detail_lines(&app)
             .iter()
@@ -10770,7 +10798,7 @@ mod tests {
             Profile::Prod,
             tx,
         );
-        app.selected_detail = Some(test_memory_detail("body text"));
+        app.memories.selected_detail = Some(test_memory_detail("body text"));
 
         let lines = build_memory_detail_lines(&app);
         let rendered = lines.iter().map(ToString::to_string).collect::<Vec<_>>();
@@ -10804,7 +10832,7 @@ mod tests {
             Profile::Prod,
             tx,
         );
-        app.selected_detail = Some(test_memory_detail("body"));
+        app.memories.selected_detail = Some(test_memory_detail("body"));
 
         let rendered = build_memory_detail_lines(&app)
             .iter()
@@ -10867,28 +10895,28 @@ mod tests {
     #[test]
     fn embeddings_loaded_event_populates_snapshot_and_clamps_selection() {
         let mut app = new_test_app();
-        app.embeddings_selected_index = 5; // out of range
+        app.embeddings.embeddings_selected_index = 5; // out of range
         app.apply_background_event(BackgroundEvent::EmbeddingBackendsLoaded {
             snapshot: Ok(embeddings_test_response()),
         });
-        let snapshot = app.embedding_backends_snapshot.as_ref().expect("loaded");
+        let snapshot = app.embeddings.embedding_backends_snapshot.as_ref().expect("loaded");
         assert_eq!(snapshot.backends.len(), 2);
-        assert_eq!(app.embeddings_selected_index, 1);
-        assert_eq!(app.embeddings_table_state.selected(), Some(1));
-        assert!(app.embedding_backends_error.is_none());
+        assert_eq!(app.embeddings.embeddings_selected_index, 1);
+        assert_eq!(app.embeddings.embeddings_table_state.selected(), Some(1));
+        assert!(app.embeddings.embedding_backends_error.is_none());
     }
 
     #[test]
     fn embeddings_loaded_event_selects_active_backend() {
         let mut app = new_test_app();
-        app.embeddings_selected_index = 0;
+        app.embeddings.embeddings_selected_index = 0;
 
         app.apply_background_event(BackgroundEvent::EmbeddingBackendsLoaded {
             snapshot: Ok(embeddings_test_response()),
         });
 
-        assert_eq!(app.embeddings_selected_index, 1);
-        assert_eq!(app.embeddings_table_state.selected(), Some(1));
+        assert_eq!(app.embeddings.embeddings_selected_index, 1);
+        assert_eq!(app.embeddings.embeddings_table_state.selected(), Some(1));
         assert_eq!(
             app.selected_embedding_backend_name().as_deref(),
             Some("voyage-code")
@@ -10901,17 +10929,17 @@ mod tests {
         app.apply_background_event(BackgroundEvent::EmbeddingBackendsLoaded {
             snapshot: Ok(embeddings_test_response()),
         });
-        app.embeddings_selected_index = 0;
+        app.embeddings.embeddings_selected_index = 0;
         app.move_embeddings_selection(1);
-        assert_eq!(app.embeddings_selected_index, 1);
+        assert_eq!(app.embeddings.embeddings_selected_index, 1);
         assert_eq!(
             app.selected_embedding_backend_name().as_deref(),
             Some("voyage-code")
         );
         app.move_embeddings_selection(1);
-        assert_eq!(app.embeddings_selected_index, 0);
+        assert_eq!(app.embeddings.embeddings_selected_index, 0);
         app.move_embeddings_selection(-1);
-        assert_eq!(app.embeddings_selected_index, 1);
+        assert_eq!(app.embeddings.embeddings_selected_index, 1);
     }
 
     #[test]
@@ -10921,7 +10949,7 @@ mod tests {
         app.apply_background_event(BackgroundEvent::EmbeddingBackendsLoaded {
             snapshot: Ok(embeddings_test_response()),
         });
-        app.embeddings_toggling = Some("openai-3-small".to_string());
+        app.embeddings.embeddings_toggling = Some("openai-3-small".to_string());
 
         // Simulate the activate POST returning a response where openai is now active.
         let mut response = embeddings_test_response();
@@ -10933,13 +10961,13 @@ mod tests {
             result: Ok(response),
         });
 
-        assert_eq!(app.embeddings_toggling, None);
+        assert_eq!(app.embeddings.embeddings_toggling, None);
         assert_eq!(
-            app.embeddings_toggle_message.as_deref(),
+            app.embeddings.embeddings_toggle_message.as_deref(),
             Some("Activated openai-3-small")
         );
         assert_eq!(
-            app.embedding_backends_snapshot
+            app.embeddings.embedding_backends_snapshot
                 .as_ref()
                 .and_then(|s| s.active.as_deref()),
             Some("openai-3-small")
@@ -10949,7 +10977,7 @@ mod tests {
     #[test]
     fn embedding_backend_toggle_off_sets_success_message() {
         let mut app = new_test_app();
-        app.embeddings_toggling = Some("turning off voyage-code".to_string());
+        app.embeddings.embeddings_toggling = Some("turning off voyage-code".to_string());
         let mut response = embeddings_test_response();
         response.active = None;
         response.backends[1].active = false;
@@ -10959,13 +10987,13 @@ mod tests {
             result: Ok(response),
         });
 
-        assert_eq!(app.embeddings_toggling, None);
+        assert_eq!(app.embeddings.embeddings_toggling, None);
         assert_eq!(
-            app.embeddings_toggle_message.as_deref(),
+            app.embeddings.embeddings_toggle_message.as_deref(),
             Some("Embeddings off")
         );
         assert_eq!(
-            app.embedding_backends_snapshot
+            app.embeddings.embedding_backends_snapshot
                 .as_ref()
                 .and_then(|s| s.active.as_deref()),
             None
@@ -10975,7 +11003,7 @@ mod tests {
     #[test]
     fn embedding_creation_toggle_updates_snapshot_and_status() {
         let mut app = new_test_app();
-        app.embeddings_creation_toggling = true;
+        app.embeddings.embeddings_creation_toggling = true;
         let mut response = embeddings_test_response();
         response.backends[1].create_enabled = false;
 
@@ -10985,13 +11013,13 @@ mod tests {
             result: Ok(response),
         });
 
-        assert!(!app.embeddings_creation_toggling);
+        assert!(!app.embeddings.embeddings_creation_toggling);
         assert_eq!(
-            app.embeddings_toggle_message.as_deref(),
+            app.embeddings.embeddings_toggle_message.as_deref(),
             Some("Automatic embedding creation off for voyage-code")
         );
         assert_eq!(
-            app.embedding_backends_snapshot
+            app.embeddings.embedding_backends_snapshot
                 .as_ref()
                 .and_then(|snapshot| snapshot.backends.get(1))
                 .map(|backend| backend.create_enabled),
@@ -11002,8 +11030,8 @@ mod tests {
     #[test]
     fn embedding_reembed_completion_updates_snapshot_and_status() {
         let mut app = new_test_app();
-        app.embeddings_selected_index = 0;
-        app.embeddings_operation = Some("creating embeddings for openai-3-small".to_string());
+        app.embeddings.embeddings_selected_index = 0;
+        app.embeddings.embeddings_operation = Some("creating embeddings for openai-3-small".to_string());
         let mut snapshot = embeddings_test_response();
         snapshot.backends[0].project_chunk_count = Some(18);
 
@@ -11018,14 +11046,14 @@ mod tests {
             )),
         });
 
-        assert_eq!(app.embeddings_operation, None);
+        assert_eq!(app.embeddings.embeddings_operation, None);
         assert_eq!(
-            app.embeddings_toggle_message.as_deref(),
+            app.embeddings.embeddings_toggle_message.as_deref(),
             Some("Created 6 chunk embedding(s) for openai-3-small")
         );
-        assert_eq!(app.embeddings_selected_index, 0);
+        assert_eq!(app.embeddings.embeddings_selected_index, 0);
         assert_eq!(
-            app.embedding_backends_snapshot
+            app.embeddings.embedding_backends_snapshot
                 .as_ref()
                 .and_then(|snapshot| snapshot.backends.first())
                 .and_then(|backend| backend.project_chunk_count),
@@ -11036,8 +11064,8 @@ mod tests {
     #[test]
     fn embedding_reindex_completion_updates_snapshot_and_status() {
         let mut app = new_test_app();
-        app.embeddings_selected_index = 1;
-        app.embeddings_operation = Some("reindexing all backends".to_string());
+        app.embeddings.embeddings_selected_index = 1;
+        app.embeddings.embeddings_operation = Some("reindexing all backends".to_string());
         let mut snapshot = embeddings_test_response();
         snapshot.backends[1].project_chunk_count = Some(20);
 
@@ -11052,14 +11080,14 @@ mod tests {
             )),
         });
 
-        assert_eq!(app.embeddings_operation, None);
+        assert_eq!(app.embeddings.embeddings_operation, None);
         assert_eq!(
-            app.embeddings_toggle_message.as_deref(),
+            app.embeddings.embeddings_toggle_message.as_deref(),
             Some("Reindexed 4 memory entries for all backends")
         );
-        assert_eq!(app.embeddings_selected_index, 1);
+        assert_eq!(app.embeddings.embeddings_selected_index, 1);
         assert_eq!(
-            app.embedding_backends_snapshot
+            app.embeddings.embedding_backends_snapshot
                 .as_ref()
                 .and_then(|snapshot| snapshot.backends.get(1))
                 .and_then(|backend| backend.project_chunk_count),
@@ -11070,16 +11098,16 @@ mod tests {
     #[test]
     fn embedding_reembed_failure_shows_error_message() {
         let mut app = new_test_app();
-        app.embeddings_operation = Some("creating embeddings for broken".to_string());
+        app.embeddings.embeddings_operation = Some("creating embeddings for broken".to_string());
 
         app.apply_background_event(BackgroundEvent::EmbeddingReembedCompleted {
             name: "broken".to_string(),
             result: Err("provider unavailable".to_string()),
         });
 
-        assert_eq!(app.embeddings_operation, None);
+        assert_eq!(app.embeddings.embeddings_operation, None);
         assert_eq!(
-            app.embeddings_toggle_message.as_deref(),
+            app.embeddings.embeddings_toggle_message.as_deref(),
             Some("Embedding creation failed for broken: provider unavailable")
         );
     }
@@ -11087,13 +11115,13 @@ mod tests {
     #[test]
     fn embedding_backend_toggle_failure_shows_error_message() {
         let mut app = new_test_app();
-        app.embeddings_toggling = Some("broken".to_string());
+        app.embeddings.embeddings_toggling = Some("broken".to_string());
         app.apply_background_event(BackgroundEvent::EmbeddingBackendToggled {
             name: "broken".to_string(),
             result: Err("400 unknown backend".to_string()),
         });
-        assert_eq!(app.embeddings_toggling, None);
-        let msg = app.embeddings_toggle_message.as_deref().unwrap_or("");
+        assert_eq!(app.embeddings.embeddings_toggling, None);
+        let msg = app.embeddings.embeddings_toggle_message.as_deref().unwrap_or("");
         assert!(msg.starts_with("Toggle failed:"));
         assert!(msg.contains("400 unknown backend"));
     }
@@ -11114,13 +11142,13 @@ mod tests {
             Profile::Prod,
             tx,
         );
-        app.selected_detail = Some(test_memory_detail("detail"));
+        app.memories.selected_detail = Some(test_memory_detail("detail"));
 
-        assert_eq!(app.memories_focus, MemoriesFocus::List);
+        assert_eq!(app.memories.memories_focus, MemoriesFocus::List);
         app.toggle_memories_focus();
-        assert_eq!(app.memories_focus, MemoriesFocus::Detail);
+        assert_eq!(app.memories.memories_focus, MemoriesFocus::Detail);
         app.focus_memories_list();
-        assert_eq!(app.memories_focus, MemoriesFocus::List);
+        assert_eq!(app.memories.memories_focus, MemoriesFocus::List);
     }
 
     #[test]
@@ -11143,16 +11171,16 @@ mod tests {
             .map(|idx| format!("- [x] item {idx} with enough text to wrap in the detail pane"))
             .collect::<Vec<_>>()
             .join("\n");
-        app.selected_detail = Some(test_memory_detail(&canonical));
+        app.memories.selected_detail = Some(test_memory_detail(&canonical));
         let frame = ratatui::layout::Rect::new(0, 0, 100, 24);
 
         let max_scroll = memory_detail_max_scroll(&app, frame);
         assert!(max_scroll > 0);
 
         app.scroll_memory_detail_in_area(500, frame);
-        assert_eq!(app.memory_detail_scroll, max_scroll);
+        assert_eq!(app.memories.memory_detail_scroll, max_scroll);
 
         app.scroll_memory_detail_in_area(-500, frame);
-        assert_eq!(app.memory_detail_scroll, 0);
+        assert_eq!(app.memories.memory_detail_scroll, 0);
     }
 }
