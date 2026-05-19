@@ -17,7 +17,7 @@ use mem_platform::preferred_user_state_dir;
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 pub(super) fn should_quit(key: KeyEvent, app: &App) -> bool {
-    matches!(app.input_mode, InputMode::Normal) && matches!(key.code, KeyCode::Char('q'))
+    matches!(app.chrome.input_mode, InputMode::Normal) && matches!(key.code, KeyCode::Char('q'))
 }
 
 pub(super) fn should_attempt_stream_reconnect(

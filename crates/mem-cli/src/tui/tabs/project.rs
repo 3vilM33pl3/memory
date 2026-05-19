@@ -21,7 +21,7 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
     let summary = Paragraph::new(vec![
         metric_line(
             "Project",
-            Span::styled(&app.overview.project, Style::default().fg(Theme::TEXT)),
+            Span::styled(&app.meta.overview.project, Style::default().fg(Theme::TEXT)),
         ),
         metric_line(
             "Latest plan",
@@ -29,19 +29,19 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
         ),
         Line::from(vec![
             label_span("Service: "),
-            service_span(&app.overview.service_status),
+            service_span(&app.meta.overview.service_status),
             Span::raw("   "),
             label_span("Database: "),
-            service_span(&app.overview.database_status),
+            service_span(&app.meta.overview.database_status),
         ]),
         Line::from(vec![
             label_span("Memories: "),
             Span::styled(
                 format!(
                     "{} total / {} active / {} archived",
-                    app.overview.memory_entries_total,
-                    app.overview.active_memories,
-                    app.overview.archived_memories
+                    app.meta.overview.memory_entries_total,
+                    app.meta.overview.active_memories,
+                    app.meta.overview.archived_memories
                 ),
                 Style::default().fg(Theme::TEXT),
             ),
@@ -51,9 +51,9 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
             Span::styled(
                 format!(
                     "{} high / {} medium / {} low",
-                    app.overview.high_confidence_memories,
-                    app.overview.medium_confidence_memories,
-                    app.overview.low_confidence_memories
+                    app.meta.overview.high_confidence_memories,
+                    app.meta.overview.medium_confidence_memories,
+                    app.meta.overview.low_confidence_memories
                 ),
                 Style::default().fg(Theme::TEXT),
             ),
@@ -63,7 +63,7 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
             Span::styled(
                 format!(
                     "{} memories / {} captures",
-                    app.overview.recent_memories_7d, app.overview.recent_captures_7d
+                    app.meta.overview.recent_memories_7d, app.meta.overview.recent_captures_7d
                 ),
                 Style::default().fg(Theme::TEXT),
             ),
@@ -73,7 +73,7 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
             Span::styled(
                 format!(
                     "{} total / {} uncurated",
-                    app.overview.raw_captures_total, app.overview.uncurated_raw_captures
+                    app.meta.overview.raw_captures_total, app.meta.overview.uncurated_raw_captures
                 ),
                 Style::default().fg(Theme::TEXT),
             ),
@@ -83,9 +83,9 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
             Span::styled(
                 format!(
                     "{} / {} / {}",
-                    app.overview.tasks_total,
-                    app.overview.sessions_total,
-                    app.overview.curation_runs_total
+                    app.meta.overview.tasks_total,
+                    app.meta.overview.sessions_total,
+                    app.meta.overview.curation_runs_total
                 ),
                 Style::default().fg(Theme::TEXT),
             ),
@@ -95,8 +95,8 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
             Span::styled(
                 format!(
                     "{} / {}",
-                    format_timestamp(app.overview.last_memory_at),
-                    format_timestamp(app.overview.last_curation_at)
+                    format_timestamp(app.meta.overview.last_memory_at),
+                    format_timestamp(app.meta.overview.last_curation_at)
                 ),
                 Style::default().fg(Theme::TEXT),
             ),
@@ -106,8 +106,9 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
             Span::styled(
                 format!(
                     "{} / {}",
-                    format_timestamp(app.overview.last_capture_at),
-                    app.overview
+                    format_timestamp(app.meta.overview.last_capture_at),
+                    app.meta
+                        .overview
                         .oldest_uncurated_capture_age_hours
                         .map(|hours| format!("{hours}h"))
                         .unwrap_or_else(|| "n/a".to_string())
@@ -120,7 +121,9 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
             Span::styled(
                 format!(
                     "memory {} / service {} / watcher {}",
-                    app.versions.mem_cli, app.versions.mem_service, app.versions.memory_watch
+                    app.meta.versions.mem_cli,
+                    app.meta.versions.mem_service,
+                    app.meta.versions.memory_watch
                 ),
                 Style::default().fg(Theme::TEXT),
             ),
@@ -130,17 +133,18 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
             Span::styled(
                 format!(
                     "v{} {} ({})",
-                    app.skill_inventory.bundle_version,
-                    app.skill_inventory.status.label(),
-                    app.skill_inventory.summary
+                    app.meta.skill_inventory.bundle_version,
+                    app.meta.skill_inventory.status.label(),
+                    app.meta.skill_inventory.summary
                 ),
-                Style::default().fg(skill_bundle_status_color(app.skill_inventory.status)),
+                Style::default().fg(skill_bundle_status_color(app.meta.skill_inventory.status)),
             ),
         ),
         metric_line(
             "Automation",
             Span::styled(
-                app.overview
+                app.meta
+                    .overview
                     .automation
                     .as_ref()
                     .map(format_automation_status)
@@ -157,7 +161,7 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
             Span::styled(
                 format!(
                     "{} / {} pending (see Review tab)",
-                    app.review.replacement_policy, app.overview.pending_replacement_proposals
+                    app.review.replacement_policy, app.meta.overview.pending_replacement_proposals
                 ),
                 Style::default().fg(Theme::TEXT),
             ),
@@ -182,7 +186,8 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
 
     frame.render_widget(
         Paragraph::new(lines_for_named_counts(
-            app.overview
+            app.meta
+                .overview
                 .memory_type_breakdown
                 .iter()
                 .map(|item| (item.memory_type.to_string(), item.count))
@@ -195,7 +200,8 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
     );
     frame.render_widget(
         Paragraph::new(lines_for_named_counts(
-            app.overview
+            app.meta
+                .overview
                 .source_kind_breakdown
                 .iter()
                 .map(|item| {
@@ -213,7 +219,8 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
     );
     frame.render_widget(
         Paragraph::new(lines_for_named_counts(
-            app.overview
+            app.meta
+                .overview
                 .top_tags
                 .iter()
                 .map(|item| (item.name.clone(), item.count))
@@ -237,7 +244,8 @@ pub(in crate::tui) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App
 
     frame.render_widget(
         Paragraph::new(lines_for_named_counts(
-            app.overview
+            app.meta
+                .overview
                 .top_files
                 .iter()
                 .map(|item| (item.name.clone(), item.count))

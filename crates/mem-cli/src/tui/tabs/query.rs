@@ -17,7 +17,7 @@ pub(in crate::tui) fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, 
             Constraint::Min(12),
         ])
         .split(area);
-    let query_editing = matches!(app.input_mode, InputMode::Query(_));
+    let query_editing = matches!(app.chrome.input_mode, InputMode::Query(_));
     let query_input_area = chunks[0];
     let query_inner_width = query_input_area.width.saturating_sub(2);
     let query_input = query_input_display(&current_query_display(app), query_inner_width);

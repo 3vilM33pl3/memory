@@ -25,6 +25,9 @@ pub(super) struct App {
     pub(in crate::tui) project: String,
     pub(in crate::tui) repo_root: PathBuf,
     pub(in crate::tui) active_tab: TabKind,
+    pub(in crate::tui) service: ServiceState,
+    pub(in crate::tui) chrome: UiChrome,
+    pub(in crate::tui) meta: RuntimeMeta,
     pub(in crate::tui) memories: MemoriesTabState,
     pub(in crate::tui) query: QueryTabState,
     pub(in crate::tui) agents: AgentsTabState,
@@ -35,13 +38,11 @@ pub(super) struct App {
     pub(in crate::tui) review: ReviewTabState,
     pub(in crate::tui) watchers: WatchersTabState,
     pub(in crate::tui) embeddings: EmbeddingsTabState,
-    pub(in crate::tui) overview: ProjectOverviewResponse,
-    pub(in crate::tui) help: HelpState,
-    pub(in crate::tui) versions: ToolVersions,
-    pub(in crate::tui) skill_inventory: SkillInventoryReport,
-    pub(in crate::tui) startup_at: DateTime<Utc>,
-    pub(in crate::tui) ui_status: UiStatus,
-    pub(in crate::tui) status_message: String,
+    pub(in crate::tui) filters: Filters,
+    pub(in crate::tui) background_tx: mpsc::UnboundedSender<BackgroundEvent>,
+}
+
+pub(super) struct ServiceState {
     pub(in crate::tui) health_ok: bool,
     pub(in crate::tui) backend_connection_state: BackendConnectionState,
     pub(in crate::tui) service_role: Option<String>,
@@ -51,11 +52,22 @@ pub(super) struct App {
     pub(in crate::tui) restart_notice: Option<TuiRestartNotice>,
     pub(in crate::tui) stream_connecting: bool,
     pub(in crate::tui) relay_discovery_enabled: bool,
-    pub(in crate::tui) profile: Profile,
-    pub(in crate::tui) filters: Filters,
+}
+
+pub(super) struct UiChrome {
+    pub(in crate::tui) help: HelpState,
+    pub(in crate::tui) ui_status: UiStatus,
+    pub(in crate::tui) status_message: String,
     pub(in crate::tui) input_mode: InputMode,
-    pub(in crate::tui) background_tx: mpsc::UnboundedSender<BackgroundEvent>,
     pub(in crate::tui) needs_redraw: bool,
+}
+
+pub(super) struct RuntimeMeta {
+    pub(in crate::tui) overview: ProjectOverviewResponse,
+    pub(in crate::tui) versions: ToolVersions,
+    pub(in crate::tui) skill_inventory: SkillInventoryReport,
+    pub(in crate::tui) startup_at: DateTime<Utc>,
+    pub(in crate::tui) profile: Profile,
 }
 
 pub(super) struct MemoriesTabState {

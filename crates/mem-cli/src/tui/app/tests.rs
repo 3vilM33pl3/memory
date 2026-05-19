@@ -101,12 +101,12 @@ fn help_open_and_close_preserve_active_tab() {
     app.active_tab = TabKind::Query;
 
     app.open_help_for_active_tab();
-    assert!(app.help.help_open);
-    assert_eq!(app.help.help_tab, TabKind::Query);
+    assert!(app.chrome.help.help_open);
+    assert_eq!(app.chrome.help.help_tab, TabKind::Query);
     assert_eq!(app.active_tab, TabKind::Query);
 
     app.handle_help_key(KeyEvent::from(KeyCode::Char('h')));
-    assert!(!app.help.help_open);
+    assert!(!app.chrome.help.help_open);
     assert_eq!(app.active_tab, TabKind::Query);
 }
 
@@ -116,26 +116,26 @@ fn help_scroll_is_clamped_to_rendered_content() {
     app.active_tab = TabKind::Embeddings;
     app.open_help_for_active_tab();
     let frame = ratatui::layout::Rect::new(0, 0, 100, 24);
-    let max_scroll = super::help_max_scroll(app.help.help_tab, frame);
+    let max_scroll = super::help_max_scroll(app.chrome.help.help_tab, frame);
     assert!(max_scroll > 0);
 
     app.scroll_help_in_area(500, frame);
-    assert_eq!(app.help.help_scroll, max_scroll);
+    assert_eq!(app.chrome.help.help_scroll, max_scroll);
 
     app.scroll_help_in_area(-500, frame);
-    assert_eq!(app.help.help_scroll, 0);
+    assert_eq!(app.chrome.help.help_scroll, 0);
 }
 
 #[test]
 fn help_can_open_when_backend_is_unavailable() {
     let mut app = new_test_app();
-    app.health_ok = false;
+    app.service.health_ok = false;
     app.active_tab = TabKind::Errors;
 
     app.open_help_for_active_tab();
 
-    assert!(app.help.help_open);
-    assert_eq!(app.help.help_tab, TabKind::Errors);
+    assert!(app.chrome.help.help_open);
+    assert_eq!(app.chrome.help.help_tab, TabKind::Errors);
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn h_is_no_longer_previous_tab_alias() {
     app.open_help_for_active_tab();
 
     assert_eq!(app.active_tab, TabKind::Query);
-    assert_eq!(app.help.help_tab, TabKind::Query);
+    assert_eq!(app.chrome.help.help_tab, TabKind::Query);
 }
 
 #[test]
@@ -469,7 +469,7 @@ fn query_history_up_restores_cached_success_results() {
             .map(|detail| detail.canonical_text.as_str()),
         Some("Restored canonical detail")
     );
-    assert!(app.status_message.contains("with cached results"));
+    assert!(app.chrome.status_message.contains("with cached results"));
 }
 
 #[test]
@@ -502,7 +502,7 @@ fn query_history_up_restores_cached_error() {
     assert_eq!(app.query.query_roundtrip_timing, Some(timing));
     assert!(app.query.query_selected_detail.is_none());
     assert_eq!(app.query.query_table_state.selected(), None);
-    assert!(app.status_message.contains("with cached error"));
+    assert!(app.chrome.status_message.contains("with cached error"));
 }
 
 #[test]
@@ -556,7 +556,10 @@ fn empty_query_submit_clears_results_and_prompts_for_question() {
     assert!(app.clear_empty_query_if_needed());
 
     assert!(!app.query.query_loading);
-    assert_eq!(app.status_message, "Enter a query before running search.");
+    assert_eq!(
+        app.chrome.status_message,
+        "Enter a query before running search."
+    );
     assert!(app.query.query_response.is_none());
     assert!(app.query.query_error.is_none());
 }
@@ -614,13 +617,13 @@ fn footer_statuses_do_not_use_stale_service_or_watcher_state_when_health_is_down
         Profile::Prod,
         tx,
     );
-    app.ui_status = UiStatus::Error;
-    app.health_ok = false;
-    app.backend_connection_state = BackendConnectionState::Unavailable;
-    app.overview = empty_overview("memory".to_string());
-    app.overview.service_status = "ok".to_string();
-    app.overview.database_status = "up".to_string();
-    app.overview.watchers = Some(WatcherPresenceSummary {
+    app.chrome.ui_status = UiStatus::Error;
+    app.service.health_ok = false;
+    app.service.backend_connection_state = BackendConnectionState::Unavailable;
+    app.meta.overview = empty_overview("memory".to_string());
+    app.meta.overview.service_status = "ok".to_string();
+    app.meta.overview.database_status = "up".to_string();
+    app.meta.overview.watchers = Some(WatcherPresenceSummary {
         active_count: 2,
         unhealthy_count: 0,
         stale_after_seconds: 90,
@@ -648,12 +651,12 @@ fn footer_service_status_treats_healthy_relay_as_up() {
         Profile::Prod,
         tx,
     );
-    app.health_ok = true;
-    app.service_role = Some("relay".to_string());
-    app.service_health_state = Some("ok".to_string());
-    app.service_database_state = Some("down".to_string());
-    app.overview.service_status = "ok".to_string();
-    app.overview.database_status = "down".to_string();
+    app.service.health_ok = true;
+    app.service.service_role = Some("relay".to_string());
+    app.service.service_health_state = Some("ok".to_string());
+    app.service.service_database_state = Some("down".to_string());
+    app.meta.overview.service_status = "ok".to_string();
+    app.meta.overview.database_status = "down".to_string();
 
     assert_eq!(service_status_label(&app), "up");
     assert_eq!(service_status_detail(&app), Some("relay".to_string()));
@@ -677,7 +680,7 @@ fn backend_connection_state_starts_connecting_then_tracks_health() {
     );
 
     assert_eq!(
-        app.backend_connection_state,
+        app.service.backend_connection_state,
         BackendConnectionState::Connecting
     );
 
@@ -703,14 +706,14 @@ fn backend_connection_state_starts_connecting_then_tracks_health() {
     };
     app.apply_project_refresh(result.clone());
     assert_eq!(
-        app.backend_connection_state,
+        app.service.backend_connection_state,
         BackendConnectionState::Connected
     );
 
     result.health = Err("connection refused".to_string());
     app.apply_project_refresh(result);
     assert_eq!(
-        app.backend_connection_state,
+        app.service.backend_connection_state,
         BackendConnectionState::Unavailable
     );
 }
@@ -817,7 +820,7 @@ fn manager_footer_detail_includes_session_and_warning_counts() {
         Profile::Prod,
         tx,
     );
-    app.manager_status = Some(super::ManagerFooterStatus {
+    app.service.manager_status = Some(super::ManagerFooterStatus {
         state: ManagerState::Active,
         tracked_sessions: 2,
         warning_count: 1,
@@ -856,30 +859,34 @@ fn stream_reconnect_attempts_are_rate_limited() {
 #[test]
 fn stream_disconnect_does_not_mark_backend_unavailable() {
     let mut app = new_test_app();
-    app.health_ok = true;
-    app.backend_connection_state = BackendConnectionState::Connected;
-    app.ui_status = UiStatus::Ready;
-    app.overview.service_status = "ok".to_string();
-    app.overview.database_status = "up".to_string();
+    app.service.health_ok = true;
+    app.service.backend_connection_state = BackendConnectionState::Connected;
+    app.chrome.ui_status = UiStatus::Ready;
+    app.meta.overview.service_status = "ok".to_string();
+    app.meta.overview.database_status = "up".to_string();
 
     app.handle_stream_disconnect("stream connection closed");
 
-    assert!(app.health_ok);
+    assert!(app.service.health_ok);
     assert_eq!(
-        app.backend_connection_state,
+        app.service.backend_connection_state,
         BackendConnectionState::Connected
     );
-    assert_eq!(app.overview.service_status, "ok");
-    assert_eq!(app.overview.database_status, "up");
-    assert_eq!(app.ui_status, UiStatus::Ready);
-    assert!(app.status_message.contains("backend health is unchanged"));
+    assert_eq!(app.meta.overview.service_status, "ok");
+    assert_eq!(app.meta.overview.database_status, "up");
+    assert_eq!(app.chrome.ui_status, UiStatus::Ready);
+    assert!(
+        app.chrome
+            .status_message
+            .contains("backend health is unchanged")
+    );
 }
 
 #[test]
 fn tui_restart_notice_forces_red_restart_status() {
     let mut app = new_test_app();
-    app.ui_status = UiStatus::Ready;
-    app.restart_notice = Some(TuiRestartNotice {
+    app.chrome.ui_status = UiStatus::Ready;
+    app.service.restart_notice = Some(TuiRestartNotice {
         marker_path: PathBuf::from("/tmp/tui-restart-required.json"),
         version: "0.9.0".to_string(),
         reason: "install-or-upgrade".to_string(),
@@ -1210,8 +1217,11 @@ fn llm_audit_toggle_event_updates_status_message() {
             .as_ref()
             .is_some_and(|status| status.enabled)
     );
-    assert_eq!(app.status_message, "LLM audit/debug logging enabled.");
-    assert_eq!(app.ui_status, UiStatus::Ready);
+    assert_eq!(
+        app.chrome.status_message,
+        "LLM audit/debug logging enabled."
+    );
+    assert_eq!(app.chrome.ui_status, UiStatus::Ready);
 }
 
 #[test]
@@ -1224,7 +1234,7 @@ fn activity_help_mentions_llm_audit_toggle() {
 #[test]
 fn errors_tab_collects_persisted_diagnostics() {
     let mut app = new_test_app();
-    app.health_ok = true;
+    app.service.health_ok = true;
     app.record_backend_activity(ActivityEvent {
         id: Uuid::new_v4(),
         recorded_at: Utc::now(),

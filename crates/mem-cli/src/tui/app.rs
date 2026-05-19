@@ -66,9 +66,9 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
     );
     start_manager_status_worker(
         app.background_tx.clone(),
-        app.profile,
-        app.startup_at,
-        app.versions.mem_cli.clone(),
+        app.meta.profile,
+        app.meta.startup_at,
+        app.meta.versions.mem_cli.clone(),
     );
     start_embedding_backends_worker(
         api.clone(),
@@ -113,20 +113,20 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
         while let Ok(event) = background_rx.try_recv() {
             match event {
                 BackgroundEvent::StreamConnectCompleted { result } => {
-                    app.stream_connecting = false;
+                    app.service.stream_connecting = false;
                     match result {
                         Ok(new_stream) => {
                             stream = Some(*new_stream);
-                            app.status_message =
+                            app.chrome.status_message =
                                 "Streaming updates enabled. Refreshing project data...".to_string();
-                            app.needs_redraw = true;
+                            app.chrome.needs_redraw = true;
                             app.request_refresh(&api, RefreshMode::Full);
                         }
                         Err(error) => {
-                            app.status_message = format!(
+                            app.chrome.status_message = format!(
                                 "Streaming unavailable: {error}. Retrying live updates in the background."
                             );
-                            app.needs_redraw = true;
+                            app.chrome.needs_redraw = true;
                         }
                     }
                 }
@@ -141,15 +141,15 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
         }
         if should_attempt_stream_reconnect(
             stream.is_some(),
-            app.stream_connecting,
+            app.service.stream_connecting,
             last_stream_connect_attempt,
         ) {
             last_stream_connect_attempt = Instant::now();
             app.request_stream_connect(&api);
         }
-        if app.needs_redraw || last_draw.elapsed() >= Duration::from_secs(1) {
+        if app.chrome.needs_redraw || last_draw.elapsed() >= Duration::from_secs(1) {
             terminal.draw(|frame| draw(frame, &app))?;
-            app.needs_redraw = false;
+            app.chrome.needs_redraw = false;
             last_draw = Instant::now();
         }
         if event::poll(Duration::from_millis(500))? {
@@ -159,10 +159,10 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
                     if app.handle_key(key, &api, stream.as_mut()).await? {
                         break;
                     }
-                    app.needs_redraw = true;
+                    app.chrome.needs_redraw = true;
                 }
                 Event::Resize(_, _) => {
-                    app.needs_redraw = true;
+                    app.chrome.needs_redraw = true;
                 }
                 _ => {}
             }
@@ -433,31 +433,37 @@ impl App {
                 embeddings_creation_toggling: false,
                 embeddings_operation: None,
             },
-            overview: empty_overview(project),
-            help: HelpState {
-                help_open: false,
-                help_tab: TabKind::Memories,
-                help_scroll: 0,
+            service: ServiceState {
+                health_ok: false,
+                backend_connection_state: BackendConnectionState::Connecting,
+                service_role: None,
+                service_health_state: None,
+                service_database_state: None,
+                manager_status: None,
+                restart_notice: None,
+                stream_connecting: false,
+                relay_discovery_enabled,
             },
-            versions,
-            skill_inventory: project_skill_inventory(&repo_root, false),
-            startup_at: Utc::now(),
-            ui_status: UiStatus::Loading,
-            status_message: "Loading project data...".to_string(),
-            health_ok: false,
-            backend_connection_state: BackendConnectionState::Connecting,
-            service_role: None,
-            service_health_state: None,
-            service_database_state: None,
-            manager_status: None,
-            restart_notice: None,
-            stream_connecting: false,
-            relay_discovery_enabled,
-            profile,
+            chrome: UiChrome {
+                help: HelpState {
+                    help_open: false,
+                    help_tab: TabKind::Memories,
+                    help_scroll: 0,
+                },
+                ui_status: UiStatus::Loading,
+                status_message: "Loading project data...".to_string(),
+                input_mode: InputMode::Normal,
+                needs_redraw: true,
+            },
+            meta: RuntimeMeta {
+                overview: empty_overview(project),
+                versions,
+                skill_inventory: project_skill_inventory(&repo_root, false),
+                startup_at: Utc::now(),
+                profile,
+            },
             filters: Filters::default(),
-            input_mode: InputMode::Normal,
             background_tx,
-            needs_redraw: true,
         }
     }
 
@@ -483,9 +489,9 @@ impl App {
     }
 
     fn begin_refresh(&mut self, mode: RefreshMode) {
-        self.needs_redraw = true;
-        self.status_message = "Refreshing...".to_string();
-        self.ui_status = if mode == RefreshMode::Startup {
+        self.chrome.needs_redraw = true;
+        self.chrome.status_message = "Refreshing...".to_string();
+        self.chrome.ui_status = if mode == RefreshMode::Startup {
             UiStatus::Loading
         } else {
             UiStatus::Busy
@@ -541,10 +547,10 @@ impl App {
     }
 
     fn request_stream_connect(&mut self, api: &ApiClient) {
-        if self.stream_connecting {
+        if self.service.stream_connecting {
             return;
         }
-        self.stream_connecting = true;
+        self.service.stream_connecting = true;
         let memory_id = self
             .memories
             .filtered_memories
@@ -564,7 +570,7 @@ impl App {
         }
         self.activity.activity_loading = true;
         self.activity.activity_error = None;
-        self.needs_redraw = true;
+        self.chrome.needs_redraw = true;
         let api = api.clone();
         let project = self.project.clone();
         let tx = self.background_tx.clone();
@@ -585,7 +591,7 @@ impl App {
         }
         self.activity.llm_audit_loading = true;
         self.activity.llm_audit_error = None;
-        self.needs_redraw = true;
+        self.chrome.needs_redraw = true;
         let api = api.clone();
         let tx = self.background_tx.clone();
         tokio::spawn(async move {
@@ -609,12 +615,12 @@ impl App {
             .unwrap_or(false);
         self.activity.llm_audit_toggling = true;
         self.activity.llm_audit_error = None;
-        self.status_message = format!(
+        self.chrome.status_message = format!(
             "{} LLM audit/debug logging...",
             if enabled { "Enabling" } else { "Disabling" }
         );
-        self.ui_status = UiStatus::Busy;
-        self.needs_redraw = true;
+        self.chrome.ui_status = UiStatus::Busy;
+        self.chrome.needs_redraw = true;
         let api = api.clone();
         let tx = self.background_tx.clone();
         tokio::spawn(async move {
@@ -632,9 +638,9 @@ impl App {
         }
         self.activity.up_to_speed_loading = true;
         self.activity.up_to_speed_error = None;
-        self.status_message = "Generating get-up-to-speed briefing...".to_string();
-        self.ui_status = UiStatus::Busy;
-        self.needs_redraw = true;
+        self.chrome.status_message = "Generating get-up-to-speed briefing...".to_string();
+        self.chrome.ui_status = UiStatus::Busy;
+        self.chrome.needs_redraw = true;
         let api = api.clone();
         let request = UpToSpeedRequest {
             project: self.project.clone(),
@@ -677,20 +683,20 @@ impl App {
 
         match result.health {
             Ok(health) => {
-                self.health_ok = true;
-                self.backend_connection_state = BackendConnectionState::Connected;
+                self.service.health_ok = true;
+                self.service.backend_connection_state = BackendConnectionState::Connected;
                 if let Some(version) = health.get("version").and_then(|value| value.as_str()) {
-                    self.versions.mem_service = version.to_string();
+                    self.meta.versions.mem_service = version.to_string();
                 }
-                self.service_role = health
+                self.service.service_role = health
                     .get("role")
                     .and_then(|value| value.as_str())
                     .map(ToOwned::to_owned);
-                self.service_health_state = health
+                self.service.service_health_state = health
                     .get("status")
                     .and_then(|value| value.as_str())
                     .map(ToOwned::to_owned);
-                self.service_database_state = health
+                self.service.service_database_state = health
                     .get("database")
                     .and_then(|value| value.as_str())
                     .map(ToOwned::to_owned);
@@ -698,7 +704,7 @@ impl App {
             Err(_) => {
                 had_error = true;
                 self.mark_service_unavailable();
-                self.status_message = if self.relay_discovery_enabled {
+                self.chrome.status_message = if self.service.relay_discovery_enabled {
                     "Backend unavailable. Relay discovery is enabled; press r to retry after another Memory Layer backend becomes reachable.".to_string()
                 } else {
                     "Backend unavailable. Press b to enable relay discovery fallback or r to retry."
@@ -707,14 +713,14 @@ impl App {
             }
         }
 
-        self.skill_inventory = result.skill_inventory;
+        self.meta.skill_inventory = result.skill_inventory;
 
         match result.overview {
-            Ok(overview) => self.overview = overview,
+            Ok(overview) => self.meta.overview = overview,
             Err(error) => {
-                if self.health_ok {
+                if self.service.health_ok {
                     had_error = true;
-                    self.status_message = error.to_string();
+                    self.chrome.status_message = error.to_string();
                 }
             }
         }
@@ -728,7 +734,7 @@ impl App {
                 self.memories.total_memories = total;
                 self.memories.all_memories = items;
                 self.apply_filters();
-                self.status_message = format!(
+                self.chrome.status_message = format!(
                     "Loaded {} visible memories ({} total).",
                     self.memories.filtered_memories.len(),
                     self.memories.total_memories
@@ -742,8 +748,8 @@ impl App {
                 self.memories.total_memories = 0;
                 self.memories.selected_detail = None;
                 self.memories.table_state.select(None);
-                if self.health_ok {
-                    self.status_message = error.to_string();
+                if self.service.health_ok {
+                    self.chrome.status_message = error.to_string();
                 }
             }
         }
@@ -769,11 +775,11 @@ impl App {
                 self.review.replacement_proposals.clear();
                 self.review.replacement_selected_index = 0;
                 self.review.review_table_state.select(None);
-                self.status_message = error.to_string();
+                self.chrome.status_message = error.to_string();
             }
         }
 
-        self.ui_status = if had_error {
+        self.chrome.ui_status = if had_error {
             UiStatus::Error
         } else if self.resume.resume_loading || self.query.query_loading {
             UiStatus::Busy
@@ -782,9 +788,9 @@ impl App {
         };
 
         if mode == RefreshMode::Startup && self.resume_checkpoint().is_some() && loaded_memories {
-            self.status_message = format!(
+            self.chrome.status_message = format!(
                 "{} Resume checkpoint available; open Resume to refresh.",
-                self.status_message
+                self.chrome.status_message
             );
         }
         loaded_memories
@@ -797,27 +803,27 @@ impl App {
     }
 
     fn mark_service_unavailable(&mut self) {
-        self.needs_redraw = true;
-        self.health_ok = false;
-        self.backend_connection_state = BackendConnectionState::Unavailable;
-        self.service_role = None;
-        self.service_health_state = None;
-        self.service_database_state = None;
-        self.overview.service_status = "error".to_string();
-        self.overview.database_status = "unknown".to_string();
-        self.overview.watchers = None;
+        self.chrome.needs_redraw = true;
+        self.service.health_ok = false;
+        self.service.backend_connection_state = BackendConnectionState::Unavailable;
+        self.service.service_role = None;
+        self.service.service_health_state = None;
+        self.service.service_database_state = None;
+        self.meta.overview.service_status = "error".to_string();
+        self.meta.overview.database_status = "unknown".to_string();
+        self.meta.overview.watchers = None;
     }
 
     fn handle_stream_disconnect(&mut self, error: &str) {
-        self.status_message = format!(
+        self.chrome.status_message = format!(
             "Streaming disconnected: {error}. Retrying live updates; backend health is unchanged."
         );
-        self.ui_status = if self.health_ok {
+        self.chrome.ui_status = if self.service.health_ok {
             UiStatus::Ready
         } else {
             UiStatus::Loading
         };
-        self.needs_redraw = true;
+        self.chrome.needs_redraw = true;
     }
 
     fn request_resume_refresh(&mut self, api: &ApiClient, allow_autoselect: bool) {
@@ -828,12 +834,12 @@ impl App {
         self.resume.resume_loading = true;
         self.resume.resume_error = None;
         if self.resume.resume_response.is_some() {
-            self.status_message = "Refreshing resume...".to_string();
+            self.chrome.status_message = "Refreshing resume...".to_string();
         } else {
-            self.status_message = "Loading resume...".to_string();
+            self.chrome.status_message = "Loading resume...".to_string();
         }
-        if !matches!(self.ui_status, UiStatus::Loading) {
-            self.ui_status = UiStatus::Busy;
+        if !matches!(self.chrome.ui_status, UiStatus::Loading) {
+            self.chrome.ui_status = UiStatus::Busy;
         }
         let request = ResumeRequest {
             project: self.project.clone(),
@@ -868,15 +874,15 @@ impl App {
     }
 
     fn apply_background_event(&mut self, event: BackgroundEvent) {
-        self.needs_redraw = true;
+        self.chrome.needs_redraw = true;
         match event {
             BackgroundEvent::ProjectRefreshLoaded(result) => {
                 self.apply_project_refresh(*result);
             }
             BackgroundEvent::StreamConnectCompleted { result } => {
-                self.stream_connecting = false;
+                self.service.stream_connecting = false;
                 if let Err(error) = result {
-                    self.status_message = format!(
+                    self.chrome.status_message = format!(
                         "Streaming unavailable: {error}. Retrying live updates in the background."
                     );
                 }
@@ -900,20 +906,20 @@ impl App {
                         {
                             self.set_active_tab(TabKind::Resume);
                         }
-                        self.status_message = if self.active_tab == TabKind::Resume {
+                        self.chrome.status_message = if self.active_tab == TabKind::Resume {
                             "Resume loaded.".to_string()
                         } else {
                             "Resume updated in the background.".to_string()
                         };
-                        self.ui_status = UiStatus::Ready;
+                        self.chrome.ui_status = UiStatus::Ready;
                     }
                     Err(error) => {
                         self.resume.resume_error = Some(error.clone());
                         if self.resume.resume_response.is_none() {
                             self.resume.resume_loaded = false;
                         }
-                        self.status_message = format!("Resume unavailable: {error}");
-                        self.ui_status = UiStatus::Error;
+                        self.chrome.status_message = format!("Resume unavailable: {error}");
+                        self.chrome.ui_status = UiStatus::Error;
                     }
                 }
             }
@@ -964,19 +970,19 @@ impl App {
                 status,
                 restart_notice,
             } => {
-                self.manager_status = status;
-                let had_restart_notice = self.restart_notice.is_some();
-                self.restart_notice = restart_notice;
-                if let Some(notice) = &self.restart_notice {
-                    self.ui_status = UiStatus::Restart;
-                    self.status_message = format!(
+                self.service.manager_status = status;
+                let had_restart_notice = self.service.restart_notice.is_some();
+                self.service.restart_notice = restart_notice;
+                if let Some(notice) = &self.service.restart_notice {
+                    self.chrome.ui_status = UiStatus::Restart;
+                    self.chrome.status_message = format!(
                         "Memory Layer was updated to v{}; restart the TUI to load the installed binary. Marker: {}",
                         notice.version,
                         notice.marker_path.display()
                     );
-                } else if had_restart_notice && matches!(self.ui_status, UiStatus::Restart) {
-                    self.ui_status = UiStatus::Ready;
-                    self.status_message = "TUI restart marker cleared.".to_string();
+                } else if had_restart_notice && matches!(self.chrome.ui_status, UiStatus::Restart) {
+                    self.chrome.ui_status = UiStatus::Ready;
+                    self.chrome.status_message = "TUI restart marker cleared.".to_string();
                 }
             }
             BackgroundEvent::ActivitiesLoaded { response } => {
@@ -990,14 +996,14 @@ impl App {
                             .map(|event| ActivityEntry::Backend(Box::new(event)))
                             .collect();
                         self.finish_activity_insert();
-                        self.status_message = format!(
+                        self.chrome.status_message = format!(
                             "Loaded {} persisted activity event(s).",
                             self.activity.activity_events.len()
                         );
                     }
                     Err(error) => {
                         self.activity.activity_error = Some(error.clone());
-                        self.status_message = format!("Activities unavailable: {error}");
+                        self.chrome.status_message = format!("Activities unavailable: {error}");
                     }
                 }
             }
@@ -1010,7 +1016,8 @@ impl App {
                     }
                     Err(error) => {
                         self.activity.llm_audit_error = Some(error.clone());
-                        self.status_message = format!("LLM audit status unavailable: {error}");
+                        self.chrome.status_message =
+                            format!("LLM audit status unavailable: {error}");
                     }
                 }
             }
@@ -1020,16 +1027,16 @@ impl App {
                     Ok(status) => {
                         self.activity.llm_audit_error = None;
                         self.activity.llm_audit_status = Some(status);
-                        self.status_message = format!(
+                        self.chrome.status_message = format!(
                             "LLM audit/debug logging {}.",
                             if enabled { "enabled" } else { "disabled" }
                         );
-                        self.ui_status = UiStatus::Ready;
+                        self.chrome.ui_status = UiStatus::Ready;
                     }
                     Err(error) => {
                         self.activity.llm_audit_error = Some(error.clone());
-                        self.status_message = format!("LLM audit toggle failed: {error}");
-                        self.ui_status = UiStatus::Error;
+                        self.chrome.status_message = format!("LLM audit toggle failed: {error}");
+                        self.chrome.ui_status = UiStatus::Error;
                     }
                 }
             }
@@ -1039,13 +1046,14 @@ impl App {
                     Ok(response) => {
                         self.activity.up_to_speed_error = None;
                         self.activity.up_to_speed_response = Some(response);
-                        self.status_message = "Get-up-to-speed briefing generated.".to_string();
-                        self.ui_status = UiStatus::Ready;
+                        self.chrome.status_message =
+                            "Get-up-to-speed briefing generated.".to_string();
+                        self.chrome.ui_status = UiStatus::Ready;
                     }
                     Err(error) => {
                         self.activity.up_to_speed_error = Some(error.clone());
-                        self.status_message = format!("Get-up-to-speed failed: {error}");
-                        self.ui_status = UiStatus::Error;
+                        self.chrome.status_message = format!("Get-up-to-speed failed: {error}");
+                        self.chrome.ui_status = UiStatus::Error;
                     }
                 }
             }
@@ -1320,7 +1328,7 @@ impl App {
         api: &ApiClient,
         stream: Option<&mut StreamSession>,
     ) -> Result<bool> {
-        let current_input = std::mem::take(&mut self.input_mode);
+        let current_input = std::mem::take(&mut self.chrome.input_mode);
         match current_input {
             InputMode::Normal => {}
             InputMode::Search(mut buffer) => {
@@ -1346,7 +1354,7 @@ impl App {
             return Ok(true);
         }
 
-        if self.help.help_open {
+        if self.chrome.help.help_open {
             self.handle_help_key(key);
             return Ok(false);
         }
@@ -1390,18 +1398,20 @@ impl App {
                 self.scroll_resume(-1);
             }
             KeyCode::Char('b')
-                if key.modifiers.is_empty() && !self.health_ok && !self.relay_discovery_enabled =>
+                if key.modifiers.is_empty()
+                    && !self.service.health_ok
+                    && !self.service.relay_discovery_enabled =>
             {
-                self.status_message =
+                self.chrome.status_message =
                     "Enabling relay discovery fallback and restarting backend...".to_string();
                 match enable_relay_discovery_and_restart_backend().await {
                     Ok(message) => {
-                        self.relay_discovery_enabled = true;
-                        self.status_message = message;
+                        self.service.relay_discovery_enabled = true;
+                        self.chrome.status_message = message;
                         self.refresh(api, RefreshMode::Full).await;
                     }
                     Err(error) => {
-                        self.status_message = error.to_string();
+                        self.chrome.status_message = error.to_string();
                     }
                 }
             }
@@ -1693,8 +1703,8 @@ impl App {
                 self.watchers.watcher_scroll = 0;
             }
             KeyCode::Char('/') if key.modifiers.is_empty() => {
-                self.input_mode = InputMode::Search(self.filters.text.clone());
-                self.status_message =
+                self.chrome.input_mode = InputMode::Search(self.filters.text.clone());
+                self.chrome.status_message =
                     "Type search text, Enter to apply, Esc to cancel.".to_string();
             }
             KeyCode::Char('?') if key.modifiers.is_empty() => {
@@ -1710,15 +1720,15 @@ impl App {
             {
                 let mut buffer = String::new();
                 buffer.push(ch);
-                self.input_mode = InputMode::Query(buffer);
+                self.chrome.input_mode = InputMode::Query(buffer);
                 self.query.query_history_cursor = None;
-                self.status_message =
+                self.chrome.status_message =
                     "Type a question, Enter to run, Up/Down for history, Esc to cancel."
                         .to_string();
             }
             KeyCode::Char('g') if key.modifiers.is_empty() => {
-                self.input_mode = InputMode::Tag(self.filters.tag.clone());
-                self.status_message =
+                self.chrome.input_mode = InputMode::Tag(self.filters.tag.clone());
+                self.chrome.status_message =
                     "Type tag filter text, Enter to apply, Esc to cancel.".to_string();
             }
             KeyCode::Char('t') if key.modifiers.is_empty() => {
@@ -1733,16 +1743,16 @@ impl App {
             }
             KeyCode::Char('x') if key.modifiers.is_empty() => {
                 self.filters = Filters::default();
-                self.input_mode = InputMode::Normal;
+                self.chrome.input_mode = InputMode::Normal;
                 self.apply_filters();
                 self.fetch_selected_detail(api, stream).await;
-                self.status_message = "Cleared filters.".to_string();
+                self.chrome.status_message = "Cleared filters.".to_string();
             }
             KeyCode::Char('c') if key.modifiers.is_empty() => {
                 let response = api
                     .curate(&self.project, self.review.replacement_policy, false)
                     .await?;
-                self.status_message = format!(
+                self.chrome.status_message = format!(
                     "Curated {} captures into {} memories with {} replacement(s) and {} queued proposal(s).",
                     response.input_count,
                     response.output_count,
@@ -1753,13 +1763,13 @@ impl App {
             }
             KeyCode::Char('i') if key.modifiers.is_empty() => {
                 let response = api.reindex(&self.project, false, None).await?;
-                self.status_message =
+                self.chrome.status_message =
                     format!("Reindexed {} memory entries.", response.reindexed_entries);
                 self.refresh(api, RefreshMode::Full).await;
             }
             KeyCode::Char('e') if key.modifiers.is_empty() => {
                 let response = api.reembed(&self.project, false, None).await?;
-                self.status_message = format!(
+                self.chrome.status_message = format!(
                     "Materialized {} chunk embeddings for the active space.",
                     response.reembedded_chunks
                 );
@@ -1767,7 +1777,7 @@ impl App {
             }
             KeyCode::Char('a') if key.modifiers.is_empty() => {
                 let response = api.archive_low_value(&self.project, false).await?;
-                self.status_message = format!(
+                self.chrome.status_message = format!(
                     "Archived {} low-value memories using default thresholds.",
                     response.archived_count
                 );
@@ -1797,7 +1807,7 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => self.scroll_help(-1),
             KeyCode::PageDown => self.scroll_help(8),
             KeyCode::PageUp => self.scroll_help(-8),
-            KeyCode::Home => self.help.help_scroll = 0,
+            KeyCode::Home => self.chrome.help.help_scroll = 0,
             KeyCode::End => self.scroll_help_end(),
             _ => {}
         }
@@ -1810,7 +1820,7 @@ impl App {
         if self.memories.selected_history.is_some() {
             self.memories.selected_history = None;
             self.memories.memory_detail_scroll = 0;
-            self.status_message = "Hid version history.".to_string();
+            self.chrome.status_message = "Hid version history.".to_string();
             return;
         }
         let Some(item) = self
@@ -1818,13 +1828,13 @@ impl App {
             .filtered_memories
             .get(self.memories.selected_index)
         else {
-            self.status_message = "No memory selected.".to_string();
+            self.chrome.status_message = "No memory selected.".to_string();
             return;
         };
-        self.status_message = "Loading version history...".to_string();
+        self.chrome.status_message = "Loading version history...".to_string();
         match api.memory_history(&item.id.to_string()).await {
             Ok(history) => {
-                self.status_message = format!(
+                self.chrome.status_message = format!(
                     "Loaded {} version(s) for canonical {}.",
                     history.versions.len(),
                     history.canonical_id
@@ -1834,7 +1844,7 @@ impl App {
                 self.memories.memories_focus = MemoriesFocus::Detail;
             }
             Err(error) => {
-                self.status_message = format!("History unavailable: {error}");
+                self.chrome.status_message = format!("History unavailable: {error}");
             }
         }
     }
@@ -1849,11 +1859,11 @@ impl App {
     ) -> Result<()> {
         match key.code {
             KeyCode::Esc => {
-                self.input_mode = InputMode::Normal;
+                self.chrome.input_mode = InputMode::Normal;
                 if kind == TextInputKind::Query {
                     self.query.query_history_cursor = None;
                 }
-                self.status_message = "Cancelled input mode.".to_string();
+                self.chrome.status_message = "Cancelled input mode.".to_string();
             }
             KeyCode::Enter => {
                 match kind {
@@ -1861,7 +1871,7 @@ impl App {
                     TextInputKind::Tag => self.filters.tag = buffer.clone(),
                     TextInputKind::Query => self.query.query_text = buffer.clone(),
                 }
-                self.input_mode = InputMode::Normal;
+                self.chrome.input_mode = InputMode::Normal;
                 match kind {
                     TextInputKind::Query => {
                         self.query.query_history_cursor = None;
@@ -1870,7 +1880,7 @@ impl App {
                     _ => {
                         self.apply_filters();
                         self.fetch_selected_detail(api, stream).await;
-                        self.status_message = "Applied filter.".to_string();
+                        self.chrome.status_message = "Applied filter.".to_string();
                     }
                 }
             }
@@ -1879,15 +1889,15 @@ impl App {
                 if kind == TextInputKind::Query {
                     self.query.query_history_cursor = None;
                 }
-                self.input_mode = kind.wrap(buffer.clone());
+                self.chrome.input_mode = kind.wrap(buffer.clone());
             }
             KeyCode::Up if kind == TextInputKind::Query => {
                 self.apply_query_history_delta(buffer, -1);
-                self.input_mode = kind.wrap(buffer.clone());
+                self.chrome.input_mode = kind.wrap(buffer.clone());
             }
             KeyCode::Down if kind == TextInputKind::Query => {
                 self.apply_query_history_delta(buffer, 1);
-                self.input_mode = kind.wrap(buffer.clone());
+                self.chrome.input_mode = kind.wrap(buffer.clone());
             }
             KeyCode::Char(ch)
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
@@ -1896,19 +1906,19 @@ impl App {
                 if kind == TextInputKind::Query {
                     self.query.query_history_cursor = None;
                 }
-                self.input_mode = kind.wrap(buffer.clone());
+                self.chrome.input_mode = kind.wrap(buffer.clone());
             }
             _ => {
-                self.input_mode = kind.wrap(buffer.clone());
+                self.chrome.input_mode = kind.wrap(buffer.clone());
             }
         }
         Ok(())
     }
 
     fn start_query_input(&mut self) {
-        self.input_mode = InputMode::Query(String::new());
+        self.chrome.input_mode = InputMode::Query(String::new());
         self.query.query_history_cursor = None;
-        self.status_message =
+        self.chrome.status_message =
             "Type a question, Enter to run, Up/Down for history, Esc to cancel.".to_string();
     }
 
@@ -2016,7 +2026,7 @@ impl App {
 
     fn apply_query_history_delta(&mut self, buffer: &mut String, delta: isize) {
         if self.query.query_history.is_empty() {
-            self.status_message = "No previous queries in this TUI session.".to_string();
+            self.chrome.status_message = "No previous queries in this TUI session.".to_string();
             return;
         }
 
@@ -2039,7 +2049,7 @@ impl App {
             None => {
                 buffer.clear();
                 self.clear_visible_query_state();
-                self.status_message = "Returned to a new empty query.".to_string();
+                self.chrome.status_message = "Returned to a new empty query.".to_string();
             }
         }
     }
@@ -2061,7 +2071,7 @@ impl App {
     fn restore_query_history_entry(&mut self, index: usize) {
         let Some(entry) = self.query.query_history.get(index).cloned() else {
             self.clear_visible_query_state();
-            self.status_message = "Query history item is unavailable.".to_string();
+            self.chrome.status_message = "Query history item is unavailable.".to_string();
             return;
         };
         self.query.query_text = entry.question.clone();
@@ -2093,7 +2103,7 @@ impl App {
         } else {
             "without cached results"
         };
-        self.status_message = format!(
+        self.chrome.status_message = format!(
             "Loaded query history item {}/{} {result_state}.",
             index + 1,
             self.query.query_history.len()
@@ -2141,12 +2151,12 @@ impl App {
                     .send(StreamRequest::SubscribeMemory { memory_id: item.id })
                     .await
                 {
-                    self.status_message = error.to_string();
+                    self.chrome.status_message = error.to_string();
                 }
             } else {
                 match api.memory_detail(&item.id.to_string()).await {
                     Ok(detail) => self.memories.selected_detail = Some(detail),
-                    Err(error) => self.status_message = error.to_string(),
+                    Err(error) => self.chrome.status_message = error.to_string(),
                 }
             }
         }
@@ -2179,21 +2189,21 @@ impl App {
     }
 
     fn apply_stream_response(&mut self, response: StreamResponse) {
-        self.needs_redraw = true;
+        self.chrome.needs_redraw = true;
         match response {
             StreamResponse::ProjectSnapshot { overview, memories }
             | StreamResponse::ProjectChanged { overview, memories } => {
-                self.overview = overview;
+                self.meta.overview = overview;
                 self.memories.total_memories = memories.total;
                 self.memories.all_memories = memories.items;
                 self.apply_filters();
                 self.resume.resume_loaded = false;
-                self.status_message = format!(
+                self.chrome.status_message = format!(
                     "Streaming update: {} visible memories ({} total).",
                     self.memories.filtered_memories.len(),
                     self.memories.total_memories
                 );
-                self.ui_status = UiStatus::Ready;
+                self.chrome.ui_status = UiStatus::Ready;
             }
             StreamResponse::MemorySnapshot { detail }
             | StreamResponse::MemoryChanged { detail } => {
@@ -2205,8 +2215,8 @@ impl App {
                 self.record_backend_activity(event);
             }
             StreamResponse::Error { message } => {
-                self.status_message = format!("Stream error: {message}");
-                self.ui_status = UiStatus::Error;
+                self.chrome.status_message = format!("Stream error: {message}");
+                self.chrome.ui_status = UiStatus::Error;
             }
             _ => {}
         }
@@ -2229,8 +2239,8 @@ impl App {
         self.query.query_selected_detail = None;
         self.query.query_roundtrip_timing = None;
         self.query.query_detail_loading = false;
-        self.status_message = format!("Searching \"{question}\"...");
-        self.ui_status = UiStatus::Busy;
+        self.chrome.status_message = format!("Searching \"{question}\"...");
+        self.chrome.ui_status = UiStatus::Busy;
         let request = QueryRequest {
             project: self.project.clone(),
             query: question.clone(),
@@ -2293,7 +2303,7 @@ impl App {
             self.query.query_selected_detail = None;
             self.query.query_selected_index = 0;
             self.query.query_table_state.select(None);
-            self.status_message = "Enter a query before running search.".to_string();
+            self.chrome.status_message = "Enter a query before running search.".to_string();
             return true;
         }
         false
@@ -2354,7 +2364,8 @@ impl App {
                         }
                         Some(Err(error)) => {
                             self.query.query_selected_detail = None;
-                            self.status_message = format!("Query detail unavailable: {error}");
+                            self.chrome.status_message =
+                                format!("Query detail unavailable: {error}");
                         }
                         None => self.query.query_selected_detail = None,
                     }
@@ -2365,21 +2376,25 @@ impl App {
                     timing,
                     loaded_initial_detail.as_ref(),
                 );
-                if self.status_message.starts_with("Query detail unavailable:") {
-                    self.status_message = format!(
+                if self
+                    .chrome
+                    .status_message
+                    .starts_with("Query detail unavailable:")
+                {
+                    self.chrome.status_message = format!(
                         "{} Query returned {} memories in {} ms.",
-                        self.status_message,
+                        self.chrome.status_message,
                         self.query_results().len(),
                         timing.ui_ready_ms
                     );
                 } else {
-                    self.status_message = format!(
+                    self.chrome.status_message = format!(
                         "Query returned {} memories in {} ms.",
                         self.query_results().len(),
                         timing.ui_ready_ms
                     );
                 }
-                self.ui_status = UiStatus::Ready;
+                self.chrome.ui_status = UiStatus::Ready;
             }
             Err(error) => {
                 self.record_query_activity(
@@ -2395,8 +2410,8 @@ impl App {
                 self.query.query_table_state.select(None);
                 self.query.query_error = Some(error.clone());
                 self.update_query_history_error(&request.query, &error, timing);
-                self.status_message = format!("Query failed: {error}");
-                self.ui_status = UiStatus::Error;
+                self.chrome.status_message = format!("Query failed: {error}");
+                self.chrome.ui_status = UiStatus::Error;
             }
         }
     }
@@ -2466,7 +2481,7 @@ impl App {
             Ok(detail) => self.query.query_selected_detail = Some(detail),
             Err(error) => {
                 self.query.query_selected_detail = None;
-                self.status_message = format!("Query detail unavailable: {error}");
+                self.chrome.status_message = format!("Query detail unavailable: {error}");
             }
         }
     }
@@ -2506,7 +2521,7 @@ impl App {
             ..
         }) = event.details.as_ref()
         {
-            self.status_message = watcher_transition_status_message(
+            self.chrome.status_message = watcher_transition_status_message(
                 &event.summary,
                 health,
                 previous_health.as_ref(),
@@ -2604,7 +2619,7 @@ impl App {
             ReplacementPolicy::Aggressive => ReplacementPolicy::Conservative,
         };
         write_replacement_policy(&self.repo_root, self.review.replacement_policy)?;
-        self.status_message = format!(
+        self.chrome.status_message = format!(
             "Curation replacement policy set to {}.",
             self.review.replacement_policy
         );
@@ -2618,13 +2633,13 @@ impl App {
             .get(self.review.replacement_selected_index)
             .cloned()
         else {
-            self.status_message = "No pending replacement proposal selected.".to_string();
+            self.chrome.status_message = "No pending replacement proposal selected.".to_string();
             return Ok(());
         };
         let response = api
             .approve_replacement_proposal(&self.project, proposal.id)
             .await?;
-        self.status_message = format!(
+        self.chrome.status_message = format!(
             "Approved replacement: {} -> {}",
             response.target_summary, response.candidate_summary
         );
@@ -2639,13 +2654,13 @@ impl App {
             .get(self.review.replacement_selected_index)
             .cloned()
         else {
-            self.status_message = "No pending replacement proposal selected.".to_string();
+            self.chrome.status_message = "No pending replacement proposal selected.".to_string();
             return Ok(());
         };
         let response = api
             .reject_replacement_proposal(&self.project, proposal.id)
             .await?;
-        self.status_message = format!(
+        self.chrome.status_message = format!(
             "Rejected replacement proposal for {}.",
             response.target_summary
         );
@@ -2659,22 +2674,22 @@ impl App {
             .filtered_memories
             .get(self.memories.selected_index)
         else {
-            self.status_message = "No selected memory to delete.".to_string();
+            self.chrome.status_message = "No selected memory to delete.".to_string();
             return Ok(());
         };
         let response = api.delete_memory(item.id).await?;
-        self.status_message = format!("Deleted memory: {}", response.summary);
+        self.chrome.status_message = format!("Deleted memory: {}", response.summary);
         self.refresh(api, RefreshMode::Full).await;
         Ok(())
     }
 
     async fn delete_selected_query_memory(&mut self, api: &ApiClient) -> Result<()> {
         let Some(result) = self.query_results().get(self.query.query_selected_index) else {
-            self.status_message = "No selected query result to delete.".to_string();
+            self.chrome.status_message = "No selected query result to delete.".to_string();
             return Ok(());
         };
         let response = api.delete_memory(result.memory_id).await?;
-        self.status_message = format!("Deleted memory: {}", response.summary);
+        self.chrome.status_message = format!("Deleted memory: {}", response.summary);
         self.query.query_selected_detail = None;
         self.run_query(api);
         self.refresh(api, RefreshMode::Full).await;
@@ -2718,19 +2733,19 @@ impl App {
     }
 
     fn open_help_for_active_tab(&mut self) {
-        self.help.help_open = true;
-        self.help.help_tab = self.active_tab;
-        self.help.help_scroll = 0;
-        self.status_message = format!(
+        self.chrome.help.help_open = true;
+        self.chrome.help.help_tab = self.active_tab;
+        self.chrome.help.help_scroll = 0;
+        self.chrome.status_message = format!(
             "Showing {} help. Press h or Esc to return.",
-            self.help.help_tab.label()
+            self.chrome.help.help_tab.label()
         );
     }
 
     fn close_help(&mut self) {
-        self.help.help_open = false;
-        self.help.help_scroll = 0;
-        self.status_message = "Help closed.".to_string();
+        self.chrome.help.help_open = false;
+        self.chrome.help.help_scroll = 0;
+        self.chrome.status_message = "Help closed.".to_string();
     }
 
     fn scroll_help(&mut self, delta: i16) {
@@ -2739,11 +2754,15 @@ impl App {
     }
 
     fn scroll_help_in_area(&mut self, delta: i16, frame_area: Rect) {
-        let max_scroll = help_max_scroll(self.help.help_tab, frame_area);
-        self.help.help_scroll = if delta.is_negative() {
-            self.help.help_scroll.saturating_sub(delta.unsigned_abs())
+        let max_scroll = help_max_scroll(self.chrome.help.help_tab, frame_area);
+        self.chrome.help.help_scroll = if delta.is_negative() {
+            self.chrome
+                .help
+                .help_scroll
+                .saturating_sub(delta.unsigned_abs())
         } else {
-            self.help
+            self.chrome
+                .help
                 .help_scroll
                 .saturating_add(u16::try_from(delta).unwrap_or(0))
         }
@@ -2752,7 +2771,7 @@ impl App {
 
     fn scroll_help_end(&mut self) {
         let area = current_frame_area().unwrap_or_else(default_frame_area);
-        self.help.help_scroll = help_max_scroll(self.help.help_tab, area);
+        self.chrome.help.help_scroll = help_max_scroll(self.chrome.help.help_tab, area);
     }
 
     fn scroll_memory_detail(&mut self, delta: i16) {

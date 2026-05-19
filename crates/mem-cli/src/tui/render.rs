@@ -373,7 +373,7 @@ pub(super) fn clamped_embedding_backend_index(
 }
 
 pub(super) fn current_query_display(app: &App) -> String {
-    match &app.input_mode {
+    match &app.chrome.input_mode {
         InputMode::Query(value) => value.clone(),
         _ => app.query.query_text.clone(),
     }
@@ -459,7 +459,7 @@ pub(super) struct ErrorItem {
 
 pub(super) fn collect_error_items(app: &App) -> Vec<ErrorItem> {
     let mut items = Vec::new();
-    if !app.health_ok {
+    if !app.service.health_ok {
         items.push(ErrorItem {
             when: Some(Utc::now()),
             diagnostic: session_diagnostic(
@@ -962,7 +962,7 @@ pub(super) fn latest_plan_display(app: &App) -> String {
 }
 
 pub(super) fn watcher_summary_text(app: &App) -> String {
-    let Some(summary) = &app.overview.watchers else {
+    let Some(summary) = &app.meta.overview.watchers else {
         return "no watcher presence reported".to_string();
     };
 
@@ -979,7 +979,7 @@ pub(super) fn watcher_summary_text(app: &App) -> String {
 }
 
 pub(super) fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
-    let Some(summary) = &app.overview.watchers else {
+    let Some(summary) = &app.meta.overview.watchers else {
         return vec![
             Line::from(Span::styled(
                 "No watcher presence reported.",
@@ -3071,10 +3071,10 @@ pub(super) fn service_span(value: &str) -> Span<'static> {
 }
 
 pub(super) fn tui_status_label(app: &App) -> &'static str {
-    if app.restart_notice.is_some() {
+    if app.service.restart_notice.is_some() {
         return "restart";
     }
-    match app.ui_status {
+    match app.chrome.ui_status {
         UiStatus::Loading => "loading",
         UiStatus::Busy => "busy",
         UiStatus::Ready => "ready",
@@ -3084,10 +3084,10 @@ pub(super) fn tui_status_label(app: &App) -> &'static str {
 }
 
 pub(super) fn tui_status_color(app: &App) -> Color {
-    if app.restart_notice.is_some() {
+    if app.service.restart_notice.is_some() {
         return Theme::DANGER;
     }
-    match app.ui_status {
+    match app.chrome.ui_status {
         UiStatus::Loading => Theme::ACCENT,
         UiStatus::Busy => Theme::ACCENT_STRONG,
         UiStatus::Ready => Theme::SUCCESS,
@@ -3102,18 +3102,20 @@ pub(super) fn tui_status_detail(app: &App) -> Option<String> {
 }
 
 pub(super) fn service_status_label(app: &App) -> &'static str {
-    if !app.health_ok {
+    if !app.service.health_ok {
         "down"
     } else {
-        let is_relay = matches!(app.service_role.as_deref(), Some("relay"));
+        let is_relay = matches!(app.service.service_role.as_deref(), Some("relay"));
         let database_status = app
+            .service
             .service_database_state
             .as_deref()
-            .unwrap_or(app.overview.database_status.as_str());
+            .unwrap_or(app.meta.overview.database_status.as_str());
         let service_status = app
+            .service
             .service_health_state
             .as_deref()
-            .unwrap_or(app.overview.service_status.as_str());
+            .unwrap_or(app.meta.overview.service_status.as_str());
         if !is_relay && !matches!(database_status, "ok" | "up") {
             return "degraded";
         }
@@ -3135,18 +3137,19 @@ pub(super) fn service_status_color(app: &App) -> Color {
 }
 
 pub(super) fn service_status_detail(app: &App) -> Option<String> {
-    if !app.health_ok {
+    if !app.service.health_ok {
         return None;
     }
     let mut parts = Vec::new();
-    if let Some(role) = app.service_role.as_deref() {
+    if let Some(role) = app.service.service_role.as_deref() {
         parts.push(role.to_string());
     }
-    let is_relay = matches!(app.service_role.as_deref(), Some("relay"));
+    let is_relay = matches!(app.service.service_role.as_deref(), Some("relay"));
     let database_status = app
+        .service
         .service_database_state
         .as_deref()
-        .unwrap_or(app.overview.database_status.as_str());
+        .unwrap_or(app.meta.overview.database_status.as_str());
     if !is_relay && !matches!(database_status, "ok" | "up") {
         parts.push(format!("db {database_status}"));
     }
@@ -3154,7 +3157,12 @@ pub(super) fn service_status_detail(app: &App) -> Option<String> {
 }
 
 pub(super) fn manager_status_label(app: &App) -> &'static str {
-    match app.manager_status.as_ref().map(|status| status.state) {
+    match app
+        .service
+        .manager_status
+        .as_ref()
+        .map(|status| status.state)
+    {
         Some(ManagerState::Active) => "active",
         Some(ManagerState::Installed) => "installed",
         Some(ManagerState::Off) => "off",
@@ -3174,7 +3182,7 @@ pub(super) fn manager_status_color(app: &App) -> Color {
 }
 
 pub(super) fn manager_status_detail(app: &App) -> Option<String> {
-    let status = app.manager_status.as_ref()?;
+    let status = app.service.manager_status.as_ref()?;
     let mut parts = Vec::new();
     if let Some(mode) = status.mode {
         parts.push(match mode {
@@ -3210,11 +3218,11 @@ pub(super) fn manager_status_detail(app: &App) -> Option<String> {
 }
 
 pub(super) fn watcher_bar_status_label(app: &App) -> &'static str {
-    if !app.health_ok {
+    if !app.service.health_ok {
         return "unknown";
     }
 
-    let Some(summary) = &app.overview.watchers else {
+    let Some(summary) = &app.meta.overview.watchers else {
         return "none";
     };
 
@@ -3238,7 +3246,7 @@ pub(super) fn watcher_bar_status_color(app: &App) -> Color {
 }
 
 pub(super) fn watcher_bar_status_detail(app: &App) -> Option<String> {
-    let summary = app.overview.watchers.as_ref()?;
+    let summary = app.meta.overview.watchers.as_ref()?;
     if summary.unhealthy_count > 0 {
         Some(format!("{} unhealthy", summary.unhealthy_count))
     } else if summary.active_count > 0 {
@@ -3512,7 +3520,7 @@ pub(super) fn skill_bundle_status_color(status: SkillBundleStatus) -> Color {
 }
 
 pub(super) fn status_message_style(app: &App) -> Style {
-    let lowered = app.status_message.to_lowercase();
+    let lowered = app.chrome.status_message.to_lowercase();
     let color = if lowered.contains("error") || lowered.contains("failed") {
         Theme::DANGER
     } else if lowered.contains("refresh")
@@ -3546,7 +3554,7 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         .into_iter()
         .map(|tab| Line::from(Span::styled(tab.label(), Style::default().fg(Theme::TEXT))))
         .collect::<Vec<_>>();
-    let title = match app.profile {
+    let title = match app.meta.profile {
         Profile::Dev => format!("Memory Layer TUI [dev] - project {}", app.project),
         Profile::Prod => format!("Memory Layer TUI - project {}", app.project),
     };
@@ -3562,7 +3570,7 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         );
     frame.render_widget(tabs, chunks[0]);
 
-    let control_line = if app.help.help_open {
+    let control_line = if app.chrome.help.help_open {
         Line::from(vec![
             accent_span("back "),
             Span::styled("h/Esc  ", Style::default().fg(Theme::TEXT)),
@@ -3571,7 +3579,7 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             accent_span("jump "),
             Span::styled("Home/End  ", Style::default().fg(Theme::TEXT)),
             Span::styled(
-                format!("showing {} help", app.help.help_tab.label()),
+                format!("showing {} help", app.chrome.help.help_tab.label()),
                 Style::default().fg(Theme::MUTED),
             ),
         ])
@@ -3729,10 +3737,10 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     };
     let filter_bar = Paragraph::new(vec![control_line])
         .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block(if app.help.help_open {
+        .block(themed_block(if app.chrome.help.help_open {
             "Help Controls"
         } else {
-            match &app.input_mode {
+            match &app.chrome.input_mode {
                 InputMode::Normal => "Controls",
                 InputMode::Search(value) => {
                     if value.is_empty() {
@@ -3759,9 +3767,9 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         }));
     frame.render_widget(filter_bar, chunks[1]);
 
-    if app.help.help_open {
+    if app.chrome.help.help_open {
         draw_help_tab(frame, app, chunks[2]);
-    } else if app.health_ok {
+    } else if app.service.health_ok {
         match app.active_tab {
             TabKind::Resume => draw_resume_tab(frame, app, chunks[2]),
             TabKind::Memories => draw_memories_tab(frame, app, chunks[2]),
@@ -3783,7 +3791,7 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         .constraints([Constraint::Length(3), Constraint::Length(1)])
         .split(chunks[3]);
 
-    let footer = Paragraph::new(app.status_message.clone())
+    let footer = Paragraph::new(app.chrome.status_message.clone())
         .style(status_message_style(app))
         .wrap(Wrap { trim: false })
         .block(themed_block("Status"));
@@ -3811,7 +3819,7 @@ pub(super) fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, 
     frame.render_widget(
         Paragraph::new(component_status_line(
             "TUI",
-            &app.versions.mem_cli,
+            &app.meta.versions.mem_cli,
             tui_status_label(app),
             tui_status_color(app),
             tui_status_detail(app),
@@ -3822,7 +3830,7 @@ pub(super) fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, 
     frame.render_widget(
         Paragraph::new(component_status_line(
             "Service",
-            &app.versions.mem_service,
+            &app.meta.versions.mem_service,
             service_status_label(app),
             service_status_color(app),
             service_status_detail(app),
@@ -3834,7 +3842,7 @@ pub(super) fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, 
     frame.render_widget(
         Paragraph::new(component_status_line(
             "Manager",
-            &app.versions.watch_manager,
+            &app.meta.versions.watch_manager,
             manager_status_label(app),
             manager_status_color(app),
             manager_status_detail(app),
@@ -3846,7 +3854,7 @@ pub(super) fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, 
     frame.render_widget(
         Paragraph::new(component_status_line(
             "Watchers",
-            &app.versions.memory_watch,
+            &app.meta.versions.memory_watch,
             watcher_bar_status_label(app),
             watcher_bar_status_color(app),
             watcher_bar_status_detail(app),
@@ -3858,10 +3866,10 @@ pub(super) fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, 
     frame.render_widget(
         Paragraph::new(component_status_line(
             "Skills",
-            &app.skill_inventory.bundle_version,
-            app.skill_inventory.status.label(),
-            skill_bundle_status_color(app.skill_inventory.status),
-            Some(app.skill_inventory.summary.clone()),
+            &app.meta.skill_inventory.bundle_version,
+            app.meta.skill_inventory.status.label(),
+            skill_bundle_status_color(app.meta.skill_inventory.status),
+            Some(app.meta.skill_inventory.summary.clone()),
         ))
         .style(Style::default().bg(Theme::PANEL_ALT)),
         sections[4],
@@ -3905,7 +3913,7 @@ pub(super) fn component_status_line<'a>(
 }
 
 pub(super) fn draw_backend_recovery(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    if app.backend_connection_state == BackendConnectionState::Connecting {
+    if app.service.backend_connection_state == BackendConnectionState::Connecting {
         draw_backend_connecting(frame, area);
         return;
     }
@@ -3920,7 +3928,7 @@ pub(super) fn draw_backend_recovery(frame: &mut ratatui::Frame<'_>, app: &App, a
         Line::from(""),
         Line::from("The TUI could not reach /healthz on the configured backend."),
     ];
-    if app.relay_discovery_enabled {
+    if app.service.relay_discovery_enabled {
         lines.push(Line::from(
             "Relay discovery fallback is already enabled in shared config.",
         ));
@@ -3964,15 +3972,15 @@ pub(super) fn draw_backend_connecting(frame: &mut ratatui::Frame<'_>, area: Rect
 }
 
 pub(super) fn draw_help_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let max_scroll = help_max_scroll_in_area(app.help.help_tab, area);
-    let scroll = app.help.help_scroll.min(max_scroll);
-    let help = Paragraph::new(tab_help_lines(app.help.help_tab))
+    let max_scroll = help_max_scroll_in_area(app.chrome.help.help_tab, area);
+    let scroll = app.chrome.help.help_scroll.min(max_scroll);
+    let help = Paragraph::new(tab_help_lines(app.chrome.help.help_tab))
         .style(Style::default().bg(Theme::PANEL))
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0))
         .block(themed_block(format!(
             "{} Help (scroll {}/{})",
-            app.help.help_tab.label(),
+            app.chrome.help.help_tab.label(),
             scroll,
             max_scroll
         )));
