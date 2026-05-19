@@ -1,0 +1,114 @@
+import type { Tab } from "../tabs";
+
+const SHARED_CONTROLS = [
+  "Click tabs to switch sections.",
+  "`h` or Help opens/closes this help panel.",
+  "`r` refreshes project state when focus is not in an input.",
+];
+
+const WEB_HELP: Record<Tab, { title: string; purpose: string; layout: string[]; controls: string[]; workflows: string[] }> = {
+  memories: {
+    title: "Memories Help",
+    purpose: "Browse canonical project memory, inspect details, provenance, embeddings, history, and related memories.",
+    layout: ["Left side filters and memory list.", "Right side selected memory detail with markdown-like canonical text.", "Embeddings, tags, sources, and relations are grouped in detail sections."],
+    controls: ["/ focuses memory search.", ...SHARED_CONTROLS],
+    workflows: ["Filter by type, status, text, or tag.", "Verify sources before relying on a memory.", "Use History before deleting or replacing important memory."],
+  },
+  agents: {
+    title: "Agents Help",
+    purpose: "Monitor detected local coding-agent sessions, context pressure, rate limits, ports, and active work.",
+    layout: ["Current project sessions are listed first.", "Detail pane shows model, tokens, context usage, process, git, children, and rate limits."],
+    controls: ["Click an agent row to inspect it.", ...SHARED_CONTROLS],
+    workflows: ["Check which agent owns a project or watcher.", "Use context and rate-limit data before adding work to a busy session."],
+  },
+  query: {
+    title: "Query Help",
+    purpose: "Ask project memory questions and inspect answer evidence, citations, timing, ranking, and graph connections.",
+    layout: ["Question panel shows answer and timing breakdown.", "Results list shows ranked memories.", "Detail pane explains why the selected memory matched."],
+    controls: ["Enter submits the question.", "ArrowUp/ArrowDown in the query input restores previous queries and their results.", "Click a result to inspect ranking details."],
+    workflows: ["Compare answer citations with returned memories.", "Use timing fields to locate slow lexical, semantic, graph, rerank, answer, or UI phases.", "Treat graph connections as retrieval explanations, not standalone answer citations."],
+  },
+  activity: {
+    title: "Activity Help",
+    purpose: "Review persisted backend activity and generate get-up-to-speed briefings for handoff or interruption recovery.",
+    layout: ["Top panel generates deterministic or LLM briefings and shows LLM audit/debug status.", "Left table lists activity with token and duration summaries.", "Right pane shows structured details."],
+    controls: ["Use Deterministic or LLM briefing buttons.", "Use the LLM audit button briefly while debugging prompts.", ...SHARED_CONTROLS],
+    workflows: ["Generate a briefing before handing work to a new agent.", "Inspect token and duration fields to understand cost and latency.", "Open query activities to inspect graph behavior and answer cost."],
+  },
+  errors: {
+    title: "Errors Help",
+    purpose: "Inspect persisted diagnostics and browser-session errors with explanations and suggested fixes.",
+    layout: ["Left list shows time, severity, source, component, and summary.", "Right pane shows explanation, fix hints, doctor hints, commands, and raw error."],
+    controls: ["Click an error row to inspect it.", ...SHARED_CONTROLS],
+    workflows: ["Open this tab when the footer shows errors or an operation fails.", "Prefer memory doctor hints when shown.", "Use source/component to route fixes to service, watcher, manager, provider, database, or browser."],
+  },
+  project: {
+    title: "Project Help",
+    purpose: "Show high-level project health, memory counts, embedding/search state, recent activity, automation, and watcher status.",
+    layout: ["Metric panels summarize the project.", "Breakdowns show memory types, source kinds, tags, files, and recent activity."],
+    controls: ["Project and repo root fields at the top choose scope.", ...SHARED_CONTROLS],
+    workflows: ["Start here for a health check.", "Use counts to spot missing memory, missing embeddings, or pending curation."],
+  },
+  review: {
+    title: "Review Help",
+    purpose: "Approve or reject replacement proposals so duplicate or superseded memories are curated safely.",
+    layout: ["Proposal list on the left.", "Candidate/target detail and policy controls on the right."],
+    controls: ["Approve or Reject selected proposals.", "Cycle policy when a repo root is resolved.", ...SHARED_CONTROLS],
+    workflows: ["Approve only when the candidate is clearly better and provenance remains valid.", "Reject ambiguous matches that would lose context."],
+  },
+  watchers: {
+    title: "Watchers Help",
+    purpose: "Show watcher heartbeat state, agent ownership, restart attempts, and recovery behavior.",
+    layout: ["Summary panel shows counts and stale threshold.", "Watcher cards show owner/session/pid, host service, heartbeat, and restarts."],
+    controls: [...SHARED_CONTROLS],
+    workflows: ["Use this tab when captures are not appearing.", "Check owner/session and stale heartbeat before restarting anything."],
+  },
+  embeddings: {
+    title: "Embeddings Help",
+    purpose: "Inspect embedding backends, switch semantic search, compare coverage, and backfill missing vectors.",
+    layout: ["Summary shows active backend and create state.", "Backend list shows readiness and coverage.", "Detail pane has activation, creation, reembed, and reindex controls."],
+    controls: ["Enter toggles selected backend search.", "c toggles automatic creation.", "e creates embeddings.", "I reindexes.", ...SHARED_CONTROLS],
+    workflows: ["Use Create embeddings for normal missing-vector backfill.", "Use Reindex when chunks need rebuilding.", "Switch active backend after both spaces are populated to compare retrieval."],
+  },
+  resume: {
+    title: "Resume Help",
+    purpose: "Get back into flow with checkpoint, current thread, next steps, recent changes, attention items, and durable context.",
+    layout: ["Load button generates the briefing.", "Scrollable detail shows checkpoint, next actions, summaries, memories, timeline, warnings, and commits."],
+    controls: ["Click Load resume to refresh context.", ...SHARED_CONTROLS],
+    workflows: ["Open this after interruption or when handing off work.", "Use the next-step section as the immediate continuation point."],
+  },
+  bundles: {
+    title: "Bundles Help",
+    purpose: "Export and import portable memory bundles from the browser.",
+    layout: ["Left side previews/downloads exports.", "Right side previews/applies imports."],
+    controls: ["Choose export options before preview or download.", "Choose a bundle file before preview or import.", ...SHARED_CONTROLS],
+    workflows: ["Preview before exporting or importing.", "Include provenance fields only when the bundle audience should see them."],
+  },
+};
+
+export function HelpPanel({ tab }: { tab: Tab }) {
+  const help = WEB_HELP[tab] ?? WEB_HELP.memories;
+  return (
+    <section className="panel help-panel">
+      <h2>{help.title}</h2>
+      <div className="help-grid">
+        <div>
+          <h3>Purpose</h3>
+          <p>{help.purpose}</p>
+        </div>
+        <div>
+          <h3>Layout</h3>
+          <ul>{help.layout.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+        <div>
+          <h3>Controls</h3>
+          <ul>{help.controls.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+        <div>
+          <h3>Workflows</h3>
+          <ul>{help.workflows.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      </div>
+    </section>
+  );
+}
