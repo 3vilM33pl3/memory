@@ -37,10 +37,10 @@ use mem_platform::preferred_user_state_dir;
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Position, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Tabs, Wrap},
+    widgets::{Block, Borders, Cell, Paragraph, Row, TableState, Tabs, Wrap},
 };
 use serde::Deserialize;
 use tokio::{
@@ -62,6 +62,12 @@ use crate::{
 
 use super::markdown::render_markdown_lines;
 use super::theme::{Theme, themed_block, themed_focus_block};
+use super::tabs::{
+    activity::draw_activity_tab, agents::draw_agents_tab, embeddings::draw_embeddings_tab,
+    errors::draw_errors_tab, memories::draw_memories_tab, project::draw_project_tab,
+    query::draw_query_tab, resume::draw_resume_tab, review::draw_review_tab,
+    watchers::draw_watchers_tab,
+};
 
 pub(super) const STREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -334,157 +340,157 @@ async fn load_project_refresh(
 }
 
 pub(super) struct App {
-    project: String,
-    repo_root: PathBuf,
-    active_tab: TabKind,
-    memories: MemoriesTabState,
-    query: QueryTabState,
-    agents: AgentsTabState,
-    resume: ResumeTabState,
-    activity: ActivityTabState,
-    errors: ErrorsTabState,
-    project_tab: ProjectTabState,
-    review: ReviewTabState,
-    watchers: WatchersTabState,
-    embeddings: EmbeddingsTabState,
-    overview: ProjectOverviewResponse,
-    help: HelpState,
-    versions: ToolVersions,
-    skill_inventory: SkillInventoryReport,
-    startup_at: DateTime<Utc>,
-    ui_status: UiStatus,
-    status_message: String,
-    health_ok: bool,
-    backend_connection_state: BackendConnectionState,
-    service_role: Option<String>,
-    service_health_state: Option<String>,
-    service_database_state: Option<String>,
-    manager_status: Option<ManagerFooterStatus>,
-    restart_notice: Option<TuiRestartNotice>,
-    stream_connecting: bool,
-    relay_discovery_enabled: bool,
-    profile: Profile,
-    filters: Filters,
-    input_mode: InputMode,
-    background_tx: mpsc::UnboundedSender<BackgroundEvent>,
-    needs_redraw: bool,
+    pub(in crate::tui) project: String,
+    pub(in crate::tui) repo_root: PathBuf,
+    pub(in crate::tui) active_tab: TabKind,
+    pub(in crate::tui) memories: MemoriesTabState,
+    pub(in crate::tui) query: QueryTabState,
+    pub(in crate::tui) agents: AgentsTabState,
+    pub(in crate::tui) resume: ResumeTabState,
+    pub(in crate::tui) activity: ActivityTabState,
+    pub(in crate::tui) errors: ErrorsTabState,
+    pub(in crate::tui) project_tab: ProjectTabState,
+    pub(in crate::tui) review: ReviewTabState,
+    pub(in crate::tui) watchers: WatchersTabState,
+    pub(in crate::tui) embeddings: EmbeddingsTabState,
+    pub(in crate::tui) overview: ProjectOverviewResponse,
+    pub(in crate::tui) help: HelpState,
+    pub(in crate::tui) versions: ToolVersions,
+    pub(in crate::tui) skill_inventory: SkillInventoryReport,
+    pub(in crate::tui) startup_at: DateTime<Utc>,
+    pub(in crate::tui) ui_status: UiStatus,
+    pub(in crate::tui) status_message: String,
+    pub(in crate::tui) health_ok: bool,
+    pub(in crate::tui) backend_connection_state: BackendConnectionState,
+    pub(in crate::tui) service_role: Option<String>,
+    pub(in crate::tui) service_health_state: Option<String>,
+    pub(in crate::tui) service_database_state: Option<String>,
+    pub(in crate::tui) manager_status: Option<ManagerFooterStatus>,
+    pub(in crate::tui) restart_notice: Option<TuiRestartNotice>,
+    pub(in crate::tui) stream_connecting: bool,
+    pub(in crate::tui) relay_discovery_enabled: bool,
+    pub(in crate::tui) profile: Profile,
+    pub(in crate::tui) filters: Filters,
+    pub(in crate::tui) input_mode: InputMode,
+    pub(in crate::tui) background_tx: mpsc::UnboundedSender<BackgroundEvent>,
+    pub(in crate::tui) needs_redraw: bool,
 }
 
 pub(super) struct MemoriesTabState {
-    all_memories: Vec<ProjectMemoryListItem>,
-    filtered_memories: Vec<ProjectMemoryListItem>,
-    total_memories: i64,
-    selected_detail: Option<MemoryEntryResponse>,
-    selected_history: Option<mem_api::MemoryHistoryResponse>,
-    selected_index: usize,
-    table_state: TableState,
-    memories_focus: MemoriesFocus,
-    memory_detail_scroll: u16,
+    pub(in crate::tui) all_memories: Vec<ProjectMemoryListItem>,
+    pub(in crate::tui) filtered_memories: Vec<ProjectMemoryListItem>,
+    pub(in crate::tui) total_memories: i64,
+    pub(in crate::tui) selected_detail: Option<MemoryEntryResponse>,
+    pub(in crate::tui) selected_history: Option<mem_api::MemoryHistoryResponse>,
+    pub(in crate::tui) selected_index: usize,
+    pub(in crate::tui) table_state: TableState,
+    pub(in crate::tui) memories_focus: MemoriesFocus,
+    pub(in crate::tui) memory_detail_scroll: u16,
 }
 
 pub(super) struct QueryTabState {
-    query_text: String,
-    query_history: Vec<QueryHistoryEntry>,
-    query_history_cursor: Option<usize>,
-    query_response: Option<QueryResponse>,
-    query_last_duration_ms: Option<u64>,
-    query_roundtrip_timing: Option<QueryRoundtripTiming>,
-    query_selected_detail: Option<MemoryEntryResponse>,
-    query_selected_index: usize,
-    query_table_state: TableState,
-    query_loading: bool,
-    query_started_at: Option<Instant>,
-    query_pending_question: Option<String>,
-    query_error: Option<String>,
-    query_request_id: u64,
-    query_detail_loading: bool,
-    query_detail_request_id: u64,
+    pub(in crate::tui) query_text: String,
+    pub(in crate::tui) query_history: Vec<QueryHistoryEntry>,
+    pub(in crate::tui) query_history_cursor: Option<usize>,
+    pub(in crate::tui) query_response: Option<QueryResponse>,
+    pub(in crate::tui) query_last_duration_ms: Option<u64>,
+    pub(in crate::tui) query_roundtrip_timing: Option<QueryRoundtripTiming>,
+    pub(in crate::tui) query_selected_detail: Option<MemoryEntryResponse>,
+    pub(in crate::tui) query_selected_index: usize,
+    pub(in crate::tui) query_table_state: TableState,
+    pub(in crate::tui) query_loading: bool,
+    pub(in crate::tui) query_started_at: Option<Instant>,
+    pub(in crate::tui) query_pending_question: Option<String>,
+    pub(in crate::tui) query_error: Option<String>,
+    pub(in crate::tui) query_request_id: u64,
+    pub(in crate::tui) query_detail_loading: bool,
+    pub(in crate::tui) query_detail_request_id: u64,
 }
 
 pub(super) struct AgentsTabState {
-    agent_snapshot: Option<AgentSnapshot>,
-    agent_loading: bool,
-    agent_error: Option<String>,
-    agent_selected_index: usize,
-    agent_table_state: TableState,
-    agent_detail_scroll: u16,
-    agent_initial_selection_done: bool,
-    agents_tab_visible: Arc<AtomicBool>,
-    agent_wake_tx: std_mpsc::Sender<()>,
-    agent_wake_rx: Option<std_mpsc::Receiver<()>>,
+    pub(in crate::tui) agent_snapshot: Option<AgentSnapshot>,
+    pub(in crate::tui) agent_loading: bool,
+    pub(in crate::tui) agent_error: Option<String>,
+    pub(in crate::tui) agent_selected_index: usize,
+    pub(in crate::tui) agent_table_state: TableState,
+    pub(in crate::tui) agent_detail_scroll: u16,
+    pub(in crate::tui) agent_initial_selection_done: bool,
+    pub(in crate::tui) agents_tab_visible: Arc<AtomicBool>,
+    pub(in crate::tui) agent_wake_tx: std_mpsc::Sender<()>,
+    pub(in crate::tui) agent_wake_rx: Option<std_mpsc::Receiver<()>>,
 }
 
 pub(super) struct ResumeTabState {
-    resume_response: Option<ResumeResponse>,
-    resume_loading: bool,
-    resume_loaded: bool,
-    resume_error: Option<String>,
-    resume_scroll: u16,
-    startup_resume_autoselect_pending: bool,
+    pub(in crate::tui) resume_response: Option<ResumeResponse>,
+    pub(in crate::tui) resume_loading: bool,
+    pub(in crate::tui) resume_loaded: bool,
+    pub(in crate::tui) resume_error: Option<String>,
+    pub(in crate::tui) resume_scroll: u16,
+    pub(in crate::tui) startup_resume_autoselect_pending: bool,
 }
 
 pub(super) struct ActivityTabState {
-    activity_events: Vec<ActivityEntry>,
-    activity_selected_index: usize,
-    activity_table_state: TableState,
-    activity_loading: bool,
-    activity_error: Option<String>,
-    activity_detail_scroll: u16,
-    llm_audit_status: Option<LlmAuditStatusResponse>,
-    llm_audit_loading: bool,
-    llm_audit_toggling: bool,
-    llm_audit_error: Option<String>,
-    up_to_speed_response: Option<UpToSpeedResponse>,
-    up_to_speed_loading: bool,
-    up_to_speed_error: Option<String>,
+    pub(in crate::tui) activity_events: Vec<ActivityEntry>,
+    pub(in crate::tui) activity_selected_index: usize,
+    pub(in crate::tui) activity_table_state: TableState,
+    pub(in crate::tui) activity_loading: bool,
+    pub(in crate::tui) activity_error: Option<String>,
+    pub(in crate::tui) activity_detail_scroll: u16,
+    pub(in crate::tui) llm_audit_status: Option<LlmAuditStatusResponse>,
+    pub(in crate::tui) llm_audit_loading: bool,
+    pub(in crate::tui) llm_audit_toggling: bool,
+    pub(in crate::tui) llm_audit_error: Option<String>,
+    pub(in crate::tui) up_to_speed_response: Option<UpToSpeedResponse>,
+    pub(in crate::tui) up_to_speed_loading: bool,
+    pub(in crate::tui) up_to_speed_error: Option<String>,
 }
 
 pub(super) struct ErrorsTabState {
-    errors_selected_index: usize,
-    errors_table_state: TableState,
-    errors_detail_scroll: u16,
+    pub(in crate::tui) errors_selected_index: usize,
+    pub(in crate::tui) errors_table_state: TableState,
+    pub(in crate::tui) errors_detail_scroll: u16,
 }
 
 pub(super) struct ProjectTabState {
-    project_scroll: u16,
+    pub(in crate::tui) project_scroll: u16,
 }
 
 pub(super) struct WatchersTabState {
-    watcher_scroll: u16,
+    pub(in crate::tui) watcher_scroll: u16,
 }
 
 pub(super) struct HelpState {
-    help_open: bool,
-    help_tab: TabKind,
-    help_scroll: u16,
+    pub(in crate::tui) help_open: bool,
+    pub(in crate::tui) help_tab: TabKind,
+    pub(in crate::tui) help_scroll: u16,
 }
 
 pub(super) struct ReviewTabState {
-    replacement_policy: ReplacementPolicy,
-    replacement_proposals: Vec<ReplacementProposalRecord>,
-    replacement_selected_index: usize,
-    review_table_state: TableState,
+    pub(in crate::tui) replacement_policy: ReplacementPolicy,
+    pub(in crate::tui) replacement_proposals: Vec<ReplacementProposalRecord>,
+    pub(in crate::tui) replacement_selected_index: usize,
+    pub(in crate::tui) review_table_state: TableState,
 }
 
 pub(super) struct EmbeddingsTabState {
-    embedding_backends_snapshot: Option<mem_api::EmbeddingBackendsResponse>,
-    embedding_backends_error: Option<String>,
-    embeddings_selected_index: usize,
-    embeddings_table_state: TableState,
-    embeddings_tab_visible: Arc<AtomicBool>,
-    embeddings_wake_tx: std_mpsc::Sender<()>,
-    embeddings_wake_rx: Option<std_mpsc::Receiver<()>>,
-    embeddings_toggle_message: Option<String>,
-    embeddings_toggling: Option<String>,
-    embeddings_creation_toggling: bool,
-    embeddings_operation: Option<String>,
+    pub(in crate::tui) embedding_backends_snapshot: Option<mem_api::EmbeddingBackendsResponse>,
+    pub(in crate::tui) embedding_backends_error: Option<String>,
+    pub(in crate::tui) embeddings_selected_index: usize,
+    pub(in crate::tui) embeddings_table_state: TableState,
+    pub(in crate::tui) embeddings_tab_visible: Arc<AtomicBool>,
+    pub(in crate::tui) embeddings_wake_tx: std_mpsc::Sender<()>,
+    pub(in crate::tui) embeddings_wake_rx: Option<std_mpsc::Receiver<()>>,
+    pub(in crate::tui) embeddings_toggle_message: Option<String>,
+    pub(in crate::tui) embeddings_toggling: Option<String>,
+    pub(in crate::tui) embeddings_creation_toggling: bool,
+    pub(in crate::tui) embeddings_operation: Option<String>,
 }
 
 pub(super) struct ToolVersions {
-    mem_cli: String,
-    mem_service: String,
-    watch_manager: String,
-    memory_watch: String,
+    pub(in crate::tui) mem_cli: String,
+    pub(in crate::tui) mem_service: String,
+    pub(in crate::tui) watch_manager: String,
+    pub(in crate::tui) memory_watch: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2747,7 +2753,7 @@ impl App {
         }
     }
 
-    fn query_results(&self) -> &[QueryResult] {
+    pub(in crate::tui) fn query_results(&self) -> &[QueryResult] {
         self.query.query_response
             .as_ref()
             .map(|response| response.results.as_slice())
@@ -3880,68 +3886,6 @@ pub(super) fn draw_help_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rec
     frame.render_widget(help, area);
 }
 
-pub(super) fn draw_memories_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let chunks = split_memories_area(area);
-
-    let header = Row::new(["Summary", "Type", "Status", "Conf", "Updated"]).style(
-        Style::default()
-            .fg(Theme::ACCENT_STRONG)
-            .bg(Theme::PANEL_ALT)
-            .add_modifier(Modifier::BOLD),
-    );
-    let rows = app.memories.filtered_memories.iter().map(memory_row);
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(34),
-            Constraint::Length(16),
-            Constraint::Length(8),
-            Constraint::Length(5),
-            Constraint::Length(20),
-        ],
-    )
-    .column_spacing(2)
-    .header(header)
-    .row_highlight_style(
-        Style::default()
-            .fg(Theme::SELECTION_FG)
-            .bg(Theme::SELECTION_BG)
-            .add_modifier(Modifier::BOLD),
-    )
-    .block(themed_focus_block(
-        format!(
-            "Memories (showing {} / {})",
-            app.memories.filtered_memories.len(),
-            app.memories.total_memories
-        ),
-        app.memories.memories_focus == MemoriesFocus::List,
-    ));
-    let mut state = app.memories.table_state.clone();
-    frame.render_stateful_widget(table, chunks[0], &mut state);
-
-    let detail_text = build_memory_detail_lines(app);
-    let detail_block = themed_focus_block(
-        match app.memories.memories_focus {
-            MemoriesFocus::List => "Detail".to_string(),
-            MemoriesFocus::Detail => "Detail Reader".to_string(),
-        },
-        app.memories.memories_focus == MemoriesFocus::Detail,
-    );
-    let detail_inner = detail_block.inner(chunks[1]);
-    let max_scroll = if detail_inner.width == 0 || detail_inner.height == 0 {
-        0
-    } else {
-        wrapped_line_count(&detail_text, detail_inner.width)
-            .saturating_sub(detail_inner.height as usize) as u16
-    };
-    let detail = Paragraph::new(detail_text)
-        .style(Style::default().bg(Theme::PANEL))
-        .scroll((app.memories.memory_detail_scroll.min(max_scroll), 0))
-        .wrap(Wrap { trim: false })
-        .block(detail_block);
-    frame.render_widget(detail, chunks[1]);
-}
-
 pub(super) fn build_history_lines(history: &mem_api::MemoryHistoryResponse) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     lines.push(Line::from(vec![
@@ -4193,505 +4137,6 @@ pub(super) fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
     }
 }
 
-pub(super) fn draw_agents_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
-        .split(area);
-
-    if app.agents.agent_loading && app.agents.agent_snapshot.is_none() {
-        frame.render_widget(
-            Paragraph::new("Loading agent sessions...")
-                .style(Style::default().fg(Theme::ACCENT).bg(Theme::PANEL_ALT))
-                .block(themed_block("Agents")),
-            area,
-        );
-        return;
-    }
-
-    if let Some(error) = &app.agents.agent_error
-        && app.agents.agent_snapshot.is_none()
-    {
-        frame.render_widget(
-            Paragraph::new(format!("Agents unavailable: {error}"))
-                .style(Style::default().fg(Theme::WARNING).bg(Theme::PANEL_ALT))
-                .wrap(Wrap { trim: false })
-                .block(themed_block("Agents")),
-            area,
-        );
-        return;
-    }
-
-    let Some(snapshot) = &app.agents.agent_snapshot else {
-        frame.render_widget(
-            Paragraph::new("No agent data available yet.")
-                .style(Style::default().fg(Theme::MUTED).bg(Theme::PANEL_ALT))
-                .block(themed_block("Agents")),
-            area,
-        );
-        return;
-    };
-
-    let header = Row::new(["Project", "Agent", "Status", "Tok", "Ctx", "Task"]).style(
-        Style::default()
-            .fg(Theme::ACCENT_STRONG)
-            .bg(Theme::PANEL_ALT)
-            .add_modifier(Modifier::BOLD),
-    );
-    let rows = snapshot.sessions.iter().map(agent_row);
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(20),
-            Constraint::Length(7),
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(7),
-            Constraint::Percentage(100),
-        ],
-    )
-    .column_spacing(1)
-    .header(header)
-    .row_highlight_style(
-        Style::default()
-            .fg(Theme::SELECTION_FG)
-            .bg(Theme::SELECTION_BG)
-            .add_modifier(Modifier::BOLD),
-    )
-    .block(themed_block(format!(
-        "Agents ({} sessions, {} orphan ports)",
-        snapshot.sessions.len(),
-        snapshot.orphan_ports.len()
-    )));
-    let mut state = app.agents.agent_table_state.clone();
-    frame.render_stateful_widget(table, chunks[0], &mut state);
-
-    let detail = Paragraph::new(agent_detail_lines(app, snapshot))
-        .scroll((app.agents.agent_detail_scroll, 0))
-        .wrap(Wrap { trim: false })
-        .style(Style::default().bg(Theme::PANEL))
-        .block(themed_block(format!(
-            "Agent Detail (scroll {})",
-            app.agents.agent_detail_scroll
-        )));
-    frame.render_widget(detail, chunks[1]);
-}
-
-pub(super) fn draw_project_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(12),
-            Constraint::Length(8),
-            Constraint::Min(7),
-        ])
-        .split(area);
-
-    let summary = Paragraph::new(vec![
-        metric_line(
-            "Project",
-            Span::styled(&app.overview.project, Style::default().fg(Theme::TEXT)),
-        ),
-        metric_line(
-            "Latest plan",
-            Span::styled(latest_plan_display(app), Style::default().fg(Theme::TEXT)),
-        ),
-        Line::from(vec![
-            label_span("Service: "),
-            service_span(&app.overview.service_status),
-            Span::raw("   "),
-            label_span("Database: "),
-            service_span(&app.overview.database_status),
-        ]),
-        Line::from(vec![
-            label_span("Memories: "),
-            Span::styled(
-                format!(
-                    "{} total / {} active / {} archived",
-                    app.overview.memory_entries_total,
-                    app.overview.active_memories,
-                    app.overview.archived_memories
-                ),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ]),
-        Line::from(vec![
-            label_span("Confidence bins: "),
-            Span::styled(
-                format!(
-                    "{} high / {} medium / {} low",
-                    app.overview.high_confidence_memories,
-                    app.overview.medium_confidence_memories,
-                    app.overview.low_confidence_memories
-                ),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ]),
-        metric_line(
-            "Recent 7d",
-            Span::styled(
-                format!(
-                    "{} memories / {} captures",
-                    app.overview.recent_memories_7d, app.overview.recent_captures_7d
-                ),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ),
-        metric_line(
-            "Raw captures",
-            Span::styled(
-                format!(
-                    "{} total / {} uncurated",
-                    app.overview.raw_captures_total, app.overview.uncurated_raw_captures
-                ),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ),
-        metric_line(
-            "Tasks / Sessions / Runs",
-            Span::styled(
-                format!(
-                    "{} / {} / {}",
-                    app.overview.tasks_total,
-                    app.overview.sessions_total,
-                    app.overview.curation_runs_total
-                ),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ),
-        metric_line(
-            "Last memory / curation",
-            Span::styled(
-                format!(
-                    "{} / {}",
-                    format_timestamp(app.overview.last_memory_at),
-                    format_timestamp(app.overview.last_curation_at)
-                ),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ),
-        metric_line(
-            "Last capture / oldest uncurated",
-            Span::styled(
-                format!(
-                    "{} / {}",
-                    format_timestamp(app.overview.last_capture_at),
-                    app.overview
-                        .oldest_uncurated_capture_age_hours
-                        .map(|hours| format!("{hours}h"))
-                        .unwrap_or_else(|| "n/a".to_string())
-                ),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ),
-        metric_line(
-            "Tool versions",
-            Span::styled(
-                format!(
-                    "memory {} / service {} / watcher {}",
-                    app.versions.mem_cli, app.versions.mem_service, app.versions.memory_watch
-                ),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ),
-        metric_line(
-            "Skill bundle",
-            Span::styled(
-                format!(
-                    "v{} {} ({})",
-                    app.skill_inventory.bundle_version,
-                    app.skill_inventory.status.label(),
-                    app.skill_inventory.summary
-                ),
-                Style::default().fg(skill_bundle_status_color(app.skill_inventory.status)),
-            ),
-        ),
-        metric_line(
-            "Automation",
-            Span::styled(
-                app.overview
-                    .automation
-                    .as_ref()
-                    .map(format_automation_status)
-                    .unwrap_or_else(|| "not configured".to_string()),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ),
-        metric_line(
-            "Watchers",
-            Span::styled(watcher_summary_text(app), Style::default().fg(Theme::TEXT)),
-        ),
-        metric_line(
-            "Curation policy",
-            Span::styled(
-                format!(
-                    "{} / {} pending (see Review tab)",
-                    app.review.replacement_policy, app.overview.pending_replacement_proposals
-                ),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ),
-    ])
-    .scroll((app.project_tab.project_scroll, 0))
-    .style(Style::default().bg(Theme::PANEL))
-    .block(themed_block(format!(
-        "Overview (scroll {})",
-        app.project_tab.project_scroll
-    )));
-    frame.render_widget(summary, chunks[0]);
-
-    let mid = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-            Constraint::Percentage(34),
-        ])
-        .split(chunks[1]);
-
-    frame.render_widget(
-        Paragraph::new(lines_for_named_counts(
-            app.overview
-                .memory_type_breakdown
-                .iter()
-                .map(|item| (item.memory_type.to_string(), item.count))
-                .collect(),
-            "No memory entries yet.",
-        ))
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block("Memory Types")),
-        mid[0],
-    );
-    frame.render_widget(
-        Paragraph::new(lines_for_named_counts(
-            app.overview
-                .source_kind_breakdown
-                .iter()
-                .map(|item| {
-                    (
-                        item.source_kind.source_kind_string().to_string(),
-                        item.count,
-                    )
-                })
-                .collect(),
-            "No sources yet.",
-        ))
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block("Source Kinds")),
-        mid[1],
-    );
-    frame.render_widget(
-        Paragraph::new(lines_for_named_counts(
-            app.overview
-                .top_tags
-                .iter()
-                .map(|item| (item.name.clone(), item.count))
-                .collect(),
-            "No tags yet.",
-        ))
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block("Top Tags")),
-        mid[2],
-    );
-
-    let bottom = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8), Constraint::Length(7)])
-        .split(chunks[2]);
-
-    let bottom_top = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
-        .split(bottom[0]);
-
-    frame.render_widget(
-        Paragraph::new(lines_for_named_counts(
-            app.overview
-                .top_files
-                .iter()
-                .map(|item| (item.name.clone(), item.count))
-                .collect(),
-            "No file provenance yet.",
-        ))
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block("Top Files")),
-        bottom_top[0],
-    );
-    frame.render_widget(
-        Paragraph::new(recent_activity_lines(app))
-            .style(Style::default().bg(Theme::PANEL_ALT))
-            .block(themed_block("Recent Activity")),
-        bottom_top[1],
-    );
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(Span::styled(
-                "Actions",
-                Style::default().fg(Theme::ACCENT_STRONG),
-            )),
-            Line::from(Span::styled(
-                "c curate project",
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(Span::styled(
-                "i reindex search chunks",
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(Span::styled(
-                "e materialize active-space vectors",
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(Span::styled(
-                "a archive low-value memories",
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(Span::styled(
-                "Review tab: y approve / n reject / p cycle policy",
-                Style::default().fg(Theme::MUTED),
-            )),
-            Line::from(Span::styled("r refresh", Style::default().fg(Theme::TEXT))),
-        ])
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block("Operations")),
-        bottom[1],
-    );
-}
-
-pub(super) fn draw_review_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(4),
-            Constraint::Min(8),
-            Constraint::Length(3),
-        ])
-        .split(area);
-
-    let pending = app.review.replacement_proposals.len();
-    let selected_label = if pending == 0 {
-        "—".to_string()
-    } else {
-        format!("{}/{}", app.review.replacement_selected_index + 1, pending)
-    };
-    let header = Paragraph::new(vec![
-        Line::from(vec![
-            label_span("Policy: "),
-            Span::styled(
-                app.review.replacement_policy.to_string(),
-                Style::default()
-                    .fg(Theme::ACCENT_STRONG)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("   "),
-            label_span("Pending: "),
-            Span::styled(pending.to_string(), Style::default().fg(Theme::TEXT)),
-            Span::raw("   "),
-            label_span("Selected: "),
-            Span::styled(selected_label, Style::default().fg(Theme::TEXT)),
-        ]),
-        Line::from(Span::styled(
-            "Clear updates replace automatically; ambiguous ones queue here for your approval.",
-            Style::default().fg(Theme::MUTED),
-        )),
-    ])
-    .style(Style::default().bg(Theme::PANEL))
-    .block(themed_block("Curation Review"));
-    frame.render_widget(header, chunks[0]);
-
-    let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[1]);
-
-    if app.review.replacement_proposals.is_empty() {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                "No pending replacement proposals. New ambiguous curation candidates will appear here.",
-                Style::default().fg(Theme::MUTED),
-            )))
-            .wrap(Wrap { trim: false })
-            .style(Style::default().bg(Theme::PANEL_ALT))
-            .block(themed_block("Proposals")),
-            body[0],
-        );
-    } else {
-        let header_row = Row::new(["#", "TARGET", "CANDIDATE", "SCORE"]).style(
-            Style::default()
-                .fg(Theme::ACCENT_STRONG)
-                .bg(Theme::PANEL_ALT)
-                .add_modifier(Modifier::BOLD),
-        );
-        let rows = app.review.replacement_proposals
-            .iter()
-            .enumerate()
-            .map(|(idx, proposal)| {
-                Row::new(vec![
-                    Line::from(Span::styled(
-                        (idx + 1).to_string(),
-                        Style::default().fg(Theme::MUTED),
-                    )),
-                    Line::from(Span::styled(
-                        truncate_for_list(&proposal.target_summary, 48),
-                        Style::default().fg(Theme::TEXT),
-                    )),
-                    Line::from(Span::styled(
-                        truncate_for_list(&proposal.candidate_summary, 48),
-                        Style::default().fg(Theme::ACCENT),
-                    )),
-                    Line::from(Span::styled(
-                        proposal.score.to_string(),
-                        Style::default().fg(Theme::TEXT),
-                    )),
-                ])
-            });
-        let table = Table::new(
-            rows,
-            [
-                Constraint::Length(4),
-                Constraint::Percentage(45),
-                Constraint::Percentage(45),
-                Constraint::Length(6),
-            ],
-        )
-        .header(header_row)
-        .row_highlight_style(
-            Style::default()
-                .bg(Theme::SELECTION_BG)
-                .fg(Theme::SELECTION_FG),
-        )
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block(format!("Proposals ({pending})")));
-        let mut state = app.review.review_table_state.clone();
-        frame.render_stateful_widget(table, body[0], &mut state);
-    }
-
-    frame.render_widget(
-        Paragraph::new(review_detail_lines(app))
-            .wrap(Wrap { trim: false })
-            .style(Style::default().bg(Theme::PANEL_ALT))
-            .block(themed_block("Detail")),
-        body[1],
-    );
-
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            accent_span("j/k [ ] "),
-            Span::styled("select  ", Style::default().fg(Theme::TEXT)),
-            accent_span("y "),
-            Span::styled("approve  ", Style::default().fg(Theme::TEXT)),
-            accent_span("n "),
-            Span::styled("reject  ", Style::default().fg(Theme::TEXT)),
-            accent_span("p "),
-            Span::styled("cycle policy  ", Style::default().fg(Theme::TEXT)),
-            accent_span("r "),
-            Span::styled("refresh", Style::default().fg(Theme::TEXT)),
-        ]))
-        .style(Style::default().bg(Theme::PANEL))
-        .block(themed_block("Actions")),
-        chunks[2],
-    );
-}
-
 pub(super) fn review_detail_lines(app: &App) -> Vec<Line<'static>> {
     let Some(proposal) = app.review.replacement_proposals
         .get(app.review.replacement_selected_index)
@@ -4755,257 +4200,6 @@ pub(super) fn truncate_for_list(s: &str, max: usize) -> String {
     }
 }
 
-pub(super) fn draw_watchers_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(5), Constraint::Min(10)])
-        .split(area);
-
-    let summary = Paragraph::new(vec![
-        metric_line(
-            "Watchers",
-            Span::styled(watcher_summary_text(app), Style::default().fg(Theme::TEXT)),
-        ),
-        metric_line(
-            "Guidance",
-            Span::styled(
-                "Use `memory watcher manager enable` on Linux, or `memory watcher enable --project <slug>` / `memory watcher run --project <slug>` for manual mode.",
-                Style::default().fg(Theme::MUTED),
-            ),
-        ),
-    ])
-    .style(Style::default().bg(Theme::PANEL))
-    .block(themed_block("Watcher Summary"));
-    frame.render_widget(summary, chunks[0]);
-
-    let detail = Paragraph::new(watcher_detail_lines(app))
-        .scroll((app.watchers.watcher_scroll, 0))
-        .wrap(Wrap { trim: false })
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block(format!(
-            "Watchers (scroll {})",
-            app.watchers.watcher_scroll
-        )));
-    frame.render_widget(detail, chunks[1]);
-}
-
-pub(super) fn draw_embeddings_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(6), Constraint::Min(8)])
-        .split(area);
-
-    let snapshot = app.embeddings.embedding_backends_snapshot.as_ref();
-    let backends = snapshot.map(|s| s.backends.as_slice()).unwrap_or(&[]);
-    let configured = backends.len();
-    let ready = backends.iter().filter(|b| b.ready).count();
-    let not_ready = configured.saturating_sub(ready);
-    let active_display = snapshot
-        .and_then(|s| s.active.clone())
-        .unwrap_or_else(|| "(none)".to_string());
-    let create_display = snapshot
-        .and_then(|snapshot| snapshot.backends.get(app.embeddings.embeddings_selected_index))
-        .map(|backend| {
-            format!(
-                "{} for {}",
-                if backend.create_enabled { "on" } else { "off" },
-                backend.name
-            )
-        })
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let message_line = if app.embeddings.embeddings_creation_toggling {
-        Line::from(vec![
-            label_span("Status: "),
-            Span::styled(
-                "toggling automatic embedding creation...",
-                Style::default().fg(Theme::ACCENT),
-            ),
-        ])
-    } else if let Some(operation) = &app.embeddings.embeddings_operation {
-        Line::from(vec![
-            label_span("Status: "),
-            Span::styled(
-                format!("{operation}..."),
-                Style::default().fg(Theme::ACCENT),
-            ),
-        ])
-    } else if let Some(toggling) = &app.embeddings.embeddings_toggling {
-        Line::from(vec![
-            label_span("Status: "),
-            Span::styled(
-                format!("toggling {toggling}..."),
-                Style::default().fg(Theme::ACCENT),
-            ),
-        ])
-    } else if let Some(msg) = &app.embeddings.embeddings_toggle_message {
-        let color = if msg.starts_with("Toggle failed")
-            || msg.starts_with("Creation toggle failed")
-            || msg.starts_with("Embedding creation failed")
-            || msg.starts_with("Reindex failed")
-        {
-            Theme::DANGER
-        } else {
-            Theme::SUCCESS
-        };
-        Line::from(vec![
-            label_span("Status: "),
-            Span::styled(msg.clone(), Style::default().fg(color)),
-        ])
-    } else if let Some(err) = &app.embeddings.embedding_backends_error {
-        Line::from(vec![
-            label_span("Status: "),
-            Span::styled(
-                format!("refresh failed: {err}"),
-                Style::default().fg(Theme::WARNING),
-            ),
-        ])
-    } else {
-        Line::from(vec![
-            label_span("Status: "),
-            Span::styled("idle", Style::default().fg(Theme::MUTED)),
-        ])
-    };
-
-    let summary = Paragraph::new(vec![
-        Line::from(vec![
-            label_span("Active: "),
-            Span::styled(active_display, Style::default().fg(Theme::ACCENT_STRONG)),
-        ]),
-        Line::from(vec![
-            label_span("Create: "),
-            Span::styled(create_display, Style::default().fg(Theme::ACCENT_STRONG)),
-            Span::styled(" automatic embeddings", Style::default().fg(Theme::MUTED)),
-        ]),
-        Line::from(vec![
-            label_span("Backends: "),
-            Span::styled(
-                format!("{configured} configured · {ready} ready · {not_ready} not ready"),
-                Style::default().fg(Theme::TEXT),
-            ),
-        ]),
-        message_line,
-    ])
-    .style(Style::default().bg(Theme::PANEL))
-    .block(themed_block("Embedding Backends"));
-    frame.render_widget(summary, chunks[0]);
-
-    if backends.is_empty() {
-        let body = if app.embeddings.embedding_backends_snapshot.is_some() {
-            "No embedding backends configured. Declare them under [[embeddings.backends]] in your memory-layer.toml."
-        } else {
-            "Loading embedding backends..."
-        };
-        frame.render_widget(
-            Paragraph::new(body)
-                .wrap(Wrap { trim: false })
-                .style(Style::default().fg(Theme::MUTED).bg(Theme::PANEL_ALT))
-                .block(themed_block("Backends")),
-            chunks[1],
-        );
-        return;
-    }
-
-    let header = Row::new([
-        " ", "NAME", "PROVIDER", "MODEL", "CREATE", "BASE URL", "CHUNKS", "MEMORIES",
-    ])
-    .style(
-        Style::default()
-            .fg(Theme::ACCENT_STRONG)
-            .bg(Theme::PANEL_ALT)
-            .add_modifier(Modifier::BOLD),
-    );
-    let rows = backends.iter().map(|backend| {
-        let marker = if backend.active {
-            Span::styled(
-                "*",
-                Style::default()
-                    .fg(Theme::ACCENT_STRONG)
-                    .add_modifier(Modifier::BOLD),
-            )
-        } else if !backend.ready {
-            Span::styled("!", Style::default().fg(Theme::DANGER))
-        } else {
-            Span::raw(" ")
-        };
-        let base_url = if backend.base_url.trim().is_empty()
-            || embedding_base_url_is_default(&backend.provider, &backend.base_url)
-        {
-            String::new()
-        } else {
-            backend.base_url.clone()
-        };
-        let chunks_cell = backend
-            .project_chunk_count
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "—".to_string());
-        let memories_cell = backend
-            .project_memory_count
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "—".to_string());
-        let name_style = if backend.active {
-            Style::default()
-                .fg(Theme::ACCENT_STRONG)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Theme::TEXT)
-        };
-        Row::new(vec![
-            Line::from(marker),
-            Line::from(Span::styled(backend.name.clone(), name_style)),
-            Line::from(Span::styled(
-                backend.provider.clone(),
-                Style::default().fg(Theme::ACCENT),
-            )),
-            Line::from(Span::styled(
-                backend.model.clone(),
-                Style::default().fg(Theme::TEXT),
-            )),
-            Line::from(Span::styled(
-                if backend.create_enabled { "on" } else { "off" },
-                if backend.create_enabled {
-                    Style::default().fg(Theme::SUCCESS)
-                } else {
-                    Style::default().fg(Theme::MUTED)
-                },
-            )),
-            Line::from(Span::styled(base_url, Style::default().fg(Theme::MUTED))),
-            Line::from(Span::styled(chunks_cell, Style::default().fg(Theme::TEXT))),
-            Line::from(Span::styled(
-                memories_cell,
-                Style::default().fg(Theme::TEXT),
-            )),
-        ])
-    });
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(1),
-            Constraint::Length(24),
-            Constraint::Length(20),
-            Constraint::Length(28),
-            Constraint::Length(8),
-            Constraint::Min(18),
-            Constraint::Length(8),
-            Constraint::Length(10),
-        ],
-    )
-    .header(header)
-    .row_highlight_style(
-        Style::default()
-            .bg(Theme::SELECTION_BG)
-            .fg(Theme::SELECTION_FG),
-    )
-    .style(Style::default().bg(Theme::PANEL_ALT))
-    .block(themed_block(format!(
-        "Backends ({} for project {})",
-        backends.len(),
-        app.project
-    )));
-    let mut state = app.embeddings.embeddings_table_state.clone();
-    frame.render_stateful_widget(table, chunks[1], &mut state);
-}
-
 pub(super) fn active_embedding_backend_index(snapshot: &mem_api::EmbeddingBackendsResponse) -> Option<usize> {
     snapshot.backends.iter().position(|backend| backend.active)
 }
@@ -5027,424 +4221,6 @@ pub(super) fn clamped_embedding_backend_index(
     (!snapshot.backends.is_empty()).then(|| current.min(snapshot.backends.len().saturating_sub(1)))
 }
 
-pub(super) fn draw_query_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(13),
-            Constraint::Min(12),
-        ])
-        .split(area);
-    let query_editing = matches!(app.input_mode, InputMode::Query(_));
-    let query_input_area = chunks[0];
-    let query_inner_width = query_input_area.width.saturating_sub(2);
-    let query_input = query_input_display(&current_query_display(app), query_inner_width);
-    let query_title = if app.query.query_loading {
-        "Question (searching)"
-    } else if query_editing {
-        "Question (editing)"
-    } else {
-        "Question"
-    };
-    let query_style = if query_input.placeholder {
-        Style::default().fg(Theme::MUTED).bg(Theme::PANEL)
-    } else {
-        Style::default().fg(Theme::TEXT).bg(Theme::PANEL)
-    };
-    let query_box = Paragraph::new(Line::from(Span::styled(query_input.text, query_style)))
-        .style(Style::default().bg(Theme::PANEL))
-        .block(themed_focus_block(
-            query_title,
-            query_editing || app.query.query_loading,
-        ));
-    frame.render_widget(query_box, query_input_area);
-    if query_editing && query_input_area.width > 2 && query_input_area.height > 2 {
-        frame.set_cursor_position(Position::new(
-            query_input_area.x + 1 + query_input.cursor_col,
-            query_input_area.y + 1,
-        ));
-    }
-
-    let answer_text = if app.query.query_loading {
-        let elapsed = app.query.query_started_at
-            .map(|started| started.elapsed().as_millis() as u64)
-            .unwrap_or_default();
-        let pending = app.query.query_pending_question
-            .as_deref()
-            .unwrap_or(app.query.query_text.as_str());
-        let previous = app.query.query_response
-            .as_ref()
-            .map(|response| response.results.len())
-            .unwrap_or(0);
-        vec![
-            Line::from(vec![
-                label_span("Searching: "),
-                Span::styled(pending.to_string(), Style::default().fg(Theme::TEXT)),
-            ]),
-            Line::from(vec![
-                Span::styled("Working ", Style::default().fg(Theme::ACCENT_STRONG)),
-                Span::styled(
-                    "querying memory and preparing answer/evidence",
-                    Style::default().fg(Theme::TEXT),
-                ),
-            ]),
-            Line::from(vec![
-                label_span("Elapsed: "),
-                Span::styled(format!("{elapsed} ms"), Style::default().fg(Theme::TEXT)),
-                Span::raw("   "),
-                label_span("Previous results: "),
-                Span::styled(previous.to_string(), Style::default().fg(Theme::MUTED)),
-            ]),
-            Line::from(Span::styled(
-                "Previous results remain visible below until the new search finishes.",
-                Style::default().fg(Theme::MUTED),
-            )),
-        ]
-    } else if let Some(error) = &app.query.query_error {
-        vec![
-            Line::from(vec![
-                label_span("Question: "),
-                Span::styled(
-                    display_filter(&current_query_display(app)),
-                    Style::default().fg(Theme::TEXT),
-                ),
-            ]),
-            Line::from(vec![
-                label_span("Error: "),
-                Span::styled(error.clone(), Style::default().fg(Theme::DANGER)),
-            ]),
-            Line::from(Span::styled(
-                "Edit the question with ? and press Enter to try again.",
-                Style::default().fg(Theme::MUTED),
-            )),
-        ]
-    } else if let Some(response) = &app.query.query_response {
-        let mut lines = vec![
-            Line::from(vec![
-                label_span("Question: "),
-                Span::styled(
-                    if current_query_display(app).trim().is_empty() {
-                        "<empty>".to_string()
-                    } else {
-                        current_query_display(app)
-                    },
-                    Style::default().fg(Theme::TEXT),
-                ),
-            ]),
-            Line::from(vec![
-                label_span("Answer: "),
-                Span::styled(response.answer.clone(), Style::default().fg(Theme::TEXT)),
-            ]),
-            Line::from(vec![
-                label_span("Method: "),
-                query_answer_method_span(&response.answer_generation.method),
-                Span::raw("   "),
-                label_span("Citations: "),
-                Span::styled(
-                    format_query_citation_numbers(&response.answer_generation.cited_result_numbers),
-                    Style::default().fg(Theme::ACCENT),
-                ),
-                Span::raw("   "),
-                label_span("Answer gen: "),
-                Span::styled(
-                    format!("{} ms", response.answer_generation.duration_ms),
-                    Style::default().fg(Theme::TEXT),
-                ),
-            ]),
-            Line::from(vec![
-                label_span("Confidence: "),
-                Span::styled(
-                    format!("{:.2}", response.confidence),
-                    confidence_style(response.confidence),
-                ),
-                Span::raw("   "),
-                label_span("Evidence: "),
-                Span::styled(
-                    if response.insufficient_evidence {
-                        "insufficient"
-                    } else {
-                        "sufficient"
-                    },
-                    if response.insufficient_evidence {
-                        Style::default().fg(Theme::WARNING)
-                    } else {
-                        Style::default().fg(Theme::SUCCESS)
-                    },
-                ),
-                Span::raw("   "),
-                label_span("Matches: "),
-                Span::styled(
-                    response.results.len().to_string(),
-                    Style::default().fg(Theme::TEXT),
-                ),
-            ]),
-        ];
-        lines.extend(query_timing_breakdown_lines(
-            response,
-            app.query.query_roundtrip_timing,
-        ));
-        lines.extend([
-            if let Some(reason) = &response.answer_generation.fallback_reason {
-                Line::from(vec![
-                    label_span("Fallback: "),
-                    Span::styled(reason.clone(), Style::default().fg(Theme::WARNING)),
-                ])
-            } else {
-                Line::from("")
-            },
-        ]);
-        lines
-    } else {
-        vec![
-            Line::from(vec![
-                label_span("Question: "),
-                Span::styled(
-                    display_filter(&current_query_display(app)),
-                    Style::default().fg(Theme::TEXT),
-                ),
-            ]),
-            Line::from(Span::styled(
-                "Press ? to enter a question. The result table below shows the memories returned for that query.",
-                Style::default().fg(Theme::MUTED),
-            )),
-        ]
-    };
-
-    let answer = Paragraph::new(answer_text)
-        .style(Style::default().bg(Theme::PANEL))
-        .wrap(Wrap { trim: false })
-        .block(themed_block("Query Result"));
-    frame.render_widget(answer, chunks[1]);
-
-    let lower = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[2]);
-
-    let header = Row::new(["#", "Summary", "Type", "Match", "Score"]).style(
-        Style::default()
-            .fg(Theme::ACCENT_STRONG)
-            .bg(Theme::PANEL_ALT)
-            .add_modifier(Modifier::BOLD),
-    );
-    let cited_numbers = app.query.query_response
-        .as_ref()
-        .map(|response| &response.answer_generation.cited_result_numbers);
-    let rows = app
-        .query_results()
-        .iter()
-        .enumerate()
-        .map(|(index, result)| {
-            query_row(
-                index + 1,
-                result,
-                cited_numbers.is_some_and(|numbers| numbers.contains(&(index + 1))),
-            )
-        });
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(4),
-            Constraint::Percentage(52),
-            Constraint::Length(13),
-            Constraint::Length(10),
-            Constraint::Length(8),
-        ],
-    )
-    .column_spacing(1)
-    .header(header)
-    .row_highlight_style(
-        Style::default()
-            .fg(Theme::SELECTION_FG)
-            .bg(Theme::SELECTION_BG)
-            .add_modifier(Modifier::BOLD),
-    )
-    .block(themed_block(format!(
-        "Returned Memories ({})",
-        app.query_results().len()
-    )));
-    let mut state = app.query.query_table_state.clone();
-    frame.render_stateful_widget(table, lower[0], &mut state);
-
-    let detail_text = if let Some(result) = app.query_results().get(app.query.query_selected_index) {
-        let result_number = app.query.query_selected_index + 1;
-        let cited_in_answer = app.query.query_response.as_ref().is_some_and(|response| {
-            response
-                .answer_generation
-                .cited_result_numbers
-                .contains(&result_number)
-        });
-        let mut lines = vec![
-            Line::from(vec![
-                label_span("Summary: "),
-                Span::styled(result.summary.clone(), Style::default().fg(Theme::TEXT)),
-            ]),
-            Line::from(vec![
-                label_span("Type: "),
-                memory_type_span(&result.memory_type),
-                Span::raw("   "),
-                label_span("Match: "),
-                query_match_span(&result.match_kind),
-                Span::raw("   "),
-                label_span("Score: "),
-                Span::styled(
-                    format!("{:.2}", result.score),
-                    Style::default().fg(Theme::ACCENT_STRONG),
-                ),
-                Span::raw("   "),
-                label_span("Cited: "),
-                Span::styled(
-                    if cited_in_answer { "yes" } else { "no" },
-                    if cited_in_answer {
-                        Style::default().fg(Theme::SUCCESS)
-                    } else {
-                        Style::default().fg(Theme::MUTED)
-                    },
-                ),
-            ]),
-            Line::from(""),
-            Line::from(vec![section_span("Snippet")]),
-            Line::from(Span::styled(
-                result.snippet.clone(),
-                Style::default().fg(Theme::TEXT),
-            )),
-        ];
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![section_span("Search Diagnostics")]));
-        lines.push(Line::from(Span::styled(
-            format!(
-                "chunk={:.2} | entry={:.2} | semantic={:.2} | overlap={:.0}% | relation={:.2} | graph={:.2}",
-                result.debug.chunk_fts,
-                result.debug.entry_fts,
-                result.debug.semantic_similarity,
-                result.debug.term_overlap * 100.0,
-                result.debug.relation_boost,
-                result.debug.graph_boost
-            ),
-            Style::default().fg(Theme::TEXT),
-        )));
-        lines.push(Line::from(Span::styled(
-            format!(
-                "phrases={} | tags={} | paths={} | graph matches={} edges={} | importance={} | confidence={:.2} | recency={:.2}",
-                result.debug.exact_phrase_matches,
-                result.debug.tag_match_count,
-                result.debug.path_match_count,
-                result.debug.graph_match_count,
-                result.debug.graph_edge_count,
-                result.debug.importance,
-                result.debug.memory_confidence,
-                result.debug.recency_boost
-            ),
-            Style::default().fg(Theme::MUTED),
-        )));
-
-        if !result.score_explanation.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("Why It Ranked")]));
-            for explanation in &result.score_explanation {
-                lines.push(Line::from(Span::styled(
-                    format!("- {explanation}"),
-                    Style::default().fg(Theme::ACCENT),
-                )));
-            }
-        }
-
-        if !result.graph_connections.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("Graph Connections")]));
-            for connection in &result.graph_connections {
-                let mut details = vec![connection.reason.clone(), connection.file_path.clone()];
-                if let Some(symbol) = &connection.symbol {
-                    details.push(format!("symbol={symbol}"));
-                }
-                if let Some(edge_kind) = &connection.edge_kind {
-                    details.push(format!("edge={edge_kind}"));
-                }
-                if let Some(neighbor) = &connection.neighbor_symbol {
-                    details.push(format!("neighbor={neighbor}"));
-                }
-                details.push(format!("boost={:.2}", connection.score_boost));
-                lines.push(Line::from(Span::styled(
-                    format!("- {}", details.join(" | ")),
-                    Style::default().fg(Theme::ACCENT),
-                )));
-            }
-        }
-
-        if let Some(detail) = &app.query.query_selected_detail {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("Canonical Text")]));
-            lines.push(Line::from(Span::styled(
-                detail.canonical_text.clone(),
-                Style::default().fg(Theme::TEXT),
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("Related Memories")]));
-            if detail.related_memories.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    "No related memories recorded.",
-                    Style::default().fg(Theme::MUTED),
-                )));
-            } else {
-                for related in &detail.related_memories {
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("{} ", related.relation_type),
-                            Style::default().fg(Theme::ACCENT),
-                        ),
-                        memory_type_span(&related.memory_type),
-                        Span::raw(" "),
-                        Span::styled(
-                            format!("({:.2}) ", related.confidence),
-                            confidence_style(related.confidence),
-                        ),
-                        Span::styled(related.summary.clone(), Style::default().fg(Theme::TEXT)),
-                    ]));
-                }
-            }
-        } else if app.query.query_detail_loading {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "Loading selected memory detail...",
-                Style::default().fg(Theme::MUTED),
-            )));
-        }
-
-        if !result.sources.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("Sources")]));
-            for source in &result.sources {
-                let mut parts = vec![source.source_kind.source_kind_string().to_string()];
-                if let Some(path) = &source.file_path {
-                    parts.push(path.clone());
-                }
-                if let Some(excerpt) = &source.excerpt {
-                    parts.push(excerpt.clone());
-                }
-                lines.push(Line::from(Span::styled(
-                    parts.join(" | "),
-                    Style::default().fg(Theme::TEXT),
-                )));
-            }
-        }
-
-        lines
-    } else {
-        vec![Line::from(Span::styled(
-            "Run a query to inspect the returned memories.",
-            Style::default().fg(Theme::MUTED),
-        ))]
-    };
-
-    let detail = Paragraph::new(detail_text)
-        .style(Style::default().bg(Theme::PANEL))
-        .wrap(Wrap { trim: false })
-        .block(themed_block("Returned Memory Detail"));
-    frame.render_widget(detail, lower[1]);
-}
-
 pub(super) fn current_query_display(app: &App) -> String {
     match &app.input_mode {
         InputMode::Query(value) => value.clone(),
@@ -5453,9 +4229,9 @@ pub(super) fn current_query_display(app: &App) -> String {
 }
 
 pub(super) struct QueryInputDisplay {
-    text: String,
-    cursor_col: u16,
-    placeholder: bool,
+    pub(in crate::tui) text: String,
+    pub(in crate::tui) cursor_col: u16,
+    pub(in crate::tui) placeholder: bool,
 }
 
 pub(super) fn query_input_display(value: &str, inner_width: u16) -> QueryInputDisplay {
@@ -5499,188 +4275,6 @@ pub(super) fn query_input_display(value: &str, inner_width: u16) -> QueryInputDi
     }
 }
 
-pub(super) fn draw_resume_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let lines = if let Some(response) = &app.resume.resume_response {
-        let mut lines = Vec::new();
-        if app.resume.resume_loading {
-            lines.push(Line::from(Span::styled(
-                "Refreshing resume in the background...",
-                Style::default().fg(Theme::ACCENT),
-            )));
-            lines.push(Line::from(""));
-        }
-        lines.push(Line::from(vec![
-            label_span("Project: "),
-            Span::styled(response.project.clone(), Style::default().fg(Theme::TEXT)),
-        ]));
-        if let Some(checkpoint) = &response.checkpoint {
-            lines.push(Line::from(vec![
-                label_span("Checkpoint: "),
-                Span::styled(
-                    format_timestamp_medium(checkpoint.marked_at),
-                    Style::default().fg(Theme::TEXT),
-                ),
-            ]));
-            if let Some(note) = &checkpoint.note {
-                lines.push(Line::from(vec![
-                    label_span("Note: "),
-                    Span::styled(note.clone(), Style::default().fg(Theme::TEXT)),
-                ]));
-            }
-        } else {
-            lines.push(Line::from(Span::styled(
-                "No checkpoint stored yet. Use `memory checkpoint save --project <slug>` when you leave a project.",
-                Style::default().fg(Theme::MUTED),
-            )));
-        }
-        if let Some(current_thread) = &response.current_thread {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("Current Thread")]));
-            lines.push(Line::from(Span::styled(
-                current_thread.clone(),
-                Style::default().fg(Theme::TEXT),
-            )));
-        }
-        if let Some(action) = &response.primary_next_step {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("Next Step")]));
-            lines.push(Line::from(Span::styled(
-                format!("{}: {}", action.title, action.rationale),
-                Style::default().fg(Theme::TEXT),
-            )));
-            if let Some(command_hint) = &action.command_hint {
-                lines.push(Line::from(Span::styled(
-                    command_hint.clone(),
-                    Style::default().fg(Theme::MUTED),
-                )));
-            }
-        }
-        if !response.change_summary.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("What Changed")]));
-            for item in &response.change_summary {
-                lines.push(Line::from(Span::styled(
-                    format!("- {item}"),
-                    Style::default().fg(Theme::TEXT),
-                )));
-            }
-        }
-        if !response.attention_items.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("Needs Attention")]));
-            for item in &response.attention_items {
-                lines.push(Line::from(Span::styled(
-                    format!("- {item}"),
-                    Style::default().fg(Theme::WARNING),
-                )));
-            }
-        }
-        if !response.context_items.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("Keep In Mind")]));
-            for item in &response.context_items {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("[{}] ", item.memory_type),
-                        Style::default().fg(Theme::ACCENT),
-                    ),
-                    Span::styled(item.summary.clone(), Style::default().fg(Theme::TEXT)),
-                ]));
-            }
-        }
-        if !response.secondary_next_steps.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("Other Useful Follow-Ups")]));
-            for action in &response.secondary_next_steps {
-                lines.push(Line::from(Span::styled(
-                    format!("- {}: {}", action.title, action.rationale),
-                    Style::default().fg(Theme::TEXT),
-                )));
-                if let Some(command_hint) = &action.command_hint {
-                    lines.push(Line::from(Span::styled(
-                        format!("  {command_hint}"),
-                        Style::default().fg(Theme::MUTED),
-                    )));
-                }
-            }
-        }
-        if !response.warnings.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("All Warnings")]));
-            for warning in &response.warnings {
-                lines.push(Line::from(Span::styled(
-                    format!("- {warning}"),
-                    Style::default().fg(Theme::WARNING),
-                )));
-            }
-        }
-        if !response.actions.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("All Suggested Next Actions")]));
-            for action in &response.actions {
-                lines.push(Line::from(Span::styled(
-                    format!("- {}: {}", action.title, action.rationale),
-                    Style::default().fg(Theme::TEXT),
-                )));
-                if let Some(command_hint) = &action.command_hint {
-                    lines.push(Line::from(Span::styled(
-                        format!("  {command_hint}"),
-                        Style::default().fg(Theme::MUTED),
-                    )));
-                }
-            }
-        }
-        if response.current_thread.is_none()
-            && response.change_summary.is_empty()
-            && response.attention_items.is_empty()
-            && response.context_items.is_empty()
-        {
-            lines.push(Line::from(""));
-            append_resume_briefing_lines(&mut lines, &response.briefing);
-        }
-        if !response.timeline.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![section_span("Recent Timeline")]));
-            for event in response.timeline.iter().take(8) {
-                lines.push(Line::from(Span::styled(
-                    format!(
-                        "- {}  {}",
-                        format_timestamp_timeline(event.recorded_at),
-                        event.summary
-                    ),
-                    Style::default().fg(Theme::TEXT),
-                )));
-            }
-        }
-        lines
-    } else if app.resume.resume_loading {
-        vec![Line::from(Span::styled(
-            "Loading resume in the background...",
-            Style::default().fg(Theme::ACCENT),
-        ))]
-    } else if let Some(error) = &app.resume.resume_error {
-        vec![Line::from(Span::styled(
-            format!("Resume unavailable: {error}"),
-            Style::default().fg(Theme::WARNING),
-        ))]
-    } else {
-        vec![Line::from(Span::styled(
-            "Resume briefing is unavailable. Press r to refresh.",
-            Style::default().fg(Theme::MUTED),
-        ))]
-    };
-
-    let paragraph = Paragraph::new(lines)
-        .scroll((app.resume.resume_scroll, 0))
-        .wrap(Wrap { trim: false })
-        .style(Style::default().bg(Theme::PANEL_ALT))
-        .block(themed_block(format!(
-            "Resume (scroll {})",
-            app.resume.resume_scroll
-        )));
-    frame.render_widget(paragraph, area);
-}
-
 pub(super) fn append_resume_briefing_lines(lines: &mut Vec<Line<'static>>, briefing: &str) {
     for raw_line in briefing.lines() {
         let trimmed = raw_line.trim_end();
@@ -5706,150 +4300,10 @@ pub(super) fn append_resume_briefing_lines(lines: &mut Vec<Line<'static>>, brief
     }
 }
 
-pub(super) fn draw_activity_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(11), Constraint::Min(8)])
-        .split(area);
-
-    let mut briefing_lines = activity_briefing_lines(app);
-    briefing_lines.extend(llm_audit_status_lines(app));
-    frame.render_widget(
-        Paragraph::new(briefing_lines)
-            .style(Style::default().bg(Theme::PANEL_ALT))
-            .wrap(Wrap { trim: false })
-            .block(themed_block("Get Up To Speed")),
-        vertical[0],
-    );
-
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-        .split(vertical[1]);
-
-    let header = Row::new(["When", "Kind", "Tok", "Ms", "Summary"]).style(
-        Style::default()
-            .fg(Theme::ACCENT_STRONG)
-            .bg(Theme::PANEL_ALT)
-            .add_modifier(Modifier::BOLD),
-    );
-    let rows = app.activity.activity_events.iter().map(activity_row);
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(16),
-            Constraint::Length(11),
-            Constraint::Length(7),
-            Constraint::Length(6),
-            Constraint::Percentage(100),
-        ],
-    )
-    .column_spacing(1)
-    .header(header)
-    .row_highlight_style(
-        Style::default()
-            .fg(Theme::SELECTION_FG)
-            .bg(Theme::SELECTION_BG)
-            .add_modifier(Modifier::BOLD),
-    )
-    .block(themed_block(format!(
-        "Activity ({})",
-        app.activity.activity_events.len()
-    )));
-    let mut state = app.activity.activity_table_state.clone();
-    frame.render_stateful_widget(table, chunks[0], &mut state);
-
-    let detail_lines = if let Some(entry) = app.activity.activity_events.get(app.activity.activity_selected_index) {
-        activity_detail_lines(entry)
-    } else {
-        vec![Line::from(Span::styled(
-            "No activity yet. Keep the TUI open while queries, captures, curations, reindexing, re-embedding, archiving, or deletions happen for this project.",
-            Style::default().fg(Theme::MUTED),
-        ))]
-    };
-
-    let detail = Paragraph::new(detail_lines)
-        .scroll((app.activity.activity_detail_scroll, 0))
-        .style(Style::default().bg(Theme::PANEL))
-        .wrap(Wrap { trim: false })
-        .block(themed_block(format!(
-            "Activity Detail (scroll {})",
-            app.activity.activity_detail_scroll
-        )));
-    frame.render_widget(detail, chunks[1]);
-}
-
 #[derive(Clone)]
 pub(super) struct ErrorItem {
     when: Option<DateTime<Utc>>,
     diagnostic: DiagnosticInfo,
-}
-
-pub(super) fn draw_errors_tab(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
-    let items = collect_error_items(app);
-    let selected_index = app.errors.errors_selected_index.min(items.len().saturating_sub(1));
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
-        .split(area);
-
-    let header = Row::new(["When", "Sev", "Source", "Component", "Summary"]).style(
-        Style::default()
-            .fg(Theme::ACCENT_STRONG)
-            .bg(Theme::PANEL_ALT)
-            .add_modifier(Modifier::BOLD),
-    );
-    let rows = items.iter().map(error_row);
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(16),
-            Constraint::Length(7),
-            Constraint::Length(12),
-            Constraint::Length(13),
-            Constraint::Percentage(100),
-        ],
-    )
-    .column_spacing(1)
-    .header(header)
-    .row_highlight_style(
-        Style::default()
-            .fg(Theme::SELECTION_FG)
-            .bg(Theme::SELECTION_BG)
-            .add_modifier(Modifier::BOLD),
-    )
-    .block(themed_block(format!("Errors ({})", items.len())));
-    let mut state = app.errors.errors_table_state.clone();
-    if items.is_empty() {
-        state.select(None);
-    } else {
-        state.select(Some(selected_index));
-    }
-    frame.render_stateful_widget(table, chunks[0], &mut state);
-
-    let lines = if let Some(item) = items.get(selected_index) {
-        error_detail_lines(item)
-    } else {
-        vec![
-            Line::from(Span::styled(
-                "No diagnostics recorded for this project or TUI session.",
-                Style::default().fg(Theme::SUCCESS),
-            )),
-            Line::from(Span::styled(
-                "Provider errors, query failures, watcher failures, and TUI connection errors will appear here with fix hints.",
-                Style::default().fg(Theme::MUTED),
-            )),
-        ]
-    };
-    let detail = Paragraph::new(lines)
-        .scroll((app.errors.errors_detail_scroll, 0))
-        .style(Style::default().bg(Theme::PANEL))
-        .wrap(Wrap { trim: false })
-        .block(themed_block(format!(
-            "Error Detail (scroll {})",
-            app.errors.errors_detail_scroll
-        )));
-    frame.render_widget(detail, chunks[1]);
 }
 
 pub(super) fn collect_error_items(app: &App) -> Vec<ErrorItem> {
