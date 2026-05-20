@@ -116,6 +116,69 @@ fn verify_source_path_requires_repo_root_for_relative_files() {
     );
 }
 
+#[tokio::test]
+async fn verify_project_provenance_marks_missing_symbols() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let slug = mem_test_support::unique_project_slug("symbol-provenance");
+    let root = std::env::temp_dir().join(format!("memory-symbol-provenance-{}", Uuid::new_v4()));
+    fs::create_dir_all(root.join("src")).expect("create temp repo");
+    fs::write(root.join("src/lib.rs"), "pub fn PresentSymbol() {}\n").expect("write source file");
+
+    let project_id = Uuid::new_v4();
+    let memory_id = Uuid::new_v4();
+    let source_id = Uuid::new_v4();
+    let run_id = Uuid::new_v4();
+    let node_id = Uuid::new_v4();
+    let symbol_id = Uuid::new_v4();
+    insert_symbol_provenance_fixture(
+        &pool, &slug, &root, project_id, memory_id, source_id, run_id, node_id, symbol_id,
+    )
+    .await;
+
+    let verified = verify_project_provenance(
+        &pool,
+        &ProvenanceVerificationRequest {
+            project: slug.clone(),
+            repo_root: Some(root.display().to_string()),
+            dry_run: false,
+        },
+    )
+    .await
+    .expect("verify provenance");
+    assert_eq!(verified.verified_count, 1);
+    assert_eq!(verified.missing_symbol_count, 0);
+
+    sqlx::query("UPDATE memory_sources SET symbol_name = 'MissingSymbol' WHERE id = $1")
+        .bind(source_id)
+        .execute(&pool)
+        .await
+        .expect("update source symbol");
+    let missing = verify_project_provenance(
+        &pool,
+        &ProvenanceVerificationRequest {
+            project: slug.clone(),
+            repo_root: Some(root.display().to_string()),
+            dry_run: true,
+        },
+    )
+    .await
+    .expect("verify missing symbol");
+    assert_eq!(missing.verified_count, 0);
+    assert_eq!(missing.missing_symbol_count, 1);
+    assert_eq!(
+        missing.items[0].status,
+        SourceProvenanceStatus::MissingSymbol
+    );
+
+    mem_test_support::cleanup_project(&pool, &slug)
+        .await
+        .expect("cleanup project");
+    fs::remove_dir_all(root).expect("cleanup temp repo");
+}
+
 fn test_presence(
     watcher_id: &str,
     project: &str,
@@ -142,6 +205,105 @@ fn test_presence(
         last_restart_attempt_at: None,
         restart_attempt_count: 0,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_symbol_provenance_fixture(
+    pool: &PgPool,
+    slug: &str,
+    root: &FsPath,
+    project_id: Uuid,
+    memory_id: Uuid,
+    source_id: Uuid,
+    run_id: Uuid,
+    node_id: Uuid,
+    symbol_id: Uuid,
+) {
+    mem_test_support::cleanup_project(pool, slug)
+        .await
+        .expect("cleanup old project");
+    sqlx::query("INSERT INTO projects (id, slug, name, root_path, created_at) VALUES ($1, $2, $2, $3, now())")
+        .bind(project_id)
+        .bind(slug)
+        .bind(root.display().to_string())
+        .execute(pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        r#"
+        INSERT INTO memory_entries
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
+             summary, memory_type, scope, importance, confidence, status,
+             created_at, updated_at, archived_at, search_document)
+        VALUES ($1, $2, $1, 1, FALSE, 'Symbol provenance detail.',
+                'Symbol provenance', 'implementation', 'project', 3, 0.9,
+                'active', now(), now(), NULL,
+                to_tsvector('english', 'Symbol provenance detail'))
+        "#,
+    )
+    .bind(memory_id)
+    .bind(project_id)
+    .execute(pool)
+    .await
+    .expect("insert memory");
+    sqlx::query(
+        r#"
+        INSERT INTO memory_sources
+            (id, memory_entry_id, source_kind, file_path, symbol_name, symbol_kind, created_at)
+        VALUES ($1, $2, 'file', 'src/lib.rs', 'PresentSymbol', 'function', now())
+        "#,
+    )
+    .bind(source_id)
+    .bind(memory_id)
+    .execute(pool)
+    .await
+    .expect("insert memory source");
+    sqlx::query(
+        r#"
+        INSERT INTO graph_extraction_runs
+            (id, project_id, repo_root, git_head, analyzer_version, strategy_version,
+             status, started_at, completed_at, summary_json)
+        VALUES ($1, $2, $3, 'abc', 'mem-analyze-v2', 'code-graph-resolution-v1',
+                'completed', now(), now(), '{}'::jsonb)
+        "#,
+    )
+    .bind(run_id)
+    .bind(project_id)
+    .bind(root.display().to_string())
+    .execute(pool)
+    .await
+    .expect("insert graph run");
+    sqlx::query(
+        r#"
+        INSERT INTO graph_nodes
+            (id, project_id, extraction_run_id, node_kind, stable_identity, display_name, metadata_json, created_at)
+        VALUES ($1, $2, $3, 'code_symbol', 'rust:src/lib.rs:function:PresentSymbol:1-1', 'PresentSymbol', '{}'::jsonb, now())
+        "#,
+    )
+    .bind(node_id)
+    .bind(project_id)
+    .bind(run_id)
+    .execute(pool)
+    .await
+    .expect("insert graph node");
+    sqlx::query(
+        r#"
+        INSERT INTO code_symbols
+            (id, project_id, extraction_run_id, graph_node_id, fact_id, stable_identity,
+             language, file_path, symbol_kind, name, qualified_name, start_byte, end_byte,
+             start_line, end_line, display_name, created_at)
+        VALUES ($1, $2, $3, $4, 'fact', 'rust:src/lib.rs:function:PresentSymbol:1-1',
+                'rust', 'src/lib.rs', 'function', 'PresentSymbol', 'PresentSymbol',
+                0, 10, 1, 1, 'PresentSymbol', now())
+        "#,
+    )
+    .bind(symbol_id)
+    .bind(project_id)
+    .bind(run_id)
+    .bind(node_id)
+    .execute(pool)
+    .await
+    .expect("insert code symbol");
 }
 
 fn test_query_response() -> QueryResponse {

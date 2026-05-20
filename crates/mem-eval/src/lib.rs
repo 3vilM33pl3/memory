@@ -1749,6 +1749,8 @@ mod tests {
                 sources: vec![mem_api::QuerySource {
                     task_id: None,
                     file_path: Some("crates/mem-search/src/lib.rs".to_string()),
+                    symbol_name: None,
+                    symbol_kind: None,
                     source_kind: mem_api::SourceKind::File,
                     excerpt: None,
                     provenance: None,
