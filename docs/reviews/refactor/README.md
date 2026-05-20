@@ -44,10 +44,13 @@ Derived from [AUDIT-2026-05-18.md](AUDIT-2026-05-18.md). Each finishes work the 
 
 - [15. Repository Layer — Extend Across Crates](15-repository-layer-extend.md) — finish the SQL extraction in mem-curate, mem-graph, mem-search; cover writes.
 - [17. Web App Decomposition — Finish](17-web-app-decomposition-finish.md) — extract the 10 remaining tabs from `App.tsx`; target ≤ 600 LOC.
+  - [17.5. Web Controller Hook Split](17.5-web-controller-hook-split.md) — slice the 1,067-LOC `useWebAppController` into per-feature hooks + a thin `useAppShell`.
 
 ### P3 — Quality of life
 
 - [16. TUI Architecture Split — Finish](16-tui-architecture-split-finish.md) — per-tab modules with their own state sub-structs; target `tui.rs` ≤ 3,000 LOC.
+  - [16.5. TUI `App` Slim and MVU Seed](16.5-tui-app-slim-and-mvu-seed.md) — group 24 coordinator fields into sub-structs; introduce per-tab `update(...) -> TabAction` seam.
+  - [16.6. TUI Query Tab Input Migration](16.6-tui-query-tab-input-migration.md) — move query-tab normal-mode navigation out of `app.rs` into `tabs/query.rs::update`.
 - [19. Eval — External Retriever Command](19-eval-retriever-cmd.md) — land the deferred `--retriever-cmd` interface for the researcher persona.
 
 ## Pull Request Guidance
