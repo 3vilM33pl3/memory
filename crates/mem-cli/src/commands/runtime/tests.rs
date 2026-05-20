@@ -10,8 +10,11 @@ use clap::{Command, CommandFactory, Parser, error::ErrorKind};
 use uuid::Uuid;
 
 use crate::commands::eval_support::{
-    EvalRunContext, agent_build_prompt, chat_completion_content, ensure_direct_llm_eval_config,
-    ensure_eval_shell_allowed, parse_no_memory_grounded_answer, token_usage_from_chat_body,
+    EvalRunContext, ExternalRetrieverResponse, agent_build_prompt,
+    build_external_retriever_request, chat_completion_content, ensure_direct_llm_eval_config,
+    ensure_eval_retriever_allowed, ensure_eval_shell_allowed, external_retriever_failure_result,
+    external_retriever_response_to_query_response, parse_no_memory_grounded_answer,
+    run_external_retriever, run_external_retriever_for_retrieval_item, token_usage_from_chat_body,
     token_usage_from_json_value, validate_agent_build_memory_evidence,
 };
 use crate::commands::{
@@ -451,6 +454,191 @@ fn eval_shell_suites_require_explicit_allow_shell() {
     assert!(error.to_string().contains("--allow-shell"));
     assert!(ensure_eval_shell_allowed(&suite, true, false).is_ok());
     assert!(ensure_eval_shell_allowed(&suite, false, true).is_ok());
+}
+
+#[test]
+fn eval_retriever_cmd_requires_explicit_allow_shell() {
+    let error = ensure_eval_retriever_allowed(Some("./retriever"), false).unwrap_err();
+
+    assert!(error.to_string().contains("--allow-shell"));
+    assert!(ensure_eval_retriever_allowed(Some("./retriever"), true).is_ok());
+    assert!(ensure_eval_retriever_allowed(None, false).is_ok());
+}
+
+#[test]
+fn external_retriever_response_normalizes_to_query_response() {
+    let response: ExternalRetrieverResponse = serde_json::from_str(
+        r#"{
+            "schema_version": 1,
+            "results": [
+                {
+                    "id": "external-release-rule",
+                    "score": 0.82,
+                    "text": "The release gate requires a green gate and paired benchmark.",
+                    "tags": ["mi-release"],
+                    "citations": [{"file_path": "docs/release-gate.md", "excerpt": "green gate"}]
+                }
+            ],
+            "diagnostics": {"latency_ms": 123, "tokens_in": 50, "tokens_out": 20}
+        }"#,
+    )
+    .unwrap();
+
+    let normalized = external_retriever_response_to_query_response(response, 999).unwrap();
+
+    assert_eq!(normalized.results.len(), 1);
+    assert_eq!(normalized.results[0].score, 0.82);
+    assert_eq!(normalized.results[0].tags, vec!["mi-release"]);
+    assert_eq!(
+        normalized.results[0].sources[0].file_path.as_deref(),
+        Some("docs/release-gate.md")
+    );
+    assert!(normalized.answer.contains("green gate"));
+    assert_eq!(normalized.diagnostics.total_duration_ms, 123);
+    assert_eq!(
+        normalized
+            .answer_generation
+            .token_usage
+            .unwrap()
+            .total_tokens,
+        70
+    );
+}
+
+#[test]
+fn external_retriever_fake_script_scores_with_existing_retrieval_scorer() {
+    let dir = unique_temp_dir("mem-external-retriever");
+    fs::create_dir_all(&dir).unwrap();
+    let script = dir.join("retriever.sh");
+    fs::write(
+        &script,
+        r#"#!/usr/bin/env sh
+cat > request.json
+printf '%s\n' '{"schema_version":1,"results":[{"id":"external-release-rule","score":0.92,"text":"The release rule requires a green gate and paired benchmark.","tags":["mi-release"],"citations":["docs/release-gate.md"]}],"diagnostics":{"latency_ms":12,"tokens_in":3,"tokens_out":4}}'
+"#,
+    )
+    .unwrap();
+    let suite = mem_eval::EvalSuite {
+        manifest: mem_eval::EvalSuiteManifest {
+            name: "external suite".to_string(),
+            description: None,
+            suite_version: None,
+            label_status: None,
+            fixture: Some("fixtures/research".to_string()),
+            default_profile: None,
+            min_items: None,
+            default_repeats: None,
+            project: Some("memory".to_string()),
+            items: "items.jsonl".to_string(),
+        },
+        root: dir.clone(),
+        items: Vec::new(),
+    };
+    let item = mem_eval::RetrievalQaItem {
+        id: "rq-release-rule".to_string(),
+        metadata: mem_eval::EvalItemMetadata::default(),
+        project: Some("memory".to_string()),
+        question: "What release rule applies?".to_string(),
+        top_k: 8,
+        hidden_facts: vec!["The hidden gate is green.".to_string()],
+        expected_memory_ids: Vec::new(),
+        expected_tags: vec!["mi-release".to_string()],
+        expected_files: vec!["docs/release-gate.md".to_string()],
+    };
+    let context = EvalRunContext {
+        profile: mem_eval::EvalProfile::Offline,
+        repeat_index: 0,
+        run_group_id: Uuid::nil(),
+        suite_checksum: None,
+        dry_run: false,
+        artifacts_root: dir.join("artifacts"),
+        memory_command: "/tmp/memory".to_string(),
+        memory_base_url: "http://127.0.0.1:4250".to_string(),
+        memory_config_path: None,
+        llm_judge: false,
+        retriever_cmd: Some(format!("sh {}", script.display())),
+        command_cwd: dir.clone(),
+    };
+
+    let response = run_external_retriever_for_retrieval_item(
+        &suite,
+        &item,
+        "memory",
+        mem_eval::EvalCondition::FullMemory,
+        &context,
+    )
+    .unwrap();
+    let result =
+        mem_eval::score_retrieval_qa(&item, mem_eval::EvalCondition::FullMemory, &response);
+    let request = fs::read_to_string(dir.join("request.json")).unwrap();
+
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.scores["tag_recall_at_k"], 1.0);
+    assert_eq!(result.scores["file_recall_at_k"], 1.0);
+    assert!(request.contains("\"item_id\":\"rq-release-rule\""));
+    assert!(request.contains("\"hidden_facts\":[\"The hidden gate is green.\"]"));
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn external_retriever_failures_become_failed_eval_results() {
+    let dir = unique_temp_dir("mem-external-retriever-failure");
+    fs::create_dir_all(&dir).unwrap();
+    let context = EvalRunContext {
+        profile: mem_eval::EvalProfile::Offline,
+        repeat_index: 0,
+        run_group_id: Uuid::nil(),
+        suite_checksum: None,
+        dry_run: false,
+        artifacts_root: dir.join("artifacts"),
+        memory_command: "/tmp/memory".to_string(),
+        memory_base_url: "http://127.0.0.1:4250".to_string(),
+        memory_config_path: None,
+        llm_judge: false,
+        retriever_cmd: Some("printf 'not-json'".to_string()),
+        command_cwd: dir.clone(),
+    };
+    let suite = mem_eval::EvalSuite {
+        manifest: mem_eval::EvalSuiteManifest {
+            name: "external suite".to_string(),
+            description: None,
+            suite_version: None,
+            label_status: None,
+            fixture: None,
+            default_profile: None,
+            min_items: None,
+            default_repeats: None,
+            project: Some("memory".to_string()),
+            items: "items.jsonl".to_string(),
+        },
+        root: dir.clone(),
+        items: Vec::new(),
+    };
+    let request = build_external_retriever_request(
+        &suite,
+        "rq",
+        "memory",
+        "question?",
+        8,
+        &[],
+        mem_eval::EvalCondition::FullMemory,
+    );
+
+    let error = run_external_retriever(&context, request).unwrap_err();
+    let result = external_retriever_failure_result(
+        "rq".to_string(),
+        "retrieval_qa",
+        mem_eval::EvalItemMetadata::default(),
+        mem_eval::EvalCondition::FullMemory,
+        error,
+    );
+
+    assert!(!result.success);
+    assert!(result.notes[0].contains("external retriever failed"));
+    assert_eq!(result.scores["external_retriever_success"], 0.0);
+
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
@@ -998,6 +1186,8 @@ fn agent_build_prompt_adds_memory_questions_for_memory_conditions() {
         memory_base_url: "http://127.0.0.1:4250".to_string(),
         memory_config_path: Some(PathBuf::from(".mem/config.toml")),
         llm_judge: false,
+        retriever_cmd: None,
+        command_cwd: PathBuf::from("."),
     };
 
     let prompt = agent_build_prompt(&item, mem_eval::EvalCondition::FullMemory, &context);
@@ -1036,6 +1226,8 @@ fn agent_build_prompt_forbids_memory_for_no_memory_condition() {
         memory_base_url: "http://127.0.0.1:4250".to_string(),
         memory_config_path: None,
         llm_judge: false,
+        retriever_cmd: None,
+        command_cwd: PathBuf::from("."),
     };
 
     let prompt = agent_build_prompt(&item, mem_eval::EvalCondition::NoMemory, &context);

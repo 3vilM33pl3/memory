@@ -240,12 +240,14 @@ Agent notes:
   Default profile is llm. Use --profile offline for deterministic CI-safe checks.
   Use --dry-run to validate suite parsing without LLM calls or shell command execution.
   Suites with command_task, agent_build_task, or agent_build_sequence execute shell commands and require --allow-shell for real runs.
+  --retriever-cmd runs retrieval and grounded-answer items through an external executable contract and also requires --allow-shell.
   agent_build_task items copy fixtures to target/memory-evals/build-runs and capture prompts, stdout, stderr, and scoring summaries.
 
 Examples:
   memory eval run --suite evals/examples/memory-smoke --condition full-memory --dry-run
   memory eval run --suite evals/examples/app-build-smoke --condition no-memory --condition full-memory --profile offline --allow-shell --text
   memory eval run --suite evals/examples/memory-smoke --condition no-memory --condition full-memory --repeat 5
+  memory eval run --suite evals/suites/memory-improvement-v1 --condition full-memory --retriever-cmd './my-retriever' --allow-shell
   memory eval run --suite evals/suites/memory-improvement-v1 --condition no-memory --condition full-memory --allow-shell --llm-judge --repeat 5
 
 See also:
@@ -1862,6 +1864,9 @@ pub(in crate::commands) struct EvalRunArgs {
     /// Allow suite-defined shell commands to execute.
     #[arg(long)]
     pub(crate) allow_shell: bool,
+    /// Run retrieval and grounded-answer eval items through an external retriever command.
+    #[arg(long, value_name = "COMMAND")]
+    pub(crate) retriever_cmd: Option<String>,
     /// Preview work without LLM calls or command execution.
     #[arg(long)]
     pub(crate) dry_run: bool,

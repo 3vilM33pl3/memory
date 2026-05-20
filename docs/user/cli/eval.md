@@ -297,16 +297,105 @@ Use `--profile offline` for CI-safe checks. Offline runs do not call the direct
 no-memory LLM baseline and can be used to validate suite shape and scoring.
 Official evidence runs should use the default `llm` profile.
 
-## External Retriever Direction
+## External Retriever Command
 
-External retriever support should stay separate from production query code. The intended research interface is an executable contract:
+Use `--retriever-cmd` to benchmark an external retriever against Memory's eval
+scoring without changing production query code:
 
-- Memory writes a JSON request containing the item id, question or prompt, project, condition, and fixture context.
-- The executable returns JSON with ranked results, citations, answer text when applicable, timing, token usage, and diagnostic notes.
-- Scoring consumes that external-run artifact beside normal Memory run artifacts.
-- External retriever failures are scored as eval failures or skips, not routed through production retrieval.
+```bash
+memory eval run \
+  --suite evals/suites/memory-improvement-v1 \
+  --condition full-memory \
+  --retriever-cmd './my-retriever' \
+  --allow-shell
+```
 
-This keeps experiments reproducible while avoiding accidental coupling between benchmark adapters and the Memory service query path.
+The command is executed through the same shell trust boundary as suite-defined
+commands, so `--allow-shell` is required. Review the executable and any suite
+fixtures before using it. `retrieval_qa` and `grounded_answer` items call the
+external retriever for memory-enabled conditions; `no-memory`, resume, command,
+and agent-build items keep their normal paths.
+
+Memory writes one JSON request to stdin per eval item:
+
+```json
+{
+  "schema_version": 1,
+  "project": "memory",
+  "query": "What release gate rule should agents follow?",
+  "limit": 8,
+  "item_id": "rq-deductive-release-rule",
+  "condition": "full-memory",
+  "context": {
+    "fixture_path": "/workspace/evals/suites/memory-improvement-v1",
+    "hidden_facts": []
+  }
+}
+```
+
+The retriever must write one JSON response to stdout:
+
+```json
+{
+  "schema_version": 1,
+  "results": [
+    {
+      "id": "external-release-rule",
+      "score": 0.82,
+      "text": "The release gate requires a green gate and paired benchmark.",
+      "tags": ["mi-release"],
+      "citations": [
+        {
+          "file_path": "docs/release-gate.md",
+          "excerpt": "green gate"
+        }
+      ]
+    }
+  ],
+  "diagnostics": {
+    "latency_ms": 123,
+    "tokens_in": 50,
+    "tokens_out": 20
+  }
+}
+```
+
+`id` may be a Memory UUID or any stable external id. UUIDs can satisfy
+`expected_memory_ids`; non-UUID ids are mapped to deterministic synthetic IDs.
+`tags` and `citations[].file_path` feed the existing tag and file recall scores.
+If `answer` is omitted for `grounded_answer`, Memory synthesizes a deterministic
+answer from the returned result text and then runs the same assertion scoring.
+
+Minimal Python stub:
+
+```python
+#!/usr/bin/env python3
+import json
+import sys
+
+request = json.load(sys.stdin)
+json.dump(
+    {
+        "schema_version": 1,
+        "results": [
+            {
+                "id": f"stub:{request['item_id']}",
+                "score": 1.0,
+                "text": "Replace this with retrieved evidence.",
+                "tags": [],
+                "citations": [],
+            }
+        ],
+        "diagnostics": {"latency_ms": 0, "tokens_in": 0, "tokens_out": 0},
+    },
+    sys.stdout,
+)
+```
+
+External retriever failures are recorded as failed eval items with diagnostic
+notes. They do not fall back to production Memory retrieval, which keeps
+experiments reproducible and prevents accidental coupling between benchmark
+adapters and the service query path.
 
 `lexical`, `semantic`, `graph`, and `full-memory` now request explicit
 retrieval modes from the query API. This means condition names are enforced by

@@ -170,6 +170,8 @@ pub struct RetrievalQaItem {
     pub question: String,
     #[serde(default = "default_top_k")]
     pub top_k: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_facts: Vec<String>,
     #[serde(default)]
     pub expected_memory_ids: Vec<Uuid>,
     #[serde(default)]
@@ -188,6 +190,8 @@ pub struct GroundedAnswerItem {
     pub question: String,
     #[serde(default = "default_top_k")]
     pub top_k: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_facts: Vec<String>,
     #[serde(default)]
     pub expected_memory_ids: Vec<Uuid>,
     #[serde(default)]
@@ -1729,6 +1733,7 @@ mod tests {
             project: None,
             question: "What changed?".to_string(),
             top_k: 8,
+            hidden_facts: Vec::new(),
             expected_memory_ids: Vec::new(),
             expected_tags: vec!["graph".to_string()],
             expected_files: vec!["crates/mem-search/src/lib.rs".to_string()],
@@ -1863,6 +1868,7 @@ mod tests {
             project: None,
             question: "What is safe?".to_string(),
             top_k: 8,
+            hidden_facts: Vec::new(),
             expected_memory_ids: Vec::new(),
             expected_tags: Vec::new(),
             expected_files: Vec::new(),
@@ -1904,6 +1910,7 @@ mod tests {
             project: None,
             question: "How are tokens reported?".to_string(),
             top_k: 8,
+            hidden_facts: Vec::new(),
             expected_memory_ids: Vec::new(),
             required_assertions: vec!["token".to_string()],
             forbidden_assertions: vec!["database password".to_string()],

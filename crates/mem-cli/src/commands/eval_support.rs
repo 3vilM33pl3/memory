@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::{
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
     process::{Command as ProcessCommand, Stdio},
     time::{Duration, Instant},
@@ -11,11 +12,15 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::Utc;
 use mem_api::{
-    AppConfig, QueryFilters, QueryRequest, TokenUsage, UpToSpeedRequest, effective_llm_base_url,
-    is_supported_llm_provider, llm_max_output_tokens_field, llm_requires_api_key,
-    resolve_llm_api_key,
+    AppConfig, MemoryType, QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod,
+    QueryDiagnostics, QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult,
+    QueryResultDebug, QuerySource, SourceKind, TokenUsage, UpToSpeedRequest,
+    effective_llm_base_url, is_supported_llm_provider, llm_max_output_tokens_field,
+    llm_requires_api_key, resolve_llm_api_key,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::commands::{
     api::ApiClient,
@@ -196,6 +201,7 @@ pub(super) async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiCli
         EvalCommand::Run(args) => {
             let suite = mem_eval::load_suite(&args.suite)?;
             ensure_eval_shell_allowed(&suite, args.allow_shell, args.dry_run)?;
+            ensure_eval_retriever_allowed(args.retriever_cmd.as_deref(), args.allow_shell)?;
             if args.fail_on_unreviewed_labels
                 && suite.manifest.label_status.as_deref() != Some("reviewed")
             {
@@ -234,6 +240,8 @@ pub(super) async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiCli
                         memory_base_url: service_url(&api.config, ""),
                         memory_config_path: eval_memory_config_path(cwd),
                         llm_judge: args.llm_judge,
+                        retriever_cmd: args.retriever_cmd.clone(),
+                        command_cwd: cwd.to_path_buf(),
                     };
                     let run = run_eval_suite(&suite, &project, *condition, context, api).await?;
                     total_tokens += run
@@ -378,6 +386,8 @@ pub(crate) struct EvalRunContext {
     pub(crate) memory_base_url: String,
     pub(crate) memory_config_path: Option<PathBuf>,
     pub(crate) llm_judge: bool,
+    pub(crate) retriever_cmd: Option<String>,
+    pub(crate) command_cwd: PathBuf,
 }
 
 pub(crate) fn ensure_eval_shell_allowed(
@@ -391,6 +401,18 @@ pub(crate) fn ensure_eval_shell_allowed(
     anyhow::bail!(
         "eval suite `{}` contains shell-executing items (command_task, agent_build_task, or agent_build_sequence). Review the suite files, then rerun with --allow-shell to execute them. Use --dry-run to validate parsing without shell execution.",
         suite.manifest.name
+    )
+}
+
+pub(crate) fn ensure_eval_retriever_allowed(
+    retriever_cmd: Option<&str>,
+    allow_shell: bool,
+) -> Result<()> {
+    if retriever_cmd.is_none_or(|command| command.trim().is_empty()) || allow_shell {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "--retriever-cmd executes an external command. Review the executable, then rerun with --allow-shell to opt in."
     )
 }
 
@@ -421,6 +443,19 @@ pub(crate) async fn run_eval_suite(
             mem_eval::EvalItem::RetrievalQa(item) => {
                 if condition == mem_eval::EvalCondition::NoMemory {
                     no_memory_retrieval_result(item, condition)
+                } else if context.retriever_cmd.is_some() {
+                    match run_external_retriever_for_retrieval_item(
+                        suite, item, project, condition, &context,
+                    ) {
+                        Ok(response) => mem_eval::score_retrieval_qa(item, condition, &response),
+                        Err(error) => external_retriever_failure_result(
+                            item.id.clone(),
+                            "retrieval_qa",
+                            item.metadata.clone(),
+                            condition,
+                            error,
+                        ),
+                    }
                 } else {
                     let response = api
                         .query(&QueryRequest {
@@ -444,6 +479,19 @@ pub(crate) async fn run_eval_suite(
                         offline_no_memory_grounded_answer_eval_item(item, condition)
                     } else {
                         run_no_memory_grounded_answer_eval_item(api, item, condition).await?
+                    }
+                } else if context.retriever_cmd.is_some() {
+                    match run_external_retriever_for_grounded_answer_item(
+                        suite, item, project, condition, &context,
+                    ) {
+                        Ok(response) => mem_eval::score_grounded_answer(item, condition, &response),
+                        Err(error) => external_retriever_failure_result(
+                            item.id.clone(),
+                            "grounded_answer",
+                            item.metadata.clone(),
+                            condition,
+                            error,
+                        ),
                     }
                 } else {
                     let response = api
@@ -601,6 +649,375 @@ pub(crate) fn wildcard_match(pattern: &str, value: &str) -> bool {
         p += 1;
     }
     p == pattern.len()
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ExternalRetrieverRequest {
+    pub(crate) schema_version: u8,
+    pub(crate) project: String,
+    pub(crate) query: String,
+    pub(crate) limit: i64,
+    pub(crate) item_id: String,
+    pub(crate) condition: String,
+    pub(crate) context: ExternalRetrieverContext,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ExternalRetrieverContext {
+    pub(crate) fixture_path: String,
+    pub(crate) hidden_facts: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExternalRetrieverResponse {
+    pub(crate) schema_version: u8,
+    #[serde(default)]
+    pub(crate) results: Vec<ExternalRetrieverResult>,
+    #[serde(default)]
+    pub(crate) answer: Option<String>,
+    #[serde(default)]
+    pub(crate) confidence: Option<f32>,
+    #[serde(default)]
+    pub(crate) diagnostics: ExternalRetrieverDiagnostics,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExternalRetrieverResult {
+    pub(crate) id: String,
+    pub(crate) score: f64,
+    pub(crate) text: String,
+    #[serde(default)]
+    pub(crate) tags: Vec<String>,
+    #[serde(default)]
+    pub(crate) citations: Vec<ExternalRetrieverCitation>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct ExternalRetrieverDiagnostics {
+    #[serde(default)]
+    pub(crate) latency_ms: Option<u64>,
+    #[serde(default)]
+    pub(crate) tokens_in: Option<u64>,
+    #[serde(default)]
+    pub(crate) tokens_out: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum ExternalRetrieverCitation {
+    Path(String),
+    Object {
+        #[serde(default)]
+        file_path: Option<String>,
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        excerpt: Option<String>,
+    },
+}
+
+pub(crate) fn run_external_retriever_for_retrieval_item(
+    suite: &mem_eval::EvalSuite,
+    item: &mem_eval::RetrievalQaItem,
+    project: &str,
+    condition: mem_eval::EvalCondition,
+    context: &EvalRunContext,
+) -> Result<QueryResponse> {
+    let request = build_external_retriever_request(
+        suite,
+        &item.id,
+        project,
+        &item.question,
+        item.top_k,
+        &item.hidden_facts,
+        condition,
+    );
+    run_external_retriever(context, request)
+}
+
+pub(crate) fn run_external_retriever_for_grounded_answer_item(
+    suite: &mem_eval::EvalSuite,
+    item: &mem_eval::GroundedAnswerItem,
+    project: &str,
+    condition: mem_eval::EvalCondition,
+    context: &EvalRunContext,
+) -> Result<QueryResponse> {
+    let request = build_external_retriever_request(
+        suite,
+        &item.id,
+        project,
+        &item.question,
+        item.top_k,
+        &item.hidden_facts,
+        condition,
+    );
+    run_external_retriever(context, request)
+}
+
+pub(crate) fn build_external_retriever_request(
+    suite: &mem_eval::EvalSuite,
+    item_id: &str,
+    project: &str,
+    query: &str,
+    limit: i64,
+    hidden_facts: &[String],
+    condition: mem_eval::EvalCondition,
+) -> ExternalRetrieverRequest {
+    ExternalRetrieverRequest {
+        schema_version: 1,
+        project: project.to_string(),
+        query: query.to_string(),
+        limit,
+        item_id: item_id.to_string(),
+        condition: condition.to_string(),
+        context: ExternalRetrieverContext {
+            fixture_path: external_retriever_fixture_path(suite),
+            hidden_facts: hidden_facts.to_vec(),
+        },
+    }
+}
+
+fn external_retriever_fixture_path(suite: &mem_eval::EvalSuite) -> String {
+    let path = suite
+        .manifest
+        .fixture
+        .as_deref()
+        .map(|fixture| suite.root.join(fixture))
+        .unwrap_or_else(|| suite.root.clone());
+    absolute_eval_path(&path).to_string_lossy().into_owned()
+}
+
+pub(crate) fn run_external_retriever(
+    context: &EvalRunContext,
+    request: ExternalRetrieverRequest,
+) -> Result<QueryResponse> {
+    let command = context
+        .retriever_cmd
+        .as_deref()
+        .filter(|command| !command.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("external retriever command is empty"))?;
+    let request_json =
+        serde_json::to_vec(&request).context("serialize external retriever request")?;
+    let mut command_builder = ProcessCommand::new("sh");
+    command_builder
+        .arg("-c")
+        .arg(command)
+        .current_dir(&context.command_cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let started = Instant::now();
+    let mut child = command_builder.spawn().with_context(|| {
+        format!(
+            "run external retriever `{command}` in {}",
+            context.command_cwd.display()
+        )
+    })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(&request_json)
+            .context("write external retriever request")?;
+    }
+    let timeout = Duration::from_secs(60);
+    let mut timed_out = false;
+    loop {
+        if child.try_wait()?.is_some() {
+            break;
+        }
+        if started.elapsed() >= timeout {
+            timed_out = true;
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let output = child
+        .wait_with_output()
+        .with_context(|| format!("collect external retriever `{command}` output"))?;
+    if timed_out {
+        anyhow::bail!("external retriever `{command}` timed out after 60s");
+    }
+    if !output.status.success() {
+        anyhow::bail!(
+            "external retriever `{}` exited with {}; stderr: {}",
+            command,
+            output
+                .status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "signal".to_string()),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let elapsed_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    let response: ExternalRetrieverResponse = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("parse external retriever `{command}` JSON stdout"))?;
+    external_retriever_response_to_query_response(response, elapsed_ms)
+}
+
+pub(crate) fn external_retriever_response_to_query_response(
+    response: ExternalRetrieverResponse,
+    elapsed_ms: u64,
+) -> Result<QueryResponse> {
+    if response.schema_version != 1 {
+        anyhow::bail!(
+            "unsupported external retriever schema_version {}",
+            response.schema_version
+        );
+    }
+    let duration_ms = response.diagnostics.latency_ms.unwrap_or(elapsed_ms);
+    let mut results = Vec::new();
+    let mut answer_citations = Vec::new();
+    for result in response.results {
+        let memory_id = external_result_id_to_uuid(&result.id);
+        let sources = result
+            .citations
+            .iter()
+            .filter_map(external_citation_to_query_source)
+            .collect::<Vec<_>>();
+        let query_result = QueryResult {
+            memory_id,
+            summary: result.text.chars().take(120).collect(),
+            memory_type: MemoryType::Reference,
+            score: result.score,
+            snippet: result.text.clone(),
+            match_kind: QueryMatchKind::Hybrid,
+            score_explanation: vec!["external retriever result".to_string()],
+            debug: QueryResultDebug::default(),
+            tags: result.tags,
+            sources,
+            graph_connections: Vec::new(),
+        };
+        let result_number = results.len() + 1;
+        answer_citations.push(QueryAnswerCitation {
+            result_number,
+            memory_id,
+            memory_type: MemoryType::Reference,
+            summary: query_result.summary.clone(),
+            snippet: query_result.snippet.clone(),
+        });
+        results.push(query_result);
+    }
+    let answer = response.answer.unwrap_or_else(|| {
+        if results.is_empty() {
+            "External retriever returned no results.".to_string()
+        } else {
+            results
+                .iter()
+                .enumerate()
+                .map(|(index, result)| format!("[{}] {}", index + 1, result.snippet))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    });
+    let token_usage = match (
+        response.diagnostics.tokens_in,
+        response.diagnostics.tokens_out,
+    ) {
+        (Some(input_tokens), Some(output_tokens)) => Some(TokenUsage {
+            input_tokens,
+            output_tokens,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            total_tokens: input_tokens + output_tokens,
+        }),
+        _ => None,
+    };
+    Ok(QueryResponse {
+        answer,
+        confidence: response.confidence.unwrap_or(0.0),
+        insufficient_evidence: results.is_empty(),
+        answer_generation: QueryAnswerGeneration {
+            method: QueryAnswerMethod::Deterministic,
+            cited_result_numbers: (1..=results.len()).collect(),
+            evidence_count: results.len(),
+            duration_ms: 0,
+            fallback_reason: None,
+            token_usage,
+        },
+        answer_citations,
+        diagnostics: QueryDiagnostics {
+            retrieval_mode: mem_api::QueryRetrievalMode::FullMemory,
+            lexical_enabled: false,
+            semantic_enabled: false,
+            graph_enabled: false,
+            relation_boost_enabled: false,
+            lexical_candidates: 0,
+            semantic_candidates: 0,
+            merged_candidates: results.len(),
+            returned_results: results.len(),
+            relation_augmented_candidates: 0,
+            graph_candidates: 0,
+            graph_augmented_candidates: 0,
+            provenance_decayed_candidates: 0,
+            provenance_unverified_candidates: 0,
+            lexical_duration_ms: 0,
+            semantic_duration_ms: 0,
+            rerank_duration_ms: 0,
+            graph_duration_ms: 0,
+            total_duration_ms: duration_ms,
+            semantic_status: "external".to_string(),
+            graph_status: "external".to_string(),
+            provenance_warnings: Vec::new(),
+        },
+        results,
+    })
+}
+
+fn external_result_id_to_uuid(id: &str) -> Uuid {
+    id.parse::<Uuid>().unwrap_or_else(|_| {
+        let digest = Sha256::digest(id.as_bytes());
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&digest[..16]);
+        bytes[6] = (bytes[6] & 0x0f) | 0x50;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        Uuid::from_bytes(bytes)
+    })
+}
+
+fn external_citation_to_query_source(citation: &ExternalRetrieverCitation) -> Option<QuerySource> {
+    let (file_path, excerpt) = match citation {
+        ExternalRetrieverCitation::Path(path) => (Some(path.clone()), None),
+        ExternalRetrieverCitation::Object {
+            file_path,
+            path,
+            excerpt,
+        } => (file_path.clone().or_else(|| path.clone()), excerpt.clone()),
+    };
+    file_path.map(|file_path| QuerySource {
+        task_id: None,
+        file_path: Some(file_path),
+        symbol_name: None,
+        symbol_kind: None,
+        source_kind: SourceKind::File,
+        excerpt,
+        provenance: None,
+    })
+}
+
+pub(crate) fn external_retriever_failure_result(
+    item_id: String,
+    eval_type: &str,
+    metadata: mem_eval::EvalItemMetadata,
+    condition: mem_eval::EvalCondition,
+    error: anyhow::Error,
+) -> mem_eval::EvalItemResult {
+    let mut scores = BTreeMap::new();
+    scores.insert("external_retriever_success".to_string(), 0.0);
+    mem_eval::EvalItemResult {
+        item_id,
+        eval_type: eval_type.to_string(),
+        condition,
+        metadata,
+        success: false,
+        skipped: false,
+        scores,
+        duration_ms: None,
+        token_usage: None,
+        answer: None,
+        notes: vec![format!("external retriever failed: {error:#}")],
+        sub_results: Vec::new(),
+    }
 }
 
 pub(crate) fn no_memory_retrieval_result(
