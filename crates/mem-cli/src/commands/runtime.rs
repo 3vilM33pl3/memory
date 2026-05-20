@@ -1412,6 +1412,9 @@ pub(in crate::commands) struct QueryArgs {
     /// Ignore memories below this confidence threshold.
     #[arg(long)]
     pub(crate) min_confidence: Option<f32>,
+    /// Bypass provenance-based stale-source de-ranking.
+    #[arg(long)]
+    pub(crate) include_stale: bool,
     /// Include every historical version of each memory (including
     /// tombstones from deleted memories) in the search space. Default is
     /// latest-version-only.

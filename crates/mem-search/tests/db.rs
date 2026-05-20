@@ -77,6 +77,7 @@ async fn graph_candidates_return_memory_by_file_provenance() {
             filters: Default::default(),
             top_k: 5,
             min_confidence: None,
+            include_stale: false,
             history: false,
             retrieval_mode: None,
             answer_mode: None,
@@ -91,6 +92,65 @@ async fn graph_candidates_return_memory_by_file_provenance() {
     assert_eq!(response.results[0].memory_id, memory_id);
     assert!(response.results[0].debug.graph_boost > 0.0);
     assert_eq!(response.results[0].graph_connections.len(), 1);
+
+    mem_test_support::cleanup_project(&pool, &slug)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
+async fn provenance_decay_ranks_missing_file_below_verified_memory() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let slug = mem_test_support::unique_project_slug("provenance-rank");
+    let project_id = Uuid::new_v4();
+    let verified_id = Uuid::new_v4();
+    let missing_id = Uuid::new_v4();
+    insert_provenance_ranking_fixture(&pool, &slug, project_id, verified_id, missing_id).await;
+
+    let request = QueryRequest {
+        project: slug.clone(),
+        query: "ranking proof".to_string(),
+        filters: Default::default(),
+        top_k: 2,
+        min_confidence: None,
+        include_stale: false,
+        history: false,
+        retrieval_mode: None,
+        answer_mode: None,
+    };
+    let response = mem_search::query_memory(&pool, &request, None)
+        .await
+        .expect("query memory");
+
+    assert_eq!(response.results.len(), 2);
+    assert_eq!(response.results[0].memory_id, verified_id);
+    assert_eq!(response.results[1].memory_id, missing_id);
+    assert!(
+        response.results[1]
+            .score_explanation
+            .iter()
+            .any(|line| line == "provenance decay x0.50 (missing_file)")
+    );
+    assert_eq!(response.diagnostics.provenance_decayed_candidates, 1);
+
+    let include_stale = QueryRequest {
+        include_stale: true,
+        ..request
+    };
+    let response = mem_search::query_memory(&pool, &include_stale, None)
+        .await
+        .expect("query memory include stale");
+
+    assert_eq!(response.results[0].memory_id, missing_id);
+    assert!(
+        response.results[0]
+            .score_explanation
+            .iter()
+            .any(|line| line == "provenance stale bypassed (missing_file)")
+    );
 
     mem_test_support::cleanup_project(&pool, &slug)
         .await
@@ -238,4 +298,96 @@ async fn insert_graph_query_fixture(
     .execute(pool)
     .await
     .expect("insert code symbol");
+}
+
+async fn insert_provenance_ranking_fixture(
+    pool: &PgPool,
+    slug: &str,
+    project_id: Uuid,
+    verified_id: Uuid,
+    missing_id: Uuid,
+) {
+    mem_test_support::cleanup_project(pool, slug)
+        .await
+        .expect("cleanup old project");
+    sqlx::query("INSERT INTO projects (id, slug, name, root_path, created_at) VALUES ($1, $2, $2, '/repo', now())")
+        .bind(project_id)
+        .bind(slug)
+        .execute(pool)
+        .await
+        .expect("insert project");
+    insert_rank_memory(
+        pool,
+        project_id,
+        verified_id,
+        "verified",
+        "src/live.rs",
+        "verified",
+        10,
+    )
+    .await;
+    insert_rank_memory(
+        pool,
+        project_id,
+        missing_id,
+        "missing",
+        "src/deleted.rs",
+        "missing_file",
+        0,
+    )
+    .await;
+}
+
+async fn insert_rank_memory(
+    pool: &PgPool,
+    project_id: Uuid,
+    memory_id: Uuid,
+    label: &str,
+    file_path: &str,
+    provenance_status: &str,
+    age_seconds: i64,
+) {
+    sqlx::query(
+        r#"
+        INSERT INTO memory_entries
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
+             summary, memory_type, scope, importance, confidence, status,
+             created_at, updated_at, archived_at, search_document)
+        VALUES ($1, $2, $1, 1, FALSE, 'ranking proof durable detail',
+                $3, 'implementation', 'project', 3, 0.9,
+                'active', now(), now() - make_interval(secs => $4), NULL,
+                to_tsvector('english', 'ranking proof durable detail'))
+        "#,
+    )
+    .bind(memory_id)
+    .bind(project_id)
+    .bind(format!("{label} ranking proof"))
+    .bind(age_seconds)
+    .execute(pool)
+    .await
+    .expect("insert rank memory");
+    let source_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO memory_sources (id, memory_entry_id, source_kind, file_path, created_at) VALUES ($1, $2, 'file', $3, now())",
+    )
+    .bind(source_id)
+    .bind(memory_id)
+    .bind(file_path)
+    .execute(pool)
+    .await
+    .expect("insert rank source");
+    sqlx::query(
+        r#"
+        INSERT INTO memory_source_verifications
+            (source_id, status, checked_at, reason, resolved_path)
+        VALUES ($1, $2, now(), $3, $4)
+        "#,
+    )
+    .bind(source_id)
+    .bind(provenance_status)
+    .bind(format!("{provenance_status} test fixture"))
+    .bind(format!("/repo/{file_path}"))
+    .execute(pool)
+    .await
+    .expect("insert source verification");
 }

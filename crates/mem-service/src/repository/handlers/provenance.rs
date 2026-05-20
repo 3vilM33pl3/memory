@@ -66,7 +66,8 @@ pub(crate) async fn verify_project_provenance(
     let checked_at = chrono::Utc::now();
     let rows = sqlx::query(
         r#"
-        SELECT ms.id AS source_id, m.id AS memory_id, m.summary, ms.file_path, ms.source_kind
+        SELECT ms.id AS source_id, m.id AS memory_id, m.summary, ms.file_path,
+               ms.symbol_name, ms.symbol_kind, ms.source_kind
         FROM memory_sources ms
         JOIN memory_entries m ON m.id = ms.memory_entry_id
         WHERE m.project_id = $1
@@ -85,15 +86,20 @@ pub(crate) async fn verify_project_provenance(
         let memory_id: Uuid = row.try_get("memory_id")?;
         let memory_summary: String = row.try_get("summary")?;
         let file_path: Option<String> = row.try_get("file_path")?;
+        let symbol_name: Option<String> = row.try_get("symbol_name")?;
+        let symbol_kind: Option<String> = row.try_get("symbol_kind")?;
         let source_kind = parse_source_kind(&row.try_get::<String, _>("source_kind")?);
-        let verification = verify_source_path(
+        let mut verification = verify_source_path(
             source_id,
             memory_id,
             memory_summary,
             source_kind,
             file_path,
+            symbol_name,
+            symbol_kind,
             &repo_root,
         );
+        verify_source_symbol(pool, project_id, &repo_root, &mut verification).await?;
         items.push(verification);
     }
 
@@ -193,12 +199,111 @@ pub(crate) async fn verify_project_provenance(
     })
 }
 
+pub(crate) async fn run_provenance_reverify_scheduler(state: AppState) -> Result<()> {
+    tokio::time::sleep(StdDuration::from_secs(10)).await;
+    let interval = state
+        .config
+        .provenance
+        .reverify_interval
+        .max(StdDuration::from_secs(60));
+    loop {
+        if state.is_primary() {
+            if let Err(error) = reverify_all_projects_once(&state).await {
+                let mut runtime = state
+                    .provenance
+                    .lock()
+                    .expect("provenance runtime mutex poisoned");
+                runtime.status = "error".to_string();
+                runtime.error = Some(error.to_string());
+            }
+        }
+        tokio::time::sleep(interval).await;
+    }
+}
+
+pub(crate) async fn reverify_all_projects_once(state: &AppState) -> Result<()> {
+    let Some(pool) = state.pool.clone() else {
+        return Ok(());
+    };
+    let projects = sqlx::query(
+        r#"
+        SELECT DISTINCT p.slug, p.root_path
+        FROM projects p
+        JOIN memory_entries m ON m.project_id = p.id
+        JOIN memory_sources ms ON ms.memory_entry_id = m.id
+        WHERE m.status = 'active'
+          AND COALESCE(m.is_tombstone, false) = false
+        ORDER BY p.slug
+        "#,
+    )
+    .fetch_all(&pool)
+    .await
+    .context("list projects for provenance reverification")?;
+
+    {
+        let mut runtime = state
+            .provenance
+            .lock()
+            .expect("provenance runtime mutex poisoned");
+        runtime.status = "running".to_string();
+        runtime.last_started_at = Some(chrono::Utc::now());
+        runtime.last_finished_at = None;
+        runtime.last_project = None;
+        runtime.checked_count = 0;
+        runtime.stale_count = 0;
+        runtime.error = None;
+    }
+
+    let mut checked_count = 0;
+    let mut stale_count = 0;
+    let mut last_project = None;
+    for row in projects {
+        let project: String = row.try_get("slug")?;
+        let repo_root: String = row.try_get("root_path")?;
+        {
+            let mut runtime = state
+                .provenance
+                .lock()
+                .expect("provenance runtime mutex poisoned");
+            runtime.last_project = Some(project.clone());
+        }
+        let response = verify_project_provenance(
+            &pool,
+            &ProvenanceVerificationRequest {
+                project: project.clone(),
+                repo_root: Some(repo_root),
+                dry_run: false,
+            },
+        )
+        .await
+        .with_context(|| format!("verify provenance for project {project}"))?;
+        checked_count += response.checked_count;
+        stale_count +=
+            response.missing_file_count + response.missing_symbol_count + response.stale_count;
+        last_project = Some(project);
+    }
+
+    let mut runtime = state
+        .provenance
+        .lock()
+        .expect("provenance runtime mutex poisoned");
+    runtime.status = "ok".to_string();
+    runtime.last_finished_at = Some(chrono::Utc::now());
+    runtime.last_project = last_project;
+    runtime.checked_count = checked_count;
+    runtime.stale_count = stale_count;
+    runtime.error = None;
+    Ok(())
+}
+
 pub(crate) fn verify_source_path(
     source_id: Uuid,
     memory_id: Uuid,
     memory_summary: String,
     source_kind: SourceKind,
     file_path: Option<String>,
+    symbol_name: Option<String>,
+    symbol_kind: Option<String>,
     repo_root: &str,
 ) -> SourceProvenanceVerification {
     let mut resolved_path = None;
@@ -212,6 +317,8 @@ pub(crate) fn verify_source_path(
                     memory_summary,
                     source_kind,
                     file_path,
+                    symbol_name,
+                    symbol_kind,
                     status: SourceProvenanceStatus::Unverifiable,
                     reason: Some(
                         "relative file source cannot be verified without a repo root".to_string(),
@@ -256,8 +363,100 @@ pub(crate) fn verify_source_path(
         memory_summary,
         source_kind,
         file_path,
+        symbol_name,
+        symbol_kind,
         status,
         reason,
         resolved_path,
     }
+}
+
+pub(crate) async fn verify_source_symbol(
+    pool: &PgPool,
+    project_id: Uuid,
+    repo_root: &str,
+    item: &mut SourceProvenanceVerification,
+) -> Result<(), sqlx::Error> {
+    if item.status != SourceProvenanceStatus::Verified {
+        return Ok(());
+    }
+    let Some(symbol_name) = item
+        .symbol_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let Some(file_path) = item.file_path.as_deref() else {
+        return Ok(());
+    };
+    let graph_file_path = graph_relative_file_path(file_path, repo_root);
+    let latest_run = sqlx::query(
+        r#"
+        SELECT id
+        FROM graph_extraction_runs
+        WHERE project_id = $1
+          AND status = 'completed'
+        ORDER BY completed_at DESC NULLS LAST, started_at DESC, id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some(latest_run) = latest_run else {
+        item.status = SourceProvenanceStatus::Unverifiable;
+        item.reason = Some(
+            "symbol source cannot be verified without a completed code graph extraction"
+                .to_string(),
+        );
+        return Ok(());
+    };
+    let latest_run_id: Uuid = latest_run.try_get("id")?;
+    let symbol_kind = item
+        .symbol_kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let row = sqlx::query(
+        r#"
+        SELECT EXISTS (
+            SELECT 1
+            FROM code_symbols cs
+            WHERE cs.project_id = $1
+              AND cs.extraction_run_id = $2
+              AND cs.file_path = $3
+              AND (cs.name = $4 OR cs.qualified_name = $4 OR cs.display_name = $4)
+              AND ($5::text IS NULL OR cs.symbol_kind = $5)
+        ) AS found
+        "#,
+    )
+    .bind(project_id)
+    .bind(latest_run_id)
+    .bind(&graph_file_path)
+    .bind(symbol_name)
+    .bind(symbol_kind)
+    .fetch_one(pool)
+    .await?;
+    let found: bool = row.try_get("found")?;
+    if found {
+        item.reason = Some(format!("file exists and symbol `{symbol_name}` is present"));
+    } else {
+        item.status = SourceProvenanceStatus::MissingSymbol;
+        item.reason = Some(format!(
+            "file exists but symbol `{symbol_name}` was not found in the latest code graph"
+        ));
+    }
+    Ok(())
+}
+
+fn graph_relative_file_path(file_path: &str, repo_root: &str) -> String {
+    let path = FsPath::new(file_path);
+    if path.is_absolute()
+        && let Ok(relative) = path.strip_prefix(repo_root)
+    {
+        return relative.display().to_string();
+    }
+    file_path.to_string()
 }

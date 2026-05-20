@@ -919,6 +919,8 @@ fn validate_candidates(raw: Vec<ScanLlmCandidate>) -> Result<Vec<CaptureCandidat
             }
             sources.push(CaptureCandidateSourceInput {
                 file_path: Some(file.clone()),
+                symbol_name: None,
+                symbol_kind: None,
                 source_kind: SourceKind::File,
                 excerpt: Some(format!("Scanned file: {file}")),
             });
@@ -932,6 +934,8 @@ fn validate_candidates(raw: Vec<ScanLlmCandidate>) -> Result<Vec<CaptureCandidat
             }
             sources.push(CaptureCandidateSourceInput {
                 file_path: None,
+                symbol_name: None,
+                symbol_kind: None,
                 source_kind: SourceKind::GitCommit,
                 excerpt: Some(format!("Scanned commit: {commit}")),
             });
@@ -940,6 +944,8 @@ fn validate_candidates(raw: Vec<ScanLlmCandidate>) -> Result<Vec<CaptureCandidat
         if !candidate.rationale.trim().is_empty() {
             sources.push(CaptureCandidateSourceInput {
                 file_path: None,
+                symbol_name: None,
+                symbol_kind: None,
                 source_kind: SourceKind::Note,
                 excerpt: Some(trim_text(&candidate.rationale, 300)),
             });

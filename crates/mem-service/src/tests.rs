@@ -35,6 +35,8 @@ fn verify_source_path_classifies_existing_and_missing_files() {
         "Existing source".to_string(),
         SourceKind::File,
         Some("src/lib.rs".to_string()),
+        None,
+        None,
         root.to_str().expect("temp path utf8"),
     );
     assert_eq!(existing.status, SourceProvenanceStatus::Verified);
@@ -53,6 +55,8 @@ fn verify_source_path_classifies_existing_and_missing_files() {
         "Missing source".to_string(),
         SourceKind::File,
         Some("src/missing.rs".to_string()),
+        None,
+        None,
         root.to_str().expect("temp path utf8"),
     );
     assert_eq!(missing.status, SourceProvenanceStatus::MissingFile);
@@ -73,6 +77,8 @@ fn verify_source_path_marks_non_file_sources_unverifiable() {
         Uuid::new_v4(),
         "Note source".to_string(),
         SourceKind::Note,
+        None,
+        None,
         None,
         "/repo",
     );
@@ -95,6 +101,8 @@ fn verify_source_path_requires_repo_root_for_relative_files() {
         "Relative source".to_string(),
         SourceKind::File,
         Some("src/lib.rs".to_string()),
+        None,
+        None,
         "",
     );
 
@@ -355,6 +363,7 @@ fn query_answer_prompt_includes_graph_connections() {
             filters: Default::default(),
             top_k: 8,
             min_confidence: None,
+            include_stale: false,
             history: false,
             retrieval_mode: None,
             answer_mode: None,
@@ -406,6 +415,7 @@ fn query_activity_details_include_graph_diagnostics() {
             filters: Default::default(),
             top_k: 8,
             min_confidence: None,
+            include_stale: false,
             history: false,
             retrieval_mode: None,
             answer_mode: None,

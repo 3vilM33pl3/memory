@@ -16,7 +16,9 @@ interface QueryTabProps {
   queryLoading: boolean;
   queryError: string | null;
   queryRoundtripMs: number | null;
+  includeStale: boolean;
   onQueryTextChange: (value: string) => void;
+  onIncludeStaleChange: (value: boolean) => void;
   onSubmit: (event: FormEvent) => void;
   onApplyHistory: (delta: number) => void;
   onResetHistoryCursor: () => void;
@@ -36,7 +38,9 @@ export function QueryTab({
   queryLoading,
   queryError,
   queryRoundtripMs,
+  includeStale,
   onQueryTextChange,
+  onIncludeStaleChange,
   onSubmit,
   onApplyHistory,
   onResetHistoryCursor,
@@ -67,6 +71,14 @@ export function QueryTab({
           />
           <button type="submit" disabled={queryLoading}>{queryLoading ? "Searching..." : "Query"}</button>
         </div>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={includeStale}
+            onChange={(event) => onIncludeStaleChange(event.target.checked)}
+          />
+          <span>Include stale ranking</span>
+        </label>
         {queryLoading ? (
           <div className="query-summary">
             <p>Searching "{queryText.trim()}"...</p>
@@ -97,6 +109,8 @@ export function QueryTab({
               <span>returned {queryResponse.diagnostics.returned_results}</span>
               <span>relation {queryResponse.diagnostics.relation_augmented_candidates}</span>
               <span>graph augmented {queryResponse.diagnostics.graph_augmented_candidates}</span>
+              <span>provenance decayed {queryResponse.diagnostics.provenance_decayed_candidates}</span>
+              <span>unverified {queryResponse.diagnostics.provenance_unverified_candidates}</span>
               <span>rerank {queryResponse.diagnostics.rerank_duration_ms} ms</span>
               <span>total {queryResponse.diagnostics.total_duration_ms} ms</span>
               <span>{queryResponse.answer_generation.token_usage ? `${formatTokens(queryResponse.answer_generation.token_usage.total_tokens)} answer tokens` : "tokens n/a"}</span>

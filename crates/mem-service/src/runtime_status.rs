@@ -16,6 +16,7 @@ pub(crate) struct RuntimeStatusResponse {
     pub(crate) service: RuntimeComponentStatus,
     pub(crate) manager: RuntimeManagerStatus,
     pub(crate) watchers: RuntimeWatcherStatus,
+    pub(crate) provenance: RuntimeProvenanceStatus,
     pub(crate) skills: RuntimeSkillStatus,
     pub(crate) restart_notice: Option<RuntimeRestartNotice>,
 }
@@ -49,6 +50,19 @@ pub(crate) struct RuntimeWatcherStatus {
     pub(crate) active_count: usize,
     pub(crate) unhealthy_count: usize,
     pub(crate) stale_after_seconds: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RuntimeProvenanceStatus {
+    pub(crate) status: String,
+    pub(crate) enabled: bool,
+    pub(crate) interval_seconds: u64,
+    pub(crate) last_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub(crate) last_finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub(crate) last_project: Option<String>,
+    pub(crate) checked_count: usize,
+    pub(crate) stale_count: usize,
+    pub(crate) error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -127,11 +141,18 @@ pub(crate) async fn runtime_status(
     let profile_label = profile.to_string();
     let startup_at = state.startup_at;
     let watchers = Arc::clone(&state.watchers);
+    let provenance_runtime = Arc::clone(&state.provenance);
+    let provenance_enabled = state.config.provenance.reverify_enabled;
+    let provenance_interval_seconds = state.config.provenance.reverify_interval.as_secs();
     let service_id = state.config.cluster.service_id.clone();
     let is_primary = state.is_primary();
 
     let response = tokio::task::spawn_blocking(move || {
         let watcher_summary = watcher_summary_for_project(&watchers, &project);
+        let provenance = provenance_runtime
+            .lock()
+            .expect("provenance runtime mutex poisoned")
+            .clone();
         let manager = runtime_manager_status(&profile, &version);
         let skills = runtime_skill_status(repo_root.as_deref(), &version);
         let restart_notice = runtime_restart_notice(startup_at, &version);
@@ -175,6 +196,17 @@ pub(crate) async fn runtime_status(
                 active_count: watcher_summary.active_count,
                 unhealthy_count: watcher_summary.unhealthy_count,
                 stale_after_seconds: watcher_summary.stale_after_seconds,
+            },
+            provenance: RuntimeProvenanceStatus {
+                status: provenance.status,
+                enabled: provenance_enabled,
+                interval_seconds: provenance_interval_seconds,
+                last_started_at: provenance.last_started_at,
+                last_finished_at: provenance.last_finished_at,
+                last_project: provenance.last_project,
+                checked_count: provenance.checked_count,
+                stale_count: provenance.stale_count,
+                error: provenance.error,
             },
             skills,
             restart_notice,

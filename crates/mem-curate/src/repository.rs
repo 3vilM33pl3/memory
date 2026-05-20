@@ -670,15 +670,18 @@ async fn attach_candidate_metadata(
         sqlx::query(
             r#"
             INSERT INTO memory_sources
-                (id, memory_entry_id, task_id, file_path, git_commit, source_kind, excerpt, created_at)
+                (id, memory_entry_id, task_id, file_path, git_commit, symbol_name, symbol_kind,
+                 source_kind, excerpt, created_at)
             VALUES
-                ($1, $2, $3, $4, NULL, $5, $6, now())
+                ($1, $2, $3, $4, NULL, $5, $6, $7, $8, now())
             "#,
         )
         .bind(Uuid::new_v4())
         .bind(memory_id)
         .bind(task_id)
         .bind(&source.file_path)
+        .bind(&source.symbol_name)
+        .bind(&source.symbol_kind)
         .bind(source_kind)
         .bind(&source.excerpt)
         .execute(&mut **tx)
@@ -1434,6 +1437,8 @@ mod tests {
             tags: vec!["search".to_string(), "refactor".to_string()],
             sources: vec![mem_ingest::CandidateSource {
                 file_path: Some("crates/mem-search/src/lib.rs".to_string()),
+                symbol_name: None,
+                symbol_kind: None,
                 source_kind: mem_api::SourceKind::File,
                 excerpt: None,
             }],

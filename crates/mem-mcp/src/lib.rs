@@ -282,6 +282,7 @@ impl MemoryMcpServer {
             filters: QueryFilters::default(),
             top_k: args.top_k.unwrap_or(8),
             min_confidence: args.min_confidence,
+            include_stale: args.include_stale.unwrap_or(false),
             history: args.history.unwrap_or(false),
             retrieval_mode: None,
             answer_mode: args.answer_mode,
@@ -714,6 +715,7 @@ struct MemoryQueryArgs {
     question: String,
     top_k: Option<i64>,
     min_confidence: Option<f32>,
+    include_stale: Option<bool>,
     history: Option<bool>,
     answer_mode: Option<QueryAnswerMode>,
 }
@@ -827,6 +829,10 @@ fn tool_definitions() -> Vec<Tool> {
                 optional_string("project", "Project slug. Required for HTTP MCP."),
                 optional_integer("top_k", "Maximum number of memories to retrieve."),
                 optional_number("min_confidence", "Minimum memory confidence, 0.0 to 1.0."),
+                optional_boolean(
+                    "include_stale",
+                    "Bypass provenance-based stale-source de-ranking.",
+                ),
                 optional_boolean("history", "Search historical memory versions."),
                 optional_enum("answer_mode", &["auto", "deterministic", "llm"]),
             ]),

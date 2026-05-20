@@ -31,6 +31,7 @@ export function useQueryController({
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [queryRoundtripMs, setQueryRoundtripMs] = useState<number | null>(null);
+  const [includeStale, setIncludeStale] = useState(false);
   const [queryHistory, setQueryHistory] = useState<QueryHistoryEntry[]>([]);
   const [queryHistoryCursor, setQueryHistoryCursor] = useState<number | null>(null);
   const [selectedQueryMemoryLoading, setSelectedQueryMemoryLoading] = useState(false);
@@ -88,6 +89,7 @@ export function useQueryController({
         filters: {},
         top_k: 8,
         min_confidence: null,
+        include_stale: includeStale,
         history: false,
       });
       setQueryResponse(response);
@@ -168,6 +170,8 @@ export function useQueryController({
     queryLoading,
     queryError,
     queryRoundtripMs,
+    includeStale,
+    setIncludeStale,
     handleQuerySubmit,
     applyQueryHistory,
     setQueryHistoryCursor,

@@ -19,6 +19,7 @@ pub(crate) struct AppState {
     pub(crate) events: broadcast::Sender<ServiceEvent>,
     pub(crate) recent_activity: Arc<Mutex<VecDeque<ServiceEvent>>>,
     pub(crate) watchers: Arc<Mutex<HashMap<String, WatcherPresence>>>,
+    pub(crate) provenance: Arc<Mutex<ProvenanceRuntimeState>>,
     pub(crate) cluster: ClusterRuntime,
     pub(crate) shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
@@ -41,6 +42,17 @@ pub(crate) struct ServiceEvent {
     pub(crate) model: Option<String>,
     pub(crate) token_usage: Option<TokenUsage>,
     pub(crate) include_activity: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub(crate) struct ProvenanceRuntimeState {
+    pub(crate) status: String,
+    pub(crate) last_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub(crate) last_finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub(crate) last_project: Option<String>,
+    pub(crate) checked_count: usize,
+    pub(crate) stale_count: usize,
+    pub(crate) error: Option<String>,
 }
 
 #[derive(Clone, Debug)]

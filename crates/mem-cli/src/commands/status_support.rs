@@ -62,6 +62,7 @@ pub(crate) struct CliStatusReport {
     pub(crate) service: StatusTextProbe,
     pub(crate) health: StatusJsonProbe,
     pub(crate) stats: StatusJsonProbe,
+    pub(crate) runtime: StatusJsonProbe,
     pub(crate) watcher_manager: StatusTextProbe,
     pub(crate) project_watcher: StatusTextProbe,
     pub(crate) mcp: mem_mcp::MpcStatusReport,
@@ -147,6 +148,13 @@ pub(crate) async fn build_cli_status_report(
     let service = text_probe("service", backend_service_status(&config_path));
     let health = fetch_status_json_probe(client, &config, "/healthz", false).await;
     let stats = fetch_status_json_probe(client, &config, "/v1/stats", true).await;
+    let runtime = fetch_status_json_probe(
+        client,
+        &config,
+        &format!("/v1/runtime/status?project={project}"),
+        true,
+    )
+    .await;
     let watcher_manager = text_probe(
         "watcher manager",
         watch_manager_service_status(Profile::detect()),
@@ -188,6 +196,7 @@ pub(crate) async fn build_cli_status_report(
         service,
         health,
         stats,
+        runtime,
         watcher_manager,
         project_watcher,
         mcp,
@@ -314,6 +323,22 @@ pub(crate) fn print_cli_status_report(report: &CliStatusReport) {
             report.stats.error.as_deref()
         )
     );
+    if let Some(provenance) = report
+        .runtime
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get("provenance"))
+    {
+        let status = provenance
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        let last_finished = provenance
+            .get("last_finished_at")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("not run");
+        println!("Provenance reverify: {status} (last finished: {last_finished})");
+    }
     println!("Watcher manager: {}", report.watcher_manager.summary);
     println!("Project watcher: {}", report.project_watcher.summary);
     println!(

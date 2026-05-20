@@ -22,6 +22,7 @@ pub(super) async fn handle(args: QueryArgs, client: Client, config: AppConfig) -
         },
         top_k: args.limit,
         min_confidence: args.min_confidence,
+        include_stale: args.include_stale,
         history: args.history,
         retrieval_mode: None,
         answer_mode: None,

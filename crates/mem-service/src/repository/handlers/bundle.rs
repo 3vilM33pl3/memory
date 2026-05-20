@@ -211,6 +211,8 @@ pub(crate) fn build_bundle_manifest(
                         .include_git_commits
                         .then(|| source.git_commit.clone())
                         .flatten(),
+                    symbol_name: source.symbol_name.clone(),
+                    symbol_kind: source.symbol_kind.clone(),
                     excerpt: options
                         .include_source_excerpts
                         .then(|| source.excerpt.clone())
@@ -608,14 +610,18 @@ pub(crate) async fn project_bundle_import(
         for source in &entry.sources {
             sqlx::query(
                 r#"
-                INSERT INTO memory_sources (id, memory_entry_id, task_id, file_path, git_commit, source_kind, excerpt, created_at)
-                VALUES ($1, $2, NULL, $3, $4, $5, $6, now())
+                INSERT INTO memory_sources
+                    (id, memory_entry_id, task_id, file_path, git_commit, symbol_name, symbol_kind,
+                     source_kind, excerpt, created_at)
+                VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, now())
                 "#,
             )
             .bind(Uuid::new_v4())
             .bind(memory_id)
             .bind(&source.file_path)
             .bind(&source.git_commit)
+            .bind(&source.symbol_name)
+            .bind(&source.symbol_kind)
             .bind(match source.source_kind {
                 SourceKind::TaskPrompt => "task_prompt",
                 SourceKind::File => "file",

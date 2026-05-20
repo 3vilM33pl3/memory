@@ -8,9 +8,9 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
     DiagnosticInfo, DiagnosticSeverity, EmbeddingBackendConfig, EmbeddingsConfig,
-    MemoryRelationType, MemoryType, QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod,
-    QueryDiagnostics, QueryGraphConnection, QueryMatchKind, QueryRequest, QueryResponse,
-    QueryResult, QueryResultDebug, QueryRetrievalMode, QuerySource, SourceKind,
+    MemoryRelationType, MemoryType, ProvenanceConfig, QueryAnswerCitation, QueryAnswerGeneration,
+    QueryAnswerMethod, QueryDiagnostics, QueryGraphConnection, QueryMatchKind, QueryRequest,
+    QueryResponse, QueryResult, QueryResultDebug, QueryRetrievalMode, QuerySource, SourceKind,
     SourceProvenanceRecord, SourceProvenanceStatus,
 };
 use pgvector::Vector;
@@ -241,6 +241,15 @@ pub async fn query_memory(
     request: &QueryRequest,
     embedder: Option<&EmbeddingService>,
 ) -> Result<QueryResponse> {
+    query_memory_with_provenance_config(pool, request, embedder, &ProvenanceConfig::default()).await
+}
+
+pub async fn query_memory_with_provenance_config(
+    pool: &PgPool,
+    request: &QueryRequest,
+    embedder: Option<&EmbeddingService>,
+    provenance_config: &ProvenanceConfig,
+) -> Result<QueryResponse> {
     let total_started = Instant::now();
     let normalized = QueryIntent::from_query(&request.query);
     let candidate_limit = (request.top_k * 8).clamp(request.top_k, MAX_CANDIDATES);
@@ -348,10 +357,34 @@ pub async fn query_memory(
     } else {
         HashMap::new()
     };
+    let provenance_map = repository::fetch_provenance_rank_map(
+        pool,
+        &candidates.keys().copied().collect::<Vec<_>>(),
+    )
+    .await
+    .context("fetch provenance rank map")?;
+    let provenance_decayed_candidates = provenance_map
+        .values()
+        .filter(|signal| signal.decay_status.is_some() && !request.include_stale)
+        .count();
+    let provenance_unverified_candidates = provenance_map
+        .values()
+        .filter(|signal| signal.unverified_count > 0)
+        .count();
 
     let mut ranked = candidates
         .drain()
-        .map(|(_, candidate)| rank_candidate(candidate, &normalized, &relation_map))
+        .map(|(_, candidate)| {
+            let provenance = provenance_map.get(&candidate.memory_id);
+            rank_candidate(
+                candidate,
+                &normalized,
+                &relation_map,
+                provenance,
+                provenance_config,
+                request.include_stale,
+            )
+        })
         .collect::<Vec<_>>();
 
     ranked.sort_by(|left, right| {
@@ -414,6 +447,8 @@ pub async fn query_memory(
             relation_augmented_candidates: relation_map.len(),
             graph_candidates: graph_count,
             graph_augmented_candidates,
+            provenance_decayed_candidates,
+            provenance_unverified_candidates,
             lexical_duration_ms,
             semantic_duration_ms,
             rerank_duration_ms,
@@ -555,6 +590,29 @@ fn provenance_warnings_for_results(results: &[QueryResult]) -> Vec<DiagnosticInf
     for result in results {
         for source in &result.sources {
             let Some(provenance) = &source.provenance else {
+                warnings.push(DiagnosticInfo {
+                    code: "provenance_unverified".to_string(),
+                    source: "memory".to_string(),
+                    component: "search".to_string(),
+                    operation: "query".to_string(),
+                    severity: DiagnosticSeverity::Info,
+                    message: format!(
+                        "Memory {} has an unverified source {}",
+                        result.memory_id,
+                        source
+                            .file_path
+                            .as_deref()
+                            .unwrap_or("<unknown source path>")
+                    ),
+                    raw_error: None,
+                    explanation: None,
+                    fix_hint: Some(
+                        "Run `memory verify-provenance --project <slug>` to verify source citations."
+                            .to_string(),
+                    ),
+                    doctor_hint: None,
+                    command_hint: Some("memory verify-provenance --project <slug>".to_string()),
+                });
                 continue;
             };
             if !matches!(
@@ -671,6 +729,12 @@ struct RankedCandidate {
     graph_connections: Vec<QueryGraphConnection>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ProvenanceRankSignal {
+    pub(crate) decay_status: Option<SourceProvenanceStatus>,
+    pub(crate) unverified_count: usize,
+}
+
 fn vector_dimension(vector: &Vector) -> i32 {
     vector.as_slice().len() as i32
 }
@@ -760,6 +824,9 @@ fn rank_candidate(
     candidate: CandidateRecord,
     intent: &QueryIntent,
     relation_map: &HashMap<Uuid, Vec<MemoryRelationType>>,
+    provenance: Option<&ProvenanceRankSignal>,
+    provenance_config: &ProvenanceConfig,
+    include_stale: bool,
 ) -> RankedCandidate {
     let query_lower = intent.normalized_query.to_lowercase();
     let summary_lower = candidate.summary.to_lowercase();
@@ -883,6 +950,26 @@ fn rank_candidate(
             candidate.graph_match_count, graph_boost
         ));
     }
+    if let Some(signal) = provenance {
+        if let Some(status) = &signal.decay_status {
+            let multiplier = provenance_decay_multiplier(status, provenance_config);
+            if include_stale {
+                score_explanation.push(format!("provenance stale bypassed ({})", status.as_str()));
+            } else {
+                final_score *= multiplier;
+                score_explanation.push(format!(
+                    "provenance decay x{multiplier:.2} ({})",
+                    status.as_str()
+                ));
+            }
+        }
+        if signal.unverified_count > 0 {
+            score_explanation.push(format!(
+                "provenance unverified x{}",
+                signal.unverified_count
+            ));
+        }
+    }
     score_explanation.push(format!("term overlap {:.0}%", term_overlap * 100.0));
     score_explanation.push(format!("importance {}", candidate.importance));
     score_explanation.push(format!("memory confidence {:.2}", candidate.confidence));
@@ -930,6 +1017,16 @@ fn rank_candidate(
         score_explanation,
         graph_connections: candidate.graph_connections,
     }
+}
+
+fn provenance_decay_multiplier(status: &SourceProvenanceStatus, config: &ProvenanceConfig) -> f64 {
+    match status {
+        SourceProvenanceStatus::MissingFile => config.missing_file_decay,
+        SourceProvenanceStatus::MissingSymbol => config.missing_symbol_decay,
+        SourceProvenanceStatus::Stale => config.stale_decay,
+        SourceProvenanceStatus::Verified | SourceProvenanceStatus::Unverifiable => 1.0,
+    }
+    .clamp(0.0, 1.0)
 }
 
 #[derive(Debug, Clone)]
@@ -1387,6 +1484,8 @@ mod tests {
             sources: vec![QuerySource {
                 task_id: None,
                 file_path: Some("src/old.rs".to_string()),
+                symbol_name: None,
+                symbol_kind: None,
                 source_kind: SourceKind::File,
                 excerpt: None,
                 provenance: Some(SourceProvenanceRecord {
@@ -1542,6 +1641,9 @@ mod tests {
             candidate,
             &QueryIntent::from_query("GraphTarget"),
             &HashMap::new(),
+            None,
+            &ProvenanceConfig::default(),
+            false,
         );
 
         assert_eq!(ranked.memory_id, memory_id);

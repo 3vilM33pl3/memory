@@ -162,6 +162,10 @@ pub struct TestResult {
 pub struct CaptureCandidateSourceInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_kind: Option<String>,
     pub source_kind: SourceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
@@ -320,6 +324,11 @@ pub struct QueryRequest {
     pub top_k: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_confidence: Option<f32>,
+    /// When true, bypass provenance-based stale-source de-ranking.
+    /// Stale memories are included either way; this flag preserves their
+    /// pre-provenance score for audit/debug cases.
+    #[serde(default)]
+    pub include_stale: bool,
     /// When true, search across every version of every canonical memory
     /// (including tombstones). Default is false, which restricts the search
     /// to the latest non-tombstone version per canonical_id. Use for
@@ -374,6 +383,10 @@ pub struct QuerySource {
     pub task_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_kind: Option<String>,
     pub source_kind: SourceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
@@ -498,6 +511,10 @@ pub struct QueryDiagnostics {
     pub graph_candidates: usize,
     #[serde(default)]
     pub graph_augmented_candidates: usize,
+    #[serde(default)]
+    pub provenance_decayed_candidates: usize,
+    #[serde(default)]
+    pub provenance_unverified_candidates: usize,
     #[serde(default)]
     pub lexical_duration_ms: u64,
     #[serde(default)]
@@ -685,6 +702,10 @@ pub struct MemorySourceRecord {
     pub file_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_kind: Option<String>,
     pub source_kind: SourceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
@@ -755,6 +776,10 @@ pub struct SourceProvenanceVerification {
     pub source_kind: SourceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_kind: Option<String>,
     pub status: SourceProvenanceStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -917,6 +942,10 @@ pub struct ProjectMemoryBundleSource {
     pub file_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
 }
@@ -2331,6 +2360,8 @@ pub struct AppConfig {
     pub automation: AutomationConfig,
     #[serde(default)]
     pub retention: RetentionConfig,
+    #[serde(default)]
+    pub provenance: ProvenanceConfig,
     #[serde(skip, default = "default_profile")]
     pub profile: Profile,
     /// Path of the resolved config file (base file in dev mode). Useful when
@@ -3241,6 +3272,33 @@ pub struct AutomationConfig {
     pub state_file_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvenanceConfig {
+    #[serde(default = "default_missing_file_decay")]
+    pub missing_file_decay: f64,
+    #[serde(default = "default_missing_symbol_decay")]
+    pub missing_symbol_decay: f64,
+    #[serde(default = "default_stale_decay")]
+    pub stale_decay: f64,
+    #[serde(default = "default_true")]
+    pub reverify_enabled: bool,
+    #[serde(default = "default_reverify_interval")]
+    #[serde(with = "humantime_serde")]
+    pub reverify_interval: Duration,
+}
+
+impl Default for ProvenanceConfig {
+    fn default() -> Self {
+        Self {
+            missing_file_decay: default_missing_file_decay(),
+            missing_symbol_decay: default_missing_symbol_decay(),
+            stale_decay: default_stale_decay(),
+            reverify_enabled: true,
+            reverify_interval: default_reverify_interval(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RetentionConfig {
     /// Delete a canonical memory entirely (all its versions) when its
@@ -3339,6 +3397,22 @@ fn default_cluster_announce_interval() -> Duration {
 
 fn default_file_events() -> bool {
     true
+}
+
+fn default_missing_file_decay() -> f64 {
+    0.5
+}
+
+fn default_missing_symbol_decay() -> f64 {
+    0.7
+}
+
+fn default_stale_decay() -> f64 {
+    0.85
+}
+
+fn default_reverify_interval() -> Duration {
+    Duration::from_secs(24 * 60 * 60)
 }
 
 fn default_cluster_peer_ttl() -> Duration {
@@ -3831,6 +3905,7 @@ mod tests {
             filters: QueryFilters::default(),
             top_k: 8,
             min_confidence: None,
+            include_stale: false,
             history: false,
             retrieval_mode: None,
             answer_mode: None,

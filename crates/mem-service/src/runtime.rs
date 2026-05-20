@@ -182,6 +182,10 @@ pub(crate) async fn build_state(
         events,
         recent_activity: Arc::new(Mutex::new(VecDeque::with_capacity(20))),
         watchers: Arc::new(Mutex::new(HashMap::new())),
+        provenance: Arc::new(Mutex::new(ProvenanceRuntimeState {
+            status: "idle".to_string(),
+            ..ProvenanceRuntimeState::default()
+        })),
         cluster: ClusterRuntime {
             peers: Arc::new(Mutex::new(HashMap::new())),
         },
@@ -301,6 +305,11 @@ pub(crate) async fn start_cluster_tasks(state: AppState) -> Result<Vec<JoinHandl
     let mut tasks = Vec::new();
     if state.is_primary() {
         tasks.push(tokio::spawn(run_watcher_watchdog(state.clone())));
+        if state.config.provenance.reverify_enabled {
+            tasks.push(tokio::spawn(run_provenance_reverify_scheduler(
+                state.clone(),
+            )));
+        }
     }
     if !state.config.cluster.enabled {
         return Ok(tasks);

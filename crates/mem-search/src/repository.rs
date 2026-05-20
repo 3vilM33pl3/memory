@@ -974,10 +974,71 @@ pub(super) async fn fetch_relation_map(
     Ok(map)
 }
 
+pub(super) async fn fetch_provenance_rank_map(
+    pool: &PgPool,
+    candidate_ids: &[Uuid],
+) -> Result<HashMap<Uuid, ProvenanceRankSignal>, sqlx::Error> {
+    if candidate_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = sqlx::query(
+        r#"
+        SELECT ms.memory_entry_id, v.status
+        FROM memory_sources ms
+        LEFT JOIN memory_source_verifications v ON v.source_id = ms.id
+        WHERE ms.memory_entry_id = ANY($1)
+        "#,
+    )
+    .bind(candidate_ids)
+    .fetch_all(pool)
+    .await?;
+
+    let mut map = HashMap::<Uuid, ProvenanceRankSignal>::new();
+    for row in rows {
+        let memory_id: Uuid = row.try_get("memory_entry_id")?;
+        let status: Option<String> = row.try_get("status")?;
+        let signal = map.entry(memory_id).or_default();
+        let Some(status) = status else {
+            signal.unverified_count += 1;
+            continue;
+        };
+        let status = parse_source_provenance_status(&status);
+        if provenance_status_rank(&status)
+            > signal
+                .decay_status
+                .as_ref()
+                .map_or(0, provenance_status_rank)
+        {
+            signal.decay_status = match &status {
+                SourceProvenanceStatus::MissingFile
+                | SourceProvenanceStatus::MissingSymbol
+                | SourceProvenanceStatus::Stale => Some(status.clone()),
+                SourceProvenanceStatus::Verified | SourceProvenanceStatus::Unverifiable => {
+                    signal.decay_status.take()
+                }
+            };
+        }
+        if status == SourceProvenanceStatus::Unverifiable {
+            signal.unverified_count += 1;
+        }
+    }
+    Ok(map)
+}
+
+fn provenance_status_rank(status: &SourceProvenanceStatus) -> u8 {
+    match status {
+        SourceProvenanceStatus::MissingFile => 4,
+        SourceProvenanceStatus::MissingSymbol => 3,
+        SourceProvenanceStatus::Stale => 2,
+        SourceProvenanceStatus::Unverifiable => 1,
+        SourceProvenanceStatus::Verified => 0,
+    }
+}
+
 pub(super) async fn fetch_sources(pool: &PgPool, memory_id: Uuid) -> Result<Vec<QuerySource>> {
     let rows = sqlx::query(
         r#"
-        SELECT ms.task_id, ms.file_path, ms.source_kind, ms.excerpt,
+        SELECT ms.task_id, ms.file_path, ms.symbol_name, ms.symbol_kind, ms.source_kind, ms.excerpt,
                v.status AS provenance_status,
                v.checked_at AS provenance_checked_at,
                v.reason AS provenance_reason,
@@ -999,6 +1060,8 @@ pub(super) async fn fetch_sources(pool: &PgPool, memory_id: Uuid) -> Result<Vec<
         items.push(QuerySource {
             task_id: row.try_get("task_id")?,
             file_path: row.try_get("file_path")?,
+            symbol_name: row.try_get("symbol_name")?,
+            symbol_kind: row.try_get("symbol_kind")?,
             source_kind: parse_source_kind(&source_kind),
             excerpt: row.try_get("excerpt")?,
             provenance: source_provenance_from_row(&row)?,

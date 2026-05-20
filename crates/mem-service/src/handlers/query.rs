@@ -13,7 +13,14 @@ pub(crate) async fn query(
     }
     let pool = state.pool()?;
     let embedders = state.embedders.read().await;
-    match query_memory(pool, &request, embedders.active()).await {
+    match query_memory_with_provenance_config(
+        pool,
+        &request,
+        embedders.active(),
+        &state.config.provenance,
+    )
+    .await
+    {
         Ok(mut response) => {
             if should_enrich_query_answer_with_llm(&request) {
                 enrich_query_answer_with_llm(&state, &request, &mut response).await;

@@ -16,6 +16,10 @@ pub struct CandidateAssertion {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CandidateSource {
     pub file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_kind: Option<String>,
     pub source_kind: SourceKind,
     pub excerpt: Option<String>,
 }
@@ -52,6 +56,8 @@ pub fn extract_candidates(request: &CaptureTaskRequest) -> Vec<CandidateAssertio
         .iter()
         .map(|path| CandidateSource {
             file_path: Some(path.clone()),
+            symbol_name: None,
+            symbol_kind: None,
             source_kind: SourceKind::File,
             excerpt: Some(format!("Changed file during task: {path}")),
         })
@@ -78,6 +84,8 @@ pub fn extract_candidates(request: &CaptureTaskRequest) -> Vec<CandidateAssertio
                     .iter()
                     .map(|source| CandidateSource {
                         file_path: source.file_path.clone(),
+                        symbol_name: source.symbol_name.clone(),
+                        symbol_kind: source.symbol_kind.clone(),
                         source_kind: source.source_kind.clone(),
                         excerpt: source.excerpt.clone(),
                     })
@@ -315,17 +323,23 @@ fn build_sources(
     let mut sources = files.to_vec();
     sources.push(CandidateSource {
         file_path: None,
+        symbol_name: None,
+        symbol_kind: None,
         source_kind: SourceKind::TaskPrompt,
         excerpt: Some(request.user_prompt.clone()),
     });
     sources.push(CandidateSource {
         file_path: None,
+        symbol_name: None,
+        symbol_kind: None,
         source_kind: SourceKind::Note,
         excerpt: Some(note.to_string()),
     });
     if let Some(summary) = &request.git_diff_summary {
         sources.push(CandidateSource {
             file_path: None,
+            symbol_name: None,
+            symbol_kind: None,
             source_kind: SourceKind::GitCommit,
             excerpt: Some(summary.clone()),
         });
@@ -333,6 +347,8 @@ fn build_sources(
     if let Some(output) = &request.command_output {
         sources.push(CandidateSource {
             file_path: None,
+            symbol_name: None,
+            symbol_kind: None,
             source_kind: SourceKind::CommandOutput,
             excerpt: Some(output.clone()),
         });
@@ -340,6 +356,8 @@ fn build_sources(
     for test in &request.tests {
         sources.push(CandidateSource {
             file_path: None,
+            symbol_name: None,
+            symbol_kind: None,
             source_kind: SourceKind::Test,
             excerpt: Some(format!("{}: {}", test.command, test.status)),
         });

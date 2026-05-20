@@ -140,6 +140,8 @@ fn capture_request(
             tags: vec!["query".to_string()],
             sources: vec![CaptureCandidateSourceInput {
                 file_path: Some("crates/mem-search/src/lib.rs".to_string()),
+                symbol_name: None,
+                symbol_kind: None,
                 source_kind: SourceKind::File,
                 excerpt: Some("query provenance".to_string()),
             }],

@@ -33,7 +33,8 @@ pub async fn fetch_memory_entry(
 
     let sources = sqlx::query(
         r#"
-        SELECT ms.id, ms.task_id, ms.file_path, ms.git_commit, ms.source_kind, ms.excerpt,
+        SELECT ms.id, ms.task_id, ms.file_path, ms.git_commit, ms.symbol_name, ms.symbol_kind,
+               ms.source_kind, ms.excerpt,
                v.status AS provenance_status,
                v.checked_at AS provenance_checked_at,
                v.reason AS provenance_reason,
@@ -54,6 +55,8 @@ pub async fn fetch_memory_entry(
             task_id: row.try_get("task_id")?,
             file_path: row.try_get("file_path")?,
             git_commit: row.try_get("git_commit")?,
+            symbol_name: row.try_get("symbol_name")?,
+            symbol_kind: row.try_get("symbol_kind")?,
             source_kind: parse_source_kind(&row.try_get::<String, _>("source_kind")?),
             excerpt: row.try_get("excerpt")?,
             provenance: source_provenance_from_row(&row)?,

@@ -429,6 +429,7 @@ pub(crate) async fn run_eval_suite(
                             filters: QueryFilters::default(),
                             top_k: item.top_k,
                             min_confidence: None,
+                            include_stale: false,
                             history: false,
                             retrieval_mode: Some(eval_condition_retrieval_mode(condition)),
                             answer_mode: Some(mem_api::QueryAnswerMode::Deterministic),
@@ -452,6 +453,7 @@ pub(crate) async fn run_eval_suite(
                             filters: QueryFilters::default(),
                             top_k: item.top_k,
                             min_confidence: None,
+                            include_stale: false,
                             history: false,
                             retrieval_mode: Some(eval_condition_retrieval_mode(condition)),
                             answer_mode: Some(match context.profile {

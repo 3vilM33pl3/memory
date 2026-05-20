@@ -2260,6 +2260,7 @@ impl App {
             filters: QueryFilters::default(),
             top_k: 8,
             min_confidence: None,
+            include_stale: false,
             history: false,
             retrieval_mode: None,
             answer_mode: None,

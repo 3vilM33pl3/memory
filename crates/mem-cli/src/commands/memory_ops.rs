@@ -381,11 +381,15 @@ pub(crate) fn build_plan_execution_request(
     let mut sources = vec![
         mem_api::CaptureCandidateSourceInput {
             file_path: None,
+            symbol_name: None,
+            symbol_kind: None,
             source_kind: mem_api::SourceKind::TaskPrompt,
             excerpt: Some("Approved execution plan entered implementation.".to_string()),
         },
         mem_api::CaptureCandidateSourceInput {
             file_path: None,
+            symbol_name: None,
+            symbol_kind: None,
             source_kind: mem_api::SourceKind::Note,
             excerpt: Some(normalized_plan.clone()),
         },
@@ -397,6 +401,8 @@ pub(crate) fn build_plan_execution_request(
             0,
             mem_api::CaptureCandidateSourceInput {
                 file_path: Some(source_path.display().to_string()),
+                symbol_name: None,
+                symbol_kind: None,
                 source_kind: mem_api::SourceKind::File,
                 excerpt: Some(format!(
                     "Approved plan source file: {}",
@@ -521,11 +527,15 @@ pub(crate) fn build_task_start_request(
             sources: vec![
                 mem_api::CaptureCandidateSourceInput {
                     file_path: None,
+                    symbol_name: None,
+                    symbol_kind: None,
                     source_kind: mem_api::SourceKind::TaskPrompt,
                     excerpt: Some(prompt.trim().to_string()),
                 },
                 mem_api::CaptureCandidateSourceInput {
                     file_path: None,
+                    symbol_name: None,
+                    symbol_kind: None,
                     source_kind: mem_api::SourceKind::Note,
                     excerpt: Some("Direct no-plan task entered execution.".to_string()),
                 },
@@ -572,6 +582,8 @@ pub(crate) fn implementation_sources(
     if !prompt.trim().is_empty() {
         sources.push(mem_api::CaptureCandidateSourceInput {
             file_path: None,
+            symbol_name: None,
+            symbol_kind: None,
             source_kind: mem_api::SourceKind::TaskPrompt,
             excerpt: Some(prompt.trim().to_string()),
         });
@@ -583,6 +595,8 @@ pub(crate) fn implementation_sources(
         }
         sources.push(mem_api::CaptureCandidateSourceInput {
             file_path: None,
+            symbol_name: None,
+            symbol_kind: None,
             source_kind: mem_api::SourceKind::Note,
             excerpt: Some(trimmed.to_string()),
         });
@@ -590,6 +604,8 @@ pub(crate) fn implementation_sources(
     for file in files_changed {
         sources.push(mem_api::CaptureCandidateSourceInput {
             file_path: Some(file.clone()),
+            symbol_name: None,
+            symbol_kind: None,
             source_kind: mem_api::SourceKind::File,
             excerpt: Some(format!("Changed file during task: {file}")),
         });
@@ -597,6 +613,8 @@ pub(crate) fn implementation_sources(
     for test in tests {
         sources.push(mem_api::CaptureCandidateSourceInput {
             file_path: None,
+            symbol_name: None,
+            symbol_kind: None,
             source_kind: mem_api::SourceKind::Test,
             excerpt: Some(format!("{}: {}", test.command, test.status)),
         });
@@ -607,6 +625,8 @@ pub(crate) fn implementation_sources(
     {
         sources.push(mem_api::CaptureCandidateSourceInput {
             file_path: None,
+            symbol_name: None,
+            symbol_kind: None,
             source_kind: mem_api::SourceKind::CommandOutput,
             excerpt: Some(output.to_string()),
         });

@@ -150,6 +150,8 @@ export interface MemorySourceRecord {
   task_id: string | null;
   file_path: string | null;
   git_commit: string | null;
+  symbol_name?: string | null;
+  symbol_kind?: string | null;
   source_kind: SourceKind;
   excerpt: string | null;
   provenance?: SourceProvenanceRecord | null;
@@ -175,6 +177,8 @@ export interface SourceProvenanceVerification {
   memory_summary: string;
   source_kind: SourceKind;
   file_path?: string | null;
+  symbol_name?: string | null;
+  symbol_kind?: string | null;
   status: SourceProvenanceStatus;
   reason?: string | null;
   resolved_path?: string | null;
@@ -251,6 +255,8 @@ export interface QueryDiagnostics {
   relation_augmented_candidates: number;
   graph_candidates: number;
   graph_augmented_candidates: number;
+  provenance_decayed_candidates: number;
+  provenance_unverified_candidates: number;
   lexical_duration_ms: number;
   semantic_duration_ms: number;
   rerank_duration_ms: number;
@@ -349,6 +355,7 @@ export interface QueryRequest {
   filters: Record<string, never>;
   top_k: number;
   min_confidence: number | null;
+  include_stale?: boolean;
   history?: boolean;
 }
 
@@ -643,6 +650,18 @@ export interface RuntimeWatcherStatus {
   stale_after_seconds: number;
 }
 
+export interface RuntimeProvenanceStatus {
+  status: string;
+  enabled: boolean;
+  interval_seconds: number;
+  last_started_at?: string | null;
+  last_finished_at?: string | null;
+  last_project?: string | null;
+  checked_count: number;
+  stale_count: number;
+  error?: string | null;
+}
+
 export interface RuntimeSkillStatus {
   bundle_version: string;
   status: string;
@@ -663,6 +682,7 @@ export interface RuntimeStatusResponse {
   service: RuntimeComponentStatus;
   manager: RuntimeManagerStatus;
   watchers: RuntimeWatcherStatus;
+  provenance: RuntimeProvenanceStatus;
   skills: RuntimeSkillStatus;
   restart_notice?: RuntimeRestartNotice | null;
 }

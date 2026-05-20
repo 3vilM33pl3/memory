@@ -70,9 +70,9 @@ pub(crate) use mem_platform::{
 };
 pub(crate) use mem_search::{
     EmbeddingRegistry, effective_embedding_base_url, parse_memory_type, parse_relation_type,
-    parse_source_kind, prune_project_embeddings, query_memory, rebuild_chunks,
-    rebuild_chunks_for_automatic_creation, rebuild_memory_chunks_for_automatic_creation,
-    reembed_project_chunks,
+    parse_source_kind, prune_project_embeddings, query_memory_with_provenance_config,
+    rebuild_chunks, rebuild_chunks_for_automatic_creation,
+    rebuild_memory_chunks_for_automatic_creation, reembed_project_chunks,
 };
 pub(crate) use regex::Regex;
 pub(crate) use serde::Deserialize;
