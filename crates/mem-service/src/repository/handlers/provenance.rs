@@ -207,15 +207,15 @@ pub(crate) async fn run_provenance_reverify_scheduler(state: AppState) -> Result
         .reverify_interval
         .max(StdDuration::from_secs(60));
     loop {
-        if state.is_primary() {
-            if let Err(error) = reverify_all_projects_once(&state).await {
-                let mut runtime = state
-                    .provenance
-                    .lock()
-                    .expect("provenance runtime mutex poisoned");
-                runtime.status = "error".to_string();
-                runtime.error = Some(error.to_string());
-            }
+        if state.is_primary()
+            && let Err(error) = reverify_all_projects_once(&state).await
+        {
+            let mut runtime = state
+                .provenance
+                .lock()
+                .expect("provenance runtime mutex poisoned");
+            runtime.status = "error".to_string();
+            runtime.error = Some(error.to_string());
         }
         tokio::time::sleep(interval).await;
     }
@@ -296,6 +296,7 @@ pub(crate) async fn reverify_all_projects_once(state: &AppState) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_source_path(
     source_id: Uuid,
     memory_id: Uuid,
