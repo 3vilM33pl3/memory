@@ -1,0 +1,29 @@
+---
+title: "MCP"
+description: "Expose read-only project memory tools to MCP-capable clients."
+---
+
+# MCP
+
+The MCP server exposes read-only project memory tools to MCP-capable clients, including coding agents.
+
+<CardGroup cols={2}>
+  <Card title="stdio server" href="/mcp/stdio" />
+  <Card title="Streamable HTTP server" href="/mcp/streamable-http" />
+  <Card title="MCP tools" href="/mcp/tools" />
+  <Card title="Client setup" href="/mcp/client-setup" />
+  <Card title="MCP security" href="/mcp/security" />
+  <Card title="Examples" href="/mcp/examples" />
+</CardGroup>
+
+## When to use MCP
+
+Use MCP when a client supports structured tools and resources. Use the CLI when a shell command is simpler or when you want direct human-readable output.
+
+## Safety posture
+
+The v1 MCP surface is read-first. Treat HTTP MCP as local/advanced unless the client is explicitly configured with a token and network controls.
+
+## Next
+
+Read [stdio server](/mcp/stdio) and [MCP security](/mcp/security).

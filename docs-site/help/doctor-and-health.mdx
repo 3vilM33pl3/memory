@@ -1,0 +1,25 @@
+---
+title: "Doctor and health"
+description: "Use `memory doctor`, `memory health`, and `memory status` correctly."
+---
+
+# Doctor and health
+
+`memory doctor` checks configuration, database, providers, skills, and environment readiness.
+
+`memory health` checks whether the backend service is reachable.
+
+`memory status --project <project-slug>` combines service, project, watcher, MCP, and diagnostic state into one payload.
+
+## When to run each
+
+| Situation | Command |
+|---|---|
+| Fresh install | `memory doctor` then `memory health` |
+| Service outage | `memory health` |
+| Agent cannot find project memory | `memory status --project <project-slug>` |
+| Provider or embedding problem | `memory doctor` |
+
+## Next
+
+Read [Support bundle](/help/support-bundle).

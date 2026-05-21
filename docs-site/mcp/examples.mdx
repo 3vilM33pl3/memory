@@ -1,0 +1,45 @@
+---
+title: "MCP examples"
+description: "Copy practical MCP usage patterns for project questions and briefings."
+---
+
+# MCP examples
+
+Copy practical MCP usage patterns for project questions and briefings.
+
+## Practical guidance
+
+- Prefer local repository facts and current CLI help over stale examples.
+- Keep secrets, database URLs, and provider keys out of committed docs.
+- Treat Memory Layer as evidence infrastructure: useful results should be inspectable and bounded.
+## Verify
+
+```bash
+memory doctor
+memory health
+memory status --project <project-slug>
+```
+
+Use command-specific help for exact flags:
+
+```bash
+memory --help
+memory <command> --help
+```
+
+## Next
+
+Return to [MCP](/mcp) or continue with the related page in the left navigation.
+
+## MCP flow
+
+```mermaid
+sequenceDiagram
+    participant Client as MCP client
+    participant Server as Memory MCP server
+    participant API as Memory service API
+    Client->>Server: memory_query(project, question)
+    Server->>API: POST /v1/query
+    API-->>Server: answer, citations, diagnostics
+    Server-->>Client: structured MCP result
+```

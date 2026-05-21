@@ -1,0 +1,24 @@
+---
+title: "stdio server"
+description: "Run the local stdio MCP server for clients such as Codex or Claude."
+---
+
+# stdio server
+
+Run a local stdio MCP server for clients that spawn tools as child processes.
+
+```bash
+memory mcp run --project <project-slug>
+```
+
+Stdio mode is intended for local clients. It should write only MCP JSON-RPC messages to stdout; diagnostics belong on stderr.
+
+## Verify
+
+```bash
+memory mcp status --project <project-slug>
+```
+
+## Next
+
+Read [Client setup](/mcp/client-setup).

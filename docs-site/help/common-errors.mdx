@@ -1,0 +1,37 @@
+---
+title: "Common errors"
+description: "Fix frequent setup, database, MCP, watcher, and eval failures."
+---
+
+# Common errors
+
+## `connection refused`
+
+The service or database is not reachable at the configured address.
+
+Fix: check service status, database host, port, firewall, and config.
+
+## `extension "vector" is not available`
+
+pgvector is not installed on the PostgreSQL server.
+
+Fix: install the server-side pgvector package and run `CREATE EXTENSION IF NOT EXISTS vector;`.
+
+## `memory command not found`
+
+The package install path is not on `PATH`, or the install failed.
+
+Fix: open a new shell, check the package install, and run `memory --version`.
+
+## `Project not configured`
+
+The current repository has not been initialised for Memory Layer.
+
+Fix: run `memory wizard --dry-run` and then `memory wizard` from the project root.
+
+## Verify
+
+```bash
+memory doctor
+memory status --project <project-slug>
+```

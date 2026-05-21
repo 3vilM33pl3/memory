@@ -1,0 +1,48 @@
+---
+title: "Linux / Debian"
+description: "Install the Debian package, enable the service, and verify the CLI."
+---
+
+# Linux / Debian
+
+## What you will do
+
+Install the Debian package, configure Memory Layer, enable the backend service, and run health checks.
+
+## Before you start
+
+Install PostgreSQL and pgvector first, or use a reachable PostgreSQL server with the `vector` extension enabled.
+
+## Steps
+
+```bash
+sudo dpkg -i memory-layer_<version>_amd64.deb
+memory wizard --global
+cd /path/to/project
+memory wizard --dry-run
+memory wizard
+sudo systemctl enable --now memory-layer.service
+memory doctor
+memory health
+memory tui
+```
+
+Use the release assets from GitHub for the package. If `dpkg` reports missing dependencies, install those packages with your normal package manager and rerun the package install.
+
+## Verify
+
+```bash
+memory --version
+systemctl status memory-layer.service
+memory status --project <project-slug>
+```
+
+## Troubleshooting
+
+- `memory command not found`: open a new shell or check the package install path.
+- `connection refused`: verify the service is running and the configured port matches.
+- `extension "vector" is not available`: install the pgvector package for your PostgreSQL major version.
+
+## Next
+
+Read [Service setup](/install/service-setup) and [Doctor and health](/help/doctor-and-health).

@@ -1,0 +1,38 @@
+---
+title: "Ablation tests"
+description: "Compare no-memory and memory-enabled variants item by item."
+---
+
+# Ablation tests
+
+Compare no-memory and memory-enabled variants item by item.
+
+## What to measure
+
+Evaluation claims should be tied to artifacts, suite version, commit, model/provider, and configuration. Pair no-memory and memory-enabled variants when possible.
+
+## How to use it
+
+Run a dry run first, then a real suite only after reviewing scripts and fixtures. Keep raw outputs and compare item-level results.
+
+## Verify
+
+```bash
+memory eval run --suite evals/examples/memory-smoke --condition full-memory --profile offline --dry-run
+```
+
+## Next
+
+Read [Run evaluations](/evals/run-evals), [Metrics](/evals/metrics), and [Limitations](/evals/limitations).
+
+## Ablation flow
+
+```mermaid
+flowchart LR
+    S[Same suite] --> N[No-memory run]
+    S --> F[Full-memory run]
+    N --> C[Paired comparison]
+    F --> C
+    C --> R[Report with limits]
+```
+

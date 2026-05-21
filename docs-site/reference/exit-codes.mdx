@@ -1,0 +1,27 @@
+---
+title: "Exit codes"
+description: "Interpret command success and failure status in scripts."
+---
+
+# Exit codes
+
+Interpret command success and failure status in scripts.
+
+## Source of truth
+
+Use the current binary and repository files as the source of truth. Reference docs should not invent flags or paths.
+
+```bash
+memory --help
+memory <command> --help
+```
+
+## Notes
+
+- Paths differ between package installs, user-local installs, and dev-profile runs.
+- Provider variables depend on the configured backend.
+- Database schema details can change with migrations; keep public docs high-level unless a table is stable.
+
+## Next
+
+Return to [Reference](/reference) or use [Doctor and health](/help/doctor-and-health) for diagnostics.

@@ -1,0 +1,20 @@
+---
+title: "Streamable HTTP server"
+description: "Use the local HTTP MCP route when a token-bearing client needs it."
+---
+
+# Streamable HTTP server
+
+The service can expose MCP over a local Streamable HTTP route, typically `/mcp`.
+
+Use this only for local, token-bearing clients unless you add your own network and authentication controls.
+
+## Verify
+
+```bash
+memory mcp status --project <project-slug>
+```
+
+## Next
+
+Read [MCP security](/mcp/security).

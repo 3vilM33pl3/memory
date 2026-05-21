@@ -1,0 +1,34 @@
+---
+title: "FAQ"
+description: "Answer common product, privacy, local-first, and operations questions."
+---
+
+# FAQ
+
+## Is Memory Layer a vector database?
+
+No. It uses PostgreSQL and can use pgvector, but the product is a memory workflow: capture, curation, evidence, retrieval, briefings, agent integration, and evaluation.
+
+## Does it replace documentation?
+
+No. It complements docs by preserving decisions, incidents, project conventions, and operational context that often never reaches README files.
+
+## Does it work offline?
+
+The service and deterministic retrieval paths can be local-first. External LLM or embedding providers receive text only when you configure and use them.
+
+## Can I use local embeddings?
+
+Memory Layer supports OpenAI-compatible embedding endpoints, which can include local compatible servers when configured.
+
+## Can multiple projects share one database?
+
+Yes. Queries and memories are project-scoped. Use clear project slugs and inspect status when moving repositories.
+
+## What should become a memory?
+
+Durable project facts, decisions, conventions, fixes, operational lessons, and constraints. Do not memorize transient observations like "I opened a file".
+
+## How do I know it works?
+
+Run status and ask a question whose answer should require project context. Inspect citations before trusting the answer.

@@ -1,0 +1,33 @@
+---
+title: "Security and privacy"
+description: "Understand what is stored locally and what providers may receive."
+---
+
+# Security and privacy
+
+Memory Layer can be local-first, but external embedding or LLM providers may receive text depending on your configuration.
+
+## Check before enabling integrations
+
+- Which database stores project memory?
+- Which LLM provider is configured?
+- Which embedding provider is active?
+- Is MCP HTTP local and token protected?
+- What does the watcher capture?
+- Are logs redacted before sharing?
+
+<Warning>
+Do not expose the MCP HTTP server to the public internet unless you have added an authentication and network control layer.
+</Warning>
+
+## Verify
+
+```bash
+memory doctor
+memory status --project <project-slug>
+memory mcp status --project <project-slug>
+```
+
+## Next
+
+Read [MCP security](/mcp/security) and [Backups and restore](/operations/backups-and-restore).

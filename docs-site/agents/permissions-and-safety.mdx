@@ -1,0 +1,32 @@
+---
+title: "Permissions and safety"
+description: "Set expectations for commands, secrets, and evidence before agent edits."
+---
+
+# Permissions and safety
+
+Set expectations for commands, secrets, and evidence before agent edits.
+
+## Practical guidance
+
+- Prefer local repository facts and current CLI help over stale examples.
+- Keep secrets, database URLs, and provider keys out of committed docs.
+- Treat Memory Layer as evidence infrastructure: useful results should be inspectable and bounded.
+## Verify
+
+```bash
+memory doctor
+memory health
+memory status --project <project-slug>
+```
+
+Use command-specific help for exact flags:
+
+```bash
+memory --help
+memory <command> --help
+```
+
+## Next
+
+Return to [Agents](/agents) or continue with the related page in the left navigation.

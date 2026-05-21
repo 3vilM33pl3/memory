@@ -1,0 +1,43 @@
+---
+title: "macOS / Homebrew"
+description: "Install Memory Layer with Homebrew and run the first health checks."
+---
+
+# macOS / Homebrew
+
+## What you will do
+
+Install Memory Layer through Homebrew, configure global and project settings, and verify the service.
+
+## Steps
+
+```bash
+brew tap 3vilM33pl3/memory https://github.com/3vilM33pl3/memory
+brew install 3vilM33pl3/memory/memory-layer
+memory wizard --global
+cd /path/to/project
+memory wizard --dry-run
+memory wizard
+memory service enable
+memory doctor
+memory health
+memory tui
+```
+
+For unreleased changes, use:
+
+```bash
+brew install --HEAD 3vilM33pl3/memory/memory-layer
+```
+
+## Verify
+
+```bash
+memory --version
+memory service status
+memory status --project <project-slug>
+```
+
+## Next
+
+Read [PostgreSQL and pgvector](/install/postgresql-pgvector) and [Project wizard](/install/wizard-project).

@@ -1,0 +1,37 @@
+---
+title: "From source"
+description: "Run a development copy from a Cargo checkout without disturbing an installed service."
+---
+
+# From source
+
+## What you will do
+
+Run a development copy from this repository while keeping it isolated from any packaged install.
+
+## Steps
+
+```bash
+cargo run --bin memory -- init
+cargo run --bin memory -- dev init --copy-from-global
+cargo run --bin memory -- service run
+```
+
+In another terminal:
+
+```bash
+cargo run --bin memory -- tui
+```
+
+The dev profile uses different ports and runtime paths from the installed service. The TUI header includes `[dev]` when connected to the dev stack.
+
+## Verify
+
+```bash
+MEMORY_LAYER_PROFILE=dev cargo run --bin memory -- health
+MEMORY_LAYER_PROFILE=dev cargo run --bin memory -- doctor
+```
+
+## Next
+
+Read [Developer docs](https://github.com/3vilM33pl3/memory/tree/main/docs/developer) for deeper contributor workflows.

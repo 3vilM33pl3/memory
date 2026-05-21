@@ -1,0 +1,41 @@
+---
+title: "PostgreSQL and pgvector"
+description: "Create a database, enable pgvector, and verify connectivity."
+---
+
+# PostgreSQL and pgvector
+
+## What you will do
+
+Create a dedicated database, enable pgvector, and verify the connection Memory Layer will use.
+
+## Steps
+
+```bash
+sudo -u postgres createuser --pwprompt memory_layer
+sudo -u postgres createdb --owner=memory_layer memory_layer
+
+export DATABASE_URL='postgres://memory_layer:<password>@127.0.0.1:5432/memory_layer'
+psql "$DATABASE_URL" -c "SELECT 1;"
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+```
+
+Use a hosted PostgreSQL instance if you prefer, but confirm that the provider supports pgvector and that your network policy allows the Memory Layer service to connect.
+
+## Verify
+
+```bash
+memory doctor
+memory health
+```
+
+## Troubleshooting
+
+- `extension "vector" is not available`: install pgvector on the PostgreSQL server, not just the client machine.
+- `permission denied to create extension`: ask a database administrator to enable `vector` or grant the needed privilege.
+- `connection refused`: check host, port, TLS, firewall, and service status.
+
+## Next
+
+Run [Global wizard](/install/wizard-global).

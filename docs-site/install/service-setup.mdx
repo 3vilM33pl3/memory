@@ -1,0 +1,33 @@
+---
+title: "Service setup"
+description: "Run, enable, inspect, and restart the backend service."
+---
+
+# Service setup
+
+## What you will do
+
+Run and inspect the backend service.
+
+## Commands
+
+```bash
+memory service run
+memory service enable
+memory service status
+memory service restart-all
+memory health
+```
+
+On Linux package installs, service management may also appear through `systemctl`. On macOS, use the Memory Layer service command unless a package-specific note says otherwise.
+
+## Verify
+
+```bash
+memory health
+memory status --project <project-slug>
+```
+
+## Next
+
+Read [Operations](/operations) for day-two service tasks.
