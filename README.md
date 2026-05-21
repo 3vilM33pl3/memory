@@ -363,6 +363,8 @@ Project-local customization now has two layers:
 
 ## Documentation
 
+The Mintlify documentation website source lives in [`docs-site/`](docs-site/README.md). It is organized for reader-facing onboarding, concepts, agent integrations, MCP, evaluations, operations, and reference pages. The `docs/` directory remains the detailed in-repo manual and developer reference.
+
 ### Start By Task
 
 - **Install and first project:** [Getting Started](docs/user/getting-started.md), [Wizard And Bootstrap](docs/user/cli/wizard.md), [Init Bootstrap](docs/user/cli/init.md), [Skill Upgrade](docs/user/cli/upgrade.md)

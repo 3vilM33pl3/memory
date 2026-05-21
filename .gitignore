@@ -12,6 +12,8 @@
 /web/node_modules
 /web/dist
 /web/*.tsbuildinfo
+/docs-site/node_modules
+/docs-site/.mintlify
 /demo/output
 __pycache__/
 *.pyc

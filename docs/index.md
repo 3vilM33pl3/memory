@@ -4,6 +4,8 @@ Memory Layer is a local-first project memory system for coding agents and develo
 
 It is designed for the real workflow: several agents, several projects, multiple embedding models, and a human who needs to understand exactly why an answer was produced.
 
+The new documentation website source lives in [`../docs-site`](../docs-site/README.md). It provides a Mintlify-ready onboarding, concepts, agent integration, MCP, evaluation, operations, and reference structure while this `docs/` directory remains the detailed in-repo manual.
+
 ![Memory Layer cited query answer](img/tui/query-tab.png)
 
 ![How Memory Layer turns project work into cited context](img/memory-layer-flow.png)

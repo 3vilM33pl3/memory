@@ -20,6 +20,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       db: ${{ steps.filter.outputs.db }}
       web: ${{ steps.filter.outputs.web }}
+      docs_site: ${{ steps.filter.outputs.docs_site }}
       evals: ${{ steps.filter.outputs.evals }}
       package: ${{ steps.filter.outputs.package }}
     steps:
@@ -46,6 +47,8 @@ jobs:
               - "migrations/**"
             web:
               - "web/**"
+            docs_site:
+              - "docs-site/**"
             evals:
               - "Cargo.toml"
               - "Cargo.lock"
@@ -163,6 +166,21 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm --prefix web ci
       - run: npm --prefix web run build
+
+  docs-site:
+    name: Docs Site
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.docs_site == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npx -y mint@latest validate
+        working-directory: docs-site
+      - run: npx -y mint@latest broken-links
+        working-directory: docs-site
 
   package-smoke:
     name: Debian Package Smoke
