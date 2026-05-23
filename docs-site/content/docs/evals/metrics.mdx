@@ -1,0 +1,24 @@
+---
+title: "Metrics"
+description: "Understand success rate, Recall@K, MRR, nDCG, assertion recall, tokens, and latency."
+---
+
+# Metrics
+
+| Metric | Meaning |
+|---|---|
+| Success rate | Whether the task met its expected outcome. |
+| Recall@K | Whether relevant items appear in the top K results. |
+| MRR | How early the first relevant result appears. |
+| nDCG | Whether useful results rank near the top. |
+| Assertion recall | Whether expected factual assertions were recovered. |
+| Token cost | Model context or generation cost used by a run. |
+| Latency | How long retrieval, answer generation, or eval work took. |
+
+## Interpret carefully
+
+Metric improvement is evidence for a bounded claim about the suite, model, and configuration used. It is not universal proof that every future agent task will improve.
+
+## Next
+
+Read [Reproducibility](/docs/evals/reproducibility).

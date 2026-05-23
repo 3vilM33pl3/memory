@@ -1,0 +1,27 @@
+---
+title: "Global wizard"
+description: "Create or update machine-level Memory Layer configuration safely."
+---
+
+# Global wizard
+
+## What you will do
+
+Create machine-level configuration for the service, database, and optional providers.
+
+```bash
+memory wizard --global
+```
+
+The global wizard should write configuration and secrets outside the repository. Re-running it is safe when you need to rotate providers or update database settings, but inspect any proposed change before accepting it.
+
+## Verify
+
+```bash
+memory doctor
+memory health
+```
+
+## Next
+
+Initialise a repository with [Project wizard](/docs/install/wizard-project).

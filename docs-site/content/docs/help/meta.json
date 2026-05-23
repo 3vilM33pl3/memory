@@ -1,0 +1,12 @@
+{
+  "title": "Help",
+  "pages": [
+    "index",
+    "troubleshooting",
+    "faq",
+    "common-errors",
+    "doctor-and-health",
+    "support-bundle",
+    "contributing-docs"
+  ]
+}

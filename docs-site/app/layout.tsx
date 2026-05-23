@@ -1,0 +1,23 @@
+import './global.css';
+
+import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
+import { RootProvider } from 'fumadocs-ui/provider/next';
+
+export const metadata: Metadata = {
+  title: {
+    default: 'Memory Layer Docs',
+    template: '%s | Memory Layer Docs',
+  },
+  description: 'Local-first memory for coding agents.',
+};
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <body className="flex min-h-screen flex-col">
+        <RootProvider>{children}</RootProvider>
+      </body>
+    </html>
+  );
+}

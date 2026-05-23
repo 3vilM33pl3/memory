@@ -1,0 +1,13 @@
+{
+  "title": "Reference",
+  "pages": [
+    "index",
+    "cli",
+    "config-global",
+    "config-project",
+    "database-schema",
+    "environment-variables",
+    "exit-codes",
+    "files-and-directories"
+  ]
+}

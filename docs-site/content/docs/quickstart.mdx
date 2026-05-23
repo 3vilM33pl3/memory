@@ -1,0 +1,66 @@
+---
+title: "Quickstart"
+description: "Configure Memory Layer and ask the first cited project question."
+---
+
+# Quickstart
+
+## What you will do
+
+Install or verify the Memory Layer CLI, configure global storage, initialise one project, and ask a cited question.
+
+## Before you start
+
+You need a PostgreSQL database with pgvector enabled. Optional LLM and embedding providers improve curation and semantic retrieval, but the core service can still run with deterministic paths.
+
+## Steps
+
+### 1. Configure the machine
+
+```bash
+memory wizard --global
+```
+
+The wizard writes global configuration and secrets outside your repository.
+
+### 2. Configure a project
+
+```bash
+cd /path/to/project
+memory wizard --dry-run
+memory wizard
+```
+
+The dry run previews repo-local files before anything is written.
+
+### 3. Check health
+
+```bash
+memory doctor
+memory health
+memory status --project <project-slug>
+```
+
+`doctor` checks configuration and dependencies. `health` checks the backend service. `status` combines service, project, watcher, and MCP diagnostics.
+
+### 4. Open a product surface
+
+```bash
+memory tui
+```
+
+Use the Query, Memories, Project, Agents, Watchers, Activity, and Review tabs to inspect what Memory Layer knows.
+
+### 5. Ask an evidence-backed question
+
+```bash
+memory query --project <project-slug> --question "What should a new agent know before changing this repo?"
+```
+
+## Verify
+
+A healthy setup has a reachable service, a configured project, and either existing memories or a clear empty-state message. If query answers look stale, inspect citations and run provenance or curation workflows before trusting them.
+
+## Next
+
+Read [Install](/docs/install), [Projects](/docs/concepts/projects), and [Codex CLI](/docs/agents/codex-cli).

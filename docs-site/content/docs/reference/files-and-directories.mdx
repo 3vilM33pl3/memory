@@ -1,0 +1,27 @@
+---
+title: "Files and directories"
+description: "Know where Memory Layer stores config, runtime files, skills, and docs."
+---
+
+# Files and directories
+
+| Path | Purpose | Commit? |
+|---|---|---:|
+| `/etc/memory-layer/` | Typical packaged Linux global config location. | No |
+| `~/.config/memory-layer/` | User-level config location on local installs. | No |
+| `.mem/project.toml` | Repo-local project identity/config. | Follow repo policy |
+| `.mem/runtime/` | Runtime state and generated files. | No |
+| `.agents/` | Agent instructions and Memory Layer skills. | Usually yes |
+| `docs/` | Existing project docs. | Yes |
+| `docs-site/` | Fumadocs / Next.js documentation website. | Yes |
+
+## Verify
+
+```bash
+memory doctor
+memory status --project <project-slug>
+```
+
+## Next
+
+Read [Project config](/docs/reference/config-project).

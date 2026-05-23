@@ -1,0 +1,13 @@
+{
+  "title": "Evaluations",
+  "pages": [
+    "index",
+    "ablation-tests",
+    "run-evals",
+    "benchmark-reports",
+    "metrics",
+    "reproducibility",
+    "interpreting-results",
+    "limitations"
+  ]
+}

@@ -1,0 +1,28 @@
+---
+title: "Service operations"
+description: "Start, stop, restart, and inspect the backend service."
+---
+
+# Service operations
+
+Start, stop, restart, and inspect the backend service.
+
+## Checklist
+
+- Know which service instance you are operating.
+- Check database connectivity before blaming retrieval.
+- Back up state before upgrades or migrations.
+- Redact secrets before sharing logs.
+- Confirm agent and MCP integrations are scoped to the intended project.
+
+## Verify
+
+```bash
+memory health
+memory doctor
+memory status --project <project-slug>
+```
+
+## Next
+
+Read [Security and privacy](/docs/operations/security-and-privacy) and [Troubleshooting](/docs/help/troubleshooting).

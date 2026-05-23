@@ -1,0 +1,31 @@
+---
+title: "Contributing docs"
+description: "Write docs that stay factual, action-oriented, and easy to validate."
+---
+
+# Contributing docs
+
+Write docs that stay factual, action-oriented, and easy to validate.
+
+## First response
+
+Run the broad status command before narrowing the diagnosis:
+
+```bash
+memory status --project <project-slug>
+```
+
+Then use `memory doctor` for environment/config issues and `memory health` for service reachability.
+
+## What to collect
+
+- Memory Layer version.
+- OS and install method.
+- Project slug.
+- Redacted config summary.
+- Health and doctor output.
+- Recent service or watcher logs with secrets removed.
+
+## Next
+
+Read [Troubleshooting](/docs/help/troubleshooting) and [Common errors](/docs/help/common-errors).

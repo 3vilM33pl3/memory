@@ -1,0 +1,13 @@
+{
+  "title": "Watchers",
+  "pages": [
+    "index",
+    "generic-watcher",
+    "codex-profile",
+    "claude-profile",
+    "session-detection",
+    "token-pressure",
+    "lifecycle-and-heartbeats",
+    "troubleshooting"
+  ]
+}

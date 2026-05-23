@@ -1,0 +1,16 @@
+{
+  "title": "Install",
+  "pages": [
+    "index",
+    "requirements",
+    "linux-debian",
+    "macos-homebrew",
+    "from-source",
+    "postgresql-pgvector",
+    "wizard-global",
+    "wizard-project",
+    "service-setup",
+    "update",
+    "uninstall"
+  ]
+}

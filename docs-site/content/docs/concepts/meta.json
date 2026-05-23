@@ -1,0 +1,16 @@
+{
+  "title": "Concepts",
+  "pages": [
+    "index",
+    "mental-model",
+    "projects",
+    "memories",
+    "evidence",
+    "curation",
+    "retrieval",
+    "embeddings",
+    "code-graph",
+    "activity-events",
+    "trust-and-staleness"
+  ]
+}

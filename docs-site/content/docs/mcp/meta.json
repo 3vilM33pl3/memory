@@ -1,0 +1,12 @@
+{
+  "title": "MCP",
+  "pages": [
+    "index",
+    "stdio",
+    "streamable-http",
+    "tools",
+    "client-setup",
+    "security",
+    "examples"
+  ]
+}

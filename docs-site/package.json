@@ -1,0 +1,31 @@
+{
+  "name": "memory-layer-docs",
+  "private": true,
+  "version": "0.9.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint:links": "node scripts/check-links.mjs",
+    "check:assets": "node scripts/check-assets.mjs"
+  },
+  "dependencies": {
+    "@types/mdx": "^2.0.13",
+    "fumadocs-core": "^16.9.0",
+    "fumadocs-mdx": "^15.0.7",
+    "fumadocs-ui": "^16.9.0",
+    "mermaid": "^11.12.1",
+    "next": "^16.2.6",
+    "next-themes": "^0.4.6",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "tailwindcss": "^4.1.18"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}
