@@ -13,7 +13,8 @@
 /web/dist
 /web/*.tsbuildinfo
 /docs-site/node_modules
-/docs-site/.mintlify
+/docs-site/.next
+/docs-site/.source
 /demo/output
 __pycache__/
 *.pyc

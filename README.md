@@ -363,7 +363,7 @@ Project-local customization now has two layers:
 
 ## Documentation
 
-The Mintlify documentation website source lives in [`docs-site/`](docs-site/README.md). It is organized for reader-facing onboarding, concepts, agent integrations, MCP, evaluations, operations, and reference pages. The `docs/` directory remains the detailed in-repo manual and developer reference.
+The Fumadocs / Next.js documentation website source lives in [`docs-site/`](docs-site/README.md). It is organized for reader-facing onboarding, concepts, agent integrations, MCP, evaluations, operations, and reference pages, and is ready for Vercel deployment from the `docs-site` root. The `docs/` directory remains the detailed in-repo manual and developer reference.
 
 ### Start By Task
 

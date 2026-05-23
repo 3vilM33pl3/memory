@@ -177,10 +177,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npx -y mint@latest validate
-        working-directory: docs-site
-      - run: npx -y mint@latest broken-links
-        working-directory: docs-site
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+      - run: npm --prefix docs-site ci
+      - run: npm --prefix docs-site run build
+      - run: npm --prefix docs-site run lint:links
+      - run: npm --prefix docs-site run check:assets
 
   package-smoke:
     name: Debian Package Smoke
