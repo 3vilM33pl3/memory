@@ -1,6 +1,4 @@
-@import 'tailwindcss';
-@import 'fumadocs-ui/css/neutral.css';
-@import 'fumadocs-ui/css/preset.css';
+@import 'fumadocs-ui/style.css';
 
 :root {
   color-scheme: light dark;
