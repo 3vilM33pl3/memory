@@ -2345,6 +2345,12 @@ pub(super) async fn run() -> Result<()> {
         command,
     } = Cli::parse();
 
+    if let Command::Watcher(args) = &command
+        && !crate::commands::watcher::handle_pre_config(args, cli_config.clone()).await?
+    {
+        return Ok(());
+    }
+
     match &command {
         Command::Wizard(args) => {
             crate::commands::wizard::handle(args).await?;
@@ -2369,11 +2375,6 @@ pub(super) async fn run() -> Result<()> {
         Command::Service(args) => {
             crate::commands::service::handle(args, cli_config.clone()).await?;
             return Ok(());
-        }
-        Command::Watcher(args) => {
-            if !crate::commands::watcher::handle_pre_config(args, cli_config.clone()).await? {
-                return Ok(());
-            }
         }
         Command::Doctor(args) => {
             crate::commands::doctor::handle(args, cli_config.clone()).await?;
