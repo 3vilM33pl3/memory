@@ -1,6 +1,6 @@
 ---
 name: memory-review-proposals
-version: 0.9.0
+version: 0.9.1
 description: Review pending Memory Layer replacement proposals interactively inside the LLM CLI; explain why each memory update was proposed, gather codebase proof when needed, and approve or reject only after explicit confirmation
 ---
 
