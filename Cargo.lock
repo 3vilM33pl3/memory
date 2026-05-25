@@ -1725,6 +1725,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rmcp",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

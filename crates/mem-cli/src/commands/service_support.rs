@@ -698,12 +698,15 @@ pub(crate) fn newest_tui_restart_notice(
         .filter_map(|path| {
             let contents = fs::read_to_string(&path).ok()?;
             let marker: TuiRestartMarker = serde_json::from_str(&contents).ok()?;
-            if !restart_marker_applies_to_running_version(&marker.version, running_version) {
+            if !restart_marker_requires_restart(
+                &marker.version,
+                running_version,
+                marker.marked_at,
+                startup_at,
+            ) {
                 return None;
             }
-            let newer_than_tui = marker.marked_at > startup_at;
-            let different_version = marker.version.trim() != running_version.trim();
-            (newer_than_tui || different_version).then_some(TuiRestartNotice {
+            Some(TuiRestartNotice {
                 marker_path: path,
                 version: marker.version,
                 reason: marker.reason,
@@ -717,11 +720,25 @@ pub(crate) fn newest_tui_restart_notice(
         })
 }
 
-pub(crate) fn restart_marker_applies_to_running_version(
+pub(crate) fn restart_marker_requires_restart(
     marker_version: &str,
     running_version: &str,
+    marked_at: DateTime<Utc>,
+    startup_at: DateTime<Utc>,
 ) -> bool {
-    version_profile_suffix(marker_version) == version_profile_suffix(running_version)
+    if version_profile_suffix(marker_version) != version_profile_suffix(running_version) {
+        return false;
+    }
+    if marked_at > startup_at {
+        return true;
+    }
+    match (
+        semver::Version::parse(marker_version.trim()),
+        semver::Version::parse(running_version.trim()),
+    ) {
+        (Ok(marker), Ok(running)) => marker > running,
+        _ => marker_version.trim() != running_version.trim(),
+    }
 }
 
 pub(crate) fn version_profile_suffix(version: &str) -> &'static str {

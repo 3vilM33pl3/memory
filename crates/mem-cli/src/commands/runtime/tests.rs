@@ -27,7 +27,7 @@ use crate::commands::{
     output::{build_graph_activity_request, write_headers},
     service_support::{
         TuiRestartMarker, newest_tui_restart_notice, parse_systemd_unit_names,
-        set_cluster_enabled_in_shared_config,
+        restart_marker_requires_restart, set_cluster_enabled_in_shared_config,
     },
     skill_support::{
         MEMORY_SKILL_NAMES, SkillBundleStatus, SkillUpgradeAction, SkillVersionStatus,
@@ -710,6 +710,48 @@ fn restart_notice_detects_newer_or_different_marker() {
     assert_eq!(notice.marker_path, marker_path);
     assert_eq!(notice.version, "9.9.9");
     fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn restart_notice_ignores_older_stale_marker() {
+    let dir = std::env::temp_dir().join(format!(
+        "memory-tui-restart-stale-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    let marker_path = dir.join("tui-restart-required.json");
+    let startup_at = chrono::Utc::now();
+    let marker = TuiRestartMarker {
+        version: "0.8.6".to_string(),
+        marked_at: startup_at - chrono::Duration::days(1),
+        reason: "install-or-upgrade".to_string(),
+        binary_path: "memory".to_string(),
+        restarted_services: vec!["memory-layer.service".to_string()],
+    };
+    fs::write(&marker_path, serde_json::to_string(&marker).unwrap()).unwrap();
+
+    let notice = newest_tui_restart_notice(startup_at, "0.9.1", vec![marker_path.clone()]);
+
+    assert!(notice.is_none());
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn restart_marker_requires_restart_for_same_version_written_after_startup() {
+    let startup_at = chrono::Utc::now();
+
+    assert!(restart_marker_requires_restart(
+        "0.9.1",
+        "0.9.1",
+        startup_at + chrono::Duration::seconds(30),
+        startup_at,
+    ));
+    assert!(!restart_marker_requires_restart(
+        "0.9.1",
+        "0.9.1",
+        startup_at - chrono::Duration::seconds(30),
+        startup_at,
+    ));
 }
 
 #[test]

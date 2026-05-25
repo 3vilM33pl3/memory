@@ -23,6 +23,7 @@ reqwest.workspace = true
 rmcp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+semver.workspace = true
 socket2.workspace = true
 sqlx.workspace = true
 tokio.workspace = true

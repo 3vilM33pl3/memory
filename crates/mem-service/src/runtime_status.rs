@@ -635,12 +635,15 @@ pub(crate) fn runtime_restart_notice(
         .filter_map(|path| {
             let contents = fs::read_to_string(&path).ok()?;
             let marker: RestartMarker = serde_json::from_str(&contents).ok()?;
-            if version_profile_suffix(&marker.version) != version_profile_suffix(running_version) {
+            if !restart_marker_requires_restart(
+                &marker.version,
+                running_version,
+                marker.marked_at,
+                startup_at,
+            ) {
                 return None;
             }
-            let newer_than_web = marker.marked_at > startup_at;
-            let different_version = marker.version.trim() != running_version.trim();
-            (newer_than_web || different_version).then_some(RuntimeRestartNotice {
+            Some(RuntimeRestartNotice {
                 version: marker.version,
                 reason: marker.reason,
                 marker_path: path.display().to_string(),
@@ -652,6 +655,27 @@ pub(crate) fn runtime_restart_notice(
                 .and_then(|contents| serde_json::from_str::<RestartMarker>(&contents).ok())
                 .map(|marker| marker.marked_at)
         })
+}
+
+pub(crate) fn restart_marker_requires_restart(
+    marker_version: &str,
+    running_version: &str,
+    marked_at: chrono::DateTime<chrono::Utc>,
+    startup_at: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    if version_profile_suffix(marker_version) != version_profile_suffix(running_version) {
+        return false;
+    }
+    if marked_at > startup_at {
+        return true;
+    }
+    match (
+        semver::Version::parse(marker_version.trim()),
+        semver::Version::parse(running_version.trim()),
+    ) {
+        (Ok(marker), Ok(running)) => marker > running,
+        _ => marker_version.trim() != running_version.trim(),
+    }
 }
 
 pub(crate) fn tui_restart_marker_paths() -> Vec<PathBuf> {

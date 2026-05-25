@@ -455,6 +455,42 @@ fn runtime_skill_status_warns_on_outdated_or_missing_bundle() {
 }
 
 #[test]
+fn runtime_restart_marker_ignores_older_stale_marker() {
+    let startup_at = chrono::Utc::now();
+
+    assert!(!restart_marker_requires_restart(
+        "0.8.6",
+        "0.9.1",
+        startup_at - chrono::Duration::days(1),
+        startup_at,
+    ));
+}
+
+#[test]
+fn runtime_restart_marker_detects_current_process_needs_restart() {
+    let startup_at = chrono::Utc::now();
+
+    assert!(restart_marker_requires_restart(
+        "0.9.1",
+        "0.9.1",
+        startup_at + chrono::Duration::seconds(30),
+        startup_at,
+    ));
+    assert!(restart_marker_requires_restart(
+        "9.9.9",
+        "0.9.1",
+        startup_at - chrono::Duration::seconds(30),
+        startup_at,
+    ));
+    assert!(!restart_marker_requires_restart(
+        "0.9.1",
+        "0.9.1-dev",
+        startup_at + chrono::Duration::seconds(30),
+        startup_at,
+    ));
+}
+
+#[test]
 fn openai_embedding_space_aliases_legacy_and_compatible_keys() {
     assert_eq!(
         equivalent_openai_embedding_space_key(
