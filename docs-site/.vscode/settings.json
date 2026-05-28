@@ -1,0 +1,20 @@
+{
+  "editor.wordWrap": "on",
+  "explorer.compactFolders": false,
+  "files.associations": {
+    "*.mdx": "markdown"
+  },
+  "files.exclude": {
+    ".next": true,
+    ".source": true,
+    "node_modules": true,
+    "package-lock.json": true,
+    "next-env.d.ts": true
+  },
+  "search.exclude": {
+    ".next": true,
+    ".source": true,
+    "node_modules": true,
+    "package-lock.json": true
+  }
+}
