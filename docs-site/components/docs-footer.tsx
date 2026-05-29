@@ -43,21 +43,24 @@ export function DocsFooter() {
   return (
     <>
       <PageFooter />
-      <footer className="mt-10 border-t border-fd-border pt-8 text-sm text-fd-muted-foreground">
-        <div className="grid gap-8 md:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,1fr))]">
-          <div>
-            <p className="font-medium text-fd-foreground">Memory Layer</p>
-            <p className="mt-2 max-w-sm">Local-first memory for coding agents.</p>
+      <footer className="mt-8 border-t border-fd-border py-5 text-xs text-fd-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-medium text-fd-foreground">Memory Layer</span>
+            <span>Local-first memory for coding agents.</span>
           </div>
           {footerGroups.map((group) => (
-            <div key={group.title}>
-              <p className="font-medium text-fd-foreground">{group.title}</p>
-              <ul className="mt-3 space-y-2">
+            <nav key={group.title} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="font-medium text-fd-foreground">{group.title}</span>
+              <ul className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 {group.links.map((link) => {
                   const external = isExternalLink(link.href);
 
                   return (
-                    <li key={link.href}>
+                    <li key={link.href} className="flex items-center gap-x-2">
+                      <span className="text-fd-muted-foreground/50" aria-hidden="true">
+                        /
+                      </span>
                       <a
                         href={link.href}
                         className="transition-colors hover:text-fd-foreground"
@@ -70,10 +73,10 @@ export function DocsFooter() {
                   );
                 })}
               </ul>
-            </div>
+            </nav>
           ))}
         </div>
-        <p className="mt-8 border-t border-fd-border pt-5 text-xs">
+        <p className="mt-4 border-t border-fd-border pt-4">
           &copy; 2026 Olivier Van Acker (3vilM33pl3). Memory Layer is AGPL-3.0-or-later with
           commercial licensing available.
         </p>
