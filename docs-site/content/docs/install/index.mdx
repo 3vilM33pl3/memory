@@ -25,6 +25,15 @@ Memory Layer runs as a native background service (`memory-layer.service` on Linu
 
 You need a PostgreSQL database with the pgvector extension enabled. See [PostgreSQL and pgvector](/docs/install/postgresql-pgvector) for setup instructions. Optional LLM and embedding providers improve curation and semantic retrieval, but the core service works without them.
 
+| Requirement | Why it matters | Verify |
+|---|---|---|
+| PostgreSQL | Durable storage for projects, captures, memories, activity, and history. | `psql "$DATABASE_URL" -c "SELECT 1;"` |
+| pgvector | Vector storage for semantic retrieval. | `psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"` |
+| `memory` binary | CLI, TUI launcher, service management, MCP, evals. | `memory --version` |
+| Optional LLM provider | Better curation, summaries, and answer synthesis. | `memory doctor` |
+| Optional embedding provider | Semantic search and graph-enhanced retrieval quality. | `memory embeddings status --project <slug>` |
+| Go | Required by repo-local Memory Layer skills used by agents. | `go version` |
+
 ## Configure the machine
 
 ```bash
@@ -32,6 +41,14 @@ memory wizard --global
 ```
 
 The wizard writes global configuration and secrets (database URL, API keys) outside your repository so they are never committed. See [Global wizard](/docs/install/wizard-global) for details.
+
+The global configuration is machine-level. It should answer:
+
+- Which PostgreSQL database should Memory Layer use?
+- Which local service URL and API token should clients use?
+- Which LLM and embedding providers are enabled?
+- Should MCP HTTP be enabled and token-protected?
+- Which defaults apply before a project-specific config is loaded?
 
 ## Configure a project
 
@@ -43,6 +60,15 @@ memory wizard
 
 The dry run previews repo-local files before anything is written. The wizard creates `.mem/project.toml` and the `.agents/` directory with Memory Layer skills and hooks. See [Project wizard](/docs/install/wizard-project) for details.
 
+Repo-local configuration is project-level. It should answer:
+
+- What is the project slug?
+- Which repository root does it describe?
+- Which generated agent instructions should be committed?
+- Which `.mem/` and `.agents/` files already exist and need preserving?
+
+Review the dry-run output before accepting writes in established repositories.
+
 ## Check health
 
 ```bash
@@ -52,6 +78,20 @@ memory status --project <project-slug>
 ```
 
 `doctor` checks configuration and dependencies. `health` checks the backend service. `status` combines service, project, watcher, and MCP diagnostics.
+
+## Daily workflow
+
+After install, most users live in a small command loop:
+
+```bash
+memory tui
+memory query --project <project-slug> --question "What should I know before changing this?"
+memory resume --project <project-slug>
+memory remember --project <project-slug> --title "..." --summary "..." --note "..."
+memory status --project <project-slug>
+```
+
+Use the TUI or [Browser UI](/docs/web-ui) for inspection, `query` and `resume` for agent context, and `remember` after completed work that should survive the current session.
 
 ## Open the TUI
 
@@ -79,6 +119,18 @@ A healthy setup returns answers with ranked memories, citations, and retrieval d
   <Card title="Update" href="/docs/install/update" />
   <Card title="Uninstall" href="/docs/install/uninstall" />
 </CardGroup>
+
+## File locations
+
+| Location | Contains | Commit? |
+|---|---|---|
+| Global Memory config | Database URL, service URL, API token, provider settings | No |
+| `.mem/project.toml` | Project slug and repo-local Memory Layer settings | Usually yes, after review |
+| `.agents/` | Agent instructions, skills, and Memory workflow config | Usually yes, after review |
+| PostgreSQL database | Captures, canonical memories, history, activity, embeddings, graph data | No |
+| Runtime state and logs | Checkpoints, service state, watcher state, diagnostics | No |
+
+Never commit database URLs, provider API keys, local service tokens, or runtime logs containing prompts/secrets.
 
 ## Next
 

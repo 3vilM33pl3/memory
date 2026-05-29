@@ -4,6 +4,7 @@
     "index",
     "install",
     "tui",
+    "web-ui",
     "how-it-works",
     "agents",
     "watchers",

@@ -29,6 +29,16 @@ Before making changes to a running instance:
 
 The service runs as a systemd unit on Linux or a launchd agent on macOS. Use standard OS tools to start, stop, and inspect it. See [Service setup](/docs/install/service-setup) for initial configuration.
 
+| Task | Command |
+|---|---|
+| Run in foreground for debugging | `memory service run` |
+| Enable packaged background service | `memory service enable` |
+| Inspect configured service | `memory service status` |
+| Restart known service components | `memory service restart-all` |
+| Regenerate or confirm API token | `memory service ensure-api-token` |
+
+The foreground run command is intentionally blocking. If it exits, the service is not running from that terminal.
+
 ## Database
 
 Memory Layer stores everything in PostgreSQL with pgvector. See [PostgreSQL and pgvector](/docs/install/postgresql-pgvector) for setup.
@@ -55,6 +65,40 @@ For production-grade backups, prefer custom-format dumps, checksums, restore tes
 
 Do not commit secrets, API keys, local database URLs, or runtime state.
 
+## Upgrades
+
+Before upgrading:
+
+```bash
+memory status --project <project-slug>
+memory doctor
+pg_dump "$DATABASE_URL" > memory-layer-before-upgrade.sql
+```
+
+After upgrading:
+
+```bash
+memory service restart-all
+memory doctor
+memory health
+memory status --project <project-slug>
+memory upgrade --dry-run
+```
+
+Run `memory upgrade` inside repositories only after reviewing the dry run, because it can refresh `.agents/` and other repo-local integration files.
+
+## Logs and diagnostics
+
+| Surface | Use it for |
+|---|---|
+| `memory doctor` | Configuration, database, provider, and environment checks. |
+| `memory status --project <slug>` | Combined project, service, watcher, MCP, and health view. |
+| TUI Errors tab | Persisted diagnostics with fix hints and raw errors. |
+| Browser UI Errors tab | Same diagnostic model in a browser surface. |
+| OS service logs | Startup failures, migrations, port conflicts, crashes. |
+
+Redact provider tokens, database URLs, prompts, and local file paths before sharing logs publicly.
+
 ## Security and privacy
 
 Memory Layer can be local-first, but external embedding or LLM providers may receive text depending on your configuration.
@@ -75,6 +119,12 @@ Do not expose the MCP HTTP server to the public internet unless you have added a
 ## Multi-project use
 
 One backend serves multiple projects. Each project has its own slug, config, watchers, and scoped queries. Use `memory status --project <slug>` to inspect each one independently.
+
+## Web UI
+
+The [Browser UI](/docs/web-ui) is served by the same local service. Use it when you need a wider inspection surface for memories, query evidence, activities, review proposals, errors, embeddings, and resume briefings.
+
+Keep the service bound to local interfaces unless you have added an explicit authentication and network control layer.
 
 ## Next
 

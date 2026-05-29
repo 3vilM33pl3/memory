@@ -1,0 +1,83 @@
+---
+title: "Browser UI"
+description: "Use the service-hosted web interface for memories, query evidence, activities, watchers, embeddings, resume briefings, and review."
+---
+
+# Browser UI
+
+The browser UI is the web companion to the TUI. It is served by `mem-service` and uses the same backend APIs for memories, query, activities, watchers, embeddings, resume briefings, errors, and curation review.
+
+Open it while the service is running:
+
+```text
+http://127.0.0.1:4040/
+```
+
+When running from source, build the web assets and run the service:
+
+```bash
+npm --prefix web ci
+npm --prefix web run build
+cargo run --bin memory -- service run
+```
+
+## Tabs
+
+| Tab | What it shows |
+|---|---|
+| Memories | Canonical memories, filters, markdown-style canonical text, embeddings, sources, history, and related memories. |
+| Agents | Local Codex and Claude sessions, current-project sorting, tokens, context pressure, child processes, ports, and rate limits. |
+| Query | Cited answers, ranked memory results, lexical/semantic/graph timing, token usage, ranking explanations, and graph connections. |
+| Activity | Persisted activity, token and duration metadata, get-up-to-speed briefings, and LLM audit/debug status. |
+| Errors | Persisted diagnostics and browser-session errors with explanations, fix hints, doctor hints, commands, and raw errors. |
+| Project | Counts, memory type/source breakdowns, embedding coverage, automation state, watcher status, and recent activity. |
+| Review | Replacement proposals with policy, target/candidate detail, reason, and approve/reject actions. |
+| Watchers | Watcher presence, heartbeat state, owner agent/session, restart attempts, and recovery details. |
+| Embeddings | Configured embedding backends, active search backend, automatic creation, coverage, re-embed, and reindex controls. |
+| Resume | Re-entry briefing with checkpoint, current thread, next steps, recent changes, context memories, timeline, warnings, and commits. |
+
+The web-only `Bundles` tool remains under the More menu for bundle export/import previews and transfer.
+
+## Runtime status
+
+The status strip shows the same operational components as the TUI bottom bar:
+
+| Component | Meaning |
+|---|---|
+| Web | Browser UI version and restart-required state. |
+| Service | Backend version, primary/relay role, and service identity. |
+| Manager | Watcher-manager state, mode, tracked sessions, and warnings. |
+| Watchers | Active and unhealthy watcher counts. |
+| Skills | Repo-local Memory skill bundle version and status. |
+
+If an install or upgrade writes a restart marker, the Web component enters restart state so you know to reload the page or restart the running UI.
+
+## Query evidence
+
+The Query tab is designed to explain how an answer was produced:
+
+- answers cite numbered returned memories
+- timing separates browser roundtrip, lexical search, semantic search, graph retrieval, rerank/relation work, and answer generation
+- result details show score components such as text score, semantic similarity, relation boost, graph boost, tag/path matches, confidence, importance, and recency
+- graph connections explain which file or symbol helped retrieve a memory
+
+Use query history with the up/down arrows in the query box. Restoring a previous query restores both the question and the results that belonged to it.
+
+## Activity and audit
+
+The Activity tab can generate deterministic and LLM-backed handoff briefings.
+
+| Briefing | Use when |
+|---|---|
+| Deterministic | You want cheap, grounded context from persisted activities and memories. |
+| LLM briefing | You want a synthesized narrative and have an LLM backend configured. |
+
+The same tab can toggle LLM audit/debug logging. Enable it briefly when debugging prompts or provider behavior, then disable it again because audit events can include large prompt payloads.
+
+## Help
+
+Press `h` or use the Help button to open contextual help for the active tab. Press `h` again or `Esc` to return.
+
+## Next
+
+Read [TUI](/docs/tui), [Operations](/docs/operations), or [CLI service commands](/docs/reference/cli/service-health).

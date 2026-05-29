@@ -35,6 +35,28 @@ memory eval compare \
 
 Use `--allow-shell` only after reviewing suite scripts and fixtures. Shell-executing evals are code execution inputs, not passive data files.
 
+## Suite structure
+
+An eval suite is a directory with:
+
+| File | Purpose |
+|---|---|
+| `suite.toml` | Suite name, project, fixture, default profile, repeat count, label status, and minimum item count. |
+| `items.jsonl` | One evaluation item per line. |
+| optional `scripts/` | Commands used by command or agent-build items. |
+| optional `fixtures/` | Source workspaces, seeded data, or static inputs. |
+
+Common item types:
+
+| Type | Measures |
+|---|---|
+| `retrieval_qa` | Whether expected memories are returned. |
+| `grounded_answer` | Whether answers include required facts and avoid forbidden claims. |
+| `resume_quality` | Whether briefings cover expected context. |
+| `command_task` | Whether a command succeeds. |
+| `agent_build_task` | Whether an agent completes a fixture task under controlled conditions. |
+| `agent_build_sequence` | Whether an agent maintains continuity across ordered work on one workspace. |
+
 ### External retrievers
 
 Plug in your own retrieval backend for comparison:
@@ -68,6 +90,32 @@ Metric improvement is evidence for a bounded claim about the suite, model, and c
 
 Tie evaluation claims to artifacts, suite version, commit, model/provider, and configuration. Keep raw JSON outputs under `target/memory-evals/` and compare item-level results before making claims.
 
+## Current benchmark claim
+
+The latest checked-in Memory improvement report is intentionally bounded. It shows strong improvement for hidden memory-only retrieval and grounded-answer tasks, plus token reduction in that suite. It does not claim universal autonomous coding improvement for every future repository or model.
+
+When publishing a claim, include:
+
+- suite name and version
+- git commit
+- model and provider
+- conditions compared
+- repeat count
+- item types
+- success, retrieval, token, and latency deltas
+- known shortcomings
+
+## Common mistakes
+
+| Mistake | Why it weakens the result |
+|---|---|
+| Running only one condition | There is no baseline. |
+| Using one lucky repeat | LLM variance is hidden. |
+| Ignoring token cost | Memory may improve quality while increasing cost, or the reverse. |
+| Publishing unreviewed labels | The scoring target may be wrong. |
+| Allowing shell without review | The suite can execute arbitrary code. |
+| Treating retrieval metrics as coding proof | Finding a memory is not the same as completing a software task. |
+
 ## Next
 
-Read [How it works](/docs/how-it-works) or [Operations](/docs/operations).
+Read [CLI eval reference](/docs/reference/cli/integrations-evals), [How it works](/docs/how-it-works), or [Operations](/docs/operations).

@@ -5,11 +5,16 @@ description: "Run, enable, inspect, and restart the backend service."
 
 # Service setup
 
-## What you will do
+The service is the shared backend for the CLI, TUI, browser UI, watchers, curation, embeddings, and MCP HTTP. It owns the database connection and serves local HTTP APIs.
 
-Run and inspect the backend service.
+## Modes
 
-## Commands
+| Mode | Use when | Command |
+|---|---|---|
+| Foreground | Development, debugging, temporary local runs | `memory service run` |
+| Packaged background service | Normal Linux/macOS install | `memory service enable` |
+| Status inspection | Checking whether the configured service is reachable | `memory service status` |
+| Restart all known components | After upgrades or component restarts | `memory service restart-all` |
 
 ```bash
 memory service run
@@ -19,7 +24,26 @@ memory service restart-all
 memory health
 ```
 
-On Linux package installs, service management may also appear through `systemctl`. On macOS, use the Memory Layer service command unless a package-specific note says otherwise.
+`memory service run` is a foreground command. It should keep running in the terminal and should not daemonize itself. If you want background operation, use the packaged service manager.
+
+On Linux package installs, service management may also appear through `systemctl`. On macOS, use `memory service enable` unless a package-specific note says otherwise.
+
+## Ports
+
+The configured service URL is the source of truth. Packaged installs commonly use `127.0.0.1:4040`; development runs commonly use `127.0.0.1:4250`.
+
+```bash
+memory service status
+memory health
+memory status --project <project-slug>
+```
+
+If a browser opens but the CLI says unauthorized, regenerate or align the API token:
+
+```bash
+memory service ensure-api-token
+memory doctor
+```
 
 ## Verify
 
@@ -27,6 +51,15 @@ On Linux package installs, service management may also appear through `systemctl
 memory health
 memory status --project <project-slug>
 ```
+
+Healthy service setup should show:
+
+- backend reachable
+- PostgreSQL reachable
+- migrations current
+- API token accepted by local clients
+- project config resolved
+- watcher and MCP status reported when enabled
 
 ## Next
 
