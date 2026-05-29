@@ -1,0 +1,33 @@
+---
+title: "Agents tab"
+description: "Monitor active agent and coding sessions in real time."
+---
+
+# Agents tab
+
+The Agents tab is a read-only monitor for active agent and coding sessions, inspired by [abtop](https://github.com/anthropics/abtop). It shows which agents are currently connected to Memory Layer and what they are doing.
+
+![Agents tab](/images/tui/agents-tab.png)
+
+## What it shows
+
+When agents are active, the tab displays each session with:
+
+- **Agent type** — which coding agent is connected (Claude Code, Codex CLI, etc.)
+- **Session ID** — unique identifier for the session
+- **Status** — whether the session is active, idle, or disconnected
+- **Activity** — what the agent is currently doing
+
+The display auto-refreshes every 2 seconds so you can watch sessions in real time without manual polling.
+
+## When no agents are active
+
+If no agent sessions are currently connected, the tab shows "Loading agent sessions..." — this is expected when no coding agents are running against the project.
+
+## Controls
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Select between sessions |
+| `PgUp` / `PgDn` | Scroll by page |
+| `Home` | Jump to top |

@@ -1,0 +1,16 @@
+{
+  "title": "TUI",
+  "pages": [
+    "index",
+    "memories",
+    "query",
+    "review",
+    "agents",
+    "watchers",
+    "activity",
+    "resume",
+    "embeddings",
+    "errors",
+    "project"
+  ]
+}

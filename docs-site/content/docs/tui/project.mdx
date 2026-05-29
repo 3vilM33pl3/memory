@@ -1,0 +1,65 @@
+---
+title: "Project tab"
+description: "Dashboard with project statistics, type breakdowns, top files, and maintenance operations."
+---
+
+# Project tab
+
+The Project tab is a comprehensive dashboard showing the health and shape of the current project's memory. It combines statistics, breakdowns, recent activity, and maintenance operations in a single view.
+
+![Project tab](/images/tui/project-tab.png)
+
+## Overview
+
+The top section shows key metrics:
+
+- **Project slug** and the latest active plan
+- **Service and database status** — whether the backend is healthy
+- **Memory counts** — total, active, and archived
+- **Confidence bins** — how many memories are high, medium, or low confidence
+- **Recent 7-day activity** — memories created and events captured in the last week
+- **Raw captures** — total captures and how many are still uncurated
+- **Tasks, sessions, and runs** — aggregate counts of work performed
+- **Timestamps** — when the last memory, curation, and capture occurred
+
+## Breakdowns
+
+Three side-by-side panels show how memories are distributed:
+
+### Memory types
+
+Counts by classification: implementation, convention, architecture, debugging, plan, environment. This tells you what kind of knowledge dominates the project.
+
+### Source kinds
+
+Counts by evidence source: file references, notes, task prompts, tests, git commits. This shows where your memories come from.
+
+### Top tags
+
+The most frequently used tags across all memories, useful for understanding how the project's knowledge is categorised.
+
+## Top files and recent activity
+
+Two lower panels show:
+
+- **Top files** — which files and directories are most referenced in memories, ranked by count
+- **Recent activity** — a chronological list of the latest events (captures, reindexes, queries, watcher health changes, checkpoints)
+
+## Maintenance operations
+
+The bottom of the tab lists keyboard-triggered operations for project maintenance:
+
+| Key | Operation |
+|-----|-----------|
+| `c` | Curate the project — run the curation pipeline on uncurated captures |
+| `i` | Reindex search chunks — rebuild keyword search indexes |
+| `e` | Materialise active-space vectors — refresh embedding indexes |
+| `a` | Archive low-value memories — move low-confidence memories to the archive |
+
+## Controls
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Scroll through the dashboard |
+| `PgUp` / `PgDn` | Scroll by page |
+| `Home` | Jump to top |

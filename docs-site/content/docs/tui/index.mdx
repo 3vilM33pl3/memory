@@ -1,0 +1,74 @@
+---
+title: "Text-based User Interface (TUI)"
+description: "Browse, search, and inspect project memory from the terminal."
+---
+
+# Text-based User Interface (TUI)
+
+Memory Layer is strongest when the user can see evidence, not just output text. Start the TUI in the initialized repository with the following command:
+
+```bash
+memory tui
+```
+
+![Memory Layer TUI overview](/images/tui/overview.png)
+
+## What the TUI does
+
+The TUI is a full dashboard for your project's memory. Use it to query memories and see ranked results with citations, browse every stored memory with its type, confidence, tags, and source, review replacement proposals before older knowledge is superseded, monitor active [agents](/docs/agents) and [watchers](/docs/watchers), trace activity events that feed the curation pipeline, and inspect embeddings and retrieval diagnostics.
+
+## Navigation
+
+The tab bar at the top of the screen lets you switch between views. The status bar at the bottom is always visible and shows component health.
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Cycle through tabs |
+| `1`–`0` | Jump to a tab by position |
+| `q` | Quit the TUI |
+| `?` | Show help |
+| `r` | Refresh the current tab |
+
+The persistent status bar shows the version and health of each component: TUI, Service, Manager, Watchers, and Skills. A healthy system shows `ready` / `up` / `active` / `ok` for each.
+
+## Each Tab Explained
+
+### [Memories](/docs/tui/memories)
+Browse, filter, and inspect every stored memory with a split list/detail view.
+[![Memories tab](/images/tui/memories-tab.png)](/docs/tui/memories)
+
+### [Query](/docs/tui/query)
+Run natural-language questions and see ranked results with citations and scores.
+[![Query tab](/images/tui/query-tab.png)](/docs/tui/query)
+
+### [Review](/docs/tui/review)
+Approve or reject curation proposals before older knowledge is superseded.
+[![Review tab](/images/tui/review-tab.png)](/docs/tui/review)
+
+### [Agents](/docs/tui/agents)
+Monitor active agent and coding sessions in real time.
+[![Agents tab](/images/tui/agents-tab.png)](/docs/tui/agents)
+
+### [Watchers](/docs/tui/watchers)
+Inspect background watchers, their health, PIDs, and owner sessions.
+[![Watchers tab](/images/tui/watchers-tab.png)](/docs/tui/watchers)
+
+### [Activity](/docs/tui/activity)
+View a chronological log of captures, reindexes, queries, and other events.
+[![Activity tab](/images/tui/activity-tab.png)](/docs/tui/activity)
+
+### [Resume](/docs/tui/resume)
+Get a structured briefing for resuming work after an interruption.
+[![Resume tab](/images/tui/resume-tab.png)](/docs/tui/resume)
+
+### [Embeddings](/docs/tui/embeddings)
+Manage embedding backends, view chunk counts, and trigger reindexing.
+[![Embeddings tab](/images/tui/embeddings-tab.png)](/docs/tui/embeddings)
+
+### [Errors](/docs/tui/errors)
+Inspect backend diagnostics with actionable remediation guidance.
+[![Errors tab](/images/tui/errors-tab.png)](/docs/tui/errors)
+
+### [Project](/docs/tui/project)
+Dashboard with statistics, type breakdowns, top files, and maintenance operations.
+[![Project tab](/images/tui/project-tab.png)](/docs/tui/project)
