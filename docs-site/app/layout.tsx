@@ -10,6 +10,10 @@ export const metadata: Metadata = {
     template: '%s | Memory Layer Docs',
   },
   description: 'Local-first memory for coding agents.',
+  icons: {
+    icon: '/images/memory-layer-logo.png',
+    apple: '/images/memory-layer-logo.png',
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
