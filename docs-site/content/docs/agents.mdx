@@ -1,0 +1,86 @@
+---
+title: "Agents"
+description: "Connect any coding agent to project memory through CLI, MCP, or repo-local instructions."
+---
+
+# Agents
+
+Any coding agent that can run shell commands or speak MCP can use Memory Layer. Codex, Claude Code, OpenCode, and custom agents all follow the same pattern.
+
+## How agents connect
+
+### CLI
+
+The fastest path. The agent calls the `memory` binary directly:
+
+```bash
+memory query  --project <slug> --question "What context matters for this task?"
+memory resume --project <slug>
+memory remember --project <slug> --title "…" --summary "…" --note "…"
+```
+
+### MCP
+
+For agents that speak MCP rather than shell. Use the stdio server for local clients, or Streamable HTTP for local, token-bearing clients. See [MCP](/docs/mcp) for server setup, tools, and security.
+
+### Repo-local instructions
+
+The project wizard writes `.agents/` files that agents pick up automatically. These contain `CLAUDE.md`, `AGENTS.md`, and Codex instructions with evidence-first rules already embedded.
+
+```bash
+memory wizard          # writes .agents/ alongside .mem/
+ls .agents/            # inspect what was generated
+```
+
+## Agent prompts
+
+Copy-paste prompts for common setup tasks. The agent handles the rest.
+
+### Install Memory Layer
+
+```text
+You are installing Memory Layer for me. Work in the terminal, explain before
+using sudo, and stop before destructive changes.
+
+Find the correct install path for this OS, configure PostgreSQL with pgvector,
+run `memory wizard --global`, run health checks, and report where config files
+live. Do not delete data or overwrite existing config without asking first.
+```
+
+The agent should finish with `memory doctor`, `memory health`, installed version, service status, and next commands.
+
+### Configure a project
+
+```text
+You are configuring this repository for Memory Layer. Do not install the
+package. Inspect existing `.mem` and `.agents` files, run
+`memory wizard --dry-run`, explain planned writes, then run `memory wizard`
+only after the preview is safe. Verify with
+`memory status --project <project-slug>` and a simple query.
+```
+
+The agent should report changed files, project slug, health/status output, and any follow-up checks.
+
+## Briefings
+
+Bring a new or returning agent up to speed without re-discovering context:
+
+```bash
+memory resume       --project <slug>                # recent work + next steps
+memory up-to-speed  --project <slug>                # broader project context
+memory activities   --project <slug> --limit 20     # raw activity feed
+```
+
+Use briefings at task start, after interruptions, and before continuing work that another agent began.
+
+## Recommended behavior
+
+1. **Query before claiming** — ask project memory before making project-specific assertions.
+2. **Cite evidence** — reference memory IDs or source evidence when using remembered facts.
+3. **Verify before editing** — inspect code and docs in the working tree, not stale training data.
+4. **Store discoveries** — run `memory remember` after meaningful work so the next session benefits.
+5. **Keep secrets out** — never commit database URLs, API keys, or provider tokens to repo files.
+
+## Next
+
+Read [MCP](/docs/mcp), [Watchers](/docs/watchers), or [How it works](/docs/how-it-works).

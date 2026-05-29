@@ -2,11 +2,9 @@
   "title": "Memory Layer",
   "pages": [
     "index",
-    "quickstart",
-    "showcase",
-    "features",
     "install",
-    "concepts",
+    "tui",
+    "how-it-works",
     "agents",
     "watchers",
     "mcp",

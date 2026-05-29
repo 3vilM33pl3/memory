@@ -1,0 +1,73 @@
+---
+title: "Evaluations"
+description: "Measure whether memory changes retrieval, answers, cost, latency, and agent outcomes."
+---
+
+# Evaluations
+
+Memory systems should be evaluated by the behavior they improve. Memory Layer includes a repeatable evaluation harness for testing whether memory changes agent outcomes, retrieval quality, cost, and latency.
+
+## What the eval harness protects against
+
+- Overclaiming from a demo.
+- Confusing retrieval success with autonomous coding success.
+- Ignoring token and latency cost.
+- Treating stale or wrong memories as harmless.
+
+## Run an evaluation
+
+Always dry-run first, then run the real suite only after reviewing scripts and fixtures.
+
+```bash
+# dry run
+memory eval run --suite evals/examples/memory-smoke \
+  --condition full-memory --profile offline --dry-run
+
+# paired run: no-memory vs full-memory
+memory eval run --suite evals/suites/memory-improvement-v1 \
+  --condition no-memory --condition full-memory --allow-shell --repeat 5
+
+# compare
+memory eval compare \
+  --baseline  'target/memory-evals/*no-memory*.json' \
+  --candidate 'target/memory-evals/*full-memory*.json' --text
+```
+
+Use `--allow-shell` only after reviewing suite scripts and fixtures. Shell-executing evals are code execution inputs, not passive data files.
+
+### External retrievers
+
+Plug in your own retrieval backend for comparison:
+
+```bash
+memory eval run --suite evals/suites/memory-improvement-v1 \
+  --condition full-memory --retriever-cmd './my-retriever' --allow-shell
+```
+
+## Ablation tests
+
+Compare no-memory and memory-enabled variants item by item. Pair variants on the same suite, commit, and model to isolate what memory contributes.
+
+<Mermaid chart="flowchart LR\n    S[Same suite] --> N[No-memory run]\n    S --> F[Full-memory run]\n    N --> C[Paired comparison]\n    F --> C\n    C --> R[Report with limits]" />
+
+## Metrics
+
+| Metric | Meaning |
+|---|---|
+| Success rate | Whether the task met its expected outcome. |
+| Recall@K | Whether relevant items appear in the top K results. |
+| MRR | How early the first relevant result appears. |
+| nDCG | Whether useful results rank near the top. |
+| Assertion recall | Whether expected factual assertions were recovered. |
+| Token cost | Model context or generation cost used by a run. |
+| Latency | How long retrieval, answer generation, or eval work took. |
+
+Metric improvement is evidence for a bounded claim about the suite, model, and configuration used. It is not universal proof that every future agent task will improve.
+
+## Reproducibility
+
+Tie evaluation claims to artifacts, suite version, commit, model/provider, and configuration. Keep raw JSON outputs under `target/memory-evals/` and compare item-level results before making claims.
+
+## Next
+
+Read [How it works](/docs/how-it-works) or [Operations](/docs/operations).

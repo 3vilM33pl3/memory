@@ -1,0 +1,53 @@
+---
+title: "MCP"
+description: "Expose read-only project memory tools to MCP-capable clients."
+---
+
+# MCP
+
+The MCP server exposes read-only project memory tools to MCP-capable clients, including coding agents. Use MCP when a client supports structured tools. Use the CLI when a shell command is simpler or when you want direct human-readable output.
+
+## stdio server
+
+Run a local stdio MCP server for clients that spawn tools as child processes (Codex, Claude Code, etc.):
+
+```bash
+memory mcp run    --project <slug>
+memory mcp status --project <slug>
+```
+
+Stdio mode writes only MCP JSON-RPC messages to stdout; diagnostics go to stderr.
+
+## Streamable HTTP server
+
+The service can expose MCP over a local HTTP route, typically `/mcp`. Use this only for local, token-bearing clients unless you add your own network and authentication controls.
+
+## Tools
+
+The MCP surface is read-first and focused on project context.
+
+| Tool | Purpose |
+|---|---|
+| `memory_query` | Ask a project question and return answers with citations. |
+| `memory_resume` | Generate a continuation briefing. |
+| `memory_up_to_speed` | Generate a new-agent briefing. |
+| `memory_overview` | Inspect counts and project state. |
+| `memory_list_memories` | Browse memory rows. |
+| `memory_get_memory` | Inspect one memory. |
+| `memory_memory_history` | Read memory version history. |
+| `memory_list_activities` | Inspect activity events. |
+| `memory_list_replacement_proposals` | Review pending proposals without approving them. |
+
+## Security
+
+- Prefer stdio for local desktop or CLI clients.
+- Keep Streamable HTTP bound to local interfaces unless you add network controls.
+- Require token-bearing clients for HTTP MCP.
+- Scope tools to explicit projects.
+- Do not expose MCP HTTP to the public internet.
+
+<Mermaid chart="sequenceDiagram\n    participant Client as MCP client\n    participant Server as Memory MCP server\n    participant API as Memory service API\n    Client->>Server: memory_query(project, question)\n    Server->>API: POST /v1/query\n    API-->>Server: answer, citations, diagnostics\n    Server-->>Client: structured MCP result" />
+
+## Next
+
+Read [Agents](/docs/agents), [Watchers](/docs/watchers), or [Operations](/docs/operations).

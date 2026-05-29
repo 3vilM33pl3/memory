@@ -1,0 +1,81 @@
+---
+title: "Operations"
+description: "Run Memory Layer safely: service, database, logs, backups, privacy, and upgrades."
+---
+
+# Operations
+
+Memory Layer is local-first, but it still has operational concerns: service health, database availability, backups, logs, privacy, and upgrade safety.
+
+## Daily commands
+
+```bash
+memory health                          # backend service
+memory doctor                          # config and dependencies
+memory status --project <project-slug> # combined service, watcher, MCP, doctor
+```
+
+## Operations checklist
+
+Before making changes to a running instance:
+
+1. Know which service instance you are operating.
+2. Check database connectivity before blaming retrieval.
+3. Back up state before upgrades or migrations.
+4. Redact secrets before sharing logs.
+5. Confirm agent and MCP integrations are scoped to the intended project.
+
+## Service
+
+The service runs as a systemd unit on Linux or a launchd agent on macOS. Use standard OS tools to start, stop, and inspect it. See [Service setup](/docs/install/service-setup) for initial configuration.
+
+## Database
+
+Memory Layer stores everything in PostgreSQL with pgvector. See [PostgreSQL and pgvector](/docs/install/postgresql-pgvector) for setup.
+
+<Mermaid chart="flowchart TB\n    P[Projects] --> M[Canonical memories]\n    M --> E[Evidence and sources]\n    M --> V[Embeddings]\n    M --> A[Activity events]\n    M --> G[Code graph references]" />
+
+## Backups and restore
+
+### What to back up
+
+- PostgreSQL database.
+- Global configuration.
+- Repo-local `.mem/` project config.
+- `.agents/` integration files if they are part of the project workflow.
+
+### Basic database backup
+
+```bash
+pg_dump "$DATABASE_URL" > memory-layer-backup.sql
+psql "$DATABASE_URL" < memory-layer-backup.sql
+```
+
+For production-grade backups, prefer custom-format dumps, checksums, restore tests, and a retention policy. Verify a restore by running `memory doctor` against a disposable database.
+
+Do not commit secrets, API keys, local database URLs, or runtime state.
+
+## Security and privacy
+
+Memory Layer can be local-first, but external embedding or LLM providers may receive text depending on your configuration.
+
+### Check before enabling integrations
+
+- Which database stores project memory?
+- Which LLM provider is configured?
+- Which embedding provider is active?
+- Is MCP HTTP local and token-protected?
+- What does the watcher capture?
+- Are logs redacted before sharing?
+
+<Warning>
+Do not expose the MCP HTTP server to the public internet unless you have added an authentication and network control layer.
+</Warning>
+
+## Multi-project use
+
+One backend serves multiple projects. Each project has its own slug, config, watchers, and scoped queries. Use `memory status --project <slug>` to inspect each one independently.
+
+## Next
+
+Read [Reference](/docs/reference), [Troubleshooting](/docs/help/troubleshooting), or [MCP](/docs/mcp).

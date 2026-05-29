@@ -5,6 +5,7 @@
     "requirements",
     "linux-debian",
     "macos-homebrew",
+    "windows",
     "from-source",
     "postgresql-pgvector",
     "wizard-global",

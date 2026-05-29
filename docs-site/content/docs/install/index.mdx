@@ -5,44 +5,81 @@ description: "Install Memory Layer, configure PostgreSQL with pgvector, and init
 
 # Install
 
-Install Memory Layer, configure PostgreSQL with pgvector, and initialise your first project.
+Memory Layer installs as a native service on your machine. Pick your platform:
 
-## Recommended path
-
-<Steps>
-  <Step title="Install the package or run from source">
-    Use the platform page for Linux, macOS, or Cargo-based development.
-  </Step>
-  <Step title="Configure global settings">
-    Run `memory wizard --global` and keep secrets out of the repository.
-  </Step>
-  <Step title="Configure the project">
-    Run `memory wizard --dry-run`, review the planned files, then run `memory wizard`.
-  </Step>
-  <Step title="Start and verify the service">
-    Run `memory doctor`, `memory health`, and `memory status --project <project-slug>`.
-  </Step>
-</Steps>
-
-## Common paths
-
-<CardGroup cols={2}>
-  <Card title="Requirements" href="/docs/install/requirements" />
-  <Card title="Linux / Debian" href="/docs/install/linux-debian" />
-  <Card title="macOS / Homebrew" href="/docs/install/macos-homebrew" />
-  <Card title="PostgreSQL and pgvector" href="/docs/install/postgresql-pgvector" />
-  <Card title="Project wizard" href="/docs/install/wizard-project" />
-  <Card title="Service setup" href="/docs/install/service-setup" />
+<CardGroup cols={3}>
+  <Card title="Linux / Debian" href="/docs/install/linux-debian">
+    Install the .deb package and enable the systemd service.
+  </Card>
+  <Card title="macOS / Homebrew" href="/docs/install/macos-homebrew">
+    Install via Homebrew and enable the background service.
+  </Card>
+  <Card title="Windows" href="/docs/install/windows">
+    Coming soon.
+  </Card>
 </CardGroup>
 
-## Verify
+Memory Layer runs as a native background service (`memory-layer.service` on Linux, a launchd agent on macOS) that manages the database connection, curation pipeline, and embedding backends. The `memory` CLI and TUI communicate with this service over a local socket — nothing leaves your machine unless you configure an external embedding or LLM provider.
+
+## Prerequisites
+
+You need a PostgreSQL database with the pgvector extension enabled. See [PostgreSQL and pgvector](/docs/install/postgresql-pgvector) for setup instructions. Optional LLM and embedding providers improve curation and semantic retrieval, but the core service works without them.
+
+## Configure the machine
+
+```bash
+memory wizard --global
+```
+
+The wizard writes global configuration and secrets (database URL, API keys) outside your repository so they are never committed. See [Global wizard](/docs/install/wizard-global) for details.
+
+## Configure a project
+
+```bash
+cd /path/to/project
+memory wizard --dry-run
+memory wizard
+```
+
+The dry run previews repo-local files before anything is written. The wizard creates `.mem/project.toml` and the `.agents/` directory with Memory Layer skills and hooks. See [Project wizard](/docs/install/wizard-project) for details.
+
+## Check health
 
 ```bash
 memory doctor
 memory health
+memory status --project <project-slug>
+```
+
+`doctor` checks configuration and dependencies. `health` checks the backend service. `status` combines service, project, watcher, and MCP diagnostics.
+
+## Open the TUI
+
+```bash
 memory tui
 ```
 
+Use the [Query, Memories, Project, Agents, Watchers, Activity, and Review tabs](/docs/tui) to inspect what Memory Layer knows.
+
+## Ask an evidence-backed question
+
+```bash
+memory query --project <project-slug> --question "What should a new agent know before changing this repo?"
+```
+
+A healthy setup returns answers with ranked memories, citations, and retrieval diagnostics. If answers look stale, inspect citations and run curation before trusting them.
+
+## More install topics
+
+<CardGroup cols={2}>
+  <Card title="Requirements" href="/docs/install/requirements" />
+  <Card title="PostgreSQL and pgvector" href="/docs/install/postgresql-pgvector" />
+  <Card title="Build from source" href="/docs/install/from-source" />
+  <Card title="Service setup" href="/docs/install/service-setup" />
+  <Card title="Update" href="/docs/install/update" />
+  <Card title="Uninstall" href="/docs/install/uninstall" />
+</CardGroup>
+
 ## Next
 
-Read [PostgreSQL and pgvector](/docs/install/postgresql-pgvector), then [Project wizard](/docs/install/wizard-project).
+Read [How it works](/docs/how-it-works), [Connect an agent](/docs/agents), or [Run an evaluation](/docs/evals).

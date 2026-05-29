@@ -1,0 +1,49 @@
+---
+title: "Watchers"
+description: "Automatic context capture from agent sessions and project activity."
+---
+
+# Watchers
+
+Watchers observe agent sessions and project activity so Memory Layer can capture useful context without requiring every fact to be manually entered.
+
+## Watcher manager
+
+The recommended path for Codex-linked sessions. The manager detects live sessions, maps them to projects, and starts a watcher automatically.
+
+```bash
+memory watcher manager enable
+memory watcher manager status
+```
+
+## Manual / generic watcher
+
+For agents or environments where the manager doesn't apply, run a watcher directly:
+
+```bash
+memory watcher run    --project <slug>
+memory watcher status --project <slug>
+```
+
+Foreground watchers observe repository changes, debounce bursts, and send activity to the service. Use this path for Claude Code, custom agents, or any setup where the watcher manager doesn't match.
+
+## Lifecycle
+
+Watchers move through health states with automatic recovery:
+
+<Mermaid chart="stateDiagram-v2\n    [*] --> Starting\n    Starting --> Healthy\n    Healthy --> Stale\n    Stale --> Restarting\n    Restarting --> Healthy\n    Stale --> Failed\n    Failed --> [*]" />
+
+A healthy watcher sends periodic heartbeats. If heartbeats stop, the watcher becomes **Stale**. The manager attempts a restart before marking it **Failed**.
+
+## Verify
+
+```bash
+memory status     --project <slug>     # combined service, watcher, MCP, and doctor status
+memory activities --project <slug> --kind watcher --limit 10
+```
+
+Open the TUI [Watchers tab](/docs/tui/watchers) to see live watcher state, or the [Activity tab](/docs/tui/activity) to inspect captured events.
+
+## Next
+
+Read [Agents](/docs/agents), [MCP](/docs/mcp), or [How it works](/docs/how-it-works).
