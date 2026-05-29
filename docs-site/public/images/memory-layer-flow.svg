@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1696" height="804" viewBox="0 0 1696 804" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1696" height="850" viewBox="0 0 1696 850" role="img" aria-labelledby="title desc">
   <title id="title">How Memory Layer turns project work into cited context</title>
   <desc id="desc">A left-to-right infographic showing work capture, curation, storage, retrieval, and faster agent re-entry.</desc>
   <defs>
@@ -28,8 +28,9 @@
       .card { fill: rgba(255,255,255,0.84); stroke: rgba(33,54,49,0.13); stroke-width: 1.4; }
       .node { fill: #fffdf8; stroke: rgba(28,44,40,0.18); stroke-width: 1.5; }
       .soft-line { stroke: rgba(40,64,58,0.2); stroke-width: 2; fill: none; }
-      .icon-line { stroke: #203b35; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+      .icon-line { stroke: #203b35; stroke-width: 4.5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
       .icon-fill { fill: #203b35; }
+      .icon-bg { fill: #f0ede6; }
       .accent-green { fill: #2c6b58; }
       .accent-gold { fill: #d99142; }
       .accent-blue { fill: #386d8f; }
@@ -38,117 +39,154 @@
     </style>
   </defs>
 
-  <rect width="1696" height="804" fill="url(#bg)"/>
+  <rect width="1696" height="850" fill="url(#bg)"/>
   <circle cx="90" cy="110" r="220" fill="#fff8e8" opacity="0.62"/>
-  <circle cx="1545" cy="665" r="260" fill="#dbeaf6" opacity="0.58"/>
-  <path d="M119 706 C 329 585, 487 759, 677 643 S 1020 548, 1199 640 S 1467 713, 1614 573" fill="none" stroke="#fffaf2" stroke-width="78" stroke-linecap="round" opacity="0.45"/>
+  <circle cx="1545" cy="700" r="260" fill="#dbeaf6" opacity="0.58"/>
+  <path d="M119 750 C 329 630, 487 800, 677 690 S 1020 590, 1199 680 S 1467 750, 1614 620" fill="none" stroke="#fffaf2" stroke-width="78" stroke-linecap="round" opacity="0.45"/>
 
   <text x="96" y="94" class="tiny">Memory Layer mental model</text>
   <text x="96" y="158" class="title">Project work becomes cited context</text>
   <text x="98" y="200" class="subtitle">Capture evidence, curate durable memory, connect it to code and activity, then help the next agent start with proof.</text>
 
-  <rect x="94" y="246" width="1508" height="330" rx="38" class="card" filter="url(#shadow)"/>
-  <path d="M187 411 H1494" stroke="url(#rail)" stroke-width="14" stroke-linecap="round"/>
+  <!-- Main container card -->
+  <rect x="94" y="246" width="1508" height="376" rx="38" class="card" filter="url(#shadow)"/>
+  <!-- Gradient rail connecting steps -->
+  <path d="M187 455 H1494" stroke="url(#rail)" stroke-width="14" stroke-linecap="round"/>
 
+  <!-- Step 1: Work happens -->
   <g transform="translate(118 278)">
-    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
-    <circle cx="44" cy="42" r="22" class="accent-green"/>
-    <text x="38" y="49" class="stage-num">1</text>
-    <text x="28" y="91" class="stage-title">Work happens</text>
-    <text x="28" y="126" class="stage-text">Agents and humans</text>
-    <text x="28" y="150" class="stage-text">edit code, run tests,</text>
-    <text x="28" y="174" class="stage-text">make decisions, and</text>
-    <text x="28" y="198" class="stage-text">ask questions.</text>
-    <path d="M142 55 c20 0 36 16 36 36 s-16 36-36 36 s-36-16-36-36 s16-36 36-36" class="soft-line"/>
-    <path d="M127 87 l14 15 l29-34" class="icon-line"/>
+    <rect x="0" y="0" width="212" height="296" rx="28" class="node"/>
+    <!-- Number badge -->
+    <circle cx="44" cy="36" r="22" class="accent-green"/>
+    <text x="38" y="43" class="stage-num">1</text>
+    <!-- Icon: checkmark in circle -->
+    <g transform="translate(106, 14)">
+      <rect x="0" y="0" width="80" height="64" rx="14" class="icon-bg"/>
+      <circle cx="40" cy="32" r="20" fill="none" stroke="#203b35" stroke-width="4.5"/>
+      <path d="M29 32 l8 9 l16-20" class="icon-line"/>
+    </g>
+    <!-- Title and description, clear below icon zone -->
+    <text x="28" y="112" class="stage-title">Work happens</text>
+    <text x="28" y="148" class="stage-text">Agents and humans</text>
+    <text x="28" y="172" class="stage-text">edit code, run tests,</text>
+    <text x="28" y="196" class="stage-text">make decisions, and</text>
+    <text x="28" y="220" class="stage-text">ask questions.</text>
   </g>
 
+  <!-- Step 2: Capture evidence -->
   <g transform="translate(366 278)">
-    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
-    <circle cx="44" cy="42" r="22" class="accent-gold"/>
-    <text x="38" y="49" class="stage-num">2</text>
-    <text x="28" y="91" class="stage-title">Capture evidence</text>
-    <text x="28" y="126" class="stage-text">Prompts, notes, files,</text>
-    <text x="28" y="150" class="stage-text">commands, tests, and</text>
-    <text x="28" y="174" class="stage-text">activities stay tied</text>
-    <text x="28" y="198" class="stage-text">to provenance.</text>
-    <rect x="122" y="55" width="50" height="66" rx="8" fill="none" stroke="#203b35" stroke-width="5"/>
-    <path d="M134 74 h26 M134 91 h26 M134 108 h17" class="icon-line"/>
+    <rect x="0" y="0" width="212" height="296" rx="28" class="node"/>
+    <circle cx="44" cy="36" r="22" class="accent-gold"/>
+    <text x="38" y="43" class="stage-num">2</text>
+    <!-- Icon: clipboard -->
+    <g transform="translate(106, 14)">
+      <rect x="0" y="0" width="80" height="64" rx="14" class="icon-bg"/>
+      <rect x="24" y="12" width="32" height="42" rx="5" fill="none" stroke="#203b35" stroke-width="4.5"/>
+      <path d="M33 30 h14 M33 40 h14 M33 50 h8" class="icon-line"/>
+    </g>
+    <text x="28" y="112" class="stage-title">Capture evidence</text>
+    <text x="28" y="148" class="stage-text">Prompts, notes, files,</text>
+    <text x="28" y="172" class="stage-text">commands, tests, and</text>
+    <text x="28" y="196" class="stage-text">activities stay tied</text>
+    <text x="28" y="220" class="stage-text">to provenance.</text>
   </g>
 
+  <!-- Step 3: Curate memory -->
   <g transform="translate(614 278)">
-    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
-    <circle cx="44" cy="42" r="22" class="accent-blue"/>
-    <text x="38" y="49" class="stage-num">3</text>
-    <text x="28" y="91" class="stage-title">Curate memory</text>
-    <text x="28" y="126" class="stage-text">Raw captures become</text>
-    <text x="28" y="150" class="stage-text">short canonical facts</text>
-    <text x="28" y="174" class="stage-text">with types, tags, and</text>
-    <text x="28" y="198" class="stage-text">confidence.</text>
-    <path d="M121 101 c16-42 69-42 85 0 c-18 34-67 34-85 0Z" fill="none" stroke="#203b35" stroke-width="5"/>
-    <circle cx="164" cy="101" r="13" class="icon-fill"/>
+    <rect x="0" y="0" width="212" height="296" rx="28" class="node"/>
+    <circle cx="44" cy="36" r="22" class="accent-blue"/>
+    <text x="38" y="43" class="stage-num">3</text>
+    <!-- Icon: eye (curation/review) -->
+    <g transform="translate(106, 14)">
+      <rect x="0" y="0" width="80" height="64" rx="14" class="icon-bg"/>
+      <path d="M14 32 c12-18 40-18 52 0 c-12 18-40 18-52 0Z" fill="none" stroke="#203b35" stroke-width="4.5"/>
+      <circle cx="40" cy="32" r="8" class="icon-fill"/>
+    </g>
+    <text x="28" y="112" class="stage-title">Curate memory</text>
+    <text x="28" y="148" class="stage-text">Raw captures become</text>
+    <text x="28" y="172" class="stage-text">short canonical facts</text>
+    <text x="28" y="196" class="stage-text">with types, tags, and</text>
+    <text x="28" y="220" class="stage-text">confidence.</text>
   </g>
 
+  <!-- Step 4: Store + link -->
   <g transform="translate(862 278)">
-    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
-    <circle cx="44" cy="42" r="22" class="accent-ink"/>
-    <text x="38" y="49" class="stage-num">4</text>
-    <text x="28" y="91" class="stage-title">Store + link</text>
-    <text x="28" y="126" class="stage-text">PostgreSQL keeps the</text>
-    <text x="28" y="150" class="stage-text">truth; pgvector and</text>
-    <text x="28" y="174" class="stage-text">code graph edges make</text>
-    <text x="28" y="198" class="stage-text">it connected.</text>
-    <ellipse cx="157" cy="69" rx="40" ry="15" fill="none" stroke="#203b35" stroke-width="5"/>
-    <path d="M117 69 v48 c0 8 18 15 40 15 s40-7 40-15 V69 M117 93 c0 8 18 15 40 15 s40-7 40-15" class="icon-line"/>
+    <rect x="0" y="0" width="212" height="296" rx="28" class="node"/>
+    <circle cx="44" cy="36" r="22" class="accent-ink"/>
+    <text x="38" y="43" class="stage-num">4</text>
+    <!-- Icon: database -->
+    <g transform="translate(106, 14)">
+      <rect x="0" y="0" width="80" height="64" rx="14" class="icon-bg"/>
+      <ellipse cx="40" cy="22" rx="20" ry="8" fill="none" stroke="#203b35" stroke-width="4.5"/>
+      <path d="M20 22 v22 c0 5 9 9 20 9 s20-4 20-9 V22" class="icon-line"/>
+      <path d="M20 35 c0 5 9 9 20 9 s20-4 20-9" class="icon-line"/>
+    </g>
+    <text x="28" y="112" class="stage-title">Store + link</text>
+    <text x="28" y="148" class="stage-text">PostgreSQL keeps the</text>
+    <text x="28" y="172" class="stage-text">truth; pgvector and</text>
+    <text x="28" y="196" class="stage-text">code graph edges make</text>
+    <text x="28" y="220" class="stage-text">it connected.</text>
   </g>
 
+  <!-- Step 5: Retrieve + explain -->
   <g transform="translate(1110 278)">
-    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
-    <circle cx="44" cy="42" r="22" class="accent-purple"/>
-    <text x="38" y="49" class="stage-num">5</text>
-    <text x="28" y="91" class="stage-title">Retrieve + explain</text>
-    <text x="28" y="126" class="stage-text">Lexical, semantic,</text>
-    <text x="28" y="150" class="stage-text">hybrid, relation, and</text>
-    <text x="28" y="174" class="stage-text">graph matches return</text>
-    <text x="28" y="198" class="stage-text">cited answers.</text>
-    <circle cx="143" cy="83" r="27" fill="none" stroke="#203b35" stroke-width="5"/>
-    <path d="M164 104 l29 29" class="icon-line"/>
+    <rect x="0" y="0" width="212" height="296" rx="28" class="node"/>
+    <circle cx="44" cy="36" r="22" class="accent-purple"/>
+    <text x="38" y="43" class="stage-num">5</text>
+    <!-- Icon: magnifying glass -->
+    <g transform="translate(106, 14)">
+      <rect x="0" y="0" width="80" height="64" rx="14" class="icon-bg"/>
+      <circle cx="35" cy="27" r="14" fill="none" stroke="#203b35" stroke-width="4.5"/>
+      <path d="M45 37 l14 14" class="icon-line"/>
+    </g>
+    <text x="28" y="112" class="stage-title">Retrieve + explain</text>
+    <text x="28" y="148" class="stage-text">Lexical, semantic,</text>
+    <text x="28" y="172" class="stage-text">hybrid, relation, and</text>
+    <text x="28" y="196" class="stage-text">graph matches return</text>
+    <text x="28" y="220" class="stage-text">cited answers.</text>
   </g>
 
+  <!-- Step 6: Next agent starts -->
   <g transform="translate(1358 278)">
-    <rect x="0" y="0" width="212" height="248" rx="28" class="node"/>
-    <circle cx="44" cy="42" r="22" class="accent-green"/>
-    <text x="38" y="49" class="stage-num">6</text>
-    <text x="28" y="91" class="stage-title">Next agent starts</text>
-    <text x="28" y="126" class="stage-text">Resume briefings, TUI</text>
-    <text x="28" y="150" class="stage-text">tabs, and query answers</text>
-    <text x="28" y="174" class="stage-text">show what happened and</text>
-    <text x="28" y="198" class="stage-text">why it matters.</text>
-    <path d="M126 122 h73 v-54 h-73 Z M139 136 h47" class="icon-line"/>
-    <path d="M140 82 h43 M140 99 h28" class="icon-line"/>
+    <rect x="0" y="0" width="212" height="296" rx="28" class="node"/>
+    <circle cx="44" cy="36" r="22" class="accent-green"/>
+    <text x="38" y="43" class="stage-num">6</text>
+    <!-- Icon: document with lines -->
+    <g transform="translate(106, 14)">
+      <rect x="0" y="0" width="80" height="64" rx="14" class="icon-bg"/>
+      <path d="M24 12 h22 l12 12 v30 h-34 Z" fill="none" stroke="#203b35" stroke-width="4.5"/>
+      <path d="M32 34 h16 M32 44 h10" class="icon-line"/>
+    </g>
+    <text x="28" y="112" class="stage-title">Next agent starts</text>
+    <text x="28" y="148" class="stage-text">Resume briefings, TUI</text>
+    <text x="28" y="172" class="stage-text">tabs, and query answers</text>
+    <text x="28" y="196" class="stage-text">show what happened and</text>
+    <text x="28" y="220" class="stage-text">why it matters.</text>
   </g>
 
-  <g transform="translate(143 624)">
+  <!-- Bottom callout cards -->
+  <g transform="translate(143 672)">
     <rect x="0" y="0" width="300" height="88" rx="24" fill="#fffdf8" stroke="#d9c7a4" stroke-width="1.5"/>
     <text x="26" y="35" class="callout-title">Auditable by default</text>
     <text x="26" y="62" class="callout-text">Every durable memory keeps provenance.</text>
   </g>
-  <g transform="translate(496 624)">
+  <g transform="translate(496 672)">
     <rect x="0" y="0" width="300" height="88" rx="24" fill="#fffdf8" stroke="#c6d4cc" stroke-width="1.5"/>
     <text x="26" y="35" class="callout-title">Typed memory</text>
     <text x="26" y="62" class="callout-text">Plans, tasks, facts, feedback, references.</text>
   </g>
-  <g transform="translate(849 624)">
+  <g transform="translate(849 672)">
     <rect x="0" y="0" width="300" height="88" rx="24" fill="#fffdf8" stroke="#c4d7e3" stroke-width="1.5"/>
     <text x="26" y="35" class="callout-title">Search is inspectable</text>
     <text x="26" y="62" class="callout-text">See match type, citations, tokens, graph boosts.</text>
   </g>
-  <g transform="translate(1202 624)">
+  <g transform="translate(1202 672)">
     <rect x="0" y="0" width="300" height="88" rx="24" fill="#fffdf8" stroke="#cec8e6" stroke-width="1.5"/>
     <text x="26" y="35" class="callout-title">Built for teams of agents</text>
     <text x="26" y="62" class="callout-text">Watchers, activities, and re-entry context.</text>
   </g>
 
-  <text x="96" y="758" class="tiny">Capture -> Curate -> Connect -> Retrieve -> Explain</text>
-  <text x="1234" y="758" class="tiny">Local-first, project-scoped, evidence-backed</text>
+  <!-- Footer -->
+  <text x="96" y="808" class="tiny">Capture -> Curate -> Connect -> Retrieve -> Explain</text>
+  <text x="1234" y="808" class="tiny">Local-first, project-scoped, evidence-backed</text>
 </svg>
