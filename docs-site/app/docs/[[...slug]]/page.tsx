@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { DocsBody, DocsPage } from 'fumadocs-ui/layouts/docs/page';
 
+import { DocsFooter } from '@/components/docs-footer';
 import { getMDXComponents } from '@/mdx-components';
 import { source } from '@/lib/source';
 
@@ -40,7 +41,7 @@ export default async function Page({ params }: PageProps) {
   const MDX = page.data.body;
 
   return (
-    <DocsPage toc={page.data.toc}>
+    <DocsPage toc={page.data.toc} footer={{ component: <DocsFooter /> }}>
       <DocsBody>
         <MDX components={getMDXComponents()} />
       </DocsBody>
