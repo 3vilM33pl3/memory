@@ -4,14 +4,11 @@ export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
       title: (
-        <span className="flex items-center gap-2">
-          <img
-            src="/images/memory-layer-logo.png"
-            alt=""
-            className="h-7 w-7 rounded-sm object-cover"
-          />
-          <span>Memory Layer</span>
-        </span>
+        <img
+          src="/images/memory-layer-logo.png"
+          alt="Memory Layer"
+          className="h-8 w-8 object-contain"
+        />
       ),
     },
     links: [
