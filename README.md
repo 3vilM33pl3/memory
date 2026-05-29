@@ -4,6 +4,9 @@ Memory Layer is a local-first memory system for coding agents and developers. It
 
 It captures what happened, curates what matters, stores it in PostgreSQL with pgvector, and exposes it through a fast TUI, browser UI, and agent-friendly CLI.
 
+**Website:** https://www.memory-layer.dev  
+**Documentation:** https://www.memory-layer.dev/docs
+
 ![Memory Layer memories tab](docs/img/tui/memories-tab.png)
 
 ## Measured Impact
@@ -363,7 +366,14 @@ Project-local customization now has two layers:
 
 ## Documentation
 
-The Fumadocs / Next.js documentation website source lives in [`docs-site/`](docs-site/README.md). It is organized for reader-facing onboarding, concepts, agent integrations, MCP, evaluations, operations, and reference pages, and is ready for Vercel deployment from the `docs-site` root. The `docs/` directory remains the detailed in-repo manual and developer reference.
+Start with the public documentation site:
+
+- **Website:** https://www.memory-layer.dev
+- **Docs:** https://www.memory-layer.dev/docs
+- **CLI reference:** https://www.memory-layer.dev/docs/reference/cli
+- **Install guide:** https://www.memory-layer.dev/docs/install
+
+The Fumadocs / Next.js website source lives in [`docs-site/`](docs-site/README.md) and deploys to Vercel from the `docs-site` root. The `docs/` directory remains the detailed in-repo manual, source material, and developer reference for contributors.
 
 ### Start By Task
 
