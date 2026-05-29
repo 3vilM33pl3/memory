@@ -1,9 +1,5 @@
 # Memory Layer
 
-<p align="center">
-  <img src="docs/img/MemoryLayerLogo.png" alt="Memory Layer logo" width="180">
-</p>
-
 Memory Layer is a local-first memory system for coding agents and developers. It turns project work into durable, searchable knowledge so the next Codex, Claude, or human session can start with evidence instead of guesswork.
 
 It captures what happened, curates what matters, stores it in PostgreSQL with pgvector, and exposes it through a fast TUI, browser UI, and agent-friendly CLI.

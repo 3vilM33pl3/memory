@@ -5,6 +5,7 @@ const root = process.cwd();
 const contentRoot = path.join(root, 'content/docs');
 const publicRoot = path.join(root, 'public');
 const imageRoot = path.join(publicRoot, 'images');
+const codeRoots = ['app', 'components', 'lib'].map((dir) => path.join(root, dir));
 
 function walk(dir, predicate = () => true) {
   const entries = [];
@@ -23,11 +24,18 @@ function walk(dir, predicate = () => true) {
   return entries;
 }
 
-const mdxFiles = walk(contentRoot, (file) => file.endsWith('.mdx'));
+const contentFiles = [
+  ...walk(contentRoot, (file) => file.endsWith('.mdx')),
+  ...codeRoots
+    .filter((dir) => existsSync(dir))
+    .flatMap((dir) =>
+      walk(dir, (file) => /\.(tsx?|jsx?)$/i.test(file)),
+    ),
+];
 const imageRefs = new Set();
 const errors = [];
 
-for (const file of mdxFiles) {
+for (const file of contentFiles) {
   const text = readFileSync(file, 'utf8');
   const rel = path.relative(root, file);
   const regexes = [
