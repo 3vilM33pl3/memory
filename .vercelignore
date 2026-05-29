@@ -1,0 +1,17 @@
+.mem
+.memory-layer
+.sqlx
+.env
+keys.env
+memory-postgres-connection.txt
+target
+demo/output
+web/node_modules
+web/dist
+docs-site/node_modules
+docs-site/.next
+docs-site/.source
+*.db
+*.log
+__pycache__
+*.pyc
