@@ -1,0 +1,78 @@
+---
+title: "CLI: service and health"
+description: "Run the backend, diagnose configuration, inspect health, and check automation state."
+---
+
+# CLI: service and health
+
+Use these commands before debugging query, TUI, watcher, MCP, or embedding behavior. Most symptoms start with one of three causes: the service is not reachable, config points at the wrong service, or PostgreSQL/pgvector is not ready.
+
+| Command | Writes | Purpose |
+|---|---:|---|
+| `memory service` | Mixed | Run or manage the HTTP backend and web UI. |
+| `memory status` | No | Show aggregate diagnostic status for a project. |
+| `memory doctor` | No | Inspect config, database, service, tools, and environment. |
+| `memory health` | No | Check backend API health. |
+| `memory stats` | No | Show project memory and capture counts. |
+| `memory automation` | Mixed | Inspect and flush automation state. |
+
+## `memory service`
+
+The service hosts the HTTP API, web UI, and optional Streamable HTTP MCP route.
+
+```bash
+memory service run
+memory service status
+memory service enable
+memory service disable
+memory service restart-all
+memory service ensure-api-token
+```
+
+`memory service run` is a foreground command. A development `cargo run --bin memory service run` should not daemonize itself. Packaged installs use systemd on Linux or launchd on macOS for background operation.
+
+Development defaults commonly use `127.0.0.1:4250`; packaged installs commonly use `127.0.0.1:4040`. Check your config and `memory service status` instead of assuming a port.
+
+## `memory status`
+
+Use status for a combined project-level view.
+
+```bash
+memory status --project memory
+memory status --project memory --json
+```
+
+Status is the fastest single command for checking service reachability, project config, watcher state, MCP status, and common doctor diagnostics.
+
+## `memory doctor`
+
+Doctor performs a deeper environment inspection.
+
+```bash
+memory doctor
+memory doctor --project memory
+memory doctor --json
+```
+
+Run it after config edits, package upgrades, database migrations, token changes, or provider changes.
+
+## `memory health` and `memory stats`
+
+Use health to confirm the backend responds; use stats to confirm the expected project has data.
+
+```bash
+memory health
+memory stats --project memory
+```
+
+If health is green but stats are empty, the service is probably healthy but the project slug or database is not the one you expected.
+
+## `memory automation`
+
+Automation commands inspect background queues and flush queued work when supported.
+
+```bash
+memory automation --help
+```
+
+Treat automation flushes as write operations. Capture logs before changing queue state when diagnosing failures.

@@ -1,0 +1,89 @@
+---
+title: "CLI: capture and curation"
+description: "Write durable memories, scan repositories, curate raw captures, review proposals, and maintain history."
+---
+
+# CLI: capture and curation
+
+These commands write or modify memory state. Use `--dry-run` where available, keep project slugs explicit in automation, and inspect proposals before approving replacement decisions.
+
+| Command | Writes | Purpose |
+|---|---:|---|
+| `memory remember` | Yes | Capture and curate completed work into memory. |
+| `memory capture` | Yes | Store structured raw task context from a file. |
+| `memory scan` | Yes | Scan a repo for candidate durable memories. |
+| `memory curate` | Yes | Convert raw captures into canonical memories. |
+| `memory proposals` | Yes | Review, approve, or reject memory replacement proposals. |
+| `memory archive` | Yes | Archive low-signal memories by confidence and importance. |
+| `memory prune-history` | Yes | Prune old versions and tombstoned canonicals. |
+| `memory checkpoint` | Yes | Save, inspect, and verify execution checkpoints. |
+
+## `memory remember`
+
+Use this after meaningful completed work.
+
+```bash
+memory remember --project memory \
+  --title "Expanded docs-site CLI reference" \
+  --summary "Grouped the CLI docs into setup, service, query, capture, repository, and integration pages." \
+  --note "Updated docs-site/content/docs/reference/cli/** and verified the Next.js docs build."
+```
+
+Remember should store durable, human-readable text with evidence. It is not a substitute for committing code or writing user docs.
+
+## `memory capture` and `memory curate`
+
+Capture stores raw context; curate turns raw captures into canonical memories.
+
+```bash
+memory capture --project memory --file task-context.json
+memory curate --project memory
+```
+
+Use this split when another tool produces structured capture payloads or when curation needs to be retried separately.
+
+## `memory scan`
+
+Scan asks the repository what durable memories can be inferred from code, docs, and history.
+
+```bash
+memory scan --project memory --dry-run
+memory scan --project memory
+```
+
+Scan is useful for onboarding an existing repository, but it is not a replacement for human review. Prefer smaller scans when investigating a subsystem.
+
+## `memory proposals`
+
+Proposals protect existing canonical memories from automatic replacement.
+
+```bash
+memory proposals --project memory
+memory proposals approve --project memory --proposal-id <uuid>
+memory proposals reject  --project memory --proposal-id <uuid>
+```
+
+Approve only when the replacement is better supported and more current. Reject when the old memory remains correct or the proposal lacks enough evidence.
+
+## `memory archive` and `memory prune-history`
+
+Archive hides low-signal memories without deleting their audit trail. Prune removes old versions and tombstones according to retention rules.
+
+```bash
+memory archive --project memory --dry-run
+memory prune-history --project memory --dry-run
+```
+
+Run dry-runs first and keep backups before aggressive cleanup.
+
+## `memory checkpoint`
+
+Checkpoint tracks plan execution and interruption recovery.
+
+```bash
+memory checkpoint start-execution --project memory --plan-file approved-plan.md
+memory checkpoint status --project memory
+memory checkpoint finish-execution --project memory
+```
+
+Use it for plan-backed work so future agents can see what started, what remains, and whether the implementation was verified.

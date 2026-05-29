@@ -1,0 +1,71 @@
+---
+title: "CLI reference"
+description: "Dense reference for the Memory Layer command surface, grouped by workflow."
+---
+
+# CLI reference
+
+The `memory` CLI is the primary automation surface for Memory Layer. It configures projects, runs the backend, captures work, curates memory, answers questions, manages embeddings, opens the TUI, exposes MCP, and runs evaluations.
+
+Use command help as the final source of truth before scripting:
+
+```bash
+memory --help
+memory <command> --help
+memory <command> <subcommand> --help
+```
+
+## Global options
+
+| Option | Env var | Purpose |
+|---|---|---|
+| `--config <path>` | `MEMORY_LAYER_CONFIG` | Use a specific global config file. |
+| `--writer-id <id>` | `MEMORY_LAYER_WRITER_ID` | Override the writer identity for captures and activity. |
+| `--agent-id <id>` | `MEMORY_LAYER_WRITER_ID` | Alias for `--writer-id`. |
+
+Many commands also support `--project <slug>`, `--json`, or `--dry-run`. Prefer `--json` for agent automation and `--dry-run` before commands that write config, memory, history, embeddings, or repo metadata.
+
+## Command groups
+
+| Group | Commands | Use when |
+|---|---|---|
+| [Setup and bootstrap](/docs/reference/cli/setup) | `wizard`, `init`, `upgrade`, `completion`, `dev` | Installing, configuring, refreshing repo-local integration files, and setting up shell completion. |
+| [Service and health](/docs/reference/cli/service-health) | `service`, `status`, `doctor`, `health`, `stats`, `automation` | Starting the backend, diagnosing config, checking API health, and inspecting automation queues. |
+| [Query and briefings](/docs/reference/cli/query-briefings) | `query`, `resume`, `up-to-speed`, `activities`, `history`, `verify-provenance` | Asking project questions, resuming work, inspecting activity, and proving memory sources still exist. |
+| [Capture and curation](/docs/reference/cli/capture-curation) | `remember`, `capture`, `scan`, `curate`, `proposals`, `archive`, `prune-history`, `checkpoint` | Writing project memory, reviewing replacements, pruning history, and tracking plan execution. |
+| [Repository, evidence, and search](/docs/reference/cli/repository-evidence) | `commits`, `repo`, `graph`, `embeddings`, `bundle` | Importing code/history evidence, maintaining search indexes, and exporting project memory. |
+| [Integrations and evals](/docs/reference/cli/integrations-evals) | `tui`, `watcher`, `mcp`, `eval` | Opening UIs, attaching agents, serving MCP, and measuring memory quality. |
+
+## Agent contract
+
+Agents should follow a repeatable command pattern:
+
+1. Run `memory query` before answering project-specific questions.
+2. Run `memory resume` after interruptions or context loss.
+3. Use `memory checkpoint start-execution` when beginning approved plans.
+4. Use `memory remember` after meaningful completed work.
+5. Use `memory status`, `memory doctor`, and `memory health` before blaming retrieval or the TUI.
+
+## Read/write guide
+
+| Kind | Mostly read-only | Writes local or service state |
+|---|---|---|
+| Setup | `completion`, most `dev` inspection | `wizard`, `init`, `upgrade`, some `dev` scaffolding |
+| Service | `status`, `doctor`, `health`, `stats` | `service enable`, `service disable`, `service restart-all`, automation flushes |
+| Query | `query`, `resume`, `up-to-speed`, `activities`, `history`, `verify-provenance` | Query/activity logging may write audit events when the service is running. |
+| Memory | `proposals list`, `scan --dry-run` | `remember`, `capture`, `curate`, `scan`, proposal approval/rejection, `archive`, `prune-history` |
+| Evidence | `repo inspect`, `graph inspect`, `embeddings status` | commit import, repo indexing, graph extraction, embedding rebuilds, bundle import |
+| Integrations | `mcp status`, watcher status, eval compare | watcher start/stop, MCP HTTP service config, eval run artifacts |
+
+## Project resolution
+
+Commands that operate on memory need a project slug. In normal repo-local use, the CLI can read `.mem/project.toml`; in automation, pass `--project <slug>` explicitly so the command does not depend on the current working directory.
+
+```bash
+memory query --project memory --question "What changed in the docs site?"
+memory status --project memory --json
+```
+
+## Next
+
+Use [Setup and bootstrap](/docs/reference/cli/setup) for installation flows or [Query and briefings](/docs/reference/cli/query-briefings) for day-to-day agent use.

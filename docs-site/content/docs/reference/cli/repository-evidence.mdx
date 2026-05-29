@@ -1,0 +1,71 @@
+---
+title: "CLI: repository, evidence, and search"
+description: "Import commit history, build repository and code graph indexes, maintain embeddings, and exchange memory bundles."
+---
+
+# CLI: repository, evidence, and search
+
+These commands maintain the evidence Memory Layer uses for retrieval, provenance, and graph-aware context. They are usually run after onboarding, large refactors, provider changes, or repository history imports.
+
+| Command | Writes | Purpose |
+|---|---:|---|
+| `memory commits` | Yes | Import and inspect git commit history. |
+| `memory repo` | Yes | Build and inspect the repository index. |
+| `memory graph` | Yes | Extract and inspect the project code graph. |
+| `memory embeddings` | Yes | Rebuild and maintain embedding spaces. |
+| `memory bundle` | Mixed | Export and import shareable project memory bundles. |
+
+## `memory commits`
+
+Import git history when commit context matters for future questions.
+
+```bash
+memory commits import --project memory
+memory commits list --project memory --limit 20
+```
+
+Commit import is evidence, not curation by itself. Pair it with query, scan, or explicit memories when decisions should become durable project knowledge.
+
+## `memory repo`
+
+The repository index records files and metadata used by scan and provenance workflows.
+
+```bash
+memory repo build --project memory
+memory repo inspect --project memory
+```
+
+Run it after major file moves or when scan/provenance output looks stale.
+
+## `memory graph`
+
+The graph command extracts parser-backed code symbols, references, and edges.
+
+```bash
+memory graph extract --project memory
+memory graph inspect --project memory
+```
+
+Graph data helps query connect memory facts to code structure. It is especially useful after refactors where names or modules move without intended behavior changes.
+
+## `memory embeddings`
+
+Embedding commands maintain semantic search spaces.
+
+```bash
+memory embeddings status --project memory
+memory embeddings rebuild --project memory
+```
+
+Use status before rebuilds. Rebuild after changing embedding providers, dimensions, active spaces, or when diagnostics show missing coverage.
+
+## `memory bundle`
+
+Bundles move project memory between systems or preserve a point-in-time export.
+
+```bash
+memory bundle export --project memory --output memory.bundle.json
+memory bundle import --project memory --input memory.bundle.json --dry-run
+```
+
+Review bundle contents before import. Treat bundles as sensitive project data.

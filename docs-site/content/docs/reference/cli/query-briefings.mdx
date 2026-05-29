@@ -1,0 +1,84 @@
+---
+title: "CLI: query and briefings"
+description: "Ask evidence-backed questions, resume work, inspect activity, and verify memory provenance."
+---
+
+# CLI: query and briefings
+
+These commands are the read path agents should use before making project-specific claims. They turn curated memories, activity, commits, and source evidence into answers and briefings.
+
+| Command | Writes | Purpose |
+|---|---:|---|
+| `memory query` | Audit only | Ask a project-specific question against curated memory. |
+| `memory resume` | Audit only | Generate a briefing for returning to interrupted work. |
+| `memory up-to-speed` | Audit only | Generate a broader new-agent project briefing. |
+| `memory activities` | No | List persisted project activity events. |
+| `memory history` | No | Show memory version history, including tombstones. |
+| `memory verify-provenance` | No | Check memory source evidence against the filesystem. |
+
+## `memory query`
+
+Ask concrete project questions and inspect the cited memories.
+
+```bash
+memory query --project memory --question "How does the MCP server resolve projects?"
+memory query --project memory --question "What changed in the docs site?" --json
+```
+
+Useful options vary by version, so check `memory query --help`; common knobs include result limits, confidence thresholds, output modes, graph-aware retrieval, and LLM-backed answer synthesis.
+
+Good questions name the project object, subsystem, file, workflow, or decision you care about. Avoid vague prompts like “what do you know?” when you need actionable context.
+
+## `memory resume`
+
+Resume is for returning after interruptions.
+
+```bash
+memory resume --project memory
+memory resume --project memory --limit 20
+```
+
+It combines recent activity, changed memories, warnings, next actions, and checkpoint context when available.
+
+## `memory up-to-speed`
+
+Use this for a new agent or a wider handoff.
+
+```bash
+memory up-to-speed --project memory
+memory up-to-speed --project memory --include-llm-summary
+```
+
+It is broader than `resume` and should be run at task start when the agent lacks project continuity.
+
+## `memory activities`
+
+Activities are persisted audit events.
+
+```bash
+memory activities --project memory --limit 30
+memory activities --project memory --kind checkpoint --json
+```
+
+Use activity output to verify whether captures, curation, proposals, embedding jobs, watcher events, or checkpoints actually happened.
+
+## `memory history`
+
+History shows how canonical memories evolved.
+
+```bash
+memory history --memory-id <uuid>
+```
+
+Use it when a remembered fact seems stale, replaced, or tombstoned.
+
+## `memory verify-provenance`
+
+Verify provenance before relying on a memory that cites files or directories.
+
+```bash
+memory verify-provenance --project memory
+memory verify-provenance --project memory --json
+```
+
+This does not prove a memory is semantically correct, but it catches missing, moved, or changed source evidence.

@@ -1,0 +1,12 @@
+{
+  "title": "CLI",
+  "pages": [
+    "index",
+    "setup",
+    "service-health",
+    "query-briefings",
+    "capture-curation",
+    "repository-evidence",
+    "integrations-evals"
+  ]
+}

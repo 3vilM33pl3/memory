@@ -1,0 +1,59 @@
+---
+title: "CLI: integrations and evals"
+description: "Open the TUI, manage watchers, run MCP, and evaluate Memory Layer behavior."
+---
+
+# CLI: integrations and evals
+
+These commands connect Memory Layer to humans, agents, MCP clients, and evaluation suites.
+
+| Command | Writes | Purpose |
+|---|---:|---|
+| `memory tui` | Mostly read | Open the terminal UI. |
+| `memory watcher` | Yes | Manage project watchers and watcher daemons. |
+| `memory mcp` | Mixed | Run and inspect the built-in Memory MCP server. |
+| `memory eval` | Yes | Run automated Memory quality evaluations. |
+
+## `memory tui`
+
+Open the main terminal interface.
+
+```bash
+memory tui
+memory tui --project memory
+```
+
+The TUI gives humans a dense view of memories, query evidence, replacement proposals, agents, watchers, activities, embeddings, errors, and project status.
+
+## `memory watcher`
+
+Watchers attach to active agent sessions and record useful runtime state.
+
+```bash
+memory watcher --help
+memory status --project memory
+```
+
+Use watcher status when agent sessions do not appear in the TUI or briefings lack recent activity.
+
+## `memory mcp`
+
+Run the local stdio MCP server or inspect service-mounted HTTP MCP.
+
+```bash
+memory mcp run --project memory
+memory mcp status --project memory
+```
+
+Stdio mode is the normal local Codex/Claude path and must write only MCP JSON-RPC messages to stdout. HTTP MCP is local-first and should require token-bearing clients.
+
+## `memory eval`
+
+Run repeatable memory-quality suites.
+
+```bash
+memory eval run --suite evals/suites/memory-improvement-v1 --condition full-memory --dry-run
+memory eval compare --baseline target/memory-evals/no-memory.json --candidate target/memory-evals/full-memory.json --text
+```
+
+Use dry-runs before shell-enabled suites. Evaluation artifacts are evidence for bounded claims about the suite, model, commit, configuration, retrieval settings, token cost, and latency.

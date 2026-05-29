@@ -1,0 +1,74 @@
+---
+title: "CLI: setup and bootstrap"
+description: "Configure Memory Layer globally, initialize projects, upgrade repo-local skills, and generate completion scripts."
+---
+
+# CLI: setup and bootstrap
+
+These commands create or refresh configuration. Run dry-runs first when a command supports them, especially inside an existing repository.
+
+| Command | Writes | Purpose |
+|---|---:|---|
+| `memory wizard` | Yes | Interactive global or project setup. |
+| `memory init` | Yes | Non-interactive repo-local bootstrap. |
+| `memory upgrade` | Yes | Refresh generated repo-local Memory Layer skill and instruction files. |
+| `memory completion` | No | Print shell completion scripts. |
+| `memory dev` | Mixed | Scaffold or inspect the dev-profile overlay used by contributors. |
+
+## `memory wizard`
+
+Use the wizard for first setup and for safe repo-local refreshes.
+
+```bash
+memory wizard --global
+cd /path/to/project
+memory wizard --dry-run
+memory wizard
+```
+
+The global wizard stores machine-level settings such as the database URL, service URL, API token, and provider configuration. The project wizard writes repo-local `.mem/` and `.agents/` files so agents can discover the project slug, Memory Layer rules, and skills.
+
+## `memory init`
+
+Use `init` when you want a scriptable project bootstrap instead of the interactive wizard.
+
+```bash
+memory init --project my-project --dry-run
+memory init --project my-project
+```
+
+Prefer `wizard` for humans and `init` for repeatable repository setup. Both should be reviewed before committing generated files.
+
+## `memory upgrade`
+
+Use `upgrade` after installing a newer Memory Layer version, especially when `.agents/` skills or generated instructions changed.
+
+```bash
+memory upgrade --dry-run
+memory upgrade
+```
+
+Review generated diffs before committing. This command is expected to touch repo-local integration files, not the PostgreSQL database.
+
+## `memory completion`
+
+Generate shell completion for interactive use.
+
+```bash
+memory completion bash
+memory completion zsh
+memory completion fish
+```
+
+Install the generated script according to your shell’s completion path.
+
+## `memory dev`
+
+The dev command is for contributors running Memory Layer from source. Use it to inspect or scaffold the dev-profile overlay instead of editing installed-user config.
+
+```bash
+memory dev --help
+MEMORY_LAYER_PROFILE=dev cargo run --bin memory -- doctor
+```
+
+The dev profile keeps source-tree experimentation separate from the packaged service where possible.
