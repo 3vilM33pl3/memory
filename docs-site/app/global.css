@@ -69,6 +69,40 @@ body {
   font-size: 0.8125rem;
 }
 
+.memory-screenshot-mosaic .memory-screenshot-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  border: 0;
+  border-radius: 0;
+  background: rgb(0 0 0 / 86%);
+  cursor: zoom-out;
+}
+
+.memory-screenshot-mosaic .memory-screenshot-lightbox:target {
+  display: flex;
+}
+
+.memory-screenshot-mosaic .memory-screenshot-lightbox img {
+  width: auto;
+  max-width: min(96vw, 1600px);
+  max-height: 90vh;
+  aspect-ratio: auto;
+  object-fit: contain;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 0.5rem;
+  box-shadow: 0 2rem 5rem rgb(0 0 0 / 45%);
+  transform: none;
+}
+
+.memory-screenshot-mosaic .memory-screenshot-lightbox:hover img {
+  transform: none;
+}
+
 .memory-prompt-box [role='region'] {
   max-height: calc(11 * 1.5em + 1.75rem);
   overflow-y: auto;
