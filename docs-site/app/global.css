@@ -41,3 +41,15 @@ body {
 .memory-prompt-box .line {
   line-height: 1.5;
 }
+
+.memory-social-links {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+}
+
+@media (max-width: 767px) {
+  .memory-social-links {
+    top: 4rem;
+  }
+}
