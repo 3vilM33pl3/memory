@@ -8,9 +8,22 @@ body {
   min-height: 100vh;
 }
 
+.memory-site-logo {
+  display: block;
+  width: 2rem;
+  height: 2rem;
+  object-fit: contain;
+}
+
+.memory-card-group,
+.memory-card-group > a,
+.memory-card-group > div {
+  min-width: 0;
+}
+
 .memory-screenshot-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
   gap: 1rem;
 }
 
@@ -33,7 +46,7 @@ body {
 
 .memory-screenshot-mosaic {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
   gap: 0.75rem;
   margin: 1.5rem 0;
 }
@@ -87,6 +100,10 @@ body {
   display: flex;
 }
 
+.memory-screenshot-mosaic .memory-screenshot-lightbox-open {
+  display: flex;
+}
+
 .memory-screenshot-mosaic .memory-screenshot-lightbox img {
   width: auto;
   max-width: min(96vw, 1600px);
@@ -105,8 +122,19 @@ body {
 }
 
 .memory-prompt-box [role='region'] {
+  max-width: 100%;
   max-height: calc(11 * 1.5em + 1.75rem);
+  min-width: 0;
+  overflow-x: auto;
   overflow-y: auto;
+}
+
+.memory-prompt-box,
+.memory-prompt-box pre,
+.memory-prompt-box pre code,
+.memory-prompt-box .line {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .memory-prompt-box pre,
@@ -115,14 +143,60 @@ body {
   line-height: 1.5;
 }
 
+.prose :where(pre, table, img):not(:where(.not-prose, .not-prose *)) {
+  max-width: 100%;
+}
+
 .memory-social-links {
   position: fixed;
   top: 1rem;
   right: 1rem;
 }
 
+.memory-social-link {
+  width: 2rem;
+  height: 2rem;
+}
+
+.memory-social-link svg {
+  width: 1rem;
+  height: 1rem;
+}
+
 @media (max-width: 767px) {
   .memory-social-links {
-    top: 4rem;
+    top: 0.625rem;
+    right: 5.75rem;
+    gap: 0.125rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .memory-social-link {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  .memory-social-link svg {
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+
+  .memory-card-group,
+  .memory-screenshot-grid,
+  .memory-screenshot-mosaic {
+    grid-template-columns: 1fr !important;
+  }
+
+  .memory-screenshot-mosaic .memory-screenshot-lightbox {
+    padding: 0.75rem;
+  }
+
+  .memory-screenshot-mosaic .memory-screenshot-lightbox img {
+    max-width: calc(100vw - 1.5rem);
+    max-height: calc(100dvh - 1.5rem);
   }
 }

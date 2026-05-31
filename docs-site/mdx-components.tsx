@@ -3,6 +3,7 @@ import defaultMdxComponents from 'fumadocs-ui/mdx';
 import type { MDXComponents } from 'mdx/types';
 
 import { Mermaid } from '@/components/mdx/mermaid';
+import { TuiScreenshotMosaic } from '@/components/tui-screenshot-mosaic';
 
 type CardProps = {
   title: string;
@@ -19,9 +20,9 @@ function CardGroup({
 }) {
   return (
     <div
-      className="not-prose my-6 grid gap-4"
+      className="memory-card-group not-prose my-6 grid gap-4"
       style={{
-        gridTemplateColumns: `repeat(auto-fit, minmax(${cols >= 3 ? '180px' : '240px'}, 1fr))`,
+        gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${cols >= 3 ? '180px' : '240px'}), 1fr))`,
       }}
     >
       {children}
@@ -80,47 +81,6 @@ function Warning({ children }: { children: React.ReactNode }) {
 
 function PromptBox({ children }: { children: React.ReactNode }) {
   return <div className="memory-prompt-box">{children}</div>;
-}
-
-const tuiScreenshots = [
-  ['Memories', 'memories-tab.png'],
-  ['Query', 'query-tab.png'],
-  ['Review', 'review-tab.png'],
-  ['Agents', 'agents-tab.png'],
-  ['Watchers', 'watchers-tab.png'],
-  ['Activity', 'activity-tab.png'],
-  ['Resume', 'resume-tab.png'],
-  ['Embeddings', 'embeddings-tab.png'],
-  ['Errors', 'errors-tab.png'],
-  ['Project', 'project-tab.png'],
-] as const;
-
-function TuiScreenshotMosaic() {
-  return (
-    <div className="memory-screenshot-mosaic">
-      {tuiScreenshots.map(([label, file]) => {
-        const src = `/images/tui/${file}`;
-        const slug = label.toLowerCase();
-
-        return (
-          <figure key={file}>
-            <a href={`#tui-screenshot-${slug}`}>
-              <img src={src} alt={`Memory Layer TUI ${label} tab`} />
-            </a>
-            <figcaption>{label}</figcaption>
-            <a
-              aria-label={`Return to TUI page from ${label} screenshot`}
-              className="memory-screenshot-lightbox"
-              href="/docs/tui"
-              id={`tui-screenshot-${slug}`}
-            >
-              <img src={src} alt={`Large Memory Layer TUI ${label} tab screenshot`} />
-            </a>
-          </figure>
-        );
-      })}
-    </div>
-  );
 }
 
 export function getMDXComponents(components?: MDXComponents) {

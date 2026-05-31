@@ -75,7 +75,7 @@ export function HeaderSocialLinks() {
         <a
           key={link.href}
           aria-label={link.label}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring"
+          className="memory-social-link inline-flex items-center justify-center rounded-md transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring"
           href={link.href}
           rel="noreferrer noopener"
           target="_blank"
@@ -95,7 +95,7 @@ export function baseOptions(): BaseLayoutProps {
         <img
           src="/images/memory-layer-logo.png"
           alt="Memory Layer"
-          className="h-8 w-8 object-contain"
+          className="memory-site-logo"
         />
       ),
     },
