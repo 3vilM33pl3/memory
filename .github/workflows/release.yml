@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build And Publish Release
+  linux-release:
+    name: Build And Publish Linux Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,9 +73,10 @@ jobs:
             fi
             echo
             echo
-            echo "### Package"
+            echo "### Packages"
             echo "- Debian package: \`memory-layer_${version}_amd64.deb\`"
-            echo "- SHA256: \`$(cut -d' ' -f1 "target/debian/memory-layer_${version}_amd64.deb.sha256")\`"
+            echo "- Windows ZIP: \`memory-layer-${version}-windows-x86_64.zip\`"
+            echo "- Windows MSI: \`memory-layer-${version}-windows-x86_64.msi\`"
           } > release-notes.md
 
       - name: Publish GitHub Release
@@ -90,3 +91,39 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Memory Layer ${GITHUB_REF_NAME}" \
             --notes-file release-notes.md
+
+  windows-release:
+    name: Build And Upload Windows Release
+    runs-on: windows-latest
+    needs: linux-release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install WiX
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.0.5
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Build Windows artifacts
+        shell: pwsh
+        run: ./packaging/windows/build-windows.ps1
+
+      - name: Upload Windows artifacts to GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload $env:GITHUB_REF_NAME target/windows/dist/* --clobber
