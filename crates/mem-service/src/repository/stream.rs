@@ -2,25 +2,30 @@ use crate::prelude::*;
 use crate::*;
 
 pub(crate) struct ProtoServers {
+    #[cfg(unix)]
     pub(crate) unix_listener: UnixListener,
     pub(crate) tcp_listener: TcpListener,
 }
 
 pub(crate) async fn start_proto_servers(state: AppState) -> Result<ProtoServers> {
-    let unix_path = PathBuf::from(&state.config.service.capnp_unix_socket);
-    if let Some(parent) = unix_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("create {}", parent.display()))?;
-    }
-    if unix_path.exists() {
-        tokio::fs::remove_file(&unix_path)
-            .await
-            .with_context(|| format!("remove stale socket {}", unix_path.display()))?;
-    }
+    #[cfg(unix)]
+    let unix_listener = {
+        let unix_path = PathBuf::from(&state.config.service.capnp_unix_socket);
+        if let Some(parent) = unix_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("create {}", parent.display()))?;
+        }
+        if unix_path.exists() {
+            tokio::fs::remove_file(&unix_path)
+                .await
+                .with_context(|| format!("remove stale socket {}", unix_path.display()))?;
+        }
 
-    let unix_listener = UnixListener::bind(&unix_path)
-        .with_context(|| format!("bind unix socket {}", unix_path.display()))?;
+        UnixListener::bind(&unix_path)
+            .with_context(|| format!("bind unix socket {}", unix_path.display()))?
+    };
+
     let tcp_addr: SocketAddr = state
         .config
         .service
@@ -32,11 +37,13 @@ pub(crate) async fn start_proto_servers(state: AppState) -> Result<ProtoServers>
         .context("bind capnp tcp addr")?;
 
     Ok(ProtoServers {
+        #[cfg(unix)]
         unix_listener,
         tcp_listener,
     })
 }
 
+#[cfg(unix)]
 pub(crate) async fn run_proto_unix(listener: UnixListener, state: AppState) -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;

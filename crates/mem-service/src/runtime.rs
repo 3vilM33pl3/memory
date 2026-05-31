@@ -35,6 +35,7 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
         let mut proto_tasks = Vec::new();
         if state.is_primary() {
             let proto_servers = start_proto_servers(state.clone()).await?;
+            #[cfg(unix)]
             proto_tasks.push(tokio::spawn(run_proto_unix(
                 proto_servers.unix_listener,
                 state.clone(),

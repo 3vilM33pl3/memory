@@ -80,8 +80,10 @@ pub(crate) use serde::{Deserialize as SerdeDeserialize, Serialize};
 pub(crate) use sha2::{Digest, Sha256};
 pub(crate) use socket2::{Domain, Protocol, Socket, Type};
 pub(crate) use sqlx::{PgPool, Row, postgres::PgPoolOptions};
+#[cfg(unix)]
+pub(crate) use tokio::net::UnixListener;
 pub(crate) use tokio::{
-    net::{TcpListener, UdpSocket, UnixListener},
+    net::{TcpListener, UdpSocket},
     sync::{broadcast, oneshot},
     task::JoinHandle,
     time::Duration,

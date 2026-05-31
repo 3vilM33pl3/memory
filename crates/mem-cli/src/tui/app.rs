@@ -20,10 +20,9 @@ use mem_api::{
     read_capnp_text_frame, write_capnp_text_frame,
 };
 use ratatui::{layout::Rect, widgets::TableState};
-use tokio::{
-    net::{TcpStream, UnixStream},
-    sync::mpsc,
-};
+#[cfg(unix)]
+use tokio::net::UnixStream;
+use tokio::{net::TcpStream, sync::mpsc};
 
 use crate::{
     commands::{
@@ -2819,6 +2818,7 @@ pub(super) struct StreamSession {
 }
 
 pub(super) enum StreamTransport {
+    #[cfg(unix)]
     Unix(UnixStream),
     Tcp(TcpStream),
 }
@@ -2830,6 +2830,7 @@ impl tokio::io::AsyncRead for StreamTransport {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         match self.get_mut() {
+            #[cfg(unix)]
             StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
             StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
         }
@@ -2843,6 +2844,7 @@ impl tokio::io::AsyncWrite for StreamTransport {
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
         match self.get_mut() {
+            #[cfg(unix)]
             StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
             StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
         }
@@ -2853,6 +2855,7 @@ impl tokio::io::AsyncWrite for StreamTransport {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         match self.get_mut() {
+            #[cfg(unix)]
             StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_flush(cx),
             StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_flush(cx),
         }
@@ -2863,6 +2866,7 @@ impl tokio::io::AsyncWrite for StreamTransport {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         match self.get_mut() {
+            #[cfg(unix)]
             StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
             StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
         }
@@ -2871,16 +2875,22 @@ impl tokio::io::AsyncWrite for StreamTransport {
 
 impl StreamSession {
     async fn connect(api: &ApiClient) -> Result<Self> {
-        let transport = if std::path::Path::new(&api.config.service.capnp_unix_socket).exists() {
-            match UnixStream::connect(&api.config.service.capnp_unix_socket).await {
-                Ok(stream) => StreamTransport::Unix(stream),
-                Err(_) => StreamTransport::Tcp(
-                    TcpStream::connect(&api.config.service.capnp_tcp_addr).await?,
-                ),
+        #[cfg(unix)]
+        let transport = {
+            if std::path::Path::new(&api.config.service.capnp_unix_socket).exists() {
+                match UnixStream::connect(&api.config.service.capnp_unix_socket).await {
+                    Ok(stream) => StreamTransport::Unix(stream),
+                    Err(_) => StreamTransport::Tcp(
+                        TcpStream::connect(&api.config.service.capnp_tcp_addr).await?,
+                    ),
+                }
+            } else {
+                StreamTransport::Tcp(TcpStream::connect(&api.config.service.capnp_tcp_addr).await?)
             }
-        } else {
-            StreamTransport::Tcp(TcpStream::connect(&api.config.service.capnp_tcp_addr).await?)
         };
+        #[cfg(not(unix))]
+        let transport =
+            StreamTransport::Tcp(TcpStream::connect(&api.config.service.capnp_tcp_addr).await?);
         let (mut reader, writer) = tokio::io::split(transport);
         let (tx, rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
