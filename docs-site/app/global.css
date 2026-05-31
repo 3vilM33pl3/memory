@@ -30,3 +30,14 @@ body {
   color: var(--color-fd-muted-foreground);
   font-size: 0.875rem;
 }
+
+.memory-prompt-box [role='region'] {
+  max-height: calc(11 * 1.5em + 1.75rem);
+  overflow-y: auto;
+}
+
+.memory-prompt-box pre,
+.memory-prompt-box pre code,
+.memory-prompt-box .line {
+  line-height: 1.5;
+}

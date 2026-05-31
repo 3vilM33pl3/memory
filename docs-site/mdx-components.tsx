@@ -78,12 +78,17 @@ function Warning({ children }: { children: React.ReactNode }) {
   );
 }
 
+function PromptBox({ children }: { children: React.ReactNode }) {
+  return <div className="memory-prompt-box">{children}</div>;
+}
+
 export function getMDXComponents(components?: MDXComponents) {
   return {
     ...defaultMdxComponents,
     Card,
     CardGroup,
     Mermaid,
+    PromptBox,
     Step,
     Steps,
     Warning,
