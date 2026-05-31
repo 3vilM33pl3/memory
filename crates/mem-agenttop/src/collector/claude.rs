@@ -568,7 +568,10 @@ fn file_identity(path: &Path) -> (u64, u64) {
     fs::metadata(path)
         .ok()
         .map(|m| {
+            #[cfg(unix)]
             let ino = m.ino();
+            #[cfg(not(unix))]
+            let ino = 0;
             let mtime_ns = m
                 .modified()
                 .ok()

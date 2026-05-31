@@ -484,6 +484,11 @@ fn read_proc_cwd(pid: u32) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn read_proc_cwd(_pid: u32) -> Option<String> {
+    None
+}
+
 #[cfg(target_os = "linux")]
 fn read_proc_started_at(pid: u32) -> Option<(u64, u64)> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -527,6 +532,11 @@ fn read_proc_started_at(pid: u32) -> Option<(u64, u64)> {
         .single()?
         .timestamp_millis() as u64;
     Some((started_at, 0))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn read_proc_started_at(_pid: u32) -> Option<(u64, u64)> {
+    None
 }
 
 impl super::AgentCollector for CodexCollector {
