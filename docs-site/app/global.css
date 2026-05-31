@@ -31,6 +31,44 @@ body {
   font-size: 0.875rem;
 }
 
+.memory-screenshot-mosaic {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin: 1.5rem 0;
+}
+
+.memory-screenshot-mosaic figure {
+  margin: 0;
+}
+
+.memory-screenshot-mosaic a {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.5rem;
+  background: var(--color-fd-muted);
+}
+
+.memory-screenshot-mosaic img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  object-position: top left;
+  transition: transform 120ms ease;
+}
+
+.memory-screenshot-mosaic a:hover img {
+  transform: scale(1.02);
+}
+
+.memory-screenshot-mosaic figcaption {
+  margin-top: 0.3rem;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8125rem;
+}
+
 .memory-prompt-box [role='region'] {
   max-height: calc(11 * 1.5em + 1.75rem);
   overflow-y: auto;
