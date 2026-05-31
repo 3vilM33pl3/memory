@@ -47,16 +47,19 @@ function DiscordIcon() {
 const socialLinks = [
   {
     label: 'GitHub repository',
+    text: 'GitHub',
     href: 'https://github.com/3vilM33pl3/memory',
     icon: <GitHubIcon />,
   },
   {
     label: 'GitHub releases',
+    text: 'Releases',
     href: 'https://github.com/3vilM33pl3/memory/releases',
     icon: <ReleaseIcon />,
   },
   {
     label: 'Discord',
+    text: 'Discord',
     href: 'https://discord.gg/7ynrBfXSfU',
     icon: <DiscordIcon />,
   },
@@ -96,5 +99,12 @@ export function baseOptions(): BaseLayoutProps {
         />
       ),
     },
+    links: socialLinks.map((link) => ({
+      type: 'main',
+      text: link.text,
+      url: link.href,
+      external: true,
+      icon: link.icon,
+    })),
   };
 }
