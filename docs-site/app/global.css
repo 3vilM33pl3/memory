@@ -79,7 +79,7 @@ body {
   padding: 2rem;
   border: 0;
   border-radius: 0;
-  background: rgb(0 0 0 / 86%);
+  background: #050505;
   cursor: zoom-out;
 }
 
@@ -95,6 +95,7 @@ body {
   object-fit: contain;
   border: 1px solid rgb(255 255 255 / 18%);
   border-radius: 0.5rem;
+  background: #101827;
   box-shadow: 0 2rem 5rem rgb(0 0 0 / 45%);
   transform: none;
 }
