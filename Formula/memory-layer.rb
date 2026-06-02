@@ -16,6 +16,7 @@ class MemoryLayer < Formula
 
     bin.install "target/release/memory"
     bin.install_symlink "memory" => "mem-cli"
+    bin.install_symlink "memory" => "memory-layer"
     (bash_completion/"memory").write Utils.safe_popen_read(bin/"memory", "completion", "bash")
     (zsh_completion/"_memory").write Utils.safe_popen_read(bin/"memory", "completion", "zsh")
     (fish_completion/"memory.fish").write Utils.safe_popen_read(bin/"memory", "completion", "fish")
@@ -32,6 +33,11 @@ class MemoryLayer < Formula
 
   def caveats
     <<~EOS
+      Commands:
+        memory
+        mem-cli
+        memory-layer
+
       Shared config:
         ~/Library/Application Support/memory-layer/memory-layer.toml
 
@@ -56,6 +62,7 @@ class MemoryLayer < Formula
   test do
     assert_match "memory", shell_output("#{bin}/memory --help")
     assert_predicate bin/"mem-cli", :exist?
+    assert_predicate bin/"memory-layer", :exist?
     assert_predicate pkgshare/"skill-template", :directory?
     assert_predicate pkgshare/"skill-template/memory-layer/SKILL.md", :exist?
     assert_predicate pkgshare/"skill-template/memory-query-resume/SKILL.md", :exist?
