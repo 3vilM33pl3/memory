@@ -1330,18 +1330,22 @@ mod tests {
 
         #[cfg(target_os = "macos")]
         {
-            assert!(index_path.starts_with(
-                home.join("Library")
-                    .join("Caches")
-                    .join("memory-layer")
-                    .join("projects")
-            ));
-            assert!(report_dir.starts_with(
-                home.join("Library")
-                    .join("Application Support")
-                    .join("memory-layer")
-                    .join("projects")
-            ));
+            assert!(
+                index_path.starts_with(
+                    home.join("Library")
+                        .join("Caches")
+                        .join("memory-layer")
+                        .join("projects")
+                )
+            );
+            assert!(
+                report_dir.starts_with(
+                    home.join("Library")
+                        .join("Application Support")
+                        .join("memory-layer")
+                        .join("projects")
+                )
+            );
         }
 
         #[cfg(not(target_os = "macos"))]

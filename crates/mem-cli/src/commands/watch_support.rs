@@ -1,5 +1,6 @@
+#[cfg(target_os = "macos")]
+use std::collections::BTreeMap;
 use std::{
-    collections::BTreeMap,
     env, fs,
     io::{self, Write},
     path::{Path, PathBuf},

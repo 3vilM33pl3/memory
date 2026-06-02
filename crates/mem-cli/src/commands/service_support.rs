@@ -1,3 +1,5 @@
+#[cfg(not(target_os = "macos"))]
+use std::process::Command as ProcessCommand;
 use std::{
     env, fs,
     io::{self, IsTerminal, Write},
@@ -13,15 +15,15 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 
+#[cfg(not(target_os = "macos"))]
+use crate::commands::runtime::{packaged_service_available, run_systemctl_system};
 #[cfg(target_os = "macos")]
 use crate::commands::watch_support::{
-    backend_launch_agent_label, backend_launch_agent_path, bootstrap_launch_agent,
-    bootout_launch_agent, launch_agent_status, launchctl_domain_target,
+    backend_launch_agent_label, backend_launch_agent_path, bootout_launch_agent,
+    bootstrap_launch_agent, launch_agent_status, launchctl_domain_target,
     render_backend_launch_agent, run_launchctl, user_memory_layer_log_dir,
     watch_manager_launch_agent_label, write_launch_agent,
 };
-#[cfg(not(target_os = "macos"))]
-use crate::commands::runtime::{packaged_service_available, run_systemctl_system};
 #[cfg(not(target_os = "macos"))]
 use crate::commands::watch_support::{run_systemctl_user, run_systemctl_user_for};
 use crate::commands::{

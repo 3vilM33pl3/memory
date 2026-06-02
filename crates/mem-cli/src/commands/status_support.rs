@@ -35,9 +35,7 @@ use crate::commands::{
         project_skill_inventory, render_agent_project_config, render_project_metadata,
         render_repo_config, sync_memory_skill_bundle, upgrade_project_skills,
     },
-    watch_support::{
-        watch_manager_service_status, watch_service_status, yes_no,
-    },
+    watch_support::{watch_manager_service_status, watch_service_status, yes_no},
 };
 use crate::writer_identity::resolve_writer_identity;
 
