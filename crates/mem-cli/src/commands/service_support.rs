@@ -2,7 +2,6 @@ use std::{
     env, fs,
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
-    process::Command as ProcessCommand,
     time::Duration,
 };
 
@@ -15,11 +14,20 @@ use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 
 #[cfg(target_os = "macos")]
-use crate::commands::watch_support::write_launch_agent;
+use crate::commands::watch_support::{
+    backend_launch_agent_label, backend_launch_agent_path, bootstrap_launch_agent,
+    bootout_launch_agent, launch_agent_status, launchctl_domain_target,
+    render_backend_launch_agent, run_launchctl, user_memory_layer_log_dir,
+    watch_manager_launch_agent_label, write_launch_agent,
+};
+#[cfg(not(target_os = "macos"))]
+use crate::commands::runtime::{packaged_service_available, run_systemctl_system};
+#[cfg(not(target_os = "macos"))]
+use crate::commands::watch_support::{run_systemctl_user, run_systemctl_user_for};
 use crate::commands::{
     output::service_url,
-    runtime::{default_global_config_path, packaged_service_available, run_systemctl_system},
-    watch_support::{memory_binary_path, run_systemctl_user, run_systemctl_user_for, yes_no},
+    runtime::default_global_config_path,
+    watch_support::{memory_binary_path, yes_no},
 };
 
 pub(crate) async fn enable_backend_service(config_path: &Path) -> Result<String> {

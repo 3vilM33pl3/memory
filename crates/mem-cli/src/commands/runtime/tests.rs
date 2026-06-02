@@ -26,8 +26,8 @@ use crate::commands::{
     },
     output::{build_graph_activity_request, write_headers},
     service_support::{
-        TuiRestartMarker, newest_tui_restart_notice, parse_systemd_unit_names,
-        restart_marker_requires_restart, set_cluster_enabled_in_shared_config,
+        TuiRestartMarker, newest_tui_restart_notice, restart_marker_requires_restart,
+        set_cluster_enabled_in_shared_config,
     },
     skill_support::{
         MEMORY_SKILL_NAMES, SkillBundleStatus, SkillUpgradeAction, SkillVersionStatus,
@@ -59,15 +59,21 @@ use mem_api::AppConfig;
 use chrono::Utc;
 
 #[cfg(target_os = "macos")]
-use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
+use mem_agenttop::LightweightAgentSession;
 
 #[cfg(target_os = "macos")]
-use super::{
-    backend_launch_agent_label, default_global_config_path, managed_watch_launch_agent_label,
-    render_backend_launch_agent, render_managed_watch_launch_agent, render_watch_launch_agent,
+use super::default_global_config_path;
+
+#[cfg(target_os = "macos")]
+use crate::commands::watch_support::{
+    backend_launch_agent_label, managed_watch_launch_agent_label, render_backend_launch_agent,
+    render_managed_watch_launch_agent, render_watch_launch_agent,
     render_watch_manager_launch_agent, sanitize_service_fragment, watch_launch_agent_label,
     watch_manager_launch_agent_label,
 };
+
+#[cfg(not(target_os = "macos"))]
+use crate::commands::service_support::parse_systemd_unit_names;
 
 #[cfg(not(target_os = "macos"))]
 use crate::commands::watch_support::{
@@ -2032,7 +2038,8 @@ fn backend_launch_agent_uses_global_config_path() {
 
     assert!(plist.contains("<string>com.memory-layer.mem-service</string>"));
     assert!(plist.contains("<string>/bin/zsh</string>"));
-    assert!(plist.contains(&default_global_config_path().display().to_string()));
+    assert!(plist.contains("--config"));
+    assert!(plist.contains("memory-layer.toml"));
     assert!(plist.contains("mem-service.stdout.log"));
 }
 

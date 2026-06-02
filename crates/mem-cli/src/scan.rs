@@ -1303,19 +1303,23 @@ mod tests {
         let _guard = env_lock().lock().unwrap();
         let temp_dir = unique_temp_dir("mem-scan-paths");
         let repo_root = temp_dir.join("repo");
+        let home = temp_dir.join("home");
         let config_home = temp_dir.join("config");
         let state_home = temp_dir.join("state");
         let cache_home = temp_dir.join("cache");
+        let old_home = std::env::var("HOME").ok();
         let old_config_home = std::env::var("XDG_CONFIG_HOME").ok();
         let old_state_home = std::env::var("XDG_STATE_HOME").ok();
         let old_cache_home = std::env::var("XDG_CACHE_HOME").ok();
         fs::create_dir_all(repo_root.join(".mem")).unwrap();
+        fs::create_dir_all(&home).unwrap();
         fs::write(
             repo_root.join(".mem").join("project.toml"),
             "slug = \"demo\"\n",
         )
         .unwrap();
         unsafe {
+            std::env::set_var("HOME", &home);
             std::env::set_var("XDG_CONFIG_HOME", &config_home);
             std::env::set_var("XDG_STATE_HOME", &state_home);
             std::env::set_var("XDG_CACHE_HOME", &cache_home);
@@ -1324,11 +1328,31 @@ mod tests {
         let index_path = repo_index_path(&repo_root, "demo");
         let report_dir = scan_report_dir(&repo_root);
 
-        assert!(index_path.starts_with(cache_home.join("memory-layer").join("projects")));
-        assert!(report_dir.starts_with(state_home.join("memory-layer").join("projects")));
+        #[cfg(target_os = "macos")]
+        {
+            assert!(index_path.starts_with(
+                home.join("Library")
+                    .join("Caches")
+                    .join("memory-layer")
+                    .join("projects")
+            ));
+            assert!(report_dir.starts_with(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("memory-layer")
+                    .join("projects")
+            ));
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert!(index_path.starts_with(cache_home.join("memory-layer").join("projects")));
+            assert!(report_dir.starts_with(state_home.join("memory-layer").join("projects")));
+        }
         assert!(!index_path.starts_with(repo_root.join(".mem")));
         assert!(!report_dir.starts_with(repo_root.join(".mem")));
 
+        restore_env_var("HOME", old_home);
         restore_env_var("XDG_CONFIG_HOME", old_config_home);
         restore_env_var("XDG_STATE_HOME", old_state_home);
         restore_env_var("XDG_CACHE_HOME", old_cache_home);

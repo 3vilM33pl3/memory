@@ -36,11 +36,20 @@ use crate::commands::{
         render_repo_config, sync_memory_skill_bundle, upgrade_project_skills,
     },
     watch_support::{
-        WATCH_MANAGER_UNIT_NAME, run_systemctl_user, user_systemd_unit_dir,
         watch_manager_service_status, watch_service_status, yes_no,
     },
 };
 use crate::writer_identity::resolve_writer_identity;
+
+#[cfg(target_os = "macos")]
+use crate::commands::watch_support::{
+    launch_agent_status, watch_manager_launch_agent_label, watch_manager_launch_agent_path,
+};
+
+#[cfg(not(target_os = "macos"))]
+use crate::commands::watch_support::{
+    WATCH_MANAGER_UNIT_NAME, run_systemctl_user, user_systemd_unit_dir,
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct DoctorReport {

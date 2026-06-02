@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     env, fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -1418,7 +1419,7 @@ pub(crate) fn render_watch_launch_agent(repo_root: &Path, project: &str) -> Resu
 pub(crate) fn render_managed_watch_launch_agent(
     repo_root: &Path,
     project: &str,
-    session: &AgentSession,
+    session: &LightweightAgentSession,
     started_at: &str,
     config_path: Option<&Path>,
 ) -> Result<String> {

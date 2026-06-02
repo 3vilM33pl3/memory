@@ -1,8 +1,10 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    process::Command as ProcessCommand,
 };
+
+#[cfg(not(target_os = "macos"))]
+use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
