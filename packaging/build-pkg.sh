@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: ./packaging/build-pkg.sh [--sign "Developer ID Installer: ..."]
 #
 # The resulting .pkg installs:
-#   /usr/local/bin/memory          (+ mem-cli symlink)
+#   /usr/local/bin/memory          (+ mem-cli and memory-layer symlinks)
 #   /usr/local/share/memory-layer/ (web UI, skill templates, example config)
 #   /usr/local/share/*             (bash, zsh, and fish completion scripts)
 
@@ -49,6 +49,7 @@ npm --prefix "$ROOT_DIR/web" run build
 # --- Stage payload ----------------------------------------------------------
 install -m 0755 "$ROOT_DIR/target/release/memory" "$PAYLOAD/usr/local/bin/memory"
 ln -sf memory "$PAYLOAD/usr/local/bin/mem-cli"
+ln -sf memory "$PAYLOAD/usr/local/bin/memory-layer"
 "$PAYLOAD/usr/local/bin/memory" completion bash > "$PAYLOAD/usr/local/share/bash-completion/completions/memory"
 "$PAYLOAD/usr/local/bin/memory" completion zsh > "$PAYLOAD/usr/local/share/zsh/site-functions/_memory"
 "$PAYLOAD/usr/local/bin/memory" completion fish > "$PAYLOAD/usr/local/share/fish/vendor_completions.d/memory.fish"
@@ -63,9 +64,21 @@ cp -R "$ROOT_DIR/web/dist/." "$PAYLOAD/usr/local/share/memory-layer/web/"
 # --- Post-install script ----------------------------------------------------
 cat > "$SCRIPTS/postinstall" << 'POSTINSTALL'
 #!/usr/bin/env bash
-# Ensure the shared Application Support directory exists for the installing user.
-APP_SUPPORT="$HOME/Library/Application Support/memory-layer"
-mkdir -p "$APP_SUPPORT/logs"
+# Ensure the shared Application Support directory exists for the logged-in user,
+# not root, because Installer postinstall runs as root.
+CONSOLE_USER="$(stat -f %Su /dev/console 2>/dev/null || true)"
+if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" ]]; then
+  CONSOLE_USER="${SUDO_USER:-}"
+fi
+if [[ -n "$CONSOLE_USER" ]]; then
+  CONSOLE_HOME="$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+fi
+if [[ -z "${CONSOLE_HOME:-}" ]]; then
+  CONSOLE_HOME="/var/root"
+fi
+
+APP_SUPPORT="$CONSOLE_HOME/Library/Application Support/memory-layer"
+mkdir -p "$APP_SUPPORT/log" "$APP_SUPPORT/run"
 
 SHARE="/usr/local/share/memory-layer"
 if [[ ! -f "$APP_SUPPORT/memory-layer.toml" && -f "$SHARE/memory-layer.toml.example" ]]; then
@@ -73,8 +86,22 @@ if [[ ! -f "$APP_SUPPORT/memory-layer.toml" && -f "$SHARE/memory-layer.toml.exam
   echo "Installed example config to $APP_SUPPORT/memory-layer.toml"
 fi
 
+if [[ ! -f "$APP_SUPPORT/memory-layer.env" ]]; then
+  cat > "$APP_SUPPORT/memory-layer.env" <<'EOF'
+# Shared secrets and overrides for Memory Layer CLI and background services.
+# The service API token is provisioned automatically during setup.
+# Example:
+# OPENAI_API_KEY=replace-me
+EOF
+  chmod 600 "$APP_SUPPORT/memory-layer.env"
+  echo "Installed shared environment file at $APP_SUPPORT/memory-layer.env"
+fi
+
+if [[ -n "$CONSOLE_USER" && "$CONSOLE_USER" != "root" ]]; then
+  chown -R "$CONSOLE_USER":staff "$APP_SUPPORT" || true
+fi
+
 if command -v /usr/local/bin/memory >/dev/null 2>&1; then
-  CONSOLE_USER="$(stat -f %Su /dev/console 2>/dev/null || true)"
   if [[ -n "$CONSOLE_USER" && "$CONSOLE_USER" != "root" ]]; then
     CONSOLE_UID="$(id -u "$CONSOLE_USER" 2>/dev/null || true)"
     if [[ -n "$CONSOLE_UID" ]]; then
