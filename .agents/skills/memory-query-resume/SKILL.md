@@ -1,6 +1,6 @@
 ---
 name: memory-query-resume
-version: 0.9.1
+version: 0.9.3
 description: Query curated project memory before answering repo-specific questions, and use resume to get back into flow after interruptions
 ---
 
