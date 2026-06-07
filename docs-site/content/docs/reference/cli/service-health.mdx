@@ -22,6 +22,7 @@ The service hosts the HTTP API, web UI, and optional Streamable HTTP MCP route.
 
 ```bash
 memory service run
+memory service enable --dry-run
 memory service status
 memory service enable
 memory service disable
@@ -52,6 +53,7 @@ Doctor performs a deeper environment inspection.
 memory doctor
 memory doctor --project memory
 memory doctor --json
+memory doctor --fix
 ```
 
 Run it after config edits, package upgrades, database migrations, token changes, or provider changes.
@@ -73,6 +75,7 @@ Automation commands inspect background queues and flush queued work when support
 
 ```bash
 memory automation --help
+memory automation status --project memory
 ```
 
 Treat automation flushes as write operations. Capture logs before changing queue state when diagnosing failures.

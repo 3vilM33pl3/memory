@@ -25,8 +25,10 @@ Use this after meaningful completed work.
 ```bash
 memory remember --project memory \
   --title "Expanded docs-site CLI reference" \
+  --type documentation \
   --summary "Grouped the CLI docs into setup, service, query, capture, repository, and integration pages." \
-  --note "Updated docs-site/content/docs/reference/cli/** and verified the Next.js docs build."
+  --note "Updated docs-site/content/docs/reference/cli and verified the Next.js docs build." \
+  --file-changed docs-site/content/docs/reference/cli/index.mdx
 ```
 
 Remember should store durable, human-readable text with evidence. It is not a substitute for committing code or writing user docs.
@@ -36,8 +38,9 @@ Remember should store durable, human-readable text with evidence. It is not a su
 Capture stores raw context; curate turns raw captures into canonical memories.
 
 ```bash
-memory capture --project memory --file task-context.json
+memory capture task --file task-context.json
 memory curate --project memory
+memory curate --project memory --batch-size 10 --dry-run
 ```
 
 Use this split when another tool produces structured capture payloads or when curation needs to be retried separately.
@@ -48,7 +51,8 @@ Scan asks the repository what durable memories can be inferred from code, docs, 
 
 ```bash
 memory scan --project memory --dry-run
-memory scan --project memory
+memory scan --project memory --rebuild-index
+memory scan --project memory --dry-run --json
 ```
 
 Scan is useful for onboarding an existing repository, but it is not a replacement for human review. Prefer smaller scans when investigating a subsystem.
@@ -58,9 +62,10 @@ Scan is useful for onboarding an existing repository, but it is not a replacemen
 Proposals protect existing canonical memories from automatic replacement.
 
 ```bash
-memory proposals --project memory
-memory proposals approve --project memory --proposal-id <uuid>
-memory proposals reject  --project memory --proposal-id <uuid>
+memory proposals list --project memory --json
+memory proposals show --project memory --id <uuid>
+memory proposals approve --project memory --id <uuid> --json
+memory proposals reject  --project memory --id <uuid> --json
 ```
 
 Approve only when the replacement is better supported and more current. Reject when the old memory remains correct or the proposal lacks enough evidence.
@@ -71,7 +76,8 @@ Archive hides low-signal memories without deleting their audit trail. Prune remo
 
 ```bash
 memory archive --project memory --dry-run
-memory prune-history --project memory --dry-run
+memory archive --project memory --max-confidence 0.2 --dry-run
+memory prune-history --project memory --tombstone-after 90d --superseded-after 180d --dry-run
 ```
 
 Run dry-runs first and keep backups before aggressive cleanup.
@@ -82,8 +88,9 @@ Checkpoint tracks plan execution and interruption recovery.
 
 ```bash
 memory checkpoint start-execution --project memory --plan-file approved-plan.md
-memory checkpoint status --project memory
+memory checkpoint show --project memory
 memory checkpoint finish-execution --project memory
+memory checkpoint finish-execution --project memory --plan-file approved-plan.md --json
 ```
 
 Use it for plan-backed work so future agents can see what started, what remains, and whether the implementation was verified.

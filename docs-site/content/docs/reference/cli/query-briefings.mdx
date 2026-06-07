@@ -26,6 +26,7 @@ memory query --project memory --question "What changed in the docs site?" --json
 ```
 
 Useful options vary by version, so check `memory query --help`; common knobs include result limits, confidence thresholds, output modes, graph-aware retrieval, and LLM-backed answer synthesis.
+Current common filters include `--type`, `--tag`, `--limit`, `--min-confidence`, `--include-stale`, `--history`, and `--json`.
 
 Good questions name the project object, subsystem, file, workflow, or decision you care about. Avoid vague prompts like “what do you know?” when you need actionable context.
 
@@ -67,7 +68,8 @@ Use activity output to verify whether captures, curation, proposals, embedding j
 History shows how canonical memories evolved.
 
 ```bash
-memory history --memory-id <uuid>
+memory history <memory-id>
+memory history <memory-id> --json
 ```
 
 Use it when a remembered fact seems stale, replaced, or tombstoned.
@@ -79,6 +81,7 @@ Verify provenance before relying on a memory that cites files or directories.
 ```bash
 memory verify-provenance --project memory
 memory verify-provenance --project memory --json
+memory verify-provenance --project memory --dry-run --json
 ```
 
 This does not prove a memory is semantically correct, but it catches missing, moved, or changed source evidence.

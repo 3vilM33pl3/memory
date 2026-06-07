@@ -5,23 +5,95 @@ description: "Understand machine-level configuration and secrets handling."
 
 # Global config
 
-Understand machine-level configuration and secrets handling.
+Global config is still needed for the installed or packaged Memory Layer stack. It holds machine-level defaults and secrets-adjacent settings shared by many projects: backend bind address, database URL, service token, LLM and embedding providers, MCP HTTP settings, retention, provenance, and automation defaults.
 
-## Source of truth
+Dev-profile cargo runs are different: the dev stack ignores global config and uses a user-local project config plus `config.dev.toml`. See [Project config](/docs/reference/config-project) for that split; the deeper source-tree reference is `docs/developer/dev-stack.md`.
 
-Use the current binary and repository files as the source of truth. Reference docs should not invent flags or paths.
+## Where it lives
 
-```bash
-memory --help
-memory <command> --help
+| Install mode | Config | Env file |
+| --- | --- | --- |
+| Debian/system package | `/etc/memory-layer/memory-layer.toml` | `/etc/memory-layer/memory-layer.env` |
+| Local Linux install | `~/.config/memory-layer/memory-layer.toml` | `~/.config/memory-layer/memory-layer.env` |
+| macOS app support | `~/Library/Application Support/memory-layer/memory-layer.toml` | `~/Library/Application Support/memory-layer/memory-layer.env` |
+| Explicit override | `memory --config <path> ...` | `<config-dir>/memory-layer.env` |
+
+The env file is loaded next to the config file and is the right place for generated service tokens and provider API keys.
+
+## What belongs here
+
+| Section | Purpose |
+| --- | --- |
+| `[service]` | HTTP bind address, Cap'n Proto endpoints, API token, request timeout, optional web root. |
+| `[mcp]` | Built-in MCP enablement, HTTP path, token requirement, read-only mode. |
+| `[database]` | PostgreSQL URL. The database must already exist and have `vector` enabled. |
+| `[cluster]` | Local-network primary/relay discovery and service identity. |
+| `[writer]` | Optional shared writer identity; most installs can use the derived default. |
+| `[llm]` and `[features]` | LLM provider settings and curation feature toggle. |
+| `[llm_audit]` | Optional redacted debug trail for service-side LLM calls. |
+| `[embeddings]` / `[[embeddings.backends]]` | Semantic retrieval providers and active embedding backend. |
+| `[automation]` | Watcher capture defaults and ignored paths. |
+| `[provenance]` | Stale/missing source de-ranking and re-verification cadence. |
+| `[retention]` | Optional pruning defaults for tombstones and superseded versions. |
+
+## Minimal packaged config shape
+
+```toml
+[service]
+bind_addr = "127.0.0.1:4040"
+capnp_tcp_addr = "127.0.0.1:4041"
+request_timeout = "30s"
+
+[database]
+url = "postgres://memory_layer:<password>@127.0.0.1:5432/memory_layer"
+
+[mcp]
+enabled = true
+http_enabled = true
+http_path = "/mcp"
+require_token = true
+read_only = true
 ```
 
-## Notes
+The service API token is normally provisioned automatically into `memory-layer.env`:
 
-- Paths differ between package installs, user-local installs, and dev-profile runs.
-- Provider variables depend on the configured backend.
-- Database schema details can change with migrations; keep public docs high-level unless a table is stable.
+```bash
+memory service ensure-api-token --rotate-placeholder
+```
+
+## Embedding provider example
+
+```toml
+[embeddings]
+active = "openai-3-small"
+
+[[embeddings.backends]]
+name = "openai-3-small"
+provider = "openai"
+base_url = ""
+api_key_env = "OPENAI_API_KEY"
+model = "text-embedding-3-small"
+batch_size = 16
+```
+
+Put the key in the adjacent env file:
+
+```dotenv
+OPENAI_API_KEY=sk-proj-...
+```
+
+## Precedence and diagnostics
+
+For prod/profile-installed commands, config is loaded from the explicit `--config` path if supplied, otherwise from the discovered global config and the current repo's user-local project config when available. Environment variables with the `MEMORY_LAYER__...` shape override TOML values.
+
+Useful checks:
+
+```bash
+memory doctor
+memory status --project <project-slug> --json
+memory service status
+```
 
 ## Next
 
-Return to [Reference](/docs/reference) or use [Doctor and health](/docs/help/doctor-and-health) for diagnostics.
+Read [Project config](/docs/reference/config-project) for repo-local and user-local overrides.

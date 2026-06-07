@@ -20,19 +20,22 @@ These commands maintain the evidence Memory Layer uses for retrieval, provenance
 Import git history when commit context matters for future questions.
 
 ```bash
-memory commits import --project memory
+memory commits sync --project memory
+memory commits sync --project memory --limit 100 --dry-run
 memory commits list --project memory --limit 20
+memory commits show <commit-hash> --project memory
 ```
 
-Commit import is evidence, not curation by itself. Pair it with query, scan, or explicit memories when decisions should become durable project knowledge.
+Commit sync is evidence, not curation by itself. Pair it with query, scan, or explicit memories when decisions should become durable project knowledge.
 
 ## `memory repo`
 
 The repository index records files and metadata used by scan and provenance workflows.
 
 ```bash
-memory repo build --project memory
-memory repo inspect --project memory
+memory repo index --project memory
+memory repo index --project memory --since 2026-04-01 --dry-run
+memory repo status --project memory --json
 ```
 
 Run it after major file moves or when scan/provenance output looks stale.
@@ -43,7 +46,8 @@ The graph command extracts parser-backed code symbols, references, and edges.
 
 ```bash
 memory graph extract --project memory
-memory graph inspect --project memory
+memory graph extract --project memory --force --text
+memory graph status --project memory
 ```
 
 Graph data helps query connect memory facts to code structure. It is especially useful after refactors where names or modules move without intended behavior changes.
@@ -53,19 +57,22 @@ Graph data helps query connect memory facts to code structure. It is especially 
 Embedding commands maintain semantic search spaces.
 
 ```bash
-memory embeddings status --project memory
-memory embeddings rebuild --project memory
+memory embeddings list
+memory embeddings activate voyage-code
+memory embeddings reindex --project memory --dry-run
+memory embeddings reembed --project memory --backend voyage-code
+memory embeddings prune --project memory --dry-run
 ```
 
-Use status before rebuilds. Rebuild after changing embedding providers, dimensions, active spaces, or when diagnostics show missing coverage.
+Use `list` before rebuilds. `reindex` rebuilds chunks and embeddings, while `reembed` fills configured embedding spaces without rebuilding chunks.
 
 ## `memory bundle`
 
 Bundles move project memory between systems or preserve a point-in-time export.
 
 ```bash
-memory bundle export --project memory --output memory.bundle.json
-memory bundle import --project memory --input memory.bundle.json --dry-run
+memory bundle export --project memory --out memory.mlbundle.zip
+memory bundle import --project memory ./memory.mlbundle.zip --dry-run
 ```
 
 Review bundle contents before import. Treat bundles as sensitive project data.

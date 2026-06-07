@@ -22,19 +22,21 @@ Use the wizard for first setup and for safe repo-local refreshes.
 ```bash
 memory wizard --global
 cd /path/to/project
-memory wizard --dry-run
+memory wizard --project my-project --dry-run
 memory wizard
 ```
 
-The global wizard stores machine-level settings such as the database URL, service URL, API token, and provider configuration. The project wizard writes repo-local `.mem/` and `.agents/` files so agents can discover the project slug, Memory Layer rules, and skills.
+The global wizard stores machine-level settings such as the database URL, API token, and provider configuration. The project wizard writes a user-local project config plus repo-local `.mem/` and `.agents/` files so agents can discover the project slug, Memory Layer rules, and skills.
 
 ## `memory init`
 
 Use `init` when you want a scriptable project bootstrap instead of the interactive wizard.
 
 ```bash
+memory init
 memory init --project my-project --dry-run
 memory init --project my-project
+memory init --force
 ```
 
 Prefer `wizard` for humans and `init` for repeatable repository setup. Both should be reviewed before committing generated files.
@@ -68,7 +70,9 @@ The dev command is for contributors running Memory Layer from source. Use it to 
 
 ```bash
 memory dev --help
+memory dev init --copy-from-global
+memory dev init --dry-run
 MEMORY_LAYER_PROFILE=dev cargo run --bin memory -- doctor
 ```
 
-The dev profile keeps source-tree experimentation separate from the packaged service where possible.
+The dev profile keeps source-tree experimentation separate from the packaged service. Cargo-run dev defaults use `127.0.0.1:4250` for HTTP and `127.0.0.1:4251` for Cap'n Proto TCP.

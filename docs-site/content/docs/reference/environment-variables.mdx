@@ -5,16 +5,61 @@ description: "Review important environment variables and when they are required.
 
 # Environment variables
 
-| Variable | Required | Description |
-|---|---:|---|
-| `DATABASE_URL` | Sometimes | PostgreSQL connection string when supplied through environment. |
-| `MEMORY_LAYER_PROFILE` | Optional | Selects a profile such as dev or prod in local workflows. |
-| `MEMORY_CONFIG` | Optional | Points a subprocess at a specific config file. |
-| `MEMORY_LAYER_CONFIG` | Optional | Alternate config path variable used by Memory-aware helpers. |
-| `OPENAI_API_KEY` | Optional | Used when OpenAI-compatible LLM or embedding providers are configured. |
-| `VOYAGE_API_KEY` | Optional | Used when Voyage embeddings are configured. |
+Memory Layer reads values from the process environment, from `memory-layer.env` files next to config files, and from TOML config. Environment overrides use the `MEMORY_LAYER__SECTION__KEY` shape.
 
-Provider-specific variables depend on your config. Prefer `memory doctor` to discover missing keys.
+## Common variables
+
+| Variable | Required | Used for |
+| --- | ---: | --- |
+| `MEMORY_LAYER_CONFIG` | Optional | Same as `--config <path>` for commands that load app config. |
+| `MEMORY_LAYER_PROFILE` | Optional | Force `dev` or `prod`; normally inferred from binary path. |
+| `MEMORY_LAYER_WRITER_ID` | Optional | Same as `--writer-id` / `--agent-id` for write-capable commands. |
+| `MEMORY_LAYER__SERVICE__API_TOKEN` | Usually generated | Service API token when supplied through env instead of TOML. |
+| `MEMORY_LAYER__DATABASE__URL` | Sometimes | PostgreSQL URL override. |
+| `OPENAI_API_KEY` | When configured | OpenAI or OpenAI-compatible LLM/embedding provider key. |
+| `VOYAGE_API_KEY` | When configured | Voyage embedding provider key. |
+| `COHERE_API_KEY` | When configured | Cohere embedding provider key. |
+| `GEMINI_API_KEY` | When configured | Gemini embedding provider key. |
+| `MEMORY_LAYER_TEST_DATABASE_URL` | Test only | Pgvector-backed integration test database. |
+| `MEMORY_LAYER_TEST_REQUIRE_DB` | Test only | Make DB-backed tests fail instead of skip when the test DB is unavailable. |
+
+`DATABASE_URL` is useful for `psql` commands and some setup snippets, but Memory Layer's own config field is `[database].url` or `MEMORY_LAYER__DATABASE__URL`.
+
+## Provider variables
+
+Provider keys are indirect. The TOML `api_key_env` value names the environment variable the service reads:
+
+```toml
+[[embeddings.backends]]
+name = "voyage-code"
+provider = "voyage"
+api_key_env = "VOYAGE_API_KEY"
+model = "voyage-code-3"
+```
+
+```dotenv
+VOYAGE_API_KEY=pa-...
+```
+
+For local Ollama, `api_key_env = ""` is normally correct.
+
+## Config override examples
+
+```bash
+MEMORY_LAYER_PROFILE=dev cargo run --bin memory -- status --project memory
+MEMORY_LAYER__DATABASE__URL='postgres://memory_layer:secret@127.0.0.1:5432/memory_layer' memory doctor
+MEMORY_LAYER_WRITER_ID=codex-docs memory remember --project memory --note "Updated reference docs"
+```
+
+## Diagnostics
+
+```bash
+memory doctor
+memory status --project <project-slug> --json
+memory embeddings list
+```
+
+`memory doctor` is the safest way to discover missing provider variables without printing secret values.
 
 ## Next
 

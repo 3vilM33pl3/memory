@@ -5,21 +5,62 @@ description: "Know where Memory Layer stores config, runtime files, skills, and 
 
 # Files and directories
 
-| Path | Purpose | Commit? |
-|---|---|---:|
-| `/etc/memory-layer/` | Typical packaged Linux global config location. | No |
-| `~/.config/memory-layer/` | User-level config location on local installs. | No |
-| `.mem/project.toml` | Repo-local project identity/config. | Follow repo policy |
-| `.mem/runtime/` | Runtime state and generated files. | No |
-| `.agents/` | Agent instructions and Memory Layer skills. | Usually yes |
-| `docs/` | Existing project docs. | Yes |
-| `docs-site/` | Fumadocs / Next.js documentation website. | Yes |
+Memory Layer separates machine config, user-local project runtime state, and repo-owned agent files.
 
-## Verify
+## Installed and user-local locations
+
+| Path | Purpose | Commit? |
+| --- | --- | ---: |
+| `/etc/memory-layer/memory-layer.toml` | Debian/system global config. | No |
+| `/etc/memory-layer/memory-layer.env` | Debian/system env and service token file. | No |
+| `~/.config/memory-layer/memory-layer.toml` | Local Linux global config. | No |
+| `~/.config/memory-layer/memory-layer.env` | Local Linux global env file. | No |
+| `~/Library/Application Support/memory-layer/memory-layer.toml` | macOS global config. | No |
+| `~/.config/memory-layer/projects/<project-key>/config.toml` | User-local project config. | No |
+| `~/.config/memory-layer/projects/<project-key>/config.dev.toml` | Dev-profile overlay for a source checkout. | No |
+| `~/.local/state/memory-layer/projects/<project-key>/runtime/` | Linux project runtime state. | No |
+| `~/.cache/memory-layer/projects/<project-key>/` | Linux project cache/index data. | No |
+
+Platform-specific directories follow XDG on Linux and Application Support on macOS.
+
+## Repo-owned locations
+
+| Path | Purpose | Commit? |
+| --- | --- | ---: |
+| `.mem/project.toml` | Project slug marker used by CLI and agents. | Usually yes |
+| `.mem/.gitignore` | Keeps runtime/config secrets out while allowing `project.toml`. | Usually yes |
+| `.mem/config.toml` | Legacy project config fallback. | Usually no for new repos |
+| `.agents/memory-layer.toml` | Agent-facing project behavior. | Usually yes |
+| `.agents/skills/` | Repo-local Memory Layer skill bundle. | Usually yes |
+| `docs/` | Markdown user/developer docs. | Yes |
+| `docs-site/` | Fumadocs / Next.js website. | Yes |
+| `web/` | Browser UI source. | Yes |
+
+## Installed skill template
+
+| Install mode | Template path |
+| --- | --- |
+| Debian package | `/usr/share/memory-layer/skill-template/` |
+| Local Linux install | `~/.local/share/memory-layer/skill-template/` |
+| macOS package | `/usr/local/share/memory-layer/skill-template/` |
+| Homebrew | `$(brew --prefix)/share/memory-layer/skill-template/` |
+| Source/dev checkout | `.agents/skills/` |
+
+`memory wizard`, `memory init`, and `memory upgrade` copy from this template into repo-local `.agents/skills/`.
+
+## Runtime checks
 
 ```bash
 memory doctor
 memory status --project <project-slug>
+memory service status
+```
+
+For dev/source runs:
+
+```bash
+cargo run --bin memory -- doctor
+cargo run --bin memory -- status --project <project-slug>
 ```
 
 ## Next

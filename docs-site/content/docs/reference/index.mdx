@@ -5,7 +5,7 @@ description: "Look up CLI commands, config files, schema concepts, variables, an
 
 # Reference
 
-Use this section when you know what you need to look up: commands, config, environment variables, files, directories, and storage concepts.
+Use this section when you already know what you need to look up. It is denser than the guides: commands, config ownership, files, environment variables, storage model, and script behavior.
 
 <CardGroup cols={2}>
   <Card title="CLI" href="/docs/reference/cli" />
@@ -16,6 +16,26 @@ Use this section when you know what you need to look up: commands, config, envir
   <Card title="Database schema" href="/docs/reference/database-schema" />
 </CardGroup>
 
-## Next
+## Fast lookup
 
-Start with [CLI reference](/docs/reference/cli).
+| Need | Start here |
+| --- | --- |
+| Exact command groups, read/write behavior, project resolution | [CLI reference](/docs/reference/cli) |
+| Packaged service settings, database URL, providers, MCP, retention | [Global config](/docs/reference/config-global) |
+| Repo markers, user-local project overrides, agent behavior | [Project config](/docs/reference/config-project) |
+| Runtime and secret variables used by scripts, services, and providers | [Environment variables](/docs/reference/environment-variables) |
+| Where config, env files, runtime state, caches, skills, and docs live | [Files and directories](/docs/reference/files-and-directories) |
+| PostgreSQL table groups, migrations, pgvector, and inspection guidance | [Database schema](/docs/reference/database-schema) |
+| How to interpret success, usage errors, and operational failures | [Exit codes](/docs/reference/exit-codes) |
+
+## Source-of-truth rule
+
+The current binary is authoritative for flags and subcommands:
+
+```bash
+memory --help
+memory <command> --help
+memory <command> <subcommand> --help
+```
+
+The markdown docs remain the deeper workflow reference. The website reference should be scriptable and current, not a copy of every guide.

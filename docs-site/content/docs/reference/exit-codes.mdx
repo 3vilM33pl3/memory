@@ -5,23 +5,52 @@ description: "Interpret command success and failure status in scripts."
 
 # Exit codes
 
-Interpret command success and failure status in scripts.
+Memory Layer follows normal CLI conventions: `0` means success, non-zero means the command did not complete the requested operation. Treat command output contracts (`--json`, stdout/stderr) as more important than hard-coding every possible failure number.
 
-## Source of truth
+## Common cases
 
-Use the current binary and repository files as the source of truth. Reference docs should not invent flags or paths.
+| Exit code | Meaning | Typical cause |
+| ---: | --- | --- |
+| `0` | Success | Command completed. |
+| `2` | CLI usage error | Unknown subcommand, missing required flag, invalid argument shape from clap. |
+| `1` | Operational failure | Service down, database/migration error, invalid token, provider failure, failed postcondition, or command-specific error. |
+
+Some subcommands may return other non-zero values through wrapped tools or platform service managers. Scripts should handle any non-zero as failure unless a command's JSON contract says otherwise.
+
+## Scripting guidance
+
+Use `--json` where available. Machine-readable output is written to stdout; diagnostics and errors should be treated as stderr.
 
 ```bash
-memory --help
-memory <command> --help
+if ! memory status --project memory --json >status.json; then
+  echo "Memory Layer status failed" >&2
+  exit 1
+fi
 ```
 
-## Notes
+Usage errors are quick to detect:
 
-- Paths differ between package installs, user-local installs, and dev-profile runs.
-- Provider variables depend on the configured backend.
-- Database schema details can change with migrations; keep public docs high-level unless a table is stable.
+```bash
+memory query --project memory
+# exits 2 because --question is required
+```
+
+Operational failures need diagnostics:
+
+```bash
+memory doctor
+memory health
+memory service status
+```
+
+For write-capable commands, run dry-runs first when supported:
+
+```bash
+memory scan --project memory --dry-run --json
+memory embeddings reindex --project memory --dry-run
+memory bundle import --project memory ./memory.mlbundle.zip --dry-run
+```
 
 ## Next
 
-Return to [Reference](/docs/reference) or use [Doctor and health](/docs/help/doctor-and-health) for diagnostics.
+Use [Doctor and health](/docs/help/doctor-and-health) when a command exits non-zero for operational reasons.

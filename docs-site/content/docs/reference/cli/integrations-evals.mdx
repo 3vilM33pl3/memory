@@ -30,11 +30,14 @@ The TUI gives humans a dense view of memories, query evidence, replacement propo
 Watchers attach to active agent sessions and record useful runtime state.
 
 ```bash
-memory watcher --help
+memory watcher manager enable --dry-run
+memory watcher manager status
+memory watcher run --project memory
+memory watcher status --project memory
 memory status --project memory
 ```
 
-Use watcher status when agent sessions do not appear in the TUI or briefings lack recent activity.
+The watcher manager is the preferred local automation path for Codex-linked sessions. Legacy per-project watcher services and foreground watcher runs remain compatibility paths.
 
 ## `memory mcp`
 
@@ -43,6 +46,7 @@ Run the local stdio MCP server or inspect service-mounted HTTP MCP.
 ```bash
 memory mcp run --project memory
 memory mcp status --project memory
+memory mcp status --project memory --json
 ```
 
 Stdio mode is the normal local Codex/Claude path and must write only MCP JSON-RPC messages to stdout. HTTP MCP is local-first and should require token-bearing clients.
@@ -52,8 +56,10 @@ Stdio mode is the normal local Codex/Claude path and must write only MCP JSON-RP
 Run repeatable memory-quality suites.
 
 ```bash
+memory eval doctor --suite evals/examples/memory-smoke
 memory eval run --suite evals/suites/memory-improvement-v1 --condition full-memory --dry-run
 memory eval compare --baseline target/memory-evals/no-memory.json --candidate target/memory-evals/full-memory.json --text
+memory eval gate --comparison target/memory-evals/comparison.json --policy evals/gates/research-v1.toml
 ```
 
 Use dry-runs before shell-enabled suites. Evaluation artifacts are evidence for bounded claims about the suite, model, commit, configuration, retrieval settings, token cost, and latency.

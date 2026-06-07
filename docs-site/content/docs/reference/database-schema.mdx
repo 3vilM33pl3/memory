@@ -5,23 +5,79 @@ description: "Read the storage model at a high level without depending on unstab
 
 # Database schema
 
-Read the storage model at a high level without depending on unstable internals.
+Memory Layer stores durable state in PostgreSQL. This page explains the stable storage concepts and table groups; exact columns and indexes are implementation details owned by the migrations in `migrations/`.
 
-## Source of truth
+The service runs migrations at startup. PostgreSQL must have `pgvector` installed and the target database must allow `CREATE EXTENSION vector`.
 
-Use the current binary and repository files as the source of truth. Reference docs should not invent flags or paths.
+## Migration source
+
+| Source | Purpose |
+| --- | --- |
+| `migrations/0001_init.sql` | Projects, sessions, tasks, raw captures, canonical memories, sources, relations, tags, chunks, curation runs. |
+| `migrations/0004_pgvector.sql` | Enables `vector` and legacy chunk vector index support. |
+| `migrations/0005_commit_history.sql` | Git commit evidence. |
+| `migrations/0009_multi_embedding_spaces.sql` | Multi-provider embedding rows. |
+| `migrations/0010_memory_bundles.sql` | Bundle import lineage. |
+| `migrations/0011_project_timeline.sql` and `0014` | Activity timeline and operation metadata. |
+| `migrations/0012_memory_replacement_proposals.sql` | Human/agent review queue for memory replacements. |
+| `migrations/0013_memory_versions.sql` | Immutable canonical memory versions and tombstones. |
+| `migrations/0015_code_graph.sql` | Graph extraction runs, nodes, edges, symbols, references, evidence. |
+| `migrations/0017_memory_source_provenance.sql` and `0018` | Source verification and symbol provenance. |
+
+## Table groups
+
+| Group | Tables | What they represent |
+| --- | --- | --- |
+| Project and task intake | `projects`, `sessions`, `tasks`, `raw_captures` | Project identity, agent/task sessions, raw captured task context before curation. |
+| Canonical memory | `memory_entries`, `memory_sources`, `memory_tags`, `memory_relations` | Human-readable memory versions, provenance, labels, and links between memories. |
+| Search materialization | `memory_chunks`, `memory_chunk_embeddings` | Full-text chunks and provider/model-specific vector spaces for semantic retrieval. |
+| Curation and review | `curation_runs`, `memory_replacement_proposals` | Curation batches and queued replacements that require approve/reject review. |
+| Git evidence | `project_commits` | Imported commit history used as evidence without turning every commit into memory. |
+| Activities | `project_timeline_events` | Query, scan, curate, checkpoint, watcher, graph, embedding, and LLM-audit events. |
+| Bundles | `memory_bundle_imports`, `imported_memory_entries` | Portable memory import lineage and idempotency. |
+| Code graph | `graph_extraction_runs`, `graph_nodes`, `graph_edges`, `graph_evidence`, `code_symbols`, `code_references` | Parser-backed repository facts used by graph-aware retrieval. |
+| Provenance checks | `memory_source_verifications` | File/source verification status used to de-rank stale memories. |
+
+## Memory versioning model
+
+`memory_entries` rows are immutable versions. `canonical_id` groups all versions of the same logical memory, `version_no` orders them, and `is_tombstone` marks a deleted sentinel. Normal query paths use latest non-tombstone versions by default; `memory history <memory-id>` shows the full chain.
+
+Approving a replacement proposal creates a new version of the target canonical memory. Rejecting a proposal leaves the active version unchanged.
+
+## Embeddings model
+
+`memory_chunks` stores shared textual chunks. `memory_chunk_embeddings` stores vectors keyed by embedding space so OpenAI, Voyage, Ollama, Gemini, Cohere, or other configured spaces can coexist. The active backend decides which space query uses for semantic retrieval.
+
+Use:
 
 ```bash
-memory --help
-memory <command> --help
+memory embeddings list
+memory embeddings reindex --project <project-slug> --dry-run
+memory embeddings reembed --project <project-slug> --backend <name> --dry-run
 ```
 
-## Notes
+## Safe inspection
 
-- Paths differ between package installs, user-local installs, and dev-profile runs.
-- Provider variables depend on the configured backend.
-- Database schema details can change with migrations; keep public docs high-level unless a table is stable.
+Use read-only `psql` queries when debugging. These examples avoid relying on every column:
+
+```sql
+SELECT slug, name, created_at FROM projects ORDER BY created_at DESC;
+SELECT COUNT(*) FROM raw_captures;
+SELECT memory_type, status, COUNT(*) FROM memory_entries GROUP BY 1, 2 ORDER BY 1, 2;
+SELECT status, COUNT(*) FROM memory_replacement_proposals GROUP BY 1;
+SELECT kind, COUNT(*) FROM project_timeline_events GROUP BY 1 ORDER BY 2 DESC;
+```
+
+For exact current schema, inspect PostgreSQL directly:
+
+```bash
+psql "$DATABASE_URL" -c "\\dt"
+psql "$DATABASE_URL" -c "\\d memory_entries"
+psql "$DATABASE_URL" -c "SELECT version, description FROM _sqlx_migrations ORDER BY version;"
+```
+
+Do not edit Memory Layer tables manually unless you are deliberately repairing a database from backup. Prefer CLI commands and migrations.
 
 ## Next
 
-Return to [Reference](/docs/reference) or use [Doctor and health](/docs/help/doctor-and-health) for diagnostics.
+Read [CLI: repository, evidence, and search](/docs/reference/cli/repository-evidence) for commands that maintain search and graph data.

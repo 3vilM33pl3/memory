@@ -25,6 +25,16 @@ memory <command> <subcommand> --help
 
 Many commands also support `--project <slug>`, `--json`, or `--dry-run`. Prefer `--json` for agent automation and `--dry-run` before commands that write config, memory, history, embeddings, or repo metadata.
 
+## Command shape
+
+Most commands follow one of three shapes:
+
+| Shape | Example | Notes |
+| --- | --- | --- |
+| Root command with flags | `memory query --project memory --question "..."` | Common for query, scan, remember, status, doctor. |
+| Command group with subcommand | `memory commits sync --project memory` | Common for service, watcher, repo, graph, bundle, eval, embeddings, checkpoint. |
+| Foreground long-running command | `memory service run` | Runs until interrupted; use service managers for packaged background operation. |
+
 ## Command groups
 
 | Group | Commands | Use when |
@@ -54,7 +64,7 @@ Agents should follow a repeatable command pattern:
 | Service | `status`, `doctor`, `health`, `stats` | `service enable`, `service disable`, `service restart-all`, automation flushes |
 | Query | `query`, `resume`, `up-to-speed`, `activities`, `history`, `verify-provenance` | Query/activity logging may write audit events when the service is running. |
 | Memory | `proposals list`, `scan --dry-run` | `remember`, `capture`, `curate`, `scan`, proposal approval/rejection, `archive`, `prune-history` |
-| Evidence | `repo inspect`, `graph inspect`, `embeddings status` | commit import, repo indexing, graph extraction, embedding rebuilds, bundle import |
+| Evidence | `repo status`, `graph status`, `embeddings list` | commit sync, repo indexing, graph extraction, embedding reindex/reembed/prune, bundle import |
 | Integrations | `mcp status`, watcher status, eval compare | watcher start/stop, MCP HTTP service config, eval run artifacts |
 
 ## Project resolution
@@ -65,6 +75,12 @@ Commands that operate on memory need a project slug. In normal repo-local use, t
 memory query --project memory --question "What changed in the docs site?"
 memory status --project memory --json
 ```
+
+## Output contracts
+
+Commands intended for automation prefer JSON output where supported. Usage mistakes, such as missing required flags, normally exit with code `2`. Operational failures normally exit non-zero and include a human-readable error on stderr.
+
+Use `memory status --project <slug> --json` as the first broad diagnostic when command behavior looks wrong.
 
 ## Next
 

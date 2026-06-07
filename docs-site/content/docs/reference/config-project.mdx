@@ -5,23 +5,78 @@ description: "Understand repo-local project files and what belongs in source con
 
 # Project config
 
-Understand repo-local project files and what belongs in source control.
+Project config is still needed, but most operational project settings are no longer stored inside the repository. Current installs use a small repo marker plus user-local project config/state directories. This keeps secrets and runtime files out of git while still letting agents discover the project.
 
-## Source of truth
+## Current files
 
-Use the current binary and repository files as the source of truth. Reference docs should not invent flags or paths.
+| File or directory | Purpose | Commit? |
+| --- | --- | --- |
+| `.mem/project.toml` | Repo-local project marker, usually just the slug. | Usually yes |
+| `.agents/memory-layer.toml` | Agent-facing behavior: capture include/ignore paths, analyzers, retrieval, replacement policy. | Usually yes |
+| `.agents/skills/` | Repo-local Memory Layer skill bundle copied by `wizard`, `init`, or `upgrade`. | Usually yes |
+| User-local `projects/<project-key>/config.toml` | Per-project runtime overrides and optional service/db/writer settings. | No |
+| User-local `projects/<project-key>/memory-layer.env` | Per-project secrets or provider env values. | No |
+| User-local state/cache dirs | Runtime state, indexes, automation state, logs. | No |
 
-```bash
-memory --help
-memory <command> --help
+Legacy `.mem/config.toml`, `.mem/memory-layer.env`, and `.mem/runtime/` remain readable as fallbacks. Use `memory doctor --fix` to migrate missing legacy config/env values into the current user-local layout.
+
+## What belongs where
+
+| Need | Put it in |
+| --- | --- |
+| Shared database URL, service token, LLM/embedding provider defaults | Global config/env |
+| Project slug | `.mem/project.toml` |
+| Project-specific runtime override, custom project DB, custom ports | User-local project `config.toml` |
+| Dev cargo-run isolation values | User-local project `config.dev.toml` |
+| Agent scan/curation/retrieval behavior that should travel with the repo | `.agents/memory-layer.toml` |
+| API keys and secrets | Env files, not git |
+
+## Repo marker example
+
+```toml
+slug = "memory"
 ```
 
-## Notes
+The CLI can infer the project from this file in normal repo-local use. Scripts should still pass `--project <slug>` explicitly.
 
-- Paths differ between package installs, user-local installs, and dev-profile runs.
-- Provider variables depend on the configured backend.
-- Database schema details can change with migrations; keep public docs high-level unless a table is stable.
+## Agent behavior example
 
-## Next
+```toml
+[capture]
+include_paths = ["crates/", "docs/", "docs-site/content/docs/"]
+ignore_paths = ["target/", "node_modules/", ".next/"]
 
-Return to [Reference](/docs/reference) or use [Doctor and health](/docs/help/doctor-and-health) for diagnostics.
+[analysis]
+analyzers = ["rust", "typescript", "python"]
+
+[retrieval]
+graph_enabled = true
+
+[curation]
+replacement_policy = "balanced"
+```
+
+Available replacement policies are `conservative`, `balanced`, and `aggressive`.
+
+## Dev overlay
+
+From a source checkout, `cargo run --bin memory -- ...` activates the dev profile. Dev reads the user-local project `config.toml` and layers `config.dev.toml` on top; it does not read global config. Bootstrap it with:
+
+```bash
+cargo run --bin memory -- init
+cargo run --bin memory -- dev init --copy-from-global
+cargo run --bin memory -- service run
+```
+
+Default dev endpoints are `127.0.0.1:4250` for HTTP and `127.0.0.1:4251` for Cap'n Proto TCP.
+
+## Commands
+
+```bash
+memory init --project my-project --dry-run
+memory wizard --dry-run
+memory upgrade --dry-run
+memory doctor --project my-project
+```
+
+Use `wizard` for guided setup, `init` for scriptable repo bootstrap, and `upgrade` after installing a newer Memory Layer version.
