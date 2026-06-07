@@ -18,3 +18,4 @@
 /demo/output
 __pycache__/
 *.pyc
+.vercel
