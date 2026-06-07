@@ -2,15 +2,17 @@
 use std::os::unix::fs::PermissionsExt;
 use std::{
     env, fs,
-    io::{self},
+    io::{self, Cursor},
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
 use chrono::Utc;
 use mem_platform as platform;
 use serde::{Deserialize, Serialize};
+use zip::ZipArchive;
 
 use crate::commands::{
     runtime::default_global_config_path, status_support::default_global_config_path_label,
@@ -26,6 +28,14 @@ pub(crate) const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-direct-task-start",
     "memory-remember",
 ];
+
+const GITHUB_SKILL_TEMPLATE_ARCHIVE_URL: &str =
+    "https://github.com/3vilM33pl3/memory/archive/refs/heads/main.zip";
+const GITHUB_SKILL_TEMPLATE_RAW_BASE: &str =
+    "https://raw.githubusercontent.com/3vilM33pl3/memory/main/.agents/skills";
+const GITHUB_SKILL_TEMPLATE_TIMEOUT: Duration = Duration::from_secs(10);
+const GITHUB_ARCHIVE_ENV: &str = "MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_ARCHIVE_URL";
+const GITHUB_RAW_BASE_ENV: &str = "MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_RAW_BASE";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -120,6 +130,26 @@ pub(crate) struct SkillUpgradeReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) backup_root: Option<String>,
     pub(crate) inventory: SkillInventoryReport,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct GitHubSkillVersionReport {
+    pub(crate) raw_base_url: String,
+    pub(crate) status: SkillBundleStatus,
+    pub(crate) summary: String,
+    pub(crate) skills: Vec<GitHubSkillVersionInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct GitHubSkillVersionInfo {
+    pub(crate) name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) project_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) github_version: Option<String>,
+    pub(crate) status: SkillVersionStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) detail: Option<String>,
 }
 
 pub(crate) fn missing_memory_skill_dirs<'a>(
@@ -393,7 +423,14 @@ pub(crate) fn upgrade_project_skills(
     force: bool,
     dry_run: bool,
 ) -> Result<SkillUpgradeReport> {
-    upgrade_project_skills_with_template(repo_root, discover_skill_template_dir(), force, dry_run)
+    let template_root = if dry_run {
+        discover_skill_template_dir()
+    } else {
+        download_github_skill_template()
+            .ok()
+            .or_else(discover_skill_template_dir)
+    };
+    upgrade_project_skills_with_template(repo_root, template_root, force, dry_run)
 }
 
 pub(crate) fn upgrade_project_skills_with_template(
@@ -547,6 +584,273 @@ pub(crate) fn format_skill_inventory_summary(inventory: &SkillInventoryReport) -
         inventory.status.label(),
         inventory.summary
     )
+}
+
+pub(crate) fn github_skill_version_report(repo_root: &Path) -> Result<GitHubSkillVersionReport> {
+    let raw_base = github_raw_base_url();
+    let skill_root = repo_root.join(".agents").join("skills");
+    let mut skills = Vec::new();
+    for name in MEMORY_SKILL_NAMES {
+        let project_version = read_skill_version(&skill_root.join(name)).ok().flatten();
+        let github_version = fetch_github_skill_version(&raw_base, name)
+            .with_context(|| format!("fetch GitHub version for {name}"))?;
+        let (status, detail) =
+            github_skill_version_status(project_version.as_deref(), github_version.as_deref());
+        skills.push(GitHubSkillVersionInfo {
+            name: (*name).to_string(),
+            project_version,
+            github_version,
+            status,
+            detail,
+        });
+    }
+    let (status, summary) = github_skill_bundle_status(&skills);
+    Ok(GitHubSkillVersionReport {
+        raw_base_url: raw_base,
+        status,
+        summary,
+        skills,
+    })
+}
+
+pub(crate) fn format_github_skill_version_summary(report: &GitHubSkillVersionReport) -> String {
+    let skills = report
+        .skills
+        .iter()
+        .map(|skill| {
+            format!(
+                "{}={} local:{} github:{}",
+                skill.name,
+                skill.status.label(),
+                skill.project_version.as_deref().unwrap_or("n/a"),
+                skill.github_version.as_deref().unwrap_or("n/a")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!(
+        "status={} summary={}; source={}; {skills}",
+        report.status.label(),
+        report.summary,
+        report.raw_base_url
+    )
+}
+
+pub(crate) fn download_github_skill_template() -> Result<PathBuf> {
+    let archive_url = github_archive_url();
+    let bytes = read_url_or_file(&archive_url)
+        .with_context(|| format!("download Memory Layer skill template from {archive_url}"))?;
+    extract_github_skill_template_archive(&bytes)
+}
+
+fn github_archive_url() -> String {
+    env::var(GITHUB_ARCHIVE_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| GITHUB_SKILL_TEMPLATE_ARCHIVE_URL.to_string())
+}
+
+fn github_raw_base_url() -> String {
+    env::var(GITHUB_RAW_BASE_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| GITHUB_SKILL_TEMPLATE_RAW_BASE.to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn fetch_github_skill_version(raw_base: &str, skill_name: &str) -> Result<Option<String>> {
+    let content = if let Some(path) = raw_base.strip_prefix("file://") {
+        let path = PathBuf::from(path).join(skill_name).join("SKILL.md");
+        fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?
+    } else {
+        let url = format!("{raw_base}/{skill_name}/SKILL.md");
+        String::from_utf8(read_url_or_file(&url)?).context("decode GitHub skill metadata")?
+    };
+    read_skill_md_frontmatter_version_from_str(&content)
+}
+
+fn github_skill_version_status(
+    project_version: Option<&str>,
+    github_version: Option<&str>,
+) -> (SkillVersionStatus, Option<String>) {
+    match (project_version, github_version) {
+        (_, None) => (
+            SkillVersionStatus::TemplateMissing,
+            Some("GitHub skill did not expose a version".to_string()),
+        ),
+        (None, Some(_)) => (SkillVersionStatus::Missing, None),
+        (Some(project_raw), Some(github_raw)) => match (
+            semver::Version::parse(project_raw),
+            semver::Version::parse(github_raw),
+        ) {
+            (Ok(project), Ok(github)) if project == github => (SkillVersionStatus::UpToDate, None),
+            (Ok(project), Ok(github)) if project < github => (SkillVersionStatus::Outdated, None),
+            (Ok(_), Ok(_)) => (SkillVersionStatus::NewerThanTemplate, None),
+            (project_result, github_result) => {
+                let mut parts = Vec::new();
+                if let Err(error) = project_result {
+                    parts.push(format!("project version `{project_raw}`: {error}"));
+                }
+                if let Err(error) = github_result {
+                    parts.push(format!("GitHub version `{github_raw}`: {error}"));
+                }
+                (SkillVersionStatus::InvalidVersion, Some(parts.join("; ")))
+            }
+        },
+    }
+}
+
+fn github_skill_bundle_status(skills: &[GitHubSkillVersionInfo]) -> (SkillBundleStatus, String) {
+    let error_count = skills
+        .iter()
+        .filter(|skill| skill.status == SkillVersionStatus::TemplateMissing)
+        .count();
+    let warn_count = skills
+        .iter()
+        .filter(|skill| {
+            !matches!(
+                skill.status,
+                SkillVersionStatus::UpToDate | SkillVersionStatus::TemplateMissing
+            )
+        })
+        .count();
+    if error_count > 0 {
+        (
+            SkillBundleStatus::Error,
+            format!("{error_count} GitHub skill(s) missing version metadata"),
+        )
+    } else if warn_count > 0 {
+        (
+            SkillBundleStatus::Warn,
+            format!("{warn_count} project skill(s) differ from GitHub"),
+        )
+    } else {
+        (
+            SkillBundleStatus::Ok,
+            "all project skills match GitHub".to_string(),
+        )
+    }
+}
+
+fn read_skill_md_frontmatter_version_from_str(content: &str) -> Result<Option<String>> {
+    let mut lines = content.lines();
+    if lines.next().map(str::trim) != Some("---") {
+        return Ok(None);
+    }
+    let mut frontmatter = Vec::new();
+    for line in lines {
+        if line.trim() == "---" {
+            return Ok(simple_yaml_value(&frontmatter, "version"));
+        }
+        frontmatter.push(line);
+    }
+    Ok(None)
+}
+
+fn read_url_or_file(url: &str) -> Result<Vec<u8>> {
+    if let Some(path) = url.strip_prefix("file://") {
+        return fs::read(path).with_context(|| format!("read {path}"));
+    }
+    let url = url.to_string();
+    std::thread::spawn(move || read_http_url(&url))
+        .join()
+        .map_err(|_| anyhow::anyhow!("GitHub skill template download worker panicked"))?
+}
+
+fn read_http_url(url: &str) -> Result<Vec<u8>> {
+    let response = reqwest::blocking::Client::builder()
+        .timeout(GITHUB_SKILL_TEMPLATE_TIMEOUT)
+        .user_agent("memory-layer")
+        .build()
+        .context("build GitHub skill template client")?
+        .get(url)
+        .send()
+        .with_context(|| format!("GET {url}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("GET {url} returned {status}");
+    }
+    Ok(response.bytes()?.to_vec())
+}
+
+fn extract_github_skill_template_archive(bytes: &[u8]) -> Result<PathBuf> {
+    let state_dir =
+        platform::preferred_user_state_dir().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    let cache_root = state_dir.join("skill-template-github");
+    let target = cache_root.join("main");
+    let tmp = cache_root.join(format!(
+        ".download-{}-{}",
+        std::process::id(),
+        Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    if tmp.exists() {
+        fs::remove_dir_all(&tmp).with_context(|| format!("remove {}", tmp.display()))?;
+    }
+    fs::create_dir_all(&tmp).with_context(|| format!("create {}", tmp.display()))?;
+
+    let mut archive =
+        ZipArchive::new(Cursor::new(bytes)).context("open GitHub skill template archive")?;
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index)?;
+        let Some(enclosed) = file.enclosed_name() else {
+            continue;
+        };
+        let Some(relative) = skill_archive_relative_path(&enclosed) else {
+            continue;
+        };
+        let out = tmp.join(relative);
+        if file.is_dir() {
+            fs::create_dir_all(&out).with_context(|| format!("create {}", out.display()))?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        let mut output =
+            fs::File::create(&out).with_context(|| format!("create {}", out.display()))?;
+        io::copy(&mut file, &mut output).with_context(|| format!("extract {}", out.display()))?;
+    }
+
+    for name in MEMORY_SKILL_NAMES {
+        let skill = tmp.join(name);
+        if !skill.join("SKILL.md").is_file() {
+            anyhow::bail!(
+                "GitHub skill template archive is missing {}",
+                skill.display()
+            );
+        }
+    }
+
+    if target.exists() {
+        fs::remove_dir_all(&target).with_context(|| format!("remove {}", target.display()))?;
+    }
+    fs::rename(&tmp, &target)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+    Ok(target)
+}
+
+fn skill_archive_relative_path(path: &Path) -> Option<PathBuf> {
+    let components = path
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => value.to_str(),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let skills_index = components
+        .windows(2)
+        .position(|window| window == [".agents", "skills"])?;
+    let relative = &components[(skills_index + 2)..];
+    let skill_name = relative.first()?;
+    if !MEMORY_SKILL_NAMES.contains(skill_name) {
+        return None;
+    }
+    let mut path = PathBuf::new();
+    for part in relative {
+        path.push(part);
+    }
+    Some(path)
 }
 
 pub(crate) fn copy_directory_tree(src: &Path, dest: &Path) -> Result<()> {

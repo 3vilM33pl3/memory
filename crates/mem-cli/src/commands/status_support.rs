@@ -31,9 +31,11 @@ use crate::commands::{
     service_support::backend_service_status,
     skill_support::{
         SkillBundleStatus, SkillUpgradeAction, discover_skill_template_dir,
-        ensure_claude_md_memory_section, format_skill_inventory_summary, missing_memory_skill_dirs,
-        project_skill_inventory, render_agent_project_config, render_project_metadata,
-        render_repo_config, sync_memory_skill_bundle, upgrade_project_skills,
+        download_github_skill_template, ensure_claude_md_memory_section,
+        format_github_skill_version_summary, format_skill_inventory_summary,
+        github_skill_version_report, missing_memory_skill_dirs, project_skill_inventory,
+        render_agent_project_config, render_project_metadata, render_repo_config,
+        sync_memory_skill_bundle, upgrade_project_skills,
     },
     watch_support::{watch_manager_service_status, watch_service_status, yes_no},
 };
@@ -665,10 +667,58 @@ pub(crate) async fn run_doctor(
         if skill_inventory.status == SkillBundleStatus::Ok {
             None
         } else {
-            Some("Run `memory upgrade --dry-run`, then `memory upgrade`.".to_string())
+            Some(
+                "Run `memory doctor --fix` to download current skills from GitHub and repair repo-local copies, or preview with `memory upgrade --dry-run`."
+                    .to_string(),
+            )
         },
         skill_fix_applied,
     ));
+
+    match github_skill_version_report(repo_root) {
+        Ok(github_inventory) => {
+            report.push(doctor_check(
+                "workflow.project_skills_github",
+                match github_inventory.status {
+                    SkillBundleStatus::Ok => DoctorStatus::Ok,
+                    SkillBundleStatus::Warn => DoctorStatus::Warn,
+                    SkillBundleStatus::Error => DoctorStatus::Fail,
+                },
+                match github_inventory.status {
+                    SkillBundleStatus::Ok => {
+                        "Repo-local Memory skills match the GitHub skill bundle."
+                    }
+                    SkillBundleStatus::Warn => {
+                        "Repo-local Memory skills differ from the GitHub skill bundle."
+                    }
+                    SkillBundleStatus::Error => {
+                        "GitHub Memory skill bundle could not be evaluated."
+                    }
+                },
+                Some(format_github_skill_version_summary(&github_inventory)),
+                if github_inventory.status == SkillBundleStatus::Ok {
+                    None
+                } else {
+                    Some(
+                        "Run `memory doctor --fix` to download current skills from GitHub and repair repo-local copies."
+                            .to_string(),
+                    )
+                },
+                false,
+            ));
+        }
+        Err(error) => report.push(doctor_check(
+            "workflow.project_skills_github",
+            DoctorStatus::Skipped,
+            "Skipped GitHub skill freshness check.",
+            Some(error.to_string()),
+            Some(
+                "Connect to GitHub and rerun `memory doctor`, or run `memory doctor --fix` when online."
+                    .to_string(),
+            ),
+            false,
+        )),
+    }
 
     let config = match AppConfig::load_from_path(cli_config.clone()) {
         Ok(config) => {
@@ -1692,9 +1742,12 @@ pub(crate) fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<(
         .context("write .agents/memory-layer.toml")?;
     }
     if missing_memory_skill_dirs(&skill_root).next().is_some() {
-        let skill_template_dir = discover_skill_template_dir().ok_or_else(|| {
-            anyhow::anyhow!("could not locate packaged memory-layer skill template")
-        })?;
+        let skill_template_dir = download_github_skill_template()
+            .ok()
+            .or_else(discover_skill_template_dir)
+            .ok_or_else(|| {
+                anyhow::anyhow!("could not locate packaged memory-layer skill template")
+            })?;
         sync_memory_skill_bundle(&skill_template_dir, &skill_root, false)?;
     }
     ensure_claude_md_memory_section(repo_root, project)?;

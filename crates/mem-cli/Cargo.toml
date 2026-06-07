@@ -34,6 +34,7 @@ capnp.workspace = true
 uuid.workspace = true
 toml.workspace = true
 humantime = "2"
+zip.workspace = true
 
 [[bin]]
 name = "memory"

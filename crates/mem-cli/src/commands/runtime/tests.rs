@@ -31,6 +31,7 @@ use crate::commands::{
     },
     skill_support::{
         MEMORY_SKILL_NAMES, SkillBundleStatus, SkillUpgradeAction, SkillVersionStatus,
+        download_github_skill_template, github_skill_version_report,
         project_skill_inventory_with_template, read_skill_version, render_agent_project_config,
         render_claude_md_memory_section, resolve_repo_root, upgrade_project_skills_with_template,
     },
@@ -54,6 +55,7 @@ use super::{
     WatcherManagerArgs, WatcherManagerCommand, ensure_shared_service_api_token, shared_env_lookup,
 };
 use mem_api::AppConfig;
+use zip::{ZipWriter, write::SimpleFileOptions};
 
 #[cfg(target_os = "macos")]
 use chrono::Utc;
@@ -1790,13 +1792,20 @@ fn repair_repo_bootstrap_creates_missing_files() {
     let _guard = ENV_LOCK.lock().unwrap();
     let repo_root = unique_temp_dir("mem-doctor-fix");
     let xdg_root = unique_temp_dir("mem-doctor-fix-xdg");
+    let archive_path = repo_root.join("memory-main.zip");
     let old_config = std::env::var("XDG_CONFIG_HOME").ok();
     let old_state = std::env::var("XDG_STATE_HOME").ok();
     let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+    let old_archive = std::env::var("MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_ARCHIVE_URL").ok();
+    write_test_skill_archive(&archive_path, "0.4.0");
     unsafe {
         std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
         std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
         std::env::set_var("XDG_CACHE_HOME", xdg_root.join("cache"));
+        std::env::set_var(
+            "MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_ARCHIVE_URL",
+            format!("file://{}", archive_path.display()),
+        );
     }
     fs::create_dir_all(&repo_root).unwrap();
 
@@ -1848,6 +1857,10 @@ fn repair_repo_bootstrap_creates_missing_files() {
     restore_env_var("XDG_CONFIG_HOME", old_config);
     restore_env_var("XDG_STATE_HOME", old_state);
     restore_env_var("XDG_CACHE_HOME", old_cache);
+    restore_env_var(
+        "MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_ARCHIVE_URL",
+        old_archive,
+    );
     let _ = fs::remove_dir_all(repo_root);
     let _ = fs::remove_dir_all(xdg_root);
 }
@@ -2475,6 +2488,70 @@ fn skill_inventory_reports_ok_for_matching_bundle_version() {
     let _ = fs::remove_dir_all(repo);
 }
 
+#[test]
+fn github_skill_version_report_detects_outdated_project_skills() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let repo = unique_temp_dir("mem-github-skill-versions");
+    let project_root = repo.join("project");
+    let github_root = repo.join("github-skills");
+    let old_raw = std::env::var("MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_RAW_BASE").ok();
+    for name in MEMORY_SKILL_NAMES {
+        write_test_skill(&github_root.join(name), "0.3.0");
+        write_test_skill(&project_root.join(".agents/skills").join(name), "0.2.0");
+    }
+    unsafe {
+        std::env::set_var(
+            "MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_RAW_BASE",
+            format!("file://{}", github_root.display()),
+        );
+    }
+
+    let report = github_skill_version_report(&project_root).unwrap();
+
+    assert_eq!(report.status, SkillBundleStatus::Warn);
+    assert_eq!(report.skills[0].status, SkillVersionStatus::Outdated);
+    assert_eq!(report.skills[0].github_version.as_deref(), Some("0.3.0"));
+
+    restore_env_var("MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_RAW_BASE", old_raw);
+    let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn download_github_skill_template_extracts_archive_to_state_cache() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let repo = unique_temp_dir("mem-github-skill-archive");
+    let xdg_root = unique_temp_dir("mem-github-skill-archive-xdg");
+    let archive_path = repo.join("memory-main.zip");
+    let old_archive = std::env::var("MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_ARCHIVE_URL").ok();
+    let old_state = std::env::var("XDG_STATE_HOME").ok();
+    write_test_skill_archive(&archive_path, "0.4.0");
+    unsafe {
+        std::env::set_var(
+            "MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_ARCHIVE_URL",
+            format!("file://{}", archive_path.display()),
+        );
+        std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
+    }
+
+    let template_root = download_github_skill_template().unwrap();
+
+    assert!(template_root.ends_with("skill-template-github/main"));
+    for name in MEMORY_SKILL_NAMES {
+        assert_eq!(
+            read_skill_version(&template_root.join(name)).unwrap(),
+            Some("0.4.0".to_string())
+        );
+    }
+
+    restore_env_var(
+        "MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_ARCHIVE_URL",
+        old_archive,
+    );
+    restore_env_var("XDG_STATE_HOME", old_state);
+    let _ = fs::remove_dir_all(repo);
+    let _ = fs::remove_dir_all(xdg_root);
+}
+
 fn write_test_skill(path: &Path, version: &str) {
     fs::create_dir_all(path.join("agents")).unwrap();
     let name = path.file_name().and_then(|value| value.to_str()).unwrap();
@@ -2488,6 +2565,36 @@ fn write_test_skill(path: &Path, version: &str) {
         format!("name: {name}\nversion: {version}\nentrypoint: SKILL.md\n"),
     )
     .unwrap();
+}
+
+fn write_test_skill_archive(path: &Path, version: &str) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    let file = fs::File::create(path).unwrap();
+    let mut zip = ZipWriter::new(file);
+    let options = SimpleFileOptions::default();
+    for name in MEMORY_SKILL_NAMES {
+        zip.start_file(
+            format!("memory-main/.agents/skills/{name}/SKILL.md"),
+            options,
+        )
+        .unwrap();
+        use std::io::Write;
+        zip.write_all(
+            format!("---\nname: {name}\nversion: {version}\ndescription: test\n---\n").as_bytes(),
+        )
+        .unwrap();
+        zip.add_directory(
+            format!("memory-main/.agents/skills/{name}/ignored/"),
+            options,
+        )
+        .unwrap();
+    }
+    zip.start_file("memory-main/README.md", options).unwrap();
+    use std::io::Write;
+    zip.write_all(b"not part of the skill template").unwrap();
+    zip.finish().unwrap();
 }
 
 fn unique_temp_dir(name: &str) -> PathBuf {

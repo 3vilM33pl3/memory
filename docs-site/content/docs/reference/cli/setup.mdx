@@ -47,10 +47,11 @@ Use `upgrade` after installing a newer Memory Layer version, especially when `.a
 
 ```bash
 memory upgrade --dry-run
+memory upgrade --dry-run --json
 memory upgrade
 ```
 
-Review generated diffs before committing. This command is expected to touch repo-local integration files, not the PostgreSQL database.
+Real upgrade runs download the current Memory skill bundle from GitHub when possible and fall back to the installed `skill-template` when offline. Review generated diffs before committing. This command is expected to touch repo-local integration files, not the PostgreSQL database.
 
 ## `memory completion`
 

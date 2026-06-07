@@ -19,6 +19,11 @@ description: "Use `memory doctor`, `memory health`, and `memory status` correctl
 | Service outage | `memory health` |
 | Agent cannot find project memory | `memory status --project <project-slug>` |
 | Provider or embedding problem | `memory doctor` |
+| Repo-local skills are missing or stale | `memory doctor --fix` |
+
+## Skill checks
+
+Doctor compares repo-local `.agents/skills/` with the local installed template and, when reachable, the current GitHub skill bundle. `memory doctor --fix` downloads the GitHub bundle, repairs missing or outdated Memory-owned skills, and falls back to the installed template when offline.
 
 ## Next
 

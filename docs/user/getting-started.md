@@ -743,7 +743,7 @@ memory upgrade --dry-run
 memory upgrade
 ```
 
-`memory doctor` reports stale or missing project skills through `workflow.project_skills`.
+`memory doctor` reports stale or missing project skills through `workflow.project_skills` and compares them with the current GitHub skill bundle through `workflow.project_skills_github`. `memory doctor --fix` downloads the current skill bundle from GitHub when possible, repairs repo-local skills, and falls back to the installed template if GitHub is unavailable.
 
 ## Using `scan`
 
