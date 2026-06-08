@@ -93,9 +93,17 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
         if let Some(current_stream) = stream.as_mut() {
             match current_stream.try_recv() {
                 Ok(Some(response)) => {
-                    app.apply_stream_response(response);
+                    let mut detail_subscription = app.apply_stream_response(response);
                     while let Ok(Some(response)) = current_stream.try_recv() {
-                        app.apply_stream_response(response);
+                        detail_subscription =
+                            app.apply_stream_response(response).or(detail_subscription);
+                    }
+                    if let Some(memory_id) = detail_subscription
+                        && let Err(error) = current_stream
+                            .send(StreamRequest::SubscribeMemory { memory_id })
+                            .await
+                    {
+                        app.chrome.status_message = error.to_string();
                     }
                 }
                 Ok(None) => {}
@@ -2174,7 +2182,20 @@ impl App {
         }
     }
 
-    fn apply_filters(&mut self) {
+    fn selected_memory_id(&self) -> Option<uuid::Uuid> {
+        self.memories
+            .filtered_memories
+            .get(self.memories.selected_index)
+            .map(|item| item.id)
+    }
+
+    fn apply_filters(&mut self) -> bool {
+        let previous_detail_id = self
+            .memories
+            .selected_detail
+            .as_ref()
+            .map(|detail| detail.id);
+
         self.memories.filtered_memories = self
             .memories
             .all_memories
@@ -2189,6 +2210,8 @@ impl App {
             self.memories.selected_detail = None;
             self.memories.selected_history = None;
             self.memories.memories_focus = MemoriesFocus::List;
+            self.memories.memory_detail_scroll = 0;
+            previous_detail_id.is_some()
         } else {
             self.memories.selected_index = self
                 .memories
@@ -2197,10 +2220,20 @@ impl App {
             self.memories
                 .table_state
                 .select(Some(self.memories.selected_index));
+            let selected_id = self.selected_memory_id();
+            if previous_detail_id.is_some() && previous_detail_id != selected_id {
+                self.memories.selected_detail = None;
+                self.memories.selected_history = None;
+                self.memories.memory_detail_scroll = 0;
+                self.memories.memories_focus = MemoriesFocus::List;
+                true
+            } else {
+                false
+            }
         }
     }
 
-    fn apply_stream_response(&mut self, response: StreamResponse) {
+    fn apply_stream_response(&mut self, response: StreamResponse) -> Option<uuid::Uuid> {
         self.chrome.needs_redraw = true;
         match response {
             StreamResponse::ProjectSnapshot { overview, memories }
@@ -2208,7 +2241,10 @@ impl App {
                 self.meta.overview = overview;
                 self.memories.total_memories = memories.total;
                 self.memories.all_memories = memories.items;
-                self.apply_filters();
+                let detail_subscription = self
+                    .apply_filters()
+                    .then(|| self.selected_memory_id())
+                    .flatten();
                 self.resume.resume_loaded = false;
                 self.chrome.status_message = format!(
                     "Streaming update: {} visible memories ({} total).",
@@ -2216,19 +2252,39 @@ impl App {
                     self.memories.total_memories
                 );
                 self.chrome.ui_status = UiStatus::Ready;
+                detail_subscription
             }
             StreamResponse::MemorySnapshot { detail }
             | StreamResponse::MemoryChanged { detail } => {
-                self.memories.selected_detail = detail;
-                self.memories.memory_detail_scroll = 0;
-                self.memories.memories_focus = MemoriesFocus::List;
+                self.apply_stream_memory_detail(detail);
+                None
             }
             StreamResponse::Activity { event } => {
                 self.record_backend_activity(event);
+                None
             }
             StreamResponse::Error { message } => {
                 self.chrome.status_message = format!("Stream error: {message}");
                 self.chrome.ui_status = UiStatus::Error;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn apply_stream_memory_detail(&mut self, detail: Option<MemoryEntryResponse>) {
+        let selected_id = self.selected_memory_id();
+        match detail {
+            Some(detail) if Some(detail.id) == selected_id => {
+                self.memories.selected_detail = Some(detail);
+                self.memories.memory_detail_scroll = 0;
+                self.memories.memories_focus = MemoriesFocus::List;
+            }
+            None if selected_id.is_none() => {
+                self.memories.selected_detail = None;
+                self.memories.selected_history = None;
+                self.memories.memory_detail_scroll = 0;
+                self.memories.memories_focus = MemoriesFocus::List;
             }
             _ => {}
         }

@@ -28,7 +28,7 @@ use mem_api::{
     LlmAuditMessage, LlmAuditStatusResponse, MemoryEmbeddingSpace, MemoryEntryResponse,
     MemoryStatus, MemoryType, Profile, ProjectMemoriesResponse, QueryAnswerGeneration,
     QueryAnswerMethod, QueryDiagnostics, QueryFilters, QueryMatchKind, QueryRequest, QueryResponse,
-    QueryResult, QueryResultDebug, ReplacementProposalListResponse, TokenUsage,
+    QueryResult, QueryResultDebug, ReplacementProposalListResponse, StreamResponse, TokenUsage,
     WatcherPresenceSummary,
 };
 use std::path::{Path, PathBuf};
@@ -779,6 +779,73 @@ fn project_refresh_selects_first_memory_for_detail_loading() {
 }
 
 #[test]
+fn memories_list_insert_clears_detail_when_selected_row_changes() {
+    let mut app = new_test_app();
+    let updated_at = Utc.with_ymd_and_hms(2026, 5, 3, 18, 0, 0).unwrap();
+    let old_first =
+        test_project_memory_list_item("Old first memory", MemoryType::Implementation, updated_at);
+    let old_first_id = old_first.id;
+    let new_first = test_project_memory_list_item("New first memory", MemoryType::Task, updated_at);
+    let new_first_id = new_first.id;
+    app.memories.all_memories = vec![old_first.clone()];
+    app.apply_filters();
+    app.memories.selected_detail = Some(test_memory_detail_with_id("old detail", old_first_id));
+
+    app.memories.all_memories = vec![new_first, old_first];
+    let needs_detail_refresh = app.apply_filters();
+
+    assert!(needs_detail_refresh);
+    assert_eq!(app.memories.selected_index, 0);
+    assert_eq!(
+        app.memories.filtered_memories.first().map(|item| item.id),
+        Some(new_first_id)
+    );
+    assert!(app.memories.selected_detail.is_none());
+}
+
+#[test]
+fn stream_list_insert_resubscribes_and_ignores_stale_detail() {
+    let mut app = new_test_app();
+    let updated_at = Utc.with_ymd_and_hms(2026, 5, 3, 18, 0, 0).unwrap();
+    let old_first =
+        test_project_memory_list_item("Old first memory", MemoryType::Implementation, updated_at);
+    let old_first_id = old_first.id;
+    let new_first = test_project_memory_list_item("New first memory", MemoryType::Task, updated_at);
+    let new_first_id = new_first.id;
+    app.memories.all_memories = vec![old_first.clone()];
+    app.apply_filters();
+    app.memories.selected_detail = Some(test_memory_detail_with_id("old detail", old_first_id));
+
+    let detail_subscription = app.apply_stream_response(StreamResponse::ProjectChanged {
+        overview: empty_overview("memory".to_string()),
+        memories: ProjectMemoriesResponse {
+            project: "memory".to_string(),
+            total: 2,
+            items: vec![new_first, old_first],
+        },
+    });
+
+    assert_eq!(detail_subscription, Some(new_first_id));
+    assert!(app.memories.selected_detail.is_none());
+
+    app.apply_stream_response(StreamResponse::MemorySnapshot {
+        detail: Some(test_memory_detail_with_id("late old detail", old_first_id)),
+    });
+    assert!(app.memories.selected_detail.is_none());
+
+    app.apply_stream_response(StreamResponse::MemorySnapshot {
+        detail: Some(test_memory_detail_with_id("fresh new detail", new_first_id)),
+    });
+    assert_eq!(
+        app.memories
+            .selected_detail
+            .as_ref()
+            .map(|detail| detail.id),
+        Some(new_first_id)
+    );
+}
+
+#[test]
 fn manager_footer_status_mapping_prefers_active_then_installed_then_off() {
     assert_eq!(
         derive_manager_state(true, true, true, false, true),
@@ -1022,6 +1089,13 @@ fn test_memory_detail(canonical_text: &str) -> MemoryEntryResponse {
         version_no: 1,
         is_tombstone: false,
     }
+}
+
+fn test_memory_detail_with_id(canonical_text: &str, id: Uuid) -> MemoryEntryResponse {
+    let mut detail = test_memory_detail(canonical_text);
+    detail.id = id;
+    detail.canonical_id = id;
+    detail
 }
 
 fn test_project_memory_list_item(
