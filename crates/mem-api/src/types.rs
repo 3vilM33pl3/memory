@@ -1771,6 +1771,14 @@ pub struct ArchiveResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchiveMemoryResponse {
+    pub memory_id: Uuid,
+    pub project: String,
+    pub summary: String,
+    pub archived: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteMemoryRequest {
     pub memory_id: Uuid,
 }

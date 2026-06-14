@@ -1,15 +1,15 @@
 use anyhow::Result;
 use mem_api::{
-    ActivityListResponse, AppConfig, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
-    CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
-    CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse, GraphActivityRequest,
-    MemoryEntryResponse, PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse,
-    ProjectMemoryBundlePreview, ProjectMemoryExportOptions, ProjectMemoryImportPreview,
-    ProjectMemoryImportResponse, ProjectOverviewResponse, ProvenanceVerificationRequest,
-    ProvenanceVerificationResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse, QueryRequest,
-    QueryResponse, ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse,
-    ReplacementPolicy, ResumeRequest, ResumeResponse, ScanActivityRequest, UpToSpeedRequest,
-    UpToSpeedResponse,
+    ActivityListResponse, AppConfig, ArchiveMemoryResponse, ArchiveRequest, ArchiveResponse,
+    CaptureTaskRequest, CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest,
+    CommitSyncResponse, CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse,
+    GraphActivityRequest, MemoryEntryResponse, PlanActivityRequest, ProjectCommitsResponse,
+    ProjectMemoriesResponse, ProjectMemoryBundlePreview, ProjectMemoryExportOptions,
+    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectOverviewResponse,
+    ProvenanceVerificationRequest, ProvenanceVerificationResponse, PruneEmbeddingsRequest,
+    PruneEmbeddingsResponse, QueryRequest, QueryResponse, ReembedRequest, ReembedResponse,
+    ReindexRequest, ReindexResponse, ReplacementPolicy, ResumeRequest, ResumeResponse,
+    ScanActivityRequest, UpToSpeedRequest, UpToSpeedResponse,
 };
 use reqwest::Client;
 use uuid::Uuid;
@@ -663,6 +663,21 @@ impl ApiClient {
                     max_importance: 1,
                     dry_run,
                 })
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn archive_memory(&self, memory_id: Uuid) -> Result<ArchiveMemoryResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/memory/{memory_id}/archive"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(&serde_json::json!({}))
                 .send()
                 .await?,
         )

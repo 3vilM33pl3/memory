@@ -272,6 +272,8 @@ pub(crate) struct ImplementationMemoryResult {
     pub(crate) capture: Option<mem_api::CaptureTaskResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) curate: Option<CurateResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) curate_error: Option<String>,
 }
 
 pub(crate) async fn resolve_active_plan_selection(

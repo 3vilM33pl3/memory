@@ -338,6 +338,69 @@ pub(crate) async fn archive(
     }))
 }
 
+pub(crate) async fn archive_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ArchiveMemoryResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if id.is_nil() {
+        return Err(ApiError::validation(ValidationError::new(
+            "memory id must be non-nil",
+        )));
+    }
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(
+                &state,
+                &format!("/v1/memory/{id}/archive"),
+                &serde_json::json!({}),
+                true,
+            )
+            .await?,
+        ));
+    }
+
+    let archived = sqlx::query(
+        r#"
+        UPDATE memory_entries m
+        SET status = 'archived',
+            archived_at = COALESCE(archived_at, now()),
+            updated_at = now()
+        FROM projects p
+        WHERE p.id = m.project_id
+          AND m.id = $1
+        RETURNING p.slug, m.summary, m.status
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(state.pool()?)
+    .await
+    .map_err(ApiError::sql)?
+    .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
+
+    let project: String = archived.try_get("slug").map_err(ApiError::sql)?;
+    let summary: String = archived.try_get("summary").map_err(ApiError::sql)?;
+    let status: String = archived.try_get("status").map_err(ApiError::sql)?;
+    let archived_now = status == "archived";
+
+    notify_project_changed(
+        &state,
+        project.clone(),
+        Some(id),
+        ActivityKind::Archive,
+        format!("Archived memory: {summary}"),
+        None,
+    );
+
+    Ok(Json(ArchiveMemoryResponse {
+        memory_id: id,
+        project,
+        summary,
+        archived: archived_now,
+    }))
+}
+
 pub(crate) async fn delete_memory(
     State(state): State<AppState>,
     headers: HeaderMap,

@@ -328,6 +328,7 @@ pub(super) async fn handle(
                     .await
                     .context("load active plan")?
             };
+            let completed_plan_memory_id = detail.id;
 
             let report = build_plan_execution_finish_report(&project, &detail)?;
             if synced_plan && !args.dry_run {
@@ -375,28 +376,38 @@ pub(super) async fn handle(
                         preview,
                         capture: None,
                         curate: None,
+                        curate_error: None,
                     })
                 } else {
                     let capture = api.capture_task(&request).await.with_context(
                         || "plan verification succeeded, but implementation capture failed",
                     )?;
-                    let curate = api
+                    let (curate, curate_error) = match api
                         .curate(&project, repo_replacement_policy(&repo_root), false)
                         .await
-                        .with_context(|| {
-                            "plan verification succeeded and implementation was captured, but curation failed"
-                        })?;
+                    {
+                        Ok(response) => (Some(response), None),
+                        Err(error) => {
+                            let message = error.to_string();
+                            eprintln!(
+                                "warning: plan verification succeeded and implementation was captured, but curation failed: {message}"
+                            );
+                            (None, Some(message))
+                        }
+                    };
                     Some(ImplementationMemoryResult {
                         recorded: true,
                         summary,
                         preview,
                         capture: Some(capture),
-                        curate: Some(curate),
+                        curate,
+                        curate_error,
                     })
                 }
             } else {
                 None
             };
+            let mut archived_plan = None;
             if !args.dry_run {
                 let finish_request = build_plan_activity_request(
                     &project,
@@ -415,6 +426,13 @@ pub(super) async fn handle(
                 if let Err(error) = api.log_plan_activity(&finish_request).await {
                     eprintln!("warning: failed to log plan activity for `{project}`: {error}");
                 }
+                if report.verified_complete {
+                    archived_plan = Some(
+                        api.archive_memory(completed_plan_memory_id)
+                            .await
+                            .context("archive completed plan memory")?,
+                    );
+                }
             }
             if args.json {
                 println!(
@@ -422,6 +440,7 @@ pub(super) async fn handle(
                     serde_json::to_string_pretty(&serde_json::json!({
                         "report": report,
                         "implementation": implementation,
+                        "archived_plan": archived_plan,
                         "dry_run": args.dry_run,
                     }))?
                 );

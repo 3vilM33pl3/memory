@@ -8,18 +8,19 @@ use tower_http::{
 };
 
 use super::{
-    AppState, activate_embedding_backend, admin_shutdown, agents_snapshot, archive, capture_task,
-    checkpoint_activity, curate_memory, deactivate_embedding_backend, delete_memory, get_memory,
-    get_memory_history, graph_activity, healthz, list_embedding_backends, llm_audit_status,
-    plan_activity, project_activities, project_bundle_export, project_bundle_export_preview,
-    project_bundle_import, project_bundle_import_preview, project_commit_detail, project_commits,
-    project_memories, project_overview, project_replacement_policy,
-    project_replacement_policy_update, project_replacement_proposal_approve,
-    project_replacement_proposal_reject, project_replacement_proposals, project_resume,
-    project_up_to_speed, prune_embeddings, prune_history, query, reembed, reindex, runtime_status,
-    scan_activity, set_embedding_creation_enabled, set_llm_audit_enabled, stats, sync_commits,
-    verify_provenance, watcher_heartbeat, watcher_restart_local, watcher_unregister,
-    web_auth_token, web_unavailable, websocket,
+    AppState, activate_embedding_backend, admin_shutdown, agents_snapshot, archive, archive_memory,
+    capture_task, checkpoint_activity, curate_memory, deactivate_embedding_backend, delete_memory,
+    get_memory, get_memory_history, graph_activity, healthz, list_embedding_backends,
+    llm_audit_status, plan_activity, project_activities, project_bundle_export,
+    project_bundle_export_preview, project_bundle_import, project_bundle_import_preview,
+    project_commit_detail, project_commits, project_memories, project_overview,
+    project_replacement_policy, project_replacement_policy_update,
+    project_replacement_proposal_approve, project_replacement_proposal_reject,
+    project_replacement_proposals, project_resume, project_up_to_speed, prune_embeddings,
+    prune_history, query, reembed, reindex, runtime_status, scan_activity,
+    set_embedding_creation_enabled, set_llm_audit_enabled, stats, sync_commits, verify_provenance,
+    watcher_heartbeat, watcher_restart_local, watcher_unregister, web_auth_token, web_unavailable,
+    websocket,
 };
 
 pub(crate) fn build_http_app(state: AppState) -> Router {
@@ -59,6 +60,7 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
             get(llm_audit_status).post(set_llm_audit_enabled),
         )
         .route("/v1/memory/{id}", get(get_memory))
+        .route("/v1/memory/{id}/archive", post(archive_memory))
         .route("/v1/memory/{id}/history", get(get_memory_history))
         .route("/v1/memory", delete(delete_memory))
         .route("/v1/prune-history", post(prune_history))

@@ -1244,44 +1244,48 @@ pub(crate) fn select_resume_context(
     }
 
     if let Some(item) = changed_memories.iter().find(|item| {
-        matches!(
-            item.memory_type,
-            mem_api::MemoryType::Task
-                | mem_api::MemoryType::Plan
-                | mem_api::MemoryType::Decision
-                | mem_api::MemoryType::Architecture
-                | mem_api::MemoryType::Convention
-                | mem_api::MemoryType::Documentation
-                | mem_api::MemoryType::Debugging
-                | mem_api::MemoryType::Refactor
-        ) && !selected.iter().any(|existing| existing.id == item.id)
+        item.status == mem_api::MemoryStatus::Active
+            && matches!(
+                item.memory_type,
+                mem_api::MemoryType::Task
+                    | mem_api::MemoryType::Plan
+                    | mem_api::MemoryType::Decision
+                    | mem_api::MemoryType::Architecture
+                    | mem_api::MemoryType::Convention
+                    | mem_api::MemoryType::Documentation
+                    | mem_api::MemoryType::Debugging
+                    | mem_api::MemoryType::Refactor
+            )
+            && !selected.iter().any(|existing| existing.id == item.id)
     }) {
         selected.push(item.clone());
-    } else if let Some(item) = changed_memories
-        .iter()
-        .find(|item| !selected.iter().any(|existing| existing.id == item.id))
-    {
+    } else if let Some(item) = changed_memories.iter().find(|item| {
+        item.status == mem_api::MemoryStatus::Active
+            && !selected.iter().any(|existing| existing.id == item.id)
+    }) {
         selected.push(item.clone());
     }
 
     if let Some(item) = durable_context.iter().find(|item| {
-        matches!(
-            item.memory_type,
-            mem_api::MemoryType::Decision
-                | mem_api::MemoryType::Architecture
-                | mem_api::MemoryType::Convention
-                | mem_api::MemoryType::Documentation
-                | mem_api::MemoryType::Environment
-                | mem_api::MemoryType::Refactor
-        ) && !selected.iter().any(|existing| existing.id == item.id)
+        item.status == mem_api::MemoryStatus::Active
+            && matches!(
+                item.memory_type,
+                mem_api::MemoryType::Decision
+                    | mem_api::MemoryType::Architecture
+                    | mem_api::MemoryType::Convention
+                    | mem_api::MemoryType::Documentation
+                    | mem_api::MemoryType::Environment
+                    | mem_api::MemoryType::Refactor
+            )
+            && !selected.iter().any(|existing| existing.id == item.id)
     }) {
         selected.push(item.clone());
     }
 
-    if let Some(item) = durable_context
-        .iter()
-        .find(|item| !selected.iter().any(|existing| existing.id == item.id))
-    {
+    if let Some(item) = durable_context.iter().find(|item| {
+        item.status == mem_api::MemoryStatus::Active
+            && !selected.iter().any(|existing| existing.id == item.id)
+    }) {
         selected.push(item.clone());
     }
 
@@ -1586,4 +1590,53 @@ pub(crate) async fn summarize_resume_with_llm(
         token_usage,
     );
     Ok(content.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn memory_item(
+        summary: &str,
+        memory_type: mem_api::MemoryType,
+        status: mem_api::MemoryStatus,
+    ) -> mem_api::ProjectMemoryListItem {
+        let id = Uuid::new_v4();
+        mem_api::ProjectMemoryListItem {
+            id,
+            summary: summary.to_string(),
+            preview: summary.to_string(),
+            memory_type,
+            status,
+            confidence: 0.9,
+            importance: 3,
+            updated_at: chrono::Utc::now(),
+            tags: Vec::new(),
+            tag_count: 0,
+            source_count: 0,
+            canonical_id: id,
+            version_no: 1,
+            is_tombstone: false,
+        }
+    }
+
+    #[test]
+    fn resume_context_ignores_archived_changed_plans() {
+        let archived_plan = memory_item(
+            "Reference Section Overhaul",
+            mem_api::MemoryType::Plan,
+            mem_api::MemoryStatus::Archived,
+        );
+        let active_refactor = memory_item(
+            "Current refactor context",
+            mem_api::MemoryType::Refactor,
+            mem_api::MemoryStatus::Active,
+        );
+
+        let selected = select_resume_context(&[archived_plan], &[active_refactor.clone()], None);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, active_refactor.id);
+        assert_eq!(selected[0].status, mem_api::MemoryStatus::Active);
+    }
 }
