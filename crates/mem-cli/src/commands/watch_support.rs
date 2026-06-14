@@ -378,19 +378,29 @@ pub(crate) async fn reconcile_watcher_manager(
             continue;
         }
 
-        let unit_name = managed_watch_service_name(&session.session_id);
+        let unit_name = managed_watch_service_name(config.profile, &session.session_id);
         let tracked = state.sessions.contains_key(&session.session_id);
-        let mut unit_loaded = tracked;
-        let mut unit_running = tracked;
-        if !tracked || verify_units {
-            unit_loaded = managed_watch_service_loaded(&session.session_id);
-            unit_running = managed_watch_service_running(&session.session_id);
+        let tracked_unit_matches = state
+            .sessions
+            .get(&session.session_id)
+            .is_some_and(|entry| entry.unit_name == unit_name);
+        let mut unit_loaded = tracked && tracked_unit_matches;
+        let mut unit_running = tracked && tracked_unit_matches;
+        if !tracked || !tracked_unit_matches || verify_units {
+            unit_loaded = managed_watch_service_loaded(config.profile, &session.session_id);
+            unit_running = managed_watch_service_running(config.profile, &session.session_id);
         }
         if should_start_agent_watcher(tracked, unit_loaded, unit_running) {
             if unit_loaded {
-                let _ = stop_managed_watch_service(&session.session_id);
+                let _ = stop_managed_watch_service(config.profile, &session.session_id);
             }
-            start_managed_agent_watcher(&repo_root, &project, &session, config_path)?;
+            start_managed_agent_watcher(
+                &repo_root,
+                &project,
+                &session,
+                config.profile,
+                config_path,
+            )?;
         }
 
         let agent_started_at = DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
@@ -418,9 +428,9 @@ pub(crate) async fn reconcile_watcher_manager(
         .collect::<Vec<_>>();
     for session_id in stale {
         if let Some(entry) = state.sessions.remove(&session_id) {
-            let _ = stop_managed_watch_service(&session_id);
+            let _ = stop_managed_watch_service(config.profile, &session_id);
             #[cfg(target_os = "macos")]
-            if let Ok(path) = managed_watch_launch_agent_path(&session_id) {
+            if let Ok(path) = managed_watch_launch_agent_path(config.profile, &session_id) {
                 if path.exists() {
                     let _ = fs::remove_file(path);
                 }
@@ -569,46 +579,50 @@ pub(crate) fn legacy_watch_service_name(project: &str) -> String {
     }
 }
 
-pub(crate) fn managed_watch_service_name(session_id: &str) -> String {
+pub(crate) fn managed_watch_service_name(profile: Profile, session_id: &str) -> String {
     #[cfg(target_os = "macos")]
     {
-        managed_watch_launch_agent_label(session_id)
+        managed_watch_launch_agent_label(profile, session_id)
     }
 
     #[cfg(not(target_os = "macos"))]
     {
+        let profile_prefix = match profile {
+            Profile::Prod => String::new(),
+            Profile::Dev => "dev-".to_string(),
+        };
         format!(
-            "memory-watch-codex-{}.service",
+            "memory-watch-codex-{profile_prefix}{}.service",
             platform::sanitize_service_fragment(session_id)
         )
     }
 }
 
-pub(crate) fn managed_watch_service_loaded(session_id: &str) -> bool {
+pub(crate) fn managed_watch_service_loaded(profile: Profile, session_id: &str) -> bool {
     #[cfg(target_os = "macos")]
     {
-        launch_agent_status(&managed_watch_launch_agent_label(session_id))
+        launch_agent_status(&managed_watch_launch_agent_label(profile, session_id))
             .map(|status| status.loaded)
             .unwrap_or(false)
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        unit_is_loaded(&managed_watch_service_name(session_id))
+        unit_is_loaded(&managed_watch_service_name(profile, session_id))
     }
 }
 
-pub(crate) fn managed_watch_service_running(session_id: &str) -> bool {
+pub(crate) fn managed_watch_service_running(profile: Profile, session_id: &str) -> bool {
     #[cfg(target_os = "macos")]
     {
-        launch_agent_status(&managed_watch_launch_agent_label(session_id))
+        launch_agent_status(&managed_watch_launch_agent_label(profile, session_id))
             .map(|status| status.running)
             .unwrap_or(false)
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        unit_is_active(&managed_watch_service_name(session_id))
+        unit_is_active(&managed_watch_service_name(profile, session_id))
     }
 }
 
@@ -616,6 +630,7 @@ pub(crate) fn start_managed_agent_watcher(
     repo_root: &Path,
     project: &str,
     session: &LightweightAgentSession,
+    profile: Profile,
     config_path: Option<&Path>,
 ) -> Result<()> {
     let started_at = DateTime::<Utc>::from_timestamp_millis(session.started_at as i64)
@@ -624,14 +639,15 @@ pub(crate) fn start_managed_agent_watcher(
 
     #[cfg(target_os = "macos")]
     {
-        let plist_path = managed_watch_launch_agent_path(&session.session_id)?;
-        let label = managed_watch_launch_agent_label(&session.session_id);
+        let plist_path = managed_watch_launch_agent_path(profile, &session.session_id)?;
+        let label = managed_watch_launch_agent_label(profile, &session.session_id);
         write_launch_agent(
             &plist_path,
             render_managed_watch_launch_agent(
                 repo_root,
                 project,
                 session,
+                profile,
                 &started_at,
                 config_path,
             )?,
@@ -645,7 +661,7 @@ pub(crate) fn start_managed_agent_watcher(
     let memory_binary = memory_binary_path()?;
 
     #[cfg(not(target_os = "macos"))]
-    let unit_name = managed_watch_service_name(&session.session_id);
+    let unit_name = managed_watch_service_name(profile, &session.session_id);
 
     #[cfg(not(target_os = "macos"))]
     let mut cmd = ProcessCommand::new("systemd-run");
@@ -931,8 +947,8 @@ pub(crate) fn disable_watch_manager_service(profile: Profile) -> Result<String> 
         }
         if let Ok(state) = load_watcher_manager_state(profile) {
             for session_id in state.sessions.keys() {
-                let _ = stop_managed_watch_service(session_id);
-                if let Ok(path) = managed_watch_launch_agent_path(session_id) {
+                let _ = stop_managed_watch_service(profile, session_id);
+                if let Ok(path) = managed_watch_launch_agent_path(profile, session_id) {
                     if path.exists() {
                         let _ = fs::remove_file(path);
                     }
@@ -1138,18 +1154,18 @@ pub(crate) fn should_start_agent_watcher(
     !session_tracked || !unit_loaded || !unit_active
 }
 
-pub(crate) fn stop_managed_watch_service(session_id: &str) -> Result<()> {
+pub(crate) fn stop_managed_watch_service(profile: Profile, session_id: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
-        let label = managed_watch_launch_agent_label(session_id);
-        let path = managed_watch_launch_agent_path(session_id)?;
+        let label = managed_watch_launch_agent_label(profile, session_id);
+        let path = managed_watch_launch_agent_path(profile, session_id)?;
         let _ = bootout_launch_agent(&path, &label);
         Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        let unit_name = managed_watch_service_name(session_id);
+        let unit_name = managed_watch_service_name(profile, session_id);
         stop_unit_if_present(&unit_name)
     }
 }
@@ -1250,14 +1266,27 @@ pub(crate) fn watch_manager_launch_agent_path() -> Result<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn managed_watch_launch_agent_label(session_id: &str) -> String {
-    platform::managed_watch_launch_agent_label(session_id)
+pub(crate) fn managed_watch_launch_agent_label(profile: Profile, session_id: &str) -> String {
+    match profile {
+        Profile::Prod => platform::managed_watch_launch_agent_label(session_id),
+        Profile::Dev => format!(
+            "com.memory-layer.memory-watch.codex.dev.{}",
+            platform::sanitize_service_fragment(session_id)
+        ),
+    }
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn managed_watch_launch_agent_path(session_id: &str) -> Result<PathBuf> {
-    platform::managed_watch_launch_agent_path(session_id)
-        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))
+pub(crate) fn managed_watch_launch_agent_path(
+    profile: Profile,
+    session_id: &str,
+) -> Result<PathBuf> {
+    Ok(platform::user_launch_agents_dir()
+        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?
+        .join(format!(
+            "{}.plist",
+            managed_watch_launch_agent_label(profile, session_id)
+        )))
 }
 
 #[cfg(target_os = "macos")]
@@ -1421,6 +1450,7 @@ pub(crate) fn render_managed_watch_launch_agent(
     repo_root: &Path,
     project: &str,
     session: &LightweightAgentSession,
+    profile: Profile,
     started_at: &str,
     config_path: Option<&Path>,
 ) -> Result<String> {
@@ -1430,8 +1460,16 @@ pub(crate) fn render_managed_watch_launch_agent(
         .with_context(|| format!("canonicalize {}", repo_root.display()))?;
     let log_dir = user_memory_layer_log_dir()?;
     let sanitized = sanitize_service_fragment(&session.session_id);
-    let stdout_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stdout.log"));
-    let stderr_path = log_dir.join(format!("memory-watch-codex-{sanitized}.stderr.log"));
+    let profile_prefix = match profile {
+        Profile::Prod => String::new(),
+        Profile::Dev => "dev-".to_string(),
+    };
+    let stdout_path = log_dir.join(format!(
+        "memory-watch-codex-{profile_prefix}{sanitized}.stdout.log"
+    ));
+    let stderr_path = log_dir.join(format!(
+        "memory-watch-codex-{profile_prefix}{sanitized}.stderr.log"
+    ));
     let mut args = vec![binary.display().to_string()];
     // Prefer the resolved project config so the watcher talks to the same
     // service instance the TUI and CLI use for this project.
@@ -1458,7 +1496,7 @@ pub(crate) fn render_managed_watch_launch_agent(
     let command = launch_agent_shell_command(&args)?;
     let command = format!("export MEMORY_LAYER_WATCH_SERVICE_MANAGED=1; {command}");
     render_launch_agent_plist(
-        &managed_watch_launch_agent_label(&session.session_id),
+        &managed_watch_launch_agent_label(profile, &session.session_id),
         &working_directory,
         &command,
         &stdout_path,

@@ -54,7 +54,7 @@ use super::{
     Cli, DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, WatcherCommand,
     WatcherManagerArgs, WatcherManagerCommand, ensure_shared_service_api_token, shared_env_lookup,
 };
-use mem_api::AppConfig;
+use mem_api::{AppConfig, Profile};
 use zip::{ZipWriter, write::SimpleFileOptions};
 
 #[cfg(target_os = "macos")]
@@ -79,7 +79,7 @@ use crate::commands::service_support::parse_systemd_unit_names;
 
 #[cfg(not(target_os = "macos"))]
 use crate::commands::watch_support::{
-    render_watch_manager_unit, render_watch_unit, watch_unit_name,
+    managed_watch_service_name, render_watch_manager_unit, render_watch_unit, watch_unit_name,
 };
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -1992,6 +1992,19 @@ fn watch_unit_name_is_project_scoped() {
 
 #[cfg(not(target_os = "macos"))]
 #[test]
+fn managed_watch_unit_name_is_profile_scoped() {
+    assert_eq!(
+        managed_watch_service_name(Profile::Prod, "session 123"),
+        "memory-watch-codex-session-123.service"
+    );
+    assert_eq!(
+        managed_watch_service_name(Profile::Dev, "session 123"),
+        "memory-watch-codex-dev-session-123.service"
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
 fn watch_unit_uses_repo_root_and_project() {
     let repo_root = unique_temp_dir("mem-watch-unit");
     fs::create_dir_all(&repo_root).unwrap();
@@ -2035,8 +2048,12 @@ fn launch_agent_labels_are_project_scoped() {
         "com.memory-layer.memory-watch.customer-portal"
     );
     assert_eq!(
-        managed_watch_launch_agent_label("session 123"),
+        managed_watch_launch_agent_label(Profile::Prod, "session 123"),
         "com.memory-layer.memory-watch.codex.session-123"
+    );
+    assert_eq!(
+        managed_watch_launch_agent_label(Profile::Dev, "session 123"),
+        "com.memory-layer.memory-watch.codex.dev.session-123"
     );
     assert_eq!(
         sanitize_service_fragment("customer portal"),
@@ -2102,6 +2119,7 @@ fn managed_watch_launch_agent_uses_agent_metadata() {
         &repo_root,
         "homelab",
         &session,
+        Profile::Prod,
         "2026-04-10T00:00:00Z",
         None,
     )
