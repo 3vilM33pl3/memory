@@ -1633,7 +1633,11 @@ mod tests {
             mem_api::MemoryStatus::Active,
         );
 
-        let selected = select_resume_context(&[archived_plan], &[active_refactor.clone()], None);
+        let selected = select_resume_context(
+            &[archived_plan],
+            std::slice::from_ref(&active_refactor),
+            None,
+        );
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].id, active_refactor.id);
