@@ -351,6 +351,267 @@ pub fn evaluate_action(mode: &LoopMode, action: LoopActionKind) -> PolicyDecisio
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerStatus {
+    Succeeded,
+    Failed,
+    Blocked,
+}
+
+impl RunnerStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RunnerBudget {
+    pub max_seconds: u64,
+    pub max_tokens: usize,
+    pub max_cost_usd: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunnerWorkspaceRef {
+    pub repo_root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunnerCapabilityProfile {
+    #[serde(default)]
+    pub can_read_repo: bool,
+    #[serde(default)]
+    pub can_write_repo: bool,
+    #[serde(default)]
+    pub can_run_commands: bool,
+    #[serde(default)]
+    pub can_propose_memory: bool,
+    #[serde(default)]
+    pub allowed_commands: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RunnerTaskPack {
+    pub title: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunnerArtifact {
+    pub path: String,
+    pub artifact_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunnerChangedFile {
+    pub path: String,
+    pub change_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunnerCommandOutput {
+    pub command: String,
+    pub exit_code: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RunnerMemoryUpdateProposal {
+    pub proposal_type: String,
+    pub summary: String,
+    pub candidate: Value,
+    #[serde(default)]
+    pub evidence: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunnerInvocation {
+    pub runner_id: String,
+    pub task_pack: RunnerTaskPack,
+    pub context_pack: LoopContextPack,
+    pub capability_profile: RunnerCapabilityProfile,
+    pub workspace: RunnerWorkspaceRef,
+    pub budget: RunnerBudget,
+    pub mode: LoopMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RunnerResult {
+    pub runner_id: String,
+    pub status: RunnerStatus,
+    pub summary: String,
+    #[serde(default)]
+    pub artifacts: Vec<RunnerArtifact>,
+    #[serde(default)]
+    pub changed_files: Vec<RunnerChangedFile>,
+    #[serde(default)]
+    pub command_outputs: Vec<RunnerCommandOutput>,
+    #[serde(default)]
+    pub memory_updates: Vec<RunnerMemoryUpdateProposal>,
+    pub policy_decision: PolicyDecision,
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+pub trait LoopRunner {
+    fn runner_id(&self) -> &str;
+
+    fn invoke(&self, invocation: RunnerInvocation) -> RunnerResult;
+}
+
+pub fn invoke_runner_with_policy(
+    runner: &impl LoopRunner,
+    invocation: RunnerInvocation,
+) -> RunnerResult {
+    let decision = evaluate_action(&invocation.mode, LoopActionKind::InvokeRunner);
+    if !decision.allowed {
+        return RunnerResult {
+            runner_id: runner.runner_id().to_string(),
+            status: RunnerStatus::Blocked,
+            summary: format!("Runner invocation blocked: {}", decision.reason),
+            artifacts: Vec::new(),
+            changed_files: Vec::new(),
+            command_outputs: Vec::new(),
+            memory_updates: Vec::new(),
+            policy_decision: decision,
+            metadata: json!({ "mode": invocation.mode.as_str() }),
+        };
+    }
+    let mut result = runner.invoke(invocation);
+    result.policy_decision = decision;
+    result
+}
+
+#[derive(Debug, Clone)]
+pub struct MockLoopRunner {
+    runner_id: String,
+    scenario: MockRunnerScenario,
+}
+
+#[derive(Debug, Clone)]
+pub enum MockRunnerScenario {
+    Success,
+    Failure(String),
+}
+
+impl MockLoopRunner {
+    pub fn success(runner_id: impl Into<String>) -> Self {
+        Self {
+            runner_id: runner_id.into(),
+            scenario: MockRunnerScenario::Success,
+        }
+    }
+
+    pub fn failure(runner_id: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            runner_id: runner_id.into(),
+            scenario: MockRunnerScenario::Failure(reason.into()),
+        }
+    }
+}
+
+impl LoopRunner for MockLoopRunner {
+    fn runner_id(&self) -> &str {
+        &self.runner_id
+    }
+
+    fn invoke(&self, invocation: RunnerInvocation) -> RunnerResult {
+        let allowed_command = invocation
+            .capability_profile
+            .allowed_commands
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "cargo test -p mem-loops".to_string());
+        let policy_decision = PolicyDecision {
+            action: LoopActionKind::InvokeRunner,
+            allowed: true,
+            requires_approval: true,
+            reason: "allowed_by_mode".to_string(),
+        };
+        match &self.scenario {
+            MockRunnerScenario::Success => RunnerResult {
+                runner_id: self.runner_id.clone(),
+                status: RunnerStatus::Succeeded,
+                summary: format!("Mock runner completed task: {}", invocation.task_pack.title),
+                artifacts: vec![RunnerArtifact {
+                    path: "mock/artifacts/result.json".to_string(),
+                    artifact_type: "json".to_string(),
+                    summary: Some("Deterministic mock runner artifact".to_string()),
+                }],
+                changed_files: vec![RunnerChangedFile {
+                    path: invocation
+                        .task_pack
+                        .metadata
+                        .get("expected_changed_file")
+                        .and_then(Value::as_str)
+                        .unwrap_or("mock/changed-file.txt")
+                        .to_string(),
+                    change_type: "modified".to_string(),
+                }],
+                command_outputs: vec![RunnerCommandOutput {
+                    command: allowed_command,
+                    exit_code: 0,
+                    stdout: Some("mock runner success".to_string()),
+                    stderr: None,
+                }],
+                memory_updates: vec![RunnerMemoryUpdateProposal {
+                    proposal_type: "add".to_string(),
+                    summary: format!("Implementation note for {}", invocation.task_pack.title),
+                    candidate: json!({
+                        "summary": format!("Implementation note for {}", invocation.task_pack.title),
+                        "memory_type": "implementation"
+                    }),
+                    evidence: json!([{ "source_kind": "note", "excerpt": "mock runner" }]),
+                }],
+                policy_decision,
+                metadata: json!({
+                    "workspace": invocation.workspace,
+                    "budget": invocation.budget,
+                    "context_pack_id": invocation.context_pack.id
+                }),
+            },
+            MockRunnerScenario::Failure(reason) => RunnerResult {
+                runner_id: self.runner_id.clone(),
+                status: RunnerStatus::Failed,
+                summary: reason.clone(),
+                artifacts: Vec::new(),
+                changed_files: Vec::new(),
+                command_outputs: vec![RunnerCommandOutput {
+                    command: allowed_command,
+                    exit_code: 1,
+                    stdout: None,
+                    stderr: Some(reason.clone()),
+                }],
+                memory_updates: Vec::new(),
+                policy_decision,
+                metadata: json!({
+                    "workspace": invocation.workspace,
+                    "budget": invocation.budget,
+                    "context_pack_id": invocation.context_pack.id
+                }),
+            },
+        }
+    }
+}
+
 pub fn budget_blocked(budgets: Option<&Value>) -> Option<String> {
     let budgets = budgets?;
     if budgets
@@ -658,6 +919,51 @@ mod tests {
         builtin_loop_definitions()[0].to_record(Utc::now())
     }
 
+    fn runner_invocation(mode: LoopMode) -> RunnerInvocation {
+        RunnerInvocation {
+            runner_id: "mock".to_string(),
+            task_pack: RunnerTaskPack {
+                title: "Update CLI help".to_string(),
+                prompt: "Make the command help clearer.".to_string(),
+                acceptance_criteria: vec!["Help text explains output.".to_string()],
+                metadata: json!({ "expected_changed_file": "crates/mem-cli/src/main.rs" }),
+            },
+            context_pack: LoopContextPack {
+                id: Uuid::new_v4(),
+                loop_id: LOOP_DRAFT_PR.to_string(),
+                project: "memory".to_string(),
+                repo_root: Some("/repo".to_string()),
+                run_id: Some(Uuid::new_v4()),
+                generated_at: Utc::now(),
+                token_budget: 500,
+                estimated_tokens: 10,
+                instructions: Vec::new(),
+                memories: Vec::new(),
+                exclusions: Vec::new(),
+                warnings: Vec::new(),
+                metadata: json!({}),
+            },
+            capability_profile: RunnerCapabilityProfile {
+                can_read_repo: true,
+                can_write_repo: true,
+                can_run_commands: true,
+                can_propose_memory: true,
+                allowed_commands: vec!["cargo test -p mem-cli".to_string()],
+            },
+            workspace: RunnerWorkspaceRef {
+                repo_root: "/repo".to_string(),
+                worktree_path: Some("/repo/.memory/worktrees/run".to_string()),
+                branch: Some("memory/loop-run".to_string()),
+            },
+            budget: RunnerBudget {
+                max_seconds: 600,
+                max_tokens: 20_000,
+                max_cost_usd: 2.0,
+            },
+            mode,
+        }
+    }
+
     fn memory(
         summary: &str,
         importance: i32,
@@ -782,6 +1088,54 @@ mod tests {
         let decision = evaluate_action(&LoopMode::DraftOutput, LoopActionKind::WriteRepo);
         assert!(decision.allowed);
         assert!(decision.requires_approval);
+    }
+
+    #[test]
+    fn mock_runner_success_returns_structured_artifacts() {
+        let runner = MockLoopRunner::success("mock");
+        let result = invoke_runner_with_policy(&runner, runner_invocation(LoopMode::DraftOutput));
+
+        assert_eq!(result.status, RunnerStatus::Succeeded);
+        assert_eq!(result.runner_id, "mock");
+        assert!(result.policy_decision.allowed);
+        assert!(result.policy_decision.requires_approval);
+        assert_eq!(result.changed_files[0].path, "crates/mem-cli/src/main.rs");
+        assert_eq!(result.command_outputs[0].exit_code, 0);
+        assert_eq!(result.memory_updates[0].proposal_type, "add");
+        assert_eq!(
+            result.metadata["context_pack_id"].as_str().is_some(),
+            true,
+            "runner results include traceable context metadata"
+        );
+    }
+
+    #[test]
+    fn mock_runner_failure_is_deterministic() {
+        let runner = MockLoopRunner::failure("mock", "intentional failure");
+        let result = invoke_runner_with_policy(&runner, runner_invocation(LoopMode::DraftOutput));
+
+        assert_eq!(result.status, RunnerStatus::Failed);
+        assert_eq!(result.summary, "intentional failure");
+        assert_eq!(result.command_outputs[0].exit_code, 1);
+        assert_eq!(
+            result.command_outputs[0].stderr.as_deref(),
+            Some("intentional failure")
+        );
+        assert!(result.changed_files.is_empty());
+        assert!(result.memory_updates.is_empty());
+    }
+
+    #[test]
+    fn runner_invocation_is_policy_gated() {
+        let runner = MockLoopRunner::success("mock");
+        let result = invoke_runner_with_policy(&runner, runner_invocation(LoopMode::SuggestOnly));
+
+        assert_eq!(result.status, RunnerStatus::Blocked);
+        assert!(!result.policy_decision.allowed);
+        assert_eq!(result.policy_decision.action, LoopActionKind::InvokeRunner);
+        assert_eq!(result.policy_decision.reason, "blocked_by_mode");
+        assert!(result.changed_files.is_empty());
+        assert!(result.command_outputs.is_empty());
     }
 
     #[test]

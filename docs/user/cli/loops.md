@@ -2,7 +2,10 @@
 
 `memory loops` operates the loop engineering control plane. It is for inspecting registered loop definitions, changing loop settings, creating manual policy-checked runs, reviewing approval requests, and using the global kill switch.
 
-This command is an operator surface over the service API. It does not bypass policy checks, and the first implementation records control-plane runs before full runner adapters are enabled.
+This command is an operator surface over the service API. It does not bypass
+policy checks. Loop runs are recorded in the service ledger, and runner
+invocations use a policy-gated adapter contract before real agent-specific
+adapters are allowed to write repo changes.
 
 ## Common Workflow
 
@@ -91,6 +94,11 @@ issue payload, classifies ambiguity and implementation risk, suggests labels suc
 as `agent-ready`, `needs-human-clarification`, or `needs-design`, estimates
 likely files and test strategy, and creates a task-pack proposal for suitable
 low-risk issues.
+
+Runner adapters receive a task pack, context pack, capability profile, workspace
+reference, and budget, then return structured artifacts, changed files, command
+outputs, and proposed memory updates. The built-in mock runner is deterministic
+and exists for tests, replay, and later Draft PR adapter integration.
 
 ## Approvals
 
