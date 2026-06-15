@@ -780,6 +780,108 @@ async fn loop_repository_draft_pr_creates_isolated_workspace_for_approved_issue(
     let _ = fs::remove_dir_all(repo_root);
 }
 
+#[tokio::test]
+async fn loop_repository_reviewer_drift_reports_findings_and_memory_proposal() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-loop-reviewer");
+    let repo_root = format!("/tmp/{project}");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+
+    mem_service::repository::handlers::loops::register_builtin_loop_definitions(&pool)
+        .await
+        .expect("register builtin loops");
+    let project_id =
+        mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+            .await
+            .expect("upsert project");
+    insert_typed_memory_fixture(
+        &pool,
+        project_id,
+        "Service routes define the public API boundary.",
+        "Route changes should be reviewed against API and architecture docs.",
+        "architecture",
+    )
+    .await;
+    enable_loop_for_project_mode(
+        &pool,
+        project_id,
+        &project,
+        mem_loops::LOOP_REVIEWER_DRIFT_DETECTION,
+        LoopMode::SuggestOnly,
+    )
+    .await;
+
+    let run = mem_service::repository::handlers::loops::record_control_plane_loop_run(
+        &pool,
+        mem_loops::LOOP_REVIEWER_DRIFT_DETECTION,
+        &LoopRunRequest {
+            project: Some(project.clone()),
+            repo_root: Some(repo_root.clone()),
+            scope_type: None,
+            scope_id: None,
+            dry_run: true,
+            reason: Some("reviewer drift repository test".to_string()),
+            trigger_payload: Some(serde_json::json!({
+                "changed_files": ["crates/mem-service/src/routes.rs", "README.md"],
+                "expected_paths": ["crates/mem-cli"],
+                "diff": "Architecture public API change with TODO and no tests",
+                "architecture_changed": true
+            })),
+        },
+    )
+    .await
+    .expect("run reviewer drift loop")
+    .run;
+
+    assert_eq!(run.summary.status, LoopRunStatus::Succeeded);
+    assert!(
+        run.traces
+            .iter()
+            .any(|trace| trace.trace_type == "reviewer_drift")
+    );
+    let findings = run.output["reviewer_drift"]["findings"]
+        .as_array()
+        .expect("findings");
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding["kind"] == "unrelated_changes")
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding["kind"] == "missing_tests")
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding["kind"] == "architecture_drift")
+    );
+    assert!(
+        run.output["reviewer_drift"]["architecture_memory_proposal_id"]
+            .as_str()
+            .is_some()
+    );
+    assert!(run.memory_proposals.iter().any(|proposal| {
+        proposal
+            .candidate
+            .get("summary")
+            .and_then(serde_json::Value::as_str)
+            == Some("Architecture drift update proposal")
+    }));
+
+    cleanup_loop_run(&pool, run.summary.id).await;
+    cleanup_loop_triggers(&pool, &repo_root).await;
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
 async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     let memory_id = Uuid::new_v4();
     sqlx::query(
@@ -837,6 +939,36 @@ async fn insert_hygiene_memory_fixture(
         .execute(pool)
         .await
         .expect("insert hygiene tag");
+    memory_id
+}
+
+async fn insert_typed_memory_fixture(
+    pool: &PgPool,
+    project_id: Uuid,
+    summary: &str,
+    canonical_text: &str,
+    memory_type: &str,
+) -> Uuid {
+    let memory_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO memory_entries
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
+             summary, memory_type, scope, importance, confidence, status,
+             created_at, updated_at, archived_at, search_document)
+        VALUES ($1, $2, $1, 1, FALSE, $3, $4, $5, 'project',
+                4, 0.92, 'active', now(), now(), NULL,
+                to_tsvector('english', $3 || ' ' || $4))
+        "#,
+    )
+    .bind(memory_id)
+    .bind(project_id)
+    .bind(canonical_text)
+    .bind(summary)
+    .bind(memory_type)
+    .execute(pool)
+    .await
+    .expect("insert typed memory fixture");
     memory_id
 }
 

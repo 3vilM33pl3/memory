@@ -1728,6 +1728,30 @@ async fn create_control_plane_loop_run_with_trigger(
             .execute(pool)
             .await
             .map_err(ApiError::sql)?;
+        } else if definition.loop_id == mem_loops::LOOP_REVIEWER_DRIFT_DETECTION && !blocked {
+            let review = emit_reviewer_drift_report(
+                pool,
+                run_id,
+                request,
+                &definition.loop_id,
+                &context_pack,
+            )
+            .await?;
+            sqlx::query(
+                r#"
+                UPDATE loop_runs
+                SET output_summary = $2,
+                    output_json = output_json || jsonb_build_object('reviewer_drift', $3::jsonb),
+                    updated_at = now()
+                WHERE id = $1
+                "#,
+            )
+            .bind(run_id)
+            .bind(&review.summary)
+            .bind(&review.output)
+            .execute(pool)
+            .await
+            .map_err(ApiError::sql)?;
         }
     }
     Ok(LoopRunResponse {
@@ -3971,6 +3995,211 @@ fn sandbox_command_from_check(
         })
         .unwrap_or_default();
     Ok(mem_loops::SandboxCommandRequest::new(program, args))
+}
+
+struct ReviewerDriftResult {
+    summary: String,
+    output: serde_json::Value,
+}
+
+async fn emit_reviewer_drift_report(
+    pool: &PgPool,
+    run_id: Uuid,
+    request: &LoopRunRequest,
+    loop_id: &str,
+    context_pack: &LoopContextPackResponse,
+) -> Result<ReviewerDriftResult, ApiError> {
+    let project = request
+        .project
+        .as_deref()
+        .ok_or_else(|| ApiError::validation(ValidationError::new("project is required")))?;
+    let changed_files = payload_string_array(
+        request.trigger_payload.as_ref(),
+        &["changed_files", "files", "paths"],
+    );
+    let expected_paths =
+        payload_string_array(request.trigger_payload.as_ref(), &["expected_paths"]);
+    let diff = payload_string_field(
+        request.trigger_payload.as_ref(),
+        &["diff", "patch", "summary"],
+    );
+    let diff_lower = diff.to_lowercase();
+    let relevant_memories = context_pack
+        .pack
+        .memories
+        .iter()
+        .filter(|memory| {
+            matches!(
+                memory.memory_type,
+                mem_api::MemoryType::Architecture | mem_api::MemoryType::Convention
+            ) || memory
+                .source_refs
+                .iter()
+                .filter_map(|source| source.file_path.as_deref())
+                .any(|path| {
+                    changed_files
+                        .iter()
+                        .any(|changed| changed.starts_with(path))
+                })
+        })
+        .take(8)
+        .map(|memory| {
+            json!({
+                "memory_id": memory.memory_id,
+                "summary": memory.summary,
+                "memory_type": memory.memory_type,
+                "confidence": memory.confidence
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut findings = Vec::new();
+    if !expected_paths.is_empty()
+        && changed_files.iter().any(|path| {
+            !expected_paths
+                .iter()
+                .any(|expected| path.starts_with(expected))
+        })
+    {
+        findings.push(json!({
+            "kind": "unrelated_changes",
+            "severity": "medium",
+            "message": "Changed files include paths outside the expected scope."
+        }));
+    }
+    if !changed_files
+        .iter()
+        .any(|path| path.contains("test") || path.contains("spec"))
+        && !diff_lower.contains("test")
+    {
+        findings.push(json!({
+            "kind": "missing_tests",
+            "severity": "medium",
+            "message": "No test file or test evidence was found in the changed files/diff."
+        }));
+    }
+    if contains_any(
+        &diff_lower,
+        &["todo", "unwrap()", "panic!", "temporary", "hack"],
+    ) {
+        findings.push(json!({
+            "kind": "hidden_behavior_change",
+            "severity": "medium",
+            "message": "Diff contains markers that may hide behavior changes or unfinished handling."
+        }));
+    }
+    if contains_any(
+        &diff_lower,
+        &[
+            "auth",
+            "billing",
+            "security",
+            "secret",
+            "token",
+            "credential",
+        ],
+    ) {
+        findings.push(json!({
+            "kind": "security_risk",
+            "severity": "high",
+            "message": "Diff touches security-sensitive concepts."
+        }));
+    }
+    let architecture_drift = changed_files.iter().any(|path| {
+        path.contains("architecture") || path.starts_with("crates/mem-service/src/routes")
+    }) || contains_any(
+        &diff_lower,
+        &["architecture", "public api", "schema", "protocol"],
+    );
+    if architecture_drift {
+        findings.push(json!({
+            "kind": "architecture_drift",
+            "severity": "medium",
+            "message": "Change appears to alter architecture or an externally visible contract."
+        }));
+    }
+    let mut proposal_id = None;
+    if architecture_drift
+        && payload_truthy(request.trigger_payload.as_ref(), &["architecture_changed"])
+    {
+        let create = LoopMemoryProposalCreateRequest {
+            project: project.to_string(),
+            loop_id: loop_id.to_string(),
+            proposal_type: "add".to_string(),
+            run_id: Some(run_id),
+            target_memory_id: None,
+            candidate: json!({
+                "canonical_text": format!(
+                    "# Architecture Drift Update\n\nChanged files:\n{}\n\nDiff summary:\n{}",
+                    changed_files.join("\n"),
+                    diff.chars().take(1_500).collect::<String>()
+                ),
+                "summary": "Architecture drift update proposal",
+                "memory_type": "architecture",
+                "tags": ["loop-engineering", "reviewer-drift"]
+            }),
+            evidence: json!([{
+                "source_kind": "note",
+                "excerpt": diff.chars().take(1_000).collect::<String>()
+            }]),
+            confidence: 0.76,
+            risk_notes: Some("Review proposed architecture memory before approval.".to_string()),
+        };
+        create.validate().map_err(ApiError::validation)?;
+        let created = insert_loop_memory_proposal(pool, &create).await?;
+        proposal_id = Some(created.proposal.id);
+    }
+    let output = json!({
+        "changed_files": changed_files,
+        "expected_paths": expected_paths,
+        "relevant_memories": relevant_memories,
+        "findings": findings,
+        "architecture_memory_proposal_id": proposal_id,
+        "code_written": false
+    });
+    append_loop_trace(
+        pool,
+        run_id,
+        "reviewer_drift",
+        "Reviewer / Drift Detection report",
+        output.clone(),
+        false,
+    )
+    .await?;
+    Ok(ReviewerDriftResult {
+        summary: format!(
+            "Reviewer / Drift Detection produced {} finding(s).",
+            output["findings"].as_array().map_or(0, Vec::len)
+        ),
+        output,
+    })
+}
+
+fn payload_string_array(payload: Option<&serde_json::Value>, keys: &[&str]) -> Vec<String> {
+    let Some(serde_json::Value::Object(object)) = payload else {
+        return Vec::new();
+    };
+    keys.iter()
+        .find_map(|key| object.get(*key))
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn payload_string_field(payload: Option<&serde_json::Value>, keys: &[&str]) -> String {
+    let Some(serde_json::Value::Object(object)) = payload else {
+        return String::new();
+    };
+    keys.iter()
+        .find_map(|key| object.get(*key))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 async fn cancel_loop_run_record(

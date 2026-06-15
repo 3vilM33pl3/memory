@@ -120,6 +120,13 @@ runs create a generated worktree/branch, build a task and context pack, invoke
 the runner under budget and capability limits, run configured checks when
 requested, and emit draft-only PR metadata with `auto_merge = false`.
 
+The `reviewer_drift_detection` loop reviews changed files and diff metadata
+against architecture and convention memories in the context pack. It flags
+unrelated changes, missing tests, hidden behavior changes, security-sensitive
+diffs, and architecture drift. It does not modify code; when the payload marks
+an architecture change as intentional, it creates a pending architecture memory
+proposal for review.
+
 ## Approvals
 
 ```bash
