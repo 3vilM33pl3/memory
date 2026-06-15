@@ -642,7 +642,7 @@ pub(crate) fn runtime_skill_status(
                 missing += 1;
                 "missing"
             }
-            Some(version) if version.trim() != expected_version.trim() => {
+            Some(version) if !skill_version_matches_expected(version, expected_version) => {
                 outdated += 1;
                 "outdated"
             }
@@ -718,6 +718,15 @@ pub(crate) fn read_skill_metadata(path: &FsPath) -> SkillMetadata {
         }
     }
     metadata
+}
+
+pub(crate) fn skill_version_matches_expected(skill_version: &str, expected_version: &str) -> bool {
+    let skill_version = skill_version.trim();
+    let expected_version = expected_version.trim();
+    skill_version == expected_version
+        || expected_version
+            .strip_suffix("-dev")
+            .is_some_and(|release_version| skill_version == release_version)
 }
 
 pub(crate) fn runtime_restart_notice(

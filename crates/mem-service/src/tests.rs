@@ -421,7 +421,7 @@ fn runtime_skill_status_reports_memory_layer_skill_by_default() {
         fs::create_dir_all(&dir).expect("create skill dir");
         fs::write(
             dir.join("SKILL.md"),
-            "---\nname: test\nversion: 0.8.6-dev\n---\n",
+            "---\nname: test\nversion: 0.8.6\n---\n",
         )
         .expect("write skill");
     }
@@ -435,7 +435,7 @@ fn runtime_skill_status_reports_memory_layer_skill_by_default() {
     assert_eq!(status.details.len(), 1);
     assert_eq!(status.details[0].id, "memory-layer");
     assert_eq!(status.details[0].name, "test");
-    assert_eq!(status.details[0].version.as_deref(), Some("0.8.6-dev"));
+    assert_eq!(status.details[0].version.as_deref(), Some("0.8.6"));
     assert_eq!(status.details[0].status, "ok");
     assert!(status.details[0].path.ends_with("memory-layer/SKILL.md"));
 
@@ -469,7 +469,7 @@ fn runtime_skill_status_ignores_focused_skill_versions_by_default() {
         let dir = root.join(".agents").join("skills").join(skill);
         fs::create_dir_all(&dir).expect("create skill dir");
         let version = if *skill == "memory-layer" {
-            "0.8.6-dev"
+            "0.8.6"
         } else {
             "0.1.0"
         };
@@ -497,7 +497,7 @@ fn runtime_skill_status_can_show_full_skill_bundle() {
         let version = if *skill == "memory-direct-task-start" {
             "0.1.0"
         } else {
-            "0.8.6-dev"
+            "0.8.6"
         };
         fs::write(
             dir.join("SKILL.md"),
@@ -540,6 +540,15 @@ fn runtime_skill_status_reports_missing_skill_detail_path() {
     assert!(status.details[0].path.ends_with("memory-layer/SKILL.md"));
 
     fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn skill_version_match_accepts_release_skill_for_dev_runtime() {
+    assert!(skill_version_matches_expected("0.8.6", "0.8.6-dev"));
+    assert!(skill_version_matches_expected("0.8.6-dev", "0.8.6-dev"));
+    assert!(skill_version_matches_expected("0.8.6", "0.8.6"));
+    assert!(!skill_version_matches_expected("0.8.5", "0.8.6-dev"));
+    assert!(!skill_version_matches_expected("0.8.6-dev", "0.8.6"));
 }
 
 #[test]
