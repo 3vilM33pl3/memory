@@ -1,6 +1,7 @@
 import { HelpPanel } from "./components/HelpPanel";
 import { ActivityTab } from "./features/activity/ActivityTab";
 import { AgentsTab } from "./features/agents/AgentsTab";
+import { AutomationsTab } from "./features/automations/AutomationsTab";
 import { BundlesTab } from "./features/bundles/BundlesTab";
 import { EmbeddingsTab } from "./features/embeddings/EmbeddingsTab";
 import { ErrorsTab } from "./features/errors/ErrorsTab";
@@ -110,6 +111,21 @@ export default function App() {
     handleToggleEmbeddingCreation,
     handleReembedEmbeddingBackend,
     handleReindexEmbeddingBackend,
+    automations,
+    activeAutomation,
+    selectedAutomationIndex,
+    setSelectedAutomationIndex,
+    automationsLoading,
+    automationBusy,
+    automationOperation,
+    loopGlobalState,
+    refreshAutomations,
+    handleSetLoopMode,
+    handleDisableLoop,
+    handlePauseLoop,
+    handleSnoozeLoop,
+    handleRunLoop,
+    handleToggleGlobalKillSwitch,
     resumeData,
     resumeLoading,
     handleLoadResume,
@@ -329,6 +345,25 @@ export default function App() {
           resumeData={resumeData}
           resumeLoading={resumeLoading}
           onLoadResume={() => void handleLoadResume()}
+        />
+      ) : null}
+      {tab === "automations" ? (
+        <AutomationsTab
+          automations={automations}
+          activeAutomation={activeAutomation}
+          selectedAutomationIndex={selectedAutomationIndex}
+          automationsLoading={automationsLoading}
+          automationBusy={automationBusy}
+          automationOperation={automationOperation}
+          loopGlobalState={loopGlobalState}
+          onRefresh={() => void refreshAutomations()}
+          onSelectAutomation={setSelectedAutomationIndex}
+          onSetLoopMode={(loopId, mode) => void handleSetLoopMode(loopId, mode)}
+          onDisableLoop={(loopId) => void handleDisableLoop(loopId)}
+          onPauseLoop={(loopId) => void handlePauseLoop(loopId)}
+          onSnoozeLoop={(loopId) => void handleSnoozeLoop(loopId)}
+          onRunLoop={(loopId) => void handleRunLoop(loopId)}
+          onToggleGlobalKillSwitch={() => void handleToggleGlobalKillSwitch()}
         />
       ) : null}
       {tab === "bundles" ? (

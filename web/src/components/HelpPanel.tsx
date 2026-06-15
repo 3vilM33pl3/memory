@@ -77,6 +77,13 @@ const WEB_HELP: Record<Tab, { title: string; purpose: string; layout: string[]; 
     controls: ["Click Load resume to refresh context.", ...SHARED_CONTROLS],
     workflows: ["Open this after interruption or when handing off work.", "Use the next-step section as the immediate continuation point."],
   },
+  automations: {
+    title: "Automations Help",
+    purpose: "Review and control loop-engineering automations from the same backend control plane used by the CLI and MCP tools.",
+    layout: ["Toolbar shows refresh and global stop.", "Left side lists automation cards with mode, scope, risk, budget, trigger, and last run.", "Right side shows selected automation policy, outputs, blocked reasons, and run details."],
+    controls: ["Use mode menus to enable or reconfigure a loop.", "Use Disable, Pause, Snooze, and Run now from the detail pane.", ...SHARED_CONTROLS],
+    workflows: ["Keep high-risk loops in suggest-only or draft-output modes until reviewed.", "Use global stop before investigating unexpected loop activity.", "Check scope text before changing inherited settings."],
+  },
   bundles: {
     title: "Bundles Help",
     purpose: "Export and import portable memory bundles from the browser.",

@@ -32,8 +32,38 @@ The main tabs match the TUI order:
 | Watchers | Watcher presence, heartbeat state, owner agent/session, restart attempts, and recovery details. |
 | Embeddings | Configured embedding backends, active search backend, automatic creation, coverage, re-embed, and reindex controls. |
 | Resume | Re-entry briefing with checkpoint, current thread, next steps, recent changes, context memories, timeline, warnings, and commits. |
+| Automations | Loop-engineering automation cards with effective mode, scope, risk, last run, next trigger, daily budget, outputs, and controls. |
 
-The web-only `Bundles` tool remains under the More menu for bundle export/import previews and transfer.
+The web-only `Automations` and `Bundles` tools remain under the More menu. `Automations` controls the shared loop control plane; `Bundles` handles memory export/import previews and transfer.
+
+## Automations
+
+The Automations tab is the browser control surface for loop engineering. It reads
+registered loop definitions from `/v1/loops`, resolves effective settings for the
+current project/repo root, and displays the latest loop run for each automation.
+
+Each automation card shows:
+
+- effective mode and whether it is disabled, blocked, paused, snoozed, or stopped by the global kill switch;
+- scope, including whether the active setting is inherited or overridden at project/repo level;
+- risk level, next supported trigger, daily budget, outputs, and the most recent run;
+- a mode menu for enabling or changing the loop mode.
+
+The detail pane adds policy capabilities, blocked reasons, pause/snooze expiry,
+last output, and action buttons:
+
+- `Enable`: writes an explicit project/repo override using the definition default mode.
+- `Disable`: turns the automation off for the current scope.
+- `Pause 1h`: pauses the automation temporarily.
+- `Snooze 1d`: suppresses the automation until the next day.
+- `Run now`: records a manual control-plane run. In the first loop-engineering
+  slices this is a dry-run/control-plane record; real autonomous execution is
+  intentionally separate.
+- `Global stop`: toggles the shared kill switch for all loop automations.
+
+Use repo root carefully. When a repo root is resolved, setting changes are stored
+as repo-scoped overrides. Without a repo root they are stored as project-scoped
+overrides.
 
 ## Runtime Status
 

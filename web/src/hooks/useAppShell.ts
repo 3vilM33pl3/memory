@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { archiveProject, curate, getHealth, getMemories, getOverview, getRuntimeStatus, reembed, reindex } from "../api";
 import { useActivityController } from "../features/activity/useActivityController";
 import { useAgentsController } from "../features/agents/useAgentsController";
+import { useAutomationsController } from "../features/automations/useAutomationsController";
 import { useBundlesController } from "../features/bundles/useBundlesController";
 import { useEmbeddingsController } from "../features/embeddings/useEmbeddingsController";
 import { useErrorsController } from "../features/errors/useErrorsController";
@@ -119,6 +120,13 @@ export function useAppShell() {
   const embeddings = useEmbeddingsController({
     activeTab: tab,
     project,
+    setStatusMessage,
+    refreshProject,
+  });
+  const automations = useAutomationsController({
+    activeTab: tab,
+    project,
+    effectiveRepoRoot,
     setStatusMessage,
     refreshProject,
   });
@@ -258,6 +266,7 @@ export function useAppShell() {
     ...errors,
     ...review,
     ...embeddings,
+    ...automations,
     ...resume,
     ...bundles,
   };

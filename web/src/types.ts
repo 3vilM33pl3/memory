@@ -29,6 +29,165 @@ export type SourceKind =
 
 export type ReplacementPolicy = "conservative" | "balanced" | "aggressive";
 
+export type LoopMode =
+  | "off"
+  | "observe"
+  | "suggest_only"
+  | "draft_output"
+  | "autonomous_safe"
+  | "paused"
+  | "snoozed";
+
+export type LoopRiskLevel = "low" | "medium" | "high" | "critical";
+
+export type LoopScopeType = "user" | "workspace" | "project" | "repo";
+
+export type LoopRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "blocked";
+
+export interface LoopDefinitionRecord {
+  id: string;
+  loop_id: string;
+  version: number;
+  name: string;
+  description: string;
+  risk_level: LoopRiskLevel;
+  default_mode: LoopMode;
+  trigger_spec: Record<string, unknown>;
+  context_spec: Record<string, unknown>;
+  policy_spec: Record<string, unknown>;
+  output_spec: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface LoopDefinitionsResponse {
+  definitions: LoopDefinitionRecord[];
+}
+
+export interface EffectiveLoopSettings {
+  loop_id: string;
+  enabled: boolean;
+  mode: LoopMode;
+  scope_type: LoopScopeType;
+  scope_id: string;
+  global_kill_switch: boolean;
+  blocked_reasons: string[];
+  budgets?: Record<string, unknown> | null;
+  approval_overrides?: Record<string, unknown> | null;
+  paused_until?: string | null;
+  snoozed_until?: string | null;
+}
+
+export interface LoopDefinitionResponse {
+  definition: LoopDefinitionRecord;
+  effective_settings?: EffectiveLoopSettings | null;
+}
+
+export interface LoopSettingRecord {
+  id: string;
+  loop_id: string;
+  scope_type: LoopScopeType;
+  scope_id: string;
+  project?: string | null;
+  repo_root?: string | null;
+  enabled?: boolean | null;
+  mode?: LoopMode | null;
+  budgets?: Record<string, unknown> | null;
+  approval_overrides?: Record<string, unknown> | null;
+  paused_until?: string | null;
+  snoozed_until?: string | null;
+  updated_by?: string | null;
+  reason?: string | null;
+  updated_at: string;
+}
+
+export interface LoopSettingsUpdateRequest {
+  scope_type?: LoopScopeType | null;
+  scope_id?: string | null;
+  project?: string | null;
+  repo_root?: string | null;
+  enabled?: boolean | null;
+  mode?: LoopMode | null;
+  budgets?: Record<string, unknown> | null;
+  approval_overrides?: Record<string, unknown> | null;
+  paused_until?: string | null;
+  snoozed_until?: string | null;
+  updated_by?: string | null;
+  reason?: string | null;
+  explicit_user_approval?: boolean;
+}
+
+export interface LoopSettingResponse {
+  setting: LoopSettingRecord;
+  effective_settings: EffectiveLoopSettings;
+}
+
+export interface LoopGlobalStateResponse {
+  kill_switch_enabled: boolean;
+  updated_by?: string | null;
+  reason?: string | null;
+  updated_at: string;
+}
+
+export interface LoopGlobalStateUpdateRequest {
+  kill_switch_enabled: boolean;
+  updated_by?: string | null;
+  reason?: string | null;
+}
+
+export interface LoopRunRequest {
+  project?: string | null;
+  repo_root?: string | null;
+  scope_type?: LoopScopeType | null;
+  scope_id?: string | null;
+  dry_run?: boolean;
+  reason?: string | null;
+  trigger_payload?: Record<string, unknown> | null;
+}
+
+export interface LoopRunSummary {
+  id: string;
+  loop_id: string;
+  definition_version: number;
+  project?: string | null;
+  repo_root?: string | null;
+  mode: LoopMode;
+  status: LoopRunStatus;
+  started_at: string;
+  finished_at?: string | null;
+  output_summary?: string | null;
+  trace_count: number;
+  blocked_reasons: string[];
+}
+
+export interface LoopTraceRecord {
+  id: string;
+  run_id: string;
+  sequence: number;
+  trace_type: string;
+  title: string;
+  payload: Record<string, unknown>;
+  redacted: boolean;
+  created_at: string;
+}
+
+export interface LoopRunDetail {
+  summary: LoopRunSummary;
+  effective_settings: Record<string, unknown>;
+  policy_decisions: Record<string, unknown>;
+  cost: Record<string, unknown>;
+  output: Record<string, unknown>;
+  traces: LoopTraceRecord[];
+}
+
+export interface LoopRunResponse {
+  run: LoopRunDetail;
+}
+
+export interface LoopRunsResponse {
+  total_returned: number;
+  runs: LoopRunSummary[];
+}
+
 export interface NamedCount {
   name: string;
   count: number;

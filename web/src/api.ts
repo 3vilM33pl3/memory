@@ -23,6 +23,15 @@ import type {
   ResumeResponse,
   ActivityListResponse,
   LlmAuditStatusResponse,
+  LoopDefinitionResponse,
+  LoopDefinitionsResponse,
+  LoopGlobalStateResponse,
+  LoopGlobalStateUpdateRequest,
+  LoopRunRequest,
+  LoopRunResponse,
+  LoopRunsResponse,
+  LoopSettingsUpdateRequest,
+  LoopSettingResponse,
   RuntimeStatusResponse,
   UpToSpeedRequest,
   UpToSpeedResponse,
@@ -296,6 +305,103 @@ export async function setEmbeddingCreationEnabled(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ name, enabled }),
+    }),
+  );
+}
+
+export async function listLoopDefinitions(): Promise<LoopDefinitionsResponse> {
+  return parseJson(await apiFetch("/v1/loops"));
+}
+
+export async function getLoopDefinition(
+  loopId: string,
+  project?: string | null,
+  repoRoot?: string | null,
+): Promise<LoopDefinitionResponse> {
+  const params = new URLSearchParams();
+  if (project) params.set("project", project);
+  if (repoRoot) params.set("repo_root", repoRoot);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return parseJson(await apiFetch(`/v1/loops/${encodeURIComponent(loopId)}${suffix}`));
+}
+
+export async function getLoopRuns(options: {
+  project?: string | null;
+  loopId?: string | null;
+  limit?: number;
+}): Promise<LoopRunsResponse> {
+  const params = new URLSearchParams();
+  if (options.project) params.set("project", options.project);
+  if (options.loopId) params.set("loop_id", options.loopId);
+  if (options.limit) params.set("limit", String(options.limit));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return parseJson(await apiFetch(`/v1/loops/runs${suffix}`));
+}
+
+export async function getLoopGlobalState(): Promise<LoopGlobalStateResponse> {
+  return parseJson(await apiFetch("/v1/loops/global-kill-switch"));
+}
+
+export async function updateLoopGlobalState(
+  request: LoopGlobalStateUpdateRequest,
+): Promise<LoopGlobalStateResponse> {
+  return parseJson(
+    await apiFetch("/v1/loops/global-kill-switch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+}
+
+async function postLoopSetting(
+  loopId: string,
+  action: "enable" | "disable" | "pause" | "snooze",
+  request: LoopSettingsUpdateRequest,
+): Promise<LoopSettingResponse> {
+  return parseJson(
+    await apiFetch(`/v1/loops/${encodeURIComponent(loopId)}/${action}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+}
+
+export async function enableLoop(
+  loopId: string,
+  request: LoopSettingsUpdateRequest,
+): Promise<LoopSettingResponse> {
+  return postLoopSetting(loopId, "enable", request);
+}
+
+export async function disableLoop(
+  loopId: string,
+  request: LoopSettingsUpdateRequest,
+): Promise<LoopSettingResponse> {
+  return postLoopSetting(loopId, "disable", request);
+}
+
+export async function pauseLoop(
+  loopId: string,
+  request: LoopSettingsUpdateRequest,
+): Promise<LoopSettingResponse> {
+  return postLoopSetting(loopId, "pause", request);
+}
+
+export async function snoozeLoop(
+  loopId: string,
+  request: LoopSettingsUpdateRequest,
+): Promise<LoopSettingResponse> {
+  return postLoopSetting(loopId, "snooze", request);
+}
+
+export async function runLoop(loopId: string, request: LoopRunRequest): Promise<LoopRunResponse> {
+  return parseJson(
+    await apiFetch(`/v1/loops/${encodeURIComponent(loopId)}/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
     }),
   );
 }
