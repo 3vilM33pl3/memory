@@ -66,7 +66,7 @@ pub(in crate::tui) fn draw_activity_tab(
         "Activity ({})",
         app.activity.activity_events.len()
     )));
-    let mut state = app.activity.activity_table_state.clone();
+    let mut state = app.activity.activity_table_state;
     frame.render_stateful_widget(table, chunks[0], &mut state);
 
     let detail_lines = if let Some(entry) = app

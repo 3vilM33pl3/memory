@@ -122,7 +122,7 @@ pub(in crate::tui) fn draw_review_tab(
         )
         .style(Style::default().bg(Theme::PANEL_ALT))
         .block(themed_block(format!("Proposals ({pending})")));
-        let mut state = app.review.review_table_state.clone();
+        let mut state = app.review.review_table_state;
         frame.render_stateful_widget(table, body[0], &mut state);
     }
 

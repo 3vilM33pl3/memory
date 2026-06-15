@@ -80,7 +80,7 @@ pub(in crate::tui) fn draw_automations_tab(
             .fg(Theme::SELECTION_FG)
             .add_modifier(Modifier::BOLD),
     );
-    let mut table_state = app.automations.table_state.clone();
+    let mut table_state = app.automations.table_state;
     frame.render_stateful_widget(table, chunks[0], &mut table_state);
 
     let detail = selected

@@ -233,7 +233,7 @@ pub(in crate::tui) fn draw_embeddings_tab(
         backends.len(),
         app.project
     )));
-    let mut state = app.embeddings.embeddings_table_state.clone();
+    let mut state = app.embeddings.embeddings_table_state;
     frame.render_stateful_widget(table, chunks[1], &mut state);
 }
 

@@ -85,7 +85,7 @@ pub(in crate::tui) fn draw_agents_tab(
         snapshot.sessions.len(),
         snapshot.orphan_ports.len()
     )));
-    let mut state = app.agents.agent_table_state.clone();
+    let mut state = app.agents.agent_table_state;
     frame.render_stateful_widget(table, chunks[0], &mut state);
 
     let detail = Paragraph::new(agent_detail_lines(app, snapshot))

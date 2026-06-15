@@ -53,7 +53,7 @@ pub(in crate::tui) fn draw_errors_tab(
             .add_modifier(Modifier::BOLD),
     )
     .block(themed_block(format!("Errors ({})", items.len())));
-    let mut state = app.errors.errors_table_state.clone();
+    let mut state = app.errors.errors_table_state;
     if items.is_empty() {
         state.select(None);
     } else {

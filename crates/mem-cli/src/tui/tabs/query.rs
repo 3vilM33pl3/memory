@@ -262,7 +262,7 @@ pub(in crate::tui) fn draw_query_tab(
         "Returned Memories ({})",
         app.query_results().len()
     )));
-    let mut state = app.query.query_table_state.clone();
+    let mut state = app.query.query_table_state;
     frame.render_stateful_widget(table, lower[0], &mut state);
 
     let detail_text = if let Some(result) = app.query_results().get(app.query.query_selected_index)

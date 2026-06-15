@@ -51,7 +51,7 @@ pub(in crate::tui) fn draw_memories_tab(
         ),
         app.memories.memories_focus == MemoriesFocus::List,
     ));
-    let mut state = app.memories.table_state.clone();
+    let mut state = app.memories.table_state;
     frame.render_stateful_widget(table, chunks[0], &mut state);
 
     let detail_text = build_memory_detail_lines(app);
