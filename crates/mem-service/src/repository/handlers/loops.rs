@@ -1770,6 +1770,23 @@ async fn create_control_plane_loop_run_with_trigger(
             .execute(pool)
             .await
             .map_err(ApiError::sql)?;
+        } else if definition.loop_id == mem_loops::LOOP_MEMORY_EVAL && !blocked {
+            let eval = emit_memory_eval_report(pool, run_id, request, &context_pack).await?;
+            sqlx::query(
+                r#"
+                UPDATE loop_runs
+                SET output_summary = $2,
+                    output_json = output_json || jsonb_build_object('memory_eval', $3::jsonb),
+                    updated_at = now()
+                WHERE id = $1
+                "#,
+            )
+            .bind(run_id)
+            .bind(&eval.summary)
+            .bind(&eval.output)
+            .execute(pool)
+            .await
+            .map_err(ApiError::sql)?;
         }
     }
     Ok(LoopRunResponse {
@@ -4328,6 +4345,189 @@ fn bullet_lines(items: &[String]) -> String {
         .map(|item| format!("- {item}"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+struct MemoryEvalResult {
+    summary: String,
+    output: serde_json::Value,
+}
+
+async fn emit_memory_eval_report(
+    pool: &PgPool,
+    run_id: Uuid,
+    request: &LoopRunRequest,
+    context_pack: &LoopContextPackResponse,
+) -> Result<MemoryEvalResult, ApiError> {
+    let project = request
+        .project
+        .as_deref()
+        .ok_or_else(|| ApiError::validation(ValidationError::new("project is required")))?;
+    let included_ids = context_pack
+        .pack
+        .memories
+        .iter()
+        .map(|memory| memory.memory_id.to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_ids = golden_expected_memory_ids(request.trigger_payload.as_ref());
+    let expected_found = expected_ids
+        .iter()
+        .filter(|id| included_ids.contains(id.as_str()))
+        .count();
+    let precision_proxy = if included_ids.is_empty() {
+        0.0
+    } else {
+        expected_found as f64 / included_ids.len() as f64
+    };
+    let recall_proxy = if expected_ids.is_empty() {
+        0.0
+    } else {
+        expected_found as f64 / expected_ids.len() as f64
+    };
+    let memory_count = context_pack.pack.memories.len().max(1) as f64;
+    let stale_rate = context_pack
+        .pack
+        .memories
+        .iter()
+        .filter(|memory| memory.stale)
+        .count() as f64
+        / memory_count;
+    let contradiction_rate = context_pack
+        .pack
+        .memories
+        .iter()
+        .filter(|memory| memory.contradictory)
+        .count() as f64
+        / memory_count;
+    let (proposal_total, proposal_approved) = proposal_acceptance_counts(pool, project).await?;
+    let accepted_memory_proposal_rate = if proposal_total == 0 {
+        0.0
+    } else {
+        proposal_approved as f64 / proposal_total as f64
+    };
+    let (run_total, useful_runs, total_cost) = useful_run_counts(pool, project).await?;
+    let useful_run_rate = if run_total == 0 {
+        0.0
+    } else {
+        useful_runs as f64 / run_total as f64
+    };
+    let cost_per_useful_run = if useful_runs == 0 {
+        0.0
+    } else {
+        total_cost / useful_runs as f64
+    };
+    let baseline = request
+        .trigger_payload
+        .as_ref()
+        .and_then(|payload| payload.get("baseline"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let output = json!({
+        "golden_scenarios": request
+            .trigger_payload
+            .as_ref()
+            .and_then(|payload| payload.get("golden_scenarios"))
+            .cloned()
+            .unwrap_or_else(|| json!([])),
+        "metrics": {
+            "retrieval_precision_proxy": precision_proxy,
+            "retrieval_recall_proxy": recall_proxy,
+            "stale_memory_injection_rate": stale_rate,
+            "contradiction_rate": contradiction_rate,
+            "accepted_memory_proposal_rate": accepted_memory_proposal_rate,
+            "useful_run_rate": useful_run_rate,
+            "cost_per_useful_run": cost_per_useful_run
+        },
+        "comparison": {
+            "baseline": baseline,
+            "context_pack_memory_count": context_pack.pack.memories.len(),
+            "context_pack_token_count": context_pack.pack.estimated_tokens,
+            "warning_count": context_pack.pack.warnings.len()
+        },
+        "dashboard": {
+            "kind": "internal_run_report",
+            "run_id": run_id,
+            "project": project
+        }
+    });
+    append_loop_trace(
+        pool,
+        run_id,
+        "memory_eval",
+        "Retrieval and Memory Eval report",
+        output.clone(),
+        false,
+    )
+    .await?;
+    Ok(MemoryEvalResult {
+        summary: "Memory Eval produced retrieval/context quality metrics.".to_string(),
+        output,
+    })
+}
+
+fn golden_expected_memory_ids(payload: Option<&serde_json::Value>) -> Vec<String> {
+    payload
+        .and_then(|payload| payload.get("golden_scenarios"))
+        .and_then(serde_json::Value::as_array)
+        .map(|scenarios| {
+            scenarios
+                .iter()
+                .flat_map(|scenario| {
+                    scenario
+                        .get("expected_memory_ids")
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn proposal_acceptance_counts(pool: &PgPool, project: &str) -> Result<(i64, i64), ApiError> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            COUNT(*)::bigint AS total,
+            COUNT(*) FILTER (WHERE mp.status = 'approved')::bigint AS approved
+        FROM memory_proposals mp
+        JOIN projects p ON p.id = mp.project_id
+        WHERE p.slug = $1
+        "#,
+    )
+    .bind(project)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    Ok((
+        row.try_get::<i64, _>("total").map_err(ApiError::sql)?,
+        row.try_get::<i64, _>("approved").map_err(ApiError::sql)?,
+    ))
+}
+
+async fn useful_run_counts(pool: &PgPool, project: &str) -> Result<(i64, i64, f64), ApiError> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            COUNT(*)::bigint AS total,
+            COUNT(*) FILTER (WHERE lr.status = 'succeeded')::bigint AS useful,
+            COALESCE(SUM((lr.cost_json->>'total_usd')::double precision), 0.0) AS cost
+        FROM loop_runs lr
+        JOIN projects p ON p.id = lr.project_id
+        WHERE p.slug = $1
+        "#,
+    )
+    .bind(project)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    Ok((
+        row.try_get::<i64, _>("total").map_err(ApiError::sql)?,
+        row.try_get::<i64, _>("useful").map_err(ApiError::sql)?,
+        row.try_get::<f64, _>("cost").map_err(ApiError::sql)?,
+    ))
 }
 
 async fn cancel_loop_run_record(

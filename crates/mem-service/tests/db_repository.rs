@@ -957,6 +957,93 @@ async fn loop_repository_skill_mining_creates_learned_skill_proposal() {
         .expect("cleanup test project");
 }
 
+#[tokio::test]
+async fn loop_repository_memory_eval_reports_quality_metrics() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-loop-eval");
+    let repo_root = format!("/tmp/{project}");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+
+    mem_service::repository::handlers::loops::register_builtin_loop_definitions(&pool)
+        .await
+        .expect("register builtin loops");
+    let project_id =
+        mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+            .await
+            .expect("upsert project");
+    let expected_memory_id = insert_typed_memory_fixture(
+        &pool,
+        project_id,
+        "Golden retrieval memory",
+        "Memory eval should include this expected memory.",
+        "reference",
+    )
+    .await;
+    enable_loop_for_project_mode(
+        &pool,
+        project_id,
+        &project,
+        mem_loops::LOOP_MEMORY_EVAL,
+        LoopMode::Observe,
+    )
+    .await;
+
+    let run = mem_service::repository::handlers::loops::record_control_plane_loop_run(
+        &pool,
+        mem_loops::LOOP_MEMORY_EVAL,
+        &LoopRunRequest {
+            project: Some(project.clone()),
+            repo_root: Some(repo_root.clone()),
+            scope_type: None,
+            scope_id: None,
+            dry_run: true,
+            reason: Some("memory eval repository test".to_string()),
+            trigger_payload: Some(serde_json::json!({
+                "golden_scenarios": [{
+                    "id": "golden-reference",
+                    "query": "expected memory",
+                    "expected_memory_ids": [expected_memory_id.to_string()]
+                }],
+                "baseline": {"retriever": "previous"}
+            })),
+        },
+    )
+    .await
+    .expect("run memory eval loop")
+    .run;
+
+    assert_eq!(run.summary.status, LoopRunStatus::Succeeded);
+    assert!(
+        run.traces
+            .iter()
+            .any(|trace| trace.trace_type == "memory_eval")
+    );
+    assert!(
+        run.output["memory_eval"]["metrics"]["retrieval_recall_proxy"]
+            .as_f64()
+            .is_some_and(|value| value > 0.0)
+    );
+    assert_eq!(
+        run.output["memory_eval"]["dashboard"]["kind"].as_str(),
+        Some("internal_run_report")
+    );
+    assert_eq!(
+        run.output["memory_eval"]["comparison"]["baseline"]["retriever"].as_str(),
+        Some("previous")
+    );
+
+    cleanup_loop_run(&pool, run.summary.id).await;
+    cleanup_loop_triggers(&pool, &repo_root).await;
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
 async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     let memory_id = Uuid::new_v4();
     sqlx::query(

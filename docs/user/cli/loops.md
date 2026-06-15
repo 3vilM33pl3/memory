@@ -133,6 +133,12 @@ proposals with applicability conditions, recipe steps, commands, validation
 evidence, and source links. Approval is required before the skill becomes
 durable memory that future context packs can retrieve.
 
+The `memory_eval` loop produces an internal run-report dashboard for retrieval
+and context quality. It supports golden scenarios with expected memory IDs and
+tracks precision/recall proxies, stale memory injection rate, contradiction
+rate, accepted memory proposal rate, useful-run rate, cost per useful run, and
+context-pack comparison data across retriever or model changes.
+
 ## Approvals
 
 ```bash
