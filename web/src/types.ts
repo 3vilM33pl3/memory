@@ -202,6 +202,16 @@ export interface LoopMemoryProposalRecord {
   resolved_at?: string | null;
 }
 
+export interface LoopMemoryProposalsResponse {
+  total_returned: number;
+  proposals: LoopMemoryProposalRecord[];
+}
+
+export interface LoopMemoryProposalDecisionResponse {
+  proposal: LoopMemoryProposalRecord;
+  memory_id?: string | null;
+}
+
 export interface LoopContextInstructionRef {
   path: string;
   reason: string;

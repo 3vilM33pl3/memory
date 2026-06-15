@@ -29,6 +29,7 @@ import type {
   LoopApprovalsResponse,
   LoopGlobalStateResponse,
   LoopGlobalStateUpdateRequest,
+  LoopMemoryProposalDecisionResponse,
   LoopRunRequest,
   LoopRunResponse,
   LoopRunsResponse,
@@ -404,6 +405,58 @@ export async function editLoopApproval(
     reviewer: "web",
     reason: reason || "Edited from the browser UI.",
     edited_action: editedAction,
+  });
+}
+
+async function postLoopMemoryProposalDecision(
+  proposalId: string,
+  action: "approve" | "reject" | "edit",
+  request: {
+    reviewer?: string | null;
+    reason?: string | null;
+    edited_candidate?: unknown;
+    edited_evidence?: unknown;
+    edited_risk_notes?: string | null;
+  },
+): Promise<LoopMemoryProposalDecisionResponse> {
+  return parseJson(
+    await apiFetch(`/v1/loops/memory-proposals/${encodeURIComponent(proposalId)}/${action}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+}
+
+export async function approveLoopMemoryProposal(
+  proposalId: string,
+  reason?: string,
+): Promise<LoopMemoryProposalDecisionResponse> {
+  return postLoopMemoryProposalDecision(proposalId, "approve", {
+    reviewer: "web",
+    reason: reason || "Approved from the browser UI.",
+  });
+}
+
+export async function rejectLoopMemoryProposal(
+  proposalId: string,
+  reason?: string,
+): Promise<LoopMemoryProposalDecisionResponse> {
+  return postLoopMemoryProposalDecision(proposalId, "reject", {
+    reviewer: "web",
+    reason: reason || "Rejected from the browser UI.",
+  });
+}
+
+export async function editLoopMemoryProposal(
+  proposalId: string,
+  editedCandidate: unknown,
+  reason?: string,
+): Promise<LoopMemoryProposalDecisionResponse> {
+  return postLoopMemoryProposalDecision(proposalId, "edit", {
+    reviewer: "web",
+    reason: reason || "Edited from the browser UI.",
+    edited_candidate: editedCandidate,
   });
 }
 

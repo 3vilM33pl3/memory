@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 
 import {
+  approveLoopMemoryProposal,
   approveLoopApproval,
   disableLoop,
   enableLoop,
+  editLoopMemoryProposal,
   editLoopApproval,
   getLoopApprovals,
   getLoopDefinition,
@@ -12,6 +14,7 @@ import {
   getLoopRuns,
   listLoopDefinitions,
   pauseLoop,
+  rejectLoopMemoryProposal,
   rejectLoopApproval,
   runLoop,
   snoozeLoop,
@@ -22,6 +25,7 @@ import type {
   LoopApprovalRequestRecord,
   LoopDefinitionRecord,
   LoopGlobalStateResponse,
+  LoopMemoryProposalRecord,
   LoopMode,
   LoopRunDetail,
   LoopRunResponse,
@@ -73,6 +77,7 @@ export function useAutomationsController({
   const [selectedLoopRunLoading, setSelectedLoopRunLoading] = useState(false);
   const [approvalQueue, setApprovalQueue] = useState<LoopApprovalRequestRecord[]>([]);
   const [approvalEdits, setApprovalEdits] = useState<Record<string, string>>({});
+  const [proposalEdits, setProposalEdits] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (activeTab !== "automations") return;
@@ -234,6 +239,10 @@ export function useAutomationsController({
     setApprovalEdits((current) => ({ ...current, [approvalId]: value }));
   }
 
+  function setProposalEdit(proposalId: string, value: string) {
+    setProposalEdits((current) => ({ ...current, [proposalId]: value }));
+  }
+
   async function refreshApprovalSurfaces(runId?: string | null) {
     const approvalsPayload = await getLoopApprovals({ project, status: "pending", limit: 50 });
     setApprovalQueue(approvalsPayload.approvals);
@@ -267,6 +276,37 @@ export function useAutomationsController({
       await refreshApprovalSurfaces(approval.run_id);
       await refreshAutomations(true);
       setStatusMessage(`Loop approval ${action} finished for ${approval.action_type}.`);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    } finally {
+      setAutomationOperation(null);
+    }
+  }
+
+  async function handleMemoryProposalDecision(
+    proposal: LoopMemoryProposalRecord,
+    action: "approve" | "reject" | "edit",
+  ) {
+    setAutomationOperation(`${action} memory proposal`);
+    try {
+      if (action === "approve") {
+        await approveLoopMemoryProposal(proposal.id);
+      } else if (action === "reject") {
+        await rejectLoopMemoryProposal(proposal.id);
+      } else {
+        const editText = proposalEdits[proposal.id] ?? JSON.stringify(proposal.candidate, null, 2);
+        let editedCandidate: unknown;
+        try {
+          editedCandidate = JSON.parse(editText);
+        } catch (error) {
+          throw new Error(`Edited proposal JSON is invalid: ${(error as Error).message}`);
+        }
+        await editLoopMemoryProposal(proposal.id, editedCandidate);
+      }
+      await refreshApprovalSurfaces(proposal.run_id);
+      await refreshAutomations(true);
+      await refreshProject(project);
+      setStatusMessage(`Memory proposal ${action} finished.`);
     } catch (error) {
       setStatusMessage((error as Error).message);
     } finally {
@@ -309,6 +349,7 @@ export function useAutomationsController({
     selectedLoopRunLoading,
     approvalQueue,
     approvalEdits,
+    proposalEdits,
     refreshAutomations,
     handleSetLoopMode,
     handleDisableLoop,
@@ -318,6 +359,8 @@ export function useAutomationsController({
     handleLoadLoopRun,
     setApprovalEdit,
     handleApprovalDecision,
+    setProposalEdit,
+    handleMemoryProposalDecision,
     handleToggleGlobalKillSwitch,
   };
 }

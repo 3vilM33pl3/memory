@@ -9,18 +9,20 @@ use tower_http::{
 
 use super::{
     AppState, activate_embedding_backend, admin_shutdown, agents_snapshot, approve_loop_approval,
-    archive, archive_memory, build_loop_context_pack, cancel_loop_run, capture_task,
-    checkpoint_activity, curate_memory, deactivate_embedding_backend, delete_memory, disable_loop,
-    edit_loop_approval, enable_loop, get_loop_definition, get_loop_global_state, get_loop_run,
-    get_loop_run_context_pack, get_memory, get_memory_history, graph_activity, healthz,
-    list_embedding_backends, list_loop_approvals, list_loop_definitions, list_loop_runs,
-    llm_audit_status, pause_loop, plan_activity, project_activities, project_bundle_export,
-    project_bundle_export_preview, project_bundle_import, project_bundle_import_preview,
-    project_commit_detail, project_commits, project_memories, project_overview,
-    project_replacement_policy, project_replacement_policy_update,
-    project_replacement_proposal_approve, project_replacement_proposal_reject,
-    project_replacement_proposals, project_resume, project_up_to_speed, prune_embeddings,
-    prune_history, query, reembed, reindex, reject_loop_approval, route_loop_trigger, run_loop,
+    approve_loop_memory_proposal, archive, archive_memory, build_loop_context_pack,
+    cancel_loop_run, capture_task, checkpoint_activity, create_loop_memory_proposal, curate_memory,
+    deactivate_embedding_backend, delete_memory, disable_loop, edit_loop_approval,
+    edit_loop_memory_proposal, enable_loop, get_loop_definition, get_loop_global_state,
+    get_loop_run, get_loop_run_context_pack, get_memory, get_memory_history, graph_activity,
+    healthz, list_embedding_backends, list_loop_approvals, list_loop_definitions,
+    list_loop_memory_proposals, list_loop_runs, llm_audit_status, pause_loop, plan_activity,
+    project_activities, project_bundle_export, project_bundle_export_preview,
+    project_bundle_import, project_bundle_import_preview, project_commit_detail, project_commits,
+    project_memories, project_overview, project_replacement_policy,
+    project_replacement_policy_update, project_replacement_proposal_approve,
+    project_replacement_proposal_reject, project_replacement_proposals, project_resume,
+    project_up_to_speed, prune_embeddings, prune_history, query, reembed, reindex,
+    reject_loop_approval, reject_loop_memory_proposal, route_loop_trigger, run_loop,
     runtime_status, scan_activity, set_embedding_creation_enabled, set_llm_audit_enabled,
     snooze_loop, stats, submit_loop_feedback, sync_commits, update_loop_global_state,
     verify_provenance, watcher_heartbeat, watcher_restart_local, watcher_unregister,
@@ -80,6 +82,10 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
             post(submit_loop_feedback),
         )
         .route("/v1/loops/approvals", get(list_loop_approvals))
+        .route(
+            "/v1/loops/memory-proposals",
+            get(list_loop_memory_proposals).post(create_loop_memory_proposal),
+        )
         .route("/v1/loops/triggers/route", post(route_loop_trigger))
         .route(
             "/v1/loops/approvals/{approval_id}/approve",
@@ -92,6 +98,18 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
         .route(
             "/v1/loops/approvals/{approval_id}/edit",
             post(edit_loop_approval),
+        )
+        .route(
+            "/v1/loops/memory-proposals/{proposal_id}/approve",
+            post(approve_loop_memory_proposal),
+        )
+        .route(
+            "/v1/loops/memory-proposals/{proposal_id}/reject",
+            post(reject_loop_memory_proposal),
+        )
+        .route(
+            "/v1/loops/memory-proposals/{proposal_id}/edit",
+            post(edit_loop_memory_proposal),
         )
         .route("/v1/loops/{loop_id}", get(get_loop_definition))
         .route("/v1/loops/{loop_id}/enable", post(enable_loop))

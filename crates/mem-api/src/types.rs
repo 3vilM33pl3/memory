@@ -1869,6 +1869,83 @@ pub struct LoopMemoryProposalRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopMemoryProposalsResponse {
+    pub total_returned: usize,
+    #[serde(default)]
+    pub proposals: Vec<LoopMemoryProposalRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopMemoryProposalCreateRequest {
+    pub project: String,
+    pub loop_id: String,
+    pub proposal_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_memory_id: Option<Uuid>,
+    #[serde(default)]
+    pub candidate: serde_json::Value,
+    #[serde(default)]
+    pub evidence: serde_json::Value,
+    pub confidence: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_notes: Option<String>,
+}
+
+impl LoopMemoryProposalCreateRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project is required"));
+        }
+        if self.loop_id.trim().is_empty() {
+            return Err(ValidationError::new("loop_id is required"));
+        }
+        validate_loop_memory_proposal_type(&self.proposal_type)?;
+        validate_loop_memory_proposal_confidence(self.confidence)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopMemoryProposalDecisionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_candidate: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_evidence: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_risk_notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopMemoryProposalDecisionResponse {
+    pub proposal: LoopMemoryProposalRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_id: Option<Uuid>,
+}
+
+pub fn validate_loop_memory_proposal_type(value: &str) -> Result<(), ValidationError> {
+    match value {
+        "add" | "update" | "deprecate" | "merge" | "link" => Ok(()),
+        _ => Err(ValidationError::new(
+            "proposal_type must be add, update, deprecate, merge, or link",
+        )),
+    }
+}
+
+pub fn validate_loop_memory_proposal_confidence(value: f32) -> Result<(), ValidationError> {
+    if (0.0..=1.0).contains(&value) {
+        Ok(())
+    } else {
+        Err(ValidationError::new("confidence must be between 0 and 1"))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopRunDetail {
     pub summary: LoopRunSummary,
     #[serde(default, skip_serializing_if = "Option::is_none")]

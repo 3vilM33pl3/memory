@@ -89,6 +89,40 @@ records a rejection and blocks a queued/running linked run safely, and
 service remains responsible for applying policy, tracing the decision, and
 updating linked memory proposal status.
 
+## Memory Proposals
+
+```bash
+memory loops memory-proposals --project memory --status pending
+memory loops create-memory-proposal \
+  --project memory \
+  --loop-id context_pack_refresh \
+  --proposal-type add \
+  --candidate '{"canonical_text":"Durable fact.","summary":"Durable fact","memory_type":"implementation","tags":["loop-engineering"]}' \
+  --evidence '[{"source_kind":"file","file_path":"docs/developer/architecture/overview.md","excerpt":"Relevant proof"}]' \
+  --confidence 0.82 \
+  --risk-notes "Needs human review before durable memory write"
+memory loops edit-memory-proposal <proposal-id> --candidate '{"canonical_text":"Reviewed fact.","summary":"Reviewed fact"}'
+memory loops approve-memory-proposal <proposal-id> --reviewer olivier --reason "Evidence checks out"
+memory loops reject-memory-proposal <proposal-id> --reviewer olivier --reason "Evidence is too weak"
+```
+
+Loop memory proposals are pending durable memory changes produced by loops. They
+support `add`, `update`, `deprecate`, `merge`, and `link`.
+
+Required fields:
+
+- `--project`, `--loop-id`, `--proposal-type`, `--candidate`, and `--confidence`.
+- `--target-memory-id` for `update`, `deprecate`, `merge`, and `link`.
+- `candidate.related_memory_id` for `merge` and `link`.
+- Evidence refs should use objects with `source_kind`, `file_path`, `git_commit`, and `excerpt` when available.
+
+Approving an `add` proposal writes a new memory entry. Approving an `update`
+proposal writes a new version of the target canonical memory. Approving
+`deprecate` archives the latest target memory version. Approving `merge` or
+`link` writes a relation between the target memory and the related memory.
+Rejected proposals stay in the proposal table for evaluation. The list filter
+accepts `pending`, `edited`, `approved`, and `rejected`.
+
 ## Global Kill Switch
 
 ```bash
@@ -115,6 +149,8 @@ memory loops run context_pack_refresh --project memory --dry-run --json
 memory loops approvals --project memory --status pending --json
 memory loops edit-approval <approval-id> --proposed-action '{"proposal_id":"..."}' --json
 memory loops context-pack context_pack_refresh --project memory --repo-root "$PWD" --json
+memory loops memory-proposals --project memory --status pending --json
+memory loops approve-memory-proposal <proposal-id> --json
 ```
 
 Loop commands require the Memory service to be reachable and use the configured local API token for write-capable operations.

@@ -32,6 +32,15 @@ pub(crate) struct LoopApprovalsQuery {
 }
 
 #[derive(Debug, SerdeDeserialize)]
+pub(crate) struct LoopMemoryProposalsQuery {
+    pub(crate) project: Option<String>,
+    pub(crate) run_id: Option<Uuid>,
+    pub(crate) loop_id: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) limit: Option<i64>,
+}
+
+#[derive(Debug, SerdeDeserialize)]
 pub(crate) struct LoopContextPackQuery {
     pub(crate) project: Option<String>,
     pub(crate) repo_root: Option<String>,
@@ -570,6 +579,116 @@ pub(crate) async fn edit_loop_approval(
             &request,
         )
         .await?,
+    ))
+}
+
+pub(crate) async fn list_loop_memory_proposals(
+    State(state): State<AppState>,
+    Query(query): Query<LoopMemoryProposalsQuery>,
+) -> Result<Json<LoopMemoryProposalsResponse>, ApiError> {
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_get_json(&state, "/v1/loops/memory-proposals").await?,
+        ));
+    }
+    Ok(Json(
+        fetch_loop_memory_proposals_for_query(state.pool()?, &query).await?,
+    ))
+}
+
+pub(crate) async fn create_loop_memory_proposal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<LoopMemoryProposalCreateRequest>,
+) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/loops/memory-proposals", &request, true).await?,
+        ));
+    }
+    Ok(Json(
+        insert_loop_memory_proposal(state.pool()?, &request).await?,
+    ))
+}
+
+pub(crate) async fn approve_loop_memory_proposal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(proposal_id): Path<Uuid>,
+    Json(request): Json<LoopMemoryProposalDecisionRequest>,
+) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(
+                &state,
+                &format!("/v1/loops/memory-proposals/{proposal_id}/approve"),
+                &request,
+                true,
+            )
+            .await?,
+        ));
+    }
+    Ok(Json(
+        resolve_loop_memory_proposal_decision(state.pool()?, proposal_id, "approved", &request)
+            .await?,
+    ))
+}
+
+pub(crate) async fn reject_loop_memory_proposal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(proposal_id): Path<Uuid>,
+    Json(request): Json<LoopMemoryProposalDecisionRequest>,
+) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(
+                &state,
+                &format!("/v1/loops/memory-proposals/{proposal_id}/reject"),
+                &request,
+                true,
+            )
+            .await?,
+        ));
+    }
+    Ok(Json(
+        resolve_loop_memory_proposal_decision(state.pool()?, proposal_id, "rejected", &request)
+            .await?,
+    ))
+}
+
+pub(crate) async fn edit_loop_memory_proposal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(proposal_id): Path<Uuid>,
+    Json(request): Json<LoopMemoryProposalDecisionRequest>,
+) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if request.edited_candidate.is_none()
+        && request.edited_evidence.is_none()
+        && request.edited_risk_notes.is_none()
+    {
+        return Err(ApiError::validation(ValidationError::new(
+            "at least one edited proposal field is required",
+        )));
+    }
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(
+                &state,
+                &format!("/v1/loops/memory-proposals/{proposal_id}/edit"),
+                &request,
+                true,
+            )
+            .await?,
+        ));
+    }
+    Ok(Json(
+        edit_loop_memory_proposal_record(state.pool()?, proposal_id, &request).await?,
     ))
 }
 
@@ -1566,6 +1685,675 @@ async fn fetch_loop_memory_proposals(
     .await
     .map_err(ApiError::sql)?;
     rows.into_iter().map(row_to_memory_proposal).collect()
+}
+
+async fn fetch_loop_memory_proposals_for_query(
+    pool: &PgPool,
+    query: &LoopMemoryProposalsQuery,
+) -> Result<LoopMemoryProposalsResponse, ApiError> {
+    if let Some(status) = query.status.as_deref() {
+        validate_memory_proposal_status(status)?;
+    }
+    let limit = query.limit.unwrap_or(50).clamp(1, 250);
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            mp.id, mp.run_id, p.slug AS project, mp.loop_id, mp.proposal_type,
+            mp.target_memory_id, mp.candidate_json, mp.evidence_json, mp.confidence,
+            mp.risk_notes, mp.status, mp.created_at, mp.resolved_at
+        FROM memory_proposals mp
+        LEFT JOIN projects p ON p.id = mp.project_id
+        WHERE ($1::text IS NULL OR p.slug = $1)
+          AND ($2::uuid IS NULL OR mp.run_id = $2)
+          AND ($3::text IS NULL OR mp.loop_id = $3)
+          AND ($4::text IS NULL OR mp.status = $4)
+        ORDER BY mp.created_at DESC
+        LIMIT $5
+        "#,
+    )
+    .bind(&query.project)
+    .bind(query.run_id)
+    .bind(&query.loop_id)
+    .bind(&query.status)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    let proposals = rows
+        .into_iter()
+        .map(row_to_memory_proposal)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(LoopMemoryProposalsResponse {
+        total_returned: proposals.len(),
+        proposals,
+    })
+}
+
+pub async fn create_memory_proposal_record(
+    pool: &PgPool,
+    request: &LoopMemoryProposalCreateRequest,
+) -> Result<LoopMemoryProposalDecisionResponse> {
+    insert_loop_memory_proposal(pool, request)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))
+}
+
+pub async fn record_loop_memory_proposal_decision(
+    pool: &PgPool,
+    proposal_id: Uuid,
+    status: &str,
+    request: &LoopMemoryProposalDecisionRequest,
+) -> Result<LoopMemoryProposalDecisionResponse> {
+    resolve_loop_memory_proposal_decision(pool, proposal_id, status, request)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))
+}
+
+async fn insert_loop_memory_proposal(
+    pool: &PgPool,
+    request: &LoopMemoryProposalCreateRequest,
+) -> Result<LoopMemoryProposalDecisionResponse, ApiError> {
+    let project_id = upsert_project_slug(pool, &request.project)
+        .await
+        .map_err(ApiError::sql)?;
+    let row = sqlx::query(
+        r#"
+        INSERT INTO memory_proposals (
+            id, run_id, project_id, loop_id, proposal_type, target_memory_id,
+            candidate_json, evidence_json, confidence, risk_notes, status, created_at
+        )
+        VALUES (
+            gen_random_uuid(), $1, $2, $3, $4, $5,
+            $6, $7, $8, $9, 'pending', now()
+        )
+        RETURNING
+            id, run_id, (SELECT slug FROM projects WHERE id = memory_proposals.project_id) AS project,
+            loop_id, proposal_type, target_memory_id, candidate_json, evidence_json,
+            confidence, risk_notes, status, created_at, resolved_at
+        "#,
+    )
+    .bind(request.run_id)
+    .bind(project_id)
+    .bind(&request.loop_id)
+    .bind(&request.proposal_type)
+    .bind(request.target_memory_id)
+    .bind(&request.candidate)
+    .bind(&request.evidence)
+    .bind(request.confidence)
+    .bind(&request.risk_notes)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    let proposal = row_to_memory_proposal(row)?;
+    append_memory_proposal_trace(pool, &proposal, "created", None).await?;
+    Ok(LoopMemoryProposalDecisionResponse {
+        proposal,
+        memory_id: None,
+    })
+}
+
+async fn edit_loop_memory_proposal_record(
+    pool: &PgPool,
+    proposal_id: Uuid,
+    request: &LoopMemoryProposalDecisionRequest,
+) -> Result<LoopMemoryProposalDecisionResponse, ApiError> {
+    let row = sqlx::query(
+        r#"
+        UPDATE memory_proposals
+        SET candidate_json = COALESCE($2, candidate_json),
+            evidence_json = COALESCE($3, evidence_json),
+            risk_notes = COALESCE($4, risk_notes),
+            status = 'pending',
+            resolved_at = NULL
+        WHERE id = $1
+        RETURNING
+            id, run_id, (SELECT slug FROM projects WHERE id = memory_proposals.project_id) AS project,
+            loop_id, proposal_type, target_memory_id, candidate_json, evidence_json,
+            confidence, risk_notes, status, created_at, resolved_at
+        "#,
+    )
+    .bind(proposal_id)
+    .bind(&request.edited_candidate)
+    .bind(&request.edited_evidence)
+    .bind(&request.edited_risk_notes)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::sql)?
+    .ok_or_else(|| ApiError::not_found("loop memory proposal not found"))?;
+    let proposal = row_to_memory_proposal(row)?;
+    append_memory_proposal_trace(pool, &proposal, "edited", request.reason.as_deref()).await?;
+    Ok(LoopMemoryProposalDecisionResponse {
+        proposal,
+        memory_id: None,
+    })
+}
+
+async fn resolve_loop_memory_proposal_decision(
+    pool: &PgPool,
+    proposal_id: Uuid,
+    status: &str,
+    request: &LoopMemoryProposalDecisionRequest,
+) -> Result<LoopMemoryProposalDecisionResponse, ApiError> {
+    validate_memory_proposal_status(status)?;
+    if status == "rejected" {
+        let proposal = update_memory_proposal_status(pool, proposal_id, status).await?;
+        append_memory_proposal_trace(pool, &proposal, "rejected", request.reason.as_deref())
+            .await?;
+        return Ok(LoopMemoryProposalDecisionResponse {
+            proposal,
+            memory_id: None,
+        });
+    }
+    if status != "approved" {
+        return Err(ApiError::validation(ValidationError::new(
+            "proposal decision must be approved or rejected",
+        )));
+    }
+
+    let mut tx = pool.begin().await.map_err(ApiError::sql)?;
+    let proposal = lock_memory_proposal(&mut tx, proposal_id).await?;
+    if proposal.record.status != "pending" && proposal.record.status != "edited" {
+        return Err(ApiError::validation(ValidationError::new(format!(
+            "memory proposal is already {}",
+            proposal.record.status
+        ))));
+    }
+    let memory_id = apply_memory_proposal(&mut tx, &proposal).await?;
+    let row = sqlx::query(
+        r#"
+        UPDATE memory_proposals
+        SET status = 'approved',
+            resolved_at = now()
+        WHERE id = $1
+        RETURNING
+            id, run_id, (SELECT slug FROM projects WHERE id = memory_proposals.project_id) AS project,
+            loop_id, proposal_type, target_memory_id, candidate_json, evidence_json,
+            confidence, risk_notes, status, created_at, resolved_at
+        "#,
+    )
+    .bind(proposal_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::sql)?;
+    tx.commit().await.map_err(ApiError::sql)?;
+
+    let proposal = row_to_memory_proposal(row)?;
+    append_memory_proposal_trace(pool, &proposal, "approved", request.reason.as_deref()).await?;
+    Ok(LoopMemoryProposalDecisionResponse {
+        proposal,
+        memory_id,
+    })
+}
+
+async fn update_memory_proposal_status(
+    pool: &PgPool,
+    proposal_id: Uuid,
+    status: &str,
+) -> Result<LoopMemoryProposalRecord, ApiError> {
+    let row = sqlx::query(
+        r#"
+        UPDATE memory_proposals
+        SET status = $2,
+            resolved_at = now()
+        WHERE id = $1
+        RETURNING
+            id, run_id, (SELECT slug FROM projects WHERE id = memory_proposals.project_id) AS project,
+            loop_id, proposal_type, target_memory_id, candidate_json, evidence_json,
+            confidence, risk_notes, status, created_at, resolved_at
+        "#,
+    )
+    .bind(proposal_id)
+    .bind(status)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::sql)?
+    .ok_or_else(|| ApiError::not_found("loop memory proposal not found"))?;
+    row_to_memory_proposal(row)
+}
+
+struct LockedMemoryProposal {
+    record: LoopMemoryProposalRecord,
+    project_id: Uuid,
+}
+
+async fn lock_memory_proposal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    proposal_id: Uuid,
+) -> Result<LockedMemoryProposal, ApiError> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            mp.id, mp.run_id, mp.project_id, p.slug AS project, mp.loop_id,
+            mp.proposal_type, mp.target_memory_id, mp.candidate_json, mp.evidence_json,
+            mp.confidence, mp.risk_notes, mp.status, mp.created_at, mp.resolved_at
+        FROM memory_proposals mp
+        LEFT JOIN projects p ON p.id = mp.project_id
+        WHERE mp.id = $1
+        FOR UPDATE
+        "#,
+    )
+    .bind(proposal_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(ApiError::sql)?
+    .ok_or_else(|| ApiError::not_found("loop memory proposal not found"))?;
+    let project_id = row.try_get("project_id").map_err(ApiError::sql)?;
+    let record = row_to_memory_proposal(row)?;
+    Ok(LockedMemoryProposal { record, project_id })
+}
+
+async fn apply_memory_proposal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    proposal: &LockedMemoryProposal,
+) -> Result<Option<Uuid>, ApiError> {
+    match proposal.record.proposal_type.as_str() {
+        "add" => insert_memory_from_proposal(tx, proposal, None)
+            .await
+            .map(Some),
+        "update" => insert_memory_update_from_proposal(tx, proposal)
+            .await
+            .map(Some),
+        "deprecate" => archive_memory_from_proposal(tx, proposal).await.map(Some),
+        "merge" | "link" => link_memories_from_proposal(tx, proposal).await.map(Some),
+        _ => Err(ApiError::validation(ValidationError::new(
+            "unsupported proposal_type",
+        ))),
+    }
+}
+
+async fn insert_memory_update_from_proposal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    proposal: &LockedMemoryProposal,
+) -> Result<Uuid, ApiError> {
+    let target_id = proposal.record.target_memory_id.ok_or_else(|| {
+        ApiError::validation(ValidationError::new("target_memory_id is required"))
+    })?;
+    let row = sqlx::query(
+        r#"
+        SELECT latest.id, latest.canonical_id, latest.version_no, latest.canonical_text,
+               latest.summary, latest.memory_type, latest.scope, latest.importance,
+               latest.confidence, latest.status
+        FROM memory_entries target
+        JOIN LATERAL (
+            SELECT m.*
+            FROM memory_entries m
+            WHERE m.canonical_id = target.canonical_id
+            ORDER BY m.version_no DESC
+            LIMIT 1
+        ) latest ON TRUE
+        WHERE target.id = $1
+        "#,
+    )
+    .bind(target_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(ApiError::sql)?
+    .ok_or_else(|| ApiError::not_found("target memory not found"))?;
+
+    insert_memory_from_proposal(tx, proposal, Some(row)).await
+}
+
+async fn insert_memory_from_proposal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    proposal: &LockedMemoryProposal,
+    previous: Option<sqlx::postgres::PgRow>,
+) -> Result<Uuid, ApiError> {
+    let candidate = &proposal.record.candidate;
+    let canonical_text = candidate_text(candidate, &["canonical_text", "text", "content"])
+        .or_else(|| {
+            previous
+                .as_ref()
+                .and_then(|row| row.try_get("canonical_text").ok())
+        })
+        .ok_or_else(|| {
+            ApiError::validation(ValidationError::new(
+                "candidate canonical_text or text is required",
+            ))
+        })?;
+    let summary = candidate_text(candidate, &["summary", "title"])
+        .or_else(|| {
+            previous
+                .as_ref()
+                .and_then(|row| row.try_get("summary").ok())
+        })
+        .unwrap_or_else(|| truncate_for_summary(&canonical_text));
+    let memory_type = candidate_text(candidate, &["memory_type"])
+        .or_else(|| {
+            previous
+                .as_ref()
+                .and_then(|row| row.try_get::<String, _>("memory_type").ok())
+        })
+        .unwrap_or_else(|| "implementation".to_string());
+    let scope = candidate_text(candidate, &["scope"])
+        .or_else(|| previous.as_ref().and_then(|row| row.try_get("scope").ok()))
+        .unwrap_or_else(|| "project".to_string());
+    let importance = candidate_i32(candidate, "importance")
+        .or_else(|| {
+            previous
+                .as_ref()
+                .and_then(|row| row.try_get("importance").ok())
+        })
+        .unwrap_or(3);
+    let confidence = candidate_f32(candidate, "confidence")
+        .or_else(|| {
+            previous
+                .as_ref()
+                .and_then(|row| row.try_get::<f32, _>("confidence").ok())
+        })
+        .unwrap_or(proposal.record.confidence);
+    let memory_id = Uuid::new_v4();
+    let (canonical_id, version_no) = if let Some(row) = &previous {
+        (
+            row.try_get("canonical_id").map_err(ApiError::sql)?,
+            row.try_get::<i32, _>("version_no").map_err(ApiError::sql)? + 1,
+        )
+    } else {
+        (memory_id, 1)
+    };
+
+    sqlx::query(
+        r#"
+        INSERT INTO memory_entries
+            (id, project_id, canonical_id, version_no, is_tombstone,
+             canonical_text, summary, memory_type, scope, importance, confidence,
+             status, created_at, updated_at, archived_at, search_document)
+        VALUES
+            ($1, $2, $3, $4, FALSE, $5, $6, $7, $8, $9, $10,
+             'active', now(), now(), NULL, to_tsvector('english', $5 || ' ' || $6))
+        "#,
+    )
+    .bind(memory_id)
+    .bind(proposal.project_id)
+    .bind(canonical_id)
+    .bind(version_no)
+    .bind(&canonical_text)
+    .bind(&summary)
+    .bind(parse_memory_type(&memory_type).to_string())
+    .bind(&scope)
+    .bind(importance)
+    .bind(confidence)
+    .execute(&mut **tx)
+    .await
+    .map_err(ApiError::sql)?;
+
+    insert_memory_tags_from_candidate(tx, memory_id, candidate).await?;
+    insert_memory_sources_from_proposal(tx, memory_id, proposal).await?;
+    Ok(memory_id)
+}
+
+async fn archive_memory_from_proposal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    proposal: &LockedMemoryProposal,
+) -> Result<Uuid, ApiError> {
+    let target_id = proposal.record.target_memory_id.ok_or_else(|| {
+        ApiError::validation(ValidationError::new("target_memory_id is required"))
+    })?;
+    let row = sqlx::query(
+        r#"
+        WITH target AS (
+            SELECT canonical_id FROM memory_entries WHERE id = $1
+        ),
+        latest AS (
+            SELECT m.id
+            FROM memory_entries m
+            JOIN target ON target.canonical_id = m.canonical_id
+            ORDER BY m.version_no DESC
+            LIMIT 1
+        )
+        UPDATE memory_entries
+        SET status = 'archived',
+            archived_at = now(),
+            updated_at = now()
+        WHERE id = (SELECT id FROM latest)
+        RETURNING id
+        "#,
+    )
+    .bind(target_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(ApiError::sql)?
+    .ok_or_else(|| ApiError::not_found("target memory not found"))?;
+    row.try_get("id").map_err(ApiError::sql)
+}
+
+async fn link_memories_from_proposal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    proposal: &LockedMemoryProposal,
+) -> Result<Uuid, ApiError> {
+    let src_memory_id = proposal.record.target_memory_id.ok_or_else(|| {
+        ApiError::validation(ValidationError::new("target_memory_id is required"))
+    })?;
+    let dst_memory_id = candidate_uuid(
+        &proposal.record.candidate,
+        &["related_memory_id", "dst_memory_id", "memory_id"],
+    )
+    .ok_or_else(|| {
+        ApiError::validation(ValidationError::new(
+            "candidate related_memory_id is required",
+        ))
+    })?;
+    let relation_type = candidate_text(&proposal.record.candidate, &["relation_type"])
+        .unwrap_or_else(|| {
+            if proposal.record.proposal_type == "merge" {
+                "duplicates".to_string()
+            } else {
+                "related_to".to_string()
+            }
+        });
+    sqlx::query(
+        r#"
+        INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id)
+        VALUES (gen_random_uuid(), $1, $2, $3)
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(src_memory_id)
+    .bind(parse_relation_type(&relation_type).to_string())
+    .bind(dst_memory_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(ApiError::sql)?;
+    Ok(src_memory_id)
+}
+
+async fn insert_memory_tags_from_candidate(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_id: Uuid,
+    candidate: &serde_json::Value,
+) -> Result<(), ApiError> {
+    for tag in candidate
+        .get("tags")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+    {
+        sqlx::query(
+            "INSERT INTO memory_tags (memory_entry_id, tag) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(memory_id)
+        .bind(tag)
+        .execute(&mut **tx)
+        .await
+        .map_err(ApiError::sql)?;
+    }
+    Ok(())
+}
+
+async fn insert_memory_sources_from_proposal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_id: Uuid,
+    proposal: &LockedMemoryProposal,
+) -> Result<(), ApiError> {
+    let note = format!(
+        "Accepted loop memory proposal {} from loop {}{}{}.",
+        proposal.record.id,
+        proposal.record.loop_id,
+        proposal
+            .record
+            .run_id
+            .map(|run_id| format!(" run {run_id}"))
+            .unwrap_or_default(),
+        proposal
+            .record
+            .risk_notes
+            .as_deref()
+            .map(|risk| format!(" Risk notes: {risk}"))
+            .unwrap_or_default()
+    );
+    insert_memory_source(tx, memory_id, "note", None, None, Some(&note)).await?;
+    for item in evidence_source_items(&proposal.record.evidence) {
+        let source_kind = item
+            .get("source_kind")
+            .or_else(|| item.get("kind"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("note");
+        let file_path = item
+            .get("file_path")
+            .or_else(|| item.get("path"))
+            .and_then(serde_json::Value::as_str);
+        let git_commit = item.get("git_commit").and_then(serde_json::Value::as_str);
+        let excerpt = item
+            .get("excerpt")
+            .or_else(|| item.get("summary"))
+            .or_else(|| item.get("reason"))
+            .and_then(serde_json::Value::as_str);
+        insert_memory_source(tx, memory_id, source_kind, file_path, git_commit, excerpt).await?;
+    }
+    Ok(())
+}
+
+async fn insert_memory_source(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    memory_id: Uuid,
+    source_kind: &str,
+    file_path: Option<&str>,
+    git_commit: Option<&str>,
+    excerpt: Option<&str>,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        r#"
+        INSERT INTO memory_sources
+            (id, memory_entry_id, task_id, file_path, git_commit, source_kind, excerpt, created_at)
+        VALUES (gen_random_uuid(), $1, NULL, $2, $3, $4, $5, now())
+        "#,
+    )
+    .bind(memory_id)
+    .bind(file_path)
+    .bind(git_commit)
+    .bind(source_kind_string(source_kind))
+    .bind(excerpt)
+    .execute(&mut **tx)
+    .await
+    .map_err(ApiError::sql)?;
+    Ok(())
+}
+
+fn evidence_source_items(
+    value: &serde_json::Value,
+) -> Vec<&serde_json::Map<String, serde_json::Value>> {
+    if let Some(array) = value.as_array() {
+        return array
+            .iter()
+            .filter_map(serde_json::Value::as_object)
+            .collect();
+    }
+    if let Some(object) = value.as_object() {
+        for key in ["sources", "evidence_refs", "refs"] {
+            if let Some(array) = object.get(key).and_then(serde_json::Value::as_array) {
+                return array
+                    .iter()
+                    .filter_map(serde_json::Value::as_object)
+                    .collect();
+            }
+        }
+        return vec![object];
+    }
+    Vec::new()
+}
+
+async fn append_memory_proposal_trace(
+    pool: &PgPool,
+    proposal: &LoopMemoryProposalRecord,
+    action: &str,
+    reason: Option<&str>,
+) -> Result<(), ApiError> {
+    if let Some(run_id) = proposal.run_id {
+        append_loop_trace(
+            pool,
+            run_id,
+            "memory_proposal",
+            &format!("Memory proposal {action}"),
+            json!({
+                "proposal_id": proposal.id,
+                "proposal_type": proposal.proposal_type,
+                "status": proposal.status,
+                "target_memory_id": proposal.target_memory_id,
+                "candidate": proposal.candidate,
+                "evidence": proposal.evidence,
+                "confidence": proposal.confidence,
+                "risk_notes": proposal.risk_notes,
+                "reason": reason,
+            }),
+            false,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn validate_memory_proposal_status(value: &str) -> Result<(), ApiError> {
+    match value {
+        "pending" | "approved" | "rejected" | "edited" => Ok(()),
+        _ => Err(ApiError::validation(ValidationError::new(
+            "status must be pending, approved, rejected, or edited",
+        ))),
+    }
+}
+
+fn candidate_text(candidate: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| candidate.get(*key).and_then(serde_json::Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn candidate_i32(candidate: &serde_json::Value, key: &str) -> Option<i32> {
+    candidate
+        .get(key)
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+}
+
+fn candidate_f32(candidate: &serde_json::Value, key: &str) -> Option<f32> {
+    candidate
+        .get(key)
+        .and_then(serde_json::Value::as_f64)
+        .map(|value| value as f32)
+}
+
+fn candidate_uuid(candidate: &serde_json::Value, keys: &[&str]) -> Option<Uuid> {
+    keys.iter()
+        .find_map(|key| candidate.get(*key).and_then(serde_json::Value::as_str))
+        .and_then(|value| Uuid::parse_str(value).ok())
+}
+
+fn truncate_for_summary(text: &str) -> String {
+    text.chars().take(120).collect()
+}
+
+fn source_kind_string(value: &str) -> &'static str {
+    match parse_source_kind(value) {
+        SourceKind::TaskPrompt => "task_prompt",
+        SourceKind::File => "file",
+        SourceKind::GitCommit => "git_commit",
+        SourceKind::CommandOutput => "command_output",
+        SourceKind::Test => "test",
+        SourceKind::Note => "note",
+    }
 }
 
 async fn build_loop_context_pack_response(

@@ -2278,6 +2278,16 @@ pub(in crate::commands) enum LoopsCommand {
     Reject(LoopApprovalDecisionArgs),
     #[command(about = "Edit a loop approval request proposed action.", after_help = LOOPS_GROUP_AFTER_HELP)]
     EditApproval(LoopApprovalEditArgs),
+    #[command(about = "List loop memory proposals.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    MemoryProposals(LoopMemoryProposalsArgs),
+    #[command(about = "Create a pending loop memory proposal.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    CreateMemoryProposal(LoopMemoryProposalCreateArgs),
+    #[command(about = "Approve a loop memory proposal and apply its memory write.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    ApproveMemoryProposal(LoopMemoryProposalDecisionArgs),
+    #[command(about = "Reject a loop memory proposal while retaining it for evaluation.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    RejectMemoryProposal(LoopMemoryProposalDecisionArgs),
+    #[command(about = "Edit a pending loop memory proposal.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    EditMemoryProposal(LoopMemoryProposalEditArgs),
     #[command(about = "Replay a prior loop run as a new policy-checked run.", after_help = LOOPS_GROUP_AFTER_HELP)]
     Replay(LoopReplayArgs),
     #[command(about = "Read or change the global loop kill switch.", after_help = LOOPS_GROUP_AFTER_HELP)]
@@ -2533,6 +2543,101 @@ pub(in crate::commands) struct LoopApprovalEditArgs {
     /// Edited proposed action JSON.
     #[arg(long, value_parser = parse_json_value_arg)]
     pub(crate) proposed_action: serde_json::Value,
+    /// Reviewer identity.
+    #[arg(long)]
+    pub(crate) reviewer: Option<String>,
+    /// Human-readable edit reason.
+    #[arg(long)]
+    pub(crate) reason: Option<String>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopMemoryProposalsArgs {
+    /// Project slug to filter by.
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    /// Loop run id to filter by.
+    #[arg(long)]
+    pub(crate) run_id: Option<Uuid>,
+    /// Loop id to filter by.
+    #[arg(long)]
+    pub(crate) loop_id: Option<String>,
+    /// Proposal status to filter by.
+    #[arg(long, value_parser = ["pending", "approved", "rejected", "edited"])]
+    pub(crate) status: Option<String>,
+    /// Maximum number of proposals to return.
+    #[arg(long, default_value_t = 20)]
+    pub(crate) limit: i64,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopMemoryProposalCreateArgs {
+    /// Project slug the proposed memory belongs to.
+    #[arg(long)]
+    pub(crate) project: String,
+    /// Loop identifier that produced the proposal.
+    #[arg(long)]
+    pub(crate) loop_id: String,
+    /// Proposal type: add, update, deprecate, merge, or link.
+    #[arg(long, value_parser = ["add", "update", "deprecate", "merge", "link"])]
+    pub(crate) proposal_type: String,
+    /// Source loop run id.
+    #[arg(long)]
+    pub(crate) run_id: Option<Uuid>,
+    /// Target memory id for update, deprecate, merge, or link proposals.
+    #[arg(long)]
+    pub(crate) target_memory_id: Option<Uuid>,
+    /// Candidate memory/action JSON.
+    #[arg(long, value_parser = parse_json_value_arg)]
+    pub(crate) candidate: serde_json::Value,
+    /// Evidence refs JSON.
+    #[arg(long, value_parser = parse_json_value_arg, default_value = "[]")]
+    pub(crate) evidence: serde_json::Value,
+    /// Proposal confidence from 0.0 to 1.0.
+    #[arg(long, default_value_t = 0.5)]
+    pub(crate) confidence: f32,
+    /// Risk notes explaining why review is useful.
+    #[arg(long)]
+    pub(crate) risk_notes: Option<String>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopMemoryProposalDecisionArgs {
+    /// Loop memory proposal id.
+    pub(crate) proposal_id: Uuid,
+    /// Reviewer identity.
+    #[arg(long)]
+    pub(crate) reviewer: Option<String>,
+    /// Human-readable decision reason.
+    #[arg(long)]
+    pub(crate) reason: Option<String>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopMemoryProposalEditArgs {
+    /// Loop memory proposal id.
+    pub(crate) proposal_id: Uuid,
+    /// Edited candidate JSON.
+    #[arg(long, value_parser = parse_json_value_arg)]
+    pub(crate) candidate: Option<serde_json::Value>,
+    /// Edited evidence JSON.
+    #[arg(long, value_parser = parse_json_value_arg)]
+    pub(crate) evidence: Option<serde_json::Value>,
+    /// Edited risk notes.
+    #[arg(long)]
+    pub(crate) risk_notes: Option<String>,
     /// Reviewer identity.
     #[arg(long)]
     pub(crate) reviewer: Option<String>,

@@ -6,7 +6,9 @@ use mem_api::{
     GraphActivityRequest, LoopApprovalDecisionRequest, LoopApprovalDecisionResponse,
     LoopApprovalStatus, LoopApprovalsResponse, LoopCancelRequest, LoopContextPackResponse,
     LoopDefinitionResponse, LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
-    LoopGlobalStateUpdateRequest, LoopRunRequest, LoopRunResponse, LoopRunStatus, LoopRunsResponse,
+    LoopGlobalStateUpdateRequest, LoopMemoryProposalCreateRequest,
+    LoopMemoryProposalDecisionRequest, LoopMemoryProposalDecisionResponse,
+    LoopMemoryProposalsResponse, LoopRunRequest, LoopRunResponse, LoopRunStatus, LoopRunsResponse,
     LoopSettingsUpdateRequest, MemoryEntryResponse, PlanActivityRequest, ProjectCommitsResponse,
     ProjectMemoriesResponse, ProjectMemoryBundlePreview, ProjectMemoryExportOptions,
     ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectOverviewResponse,
@@ -1018,6 +1020,72 @@ impl ApiClient {
                 .post(service_url(
                     &self.config,
                     &format!("/v1/loops/approvals/{approval_id}/{action}"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_memory_proposals(
+        &self,
+        project: Option<&str>,
+        run_id: Option<Uuid>,
+        loop_id: Option<&str>,
+        status: Option<&str>,
+        limit: i64,
+    ) -> Result<LoopMemoryProposalsResponse> {
+        let mut query = vec![("limit", limit.to_string())];
+        if let Some(project) = project {
+            query.push(("project", project.to_string()));
+        }
+        if let Some(run_id) = run_id {
+            query.push(("run_id", run_id.to_string()));
+        }
+        if let Some(loop_id) = loop_id {
+            query.push(("loop_id", loop_id.to_string()));
+        }
+        if let Some(status) = status {
+            query.push(("status", status.to_string()));
+        }
+        get_json(
+            self.client
+                .get(service_url(&self.config, "/v1/loops/memory-proposals"))
+                .query(&query)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn create_loop_memory_proposal(
+        &self,
+        request: &LoopMemoryProposalCreateRequest,
+    ) -> Result<LoopMemoryProposalDecisionResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/loops/memory-proposals"))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_memory_proposal_decision(
+        &self,
+        proposal_id: Uuid,
+        action: &str,
+        request: &LoopMemoryProposalDecisionRequest,
+    ) -> Result<LoopMemoryProposalDecisionResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/loops/memory-proposals/{proposal_id}/{action}"),
                 ))
                 .headers(write_headers(&self.config)?)
                 .json(request)

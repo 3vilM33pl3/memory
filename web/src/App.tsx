@@ -124,6 +124,7 @@ export default function App() {
     selectedLoopRunLoading,
     approvalQueue,
     approvalEdits,
+    proposalEdits,
     refreshAutomations,
     handleSetLoopMode,
     handleDisableLoop,
@@ -133,6 +134,8 @@ export default function App() {
     handleLoadLoopRun,
     setApprovalEdit,
     handleApprovalDecision,
+    setProposalEdit,
+    handleMemoryProposalDecision,
     handleToggleGlobalKillSwitch,
     resumeData,
     resumeLoading,
@@ -369,6 +372,7 @@ export default function App() {
           selectedLoopRunLoading={selectedLoopRunLoading}
           approvalQueue={approvalQueue}
           approvalEdits={approvalEdits}
+          proposalEdits={proposalEdits}
           onRefresh={() => void refreshAutomations()}
           onSelectAutomation={setSelectedAutomationIndex}
           onSetLoopMode={(loopId, mode) => void handleSetLoopMode(loopId, mode)}
@@ -379,6 +383,8 @@ export default function App() {
           onLoadLoopRun={(runId) => void handleLoadLoopRun(runId)}
           onApprovalEditChange={setApprovalEdit}
           onApprovalDecision={(approval, action) => void handleApprovalDecision(approval, action)}
+          onProposalEditChange={setProposalEdit}
+          onProposalDecision={(proposal, action) => void handleMemoryProposalDecision(proposal, action)}
           onToggleGlobalKillSwitch={() => void handleToggleGlobalKillSwitch()}
         />
       ) : null}

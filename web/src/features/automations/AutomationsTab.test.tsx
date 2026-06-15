@@ -169,6 +169,7 @@ function renderTab(overrides: Partial<ComponentProps<typeof AutomationsTab>> = {
     selectedLoopRunLoading: false,
     approvalQueue: [],
     approvalEdits: {},
+    proposalEdits: {},
     onRefresh: vi.fn(),
     onSelectAutomation: vi.fn(),
     onSetLoopMode: vi.fn(),
@@ -179,6 +180,8 @@ function renderTab(overrides: Partial<ComponentProps<typeof AutomationsTab>> = {
     onLoadLoopRun: vi.fn(),
     onApprovalEditChange: vi.fn(),
     onApprovalDecision: vi.fn(),
+    onProposalEditChange: vi.fn(),
+    onProposalDecision: vi.fn(),
     onToggleGlobalKillSwitch: vi.fn(),
     ...overrides,
   };

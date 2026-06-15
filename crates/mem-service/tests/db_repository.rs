@@ -1,5 +1,6 @@
 use mem_api::{
-    LoopApprovalDecisionRequest, LoopApprovalStatus, LoopMode, LoopRunRequest, LoopRunStatus,
+    LoopApprovalDecisionRequest, LoopApprovalStatus, LoopMemoryProposalCreateRequest,
+    LoopMemoryProposalDecisionRequest, LoopMode, LoopRunRequest, LoopRunStatus,
     LoopTriggerRouteRequest, LoopTrustLevel, MemoryStatus, MemoryType,
 };
 use sqlx::PgPool;
@@ -275,6 +276,88 @@ async fn loop_repository_rejects_approval_and_blocks_run_safely() {
     cleanup_approval(&pool, approval_id).await;
     cleanup_loop_run(&pool, run.summary.id).await;
     cleanup_loop_triggers(&pool, &repo_root).await;
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
+#[tokio::test]
+async fn loop_repository_approves_memory_proposal_and_writes_provenance() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-loop-proposal");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+
+    let request = LoopMemoryProposalCreateRequest {
+        project: project.clone(),
+        loop_id: mem_loops::LOOP_CONTEXT_PACK_REFRESH.to_string(),
+        proposal_type: "add".to_string(),
+        run_id: None,
+        target_memory_id: None,
+        candidate: serde_json::json!({
+            "canonical_text": "Loop memory proposals store reviewed durable memory text.",
+            "summary": "Loop proposal approval writes memory",
+            "memory_type": "implementation",
+            "tags": ["loop-engineering", "proposal"]
+        }),
+        evidence: serde_json::json!([
+            {
+                "source_kind": "file",
+                "file_path": "crates/mem-service/src/repository/handlers/loops.rs",
+                "excerpt": "accepted proposals write memory provenance"
+            }
+        ]),
+        confidence: 0.91,
+        risk_notes: Some("repository test approval".to_string()),
+    };
+
+    let created =
+        mem_service::repository::handlers::loops::create_memory_proposal_record(&pool, &request)
+            .await
+            .expect("create memory proposal");
+    assert_eq!(created.proposal.status, "pending");
+
+    let approved = mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
+        &pool,
+        created.proposal.id,
+        "approved",
+        &LoopMemoryProposalDecisionRequest {
+            reviewer: Some("repository-test".to_string()),
+            reason: Some("Approve test proposal.".to_string()),
+            edited_candidate: None,
+            edited_evidence: None,
+            edited_risk_notes: None,
+        },
+    )
+    .await
+    .expect("approve memory proposal");
+
+    assert_eq!(approved.proposal.status, "approved");
+    let memory_id = approved.memory_id.expect("approved proposal wrote memory");
+    let memory = mem_service::repository::handlers::memory::fetch_memory_entry(&pool, memory_id)
+        .await
+        .expect("fetch approved proposal memory")
+        .expect("memory exists");
+    assert_eq!(memory.project, project);
+    assert_eq!(memory.summary, "Loop proposal approval writes memory");
+    assert_eq!(
+        memory.canonical_text,
+        "Loop memory proposals store reviewed durable memory text."
+    );
+    assert_eq!(memory.sources.len(), 2);
+    assert!(
+        memory
+            .sources
+            .iter()
+            .any(|source| source.file_path.as_deref()
+                == Some("crates/mem-service/src/repository/handlers/loops.rs"))
+    );
+    assert!(memory.tags.iter().any(|tag| tag == "loop-engineering"));
+
     mem_test_support::cleanup_project(&pool, &project)
         .await
         .expect("cleanup test project");

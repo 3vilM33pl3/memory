@@ -29,6 +29,7 @@ interface AutomationsTabProps {
   selectedLoopRunLoading: boolean;
   approvalQueue: LoopApprovalRequestRecord[];
   approvalEdits: Record<string, string>;
+  proposalEdits: Record<string, string>;
   onRefresh: () => void;
   onSelectAutomation: (index: number) => void;
   onSetLoopMode: (loopId: string, mode: LoopMode) => void;
@@ -40,6 +41,11 @@ interface AutomationsTabProps {
   onApprovalEditChange: (approvalId: string, value: string) => void;
   onApprovalDecision: (
     approval: LoopApprovalRequestRecord,
+    action: "approve" | "reject" | "edit",
+  ) => void;
+  onProposalEditChange: (proposalId: string, value: string) => void;
+  onProposalDecision: (
+    proposal: LoopMemoryProposalRecord,
     action: "approve" | "reject" | "edit",
   ) => void;
   onToggleGlobalKillSwitch: () => void;
@@ -152,6 +158,7 @@ export function AutomationsTab({
   selectedLoopRunLoading,
   approvalQueue,
   approvalEdits,
+  proposalEdits,
   onRefresh,
   onSelectAutomation,
   onSetLoopMode,
@@ -162,6 +169,8 @@ export function AutomationsTab({
   onLoadLoopRun,
   onApprovalEditChange,
   onApprovalDecision,
+  onProposalEditChange,
+  onProposalDecision,
   onToggleGlobalKillSwitch,
 }: AutomationsTabProps) {
   const globalKillSwitch = loopGlobalState?.kill_switch_enabled ?? false;
@@ -231,6 +240,58 @@ export function AutomationsTab({
             <button
               className="reject-btn"
               onClick={() => onApprovalDecision(approval, "reject")}
+              type="button"
+              disabled={automationBusy}
+            >
+              Reject
+            </button>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+  const renderMemoryProposal = (proposal: LoopMemoryProposalRecord) => {
+    const editValue = proposalEdits[proposal.id] ?? jsonPreview(proposal.candidate);
+    return (
+      <div className="trace-card" key={proposal.id}>
+        <div className="detail-header">
+          <strong>{label(proposal.proposal_type)} · {proposal.status}</strong>
+          <span className={proposal.status === "pending" ? "badge status-connecting" : "badge"}>
+            {formatDateTime(proposal.created_at)}
+          </span>
+        </div>
+        <p>confidence {proposal.confidence.toFixed(2)}{proposal.risk_notes ? ` · ${proposal.risk_notes}` : ""}</p>
+        {proposal.target_memory_id ? <p>Target: {proposal.target_memory_id}</p> : null}
+        <label className="approval-edit-label" htmlFor={`proposal-edit-${proposal.id}`}>Candidate</label>
+        <textarea
+          id={`proposal-edit-${proposal.id}`}
+          className="approval-edit"
+          value={editValue}
+          disabled={proposal.status !== "pending" || automationBusy}
+          onChange={(event) => onProposalEditChange(proposal.id, event.target.value)}
+          rows={6}
+        />
+        <pre className="json-preview">{jsonPreview({ evidence: proposal.evidence })}</pre>
+        {proposal.status === "pending" ? (
+          <div className="proposal-actions">
+            <button
+              className="approve-btn"
+              onClick={() => onProposalDecision(proposal, "approve")}
+              type="button"
+              disabled={automationBusy}
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => onProposalDecision(proposal, "edit")}
+              type="button"
+              disabled={automationBusy}
+            >
+              Save edit
+            </button>
+            <button
+              className="reject-btn"
+              onClick={() => onProposalDecision(proposal, "reject")}
               type="button"
               disabled={automationBusy}
             >
@@ -473,13 +534,9 @@ export function AutomationsTab({
                       </div>
                       <div className="detail-section">
                         <h3>Memory proposals</h3>
-                        {activeLoopRun.memory_proposals.length ? activeLoopRun.memory_proposals.map((proposal) => (
-                          <div className="trace-card" key={proposal.id}>
-                            <strong>{label(proposal.proposal_type)} · {proposal.status}</strong>
-                            <p>confidence {proposal.confidence.toFixed(2)}{proposal.risk_notes ? ` · ${proposal.risk_notes}` : ""}</p>
-                            <pre className="json-preview">{jsonPreview(proposal.candidate)}</pre>
-                          </div>
-                        )) : <p className="muted">No memory proposals recorded for this run.</p>}
+                        {activeLoopRun.memory_proposals.length
+                          ? activeLoopRun.memory_proposals.map((proposal) => renderMemoryProposal(proposal))
+                          : <p className="muted">No memory proposals recorded for this run.</p>}
                       </div>
                       <div className="detail-section">
                         <h3>Approvals</h3>

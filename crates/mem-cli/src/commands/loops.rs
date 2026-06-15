@@ -2,8 +2,9 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use mem_api::{
     LoopApprovalDecisionRequest, LoopApprovalStatus, LoopCancelRequest, LoopContextPackResponse,
-    LoopFeedbackRequest, LoopGlobalStateUpdateRequest, LoopMode, LoopRunRequest, LoopRunStatus,
-    LoopScopeType, LoopSettingResponse, LoopSettingsUpdateRequest,
+    LoopFeedbackRequest, LoopGlobalStateUpdateRequest, LoopMemoryProposalCreateRequest,
+    LoopMemoryProposalDecisionRequest, LoopMode, LoopRunRequest, LoopRunStatus, LoopScopeType,
+    LoopSettingResponse, LoopSettingsUpdateRequest,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -11,8 +12,8 @@ use serde_json::json;
 use crate::commands::{
     api::ApiClient,
     runtime::{
-        LoopApprovalDecisionArgs, LoopApprovalEditArgs, LoopRunArgs, LoopSettingArgs, LoopsArgs,
-        LoopsCommand,
+        LoopApprovalDecisionArgs, LoopApprovalEditArgs, LoopMemoryProposalDecisionArgs,
+        LoopMemoryProposalEditArgs, LoopRunArgs, LoopSettingArgs, LoopsArgs, LoopsCommand,
     },
 };
 
@@ -217,6 +218,81 @@ pub(super) async fn handle(args: LoopsArgs, api: &ApiClient) -> Result<()> {
                 );
             }
         }
+        LoopsCommand::MemoryProposals(args) => {
+            let response = api
+                .loop_memory_proposals(
+                    args.project.as_deref(),
+                    args.run_id,
+                    args.loop_id.as_deref(),
+                    args.status.as_deref(),
+                    args.limit,
+                )
+                .await?;
+            if args.json {
+                print_json(&response)?;
+            } else {
+                print_loop_memory_proposals(&response);
+            }
+        }
+        LoopsCommand::CreateMemoryProposal(args) => {
+            let request = LoopMemoryProposalCreateRequest {
+                project: args.project,
+                loop_id: args.loop_id,
+                proposal_type: args.proposal_type,
+                run_id: args.run_id,
+                target_memory_id: args.target_memory_id,
+                candidate: args.candidate,
+                evidence: args.evidence,
+                confidence: args.confidence,
+                risk_notes: args.risk_notes,
+            };
+            request.validate().map_err(anyhow::Error::msg)?;
+            let response = api.create_loop_memory_proposal(&request).await?;
+            if args.json {
+                print_json(&response)?;
+            } else {
+                print_memory_proposal_decision("Created", &response);
+            }
+        }
+        LoopsCommand::ApproveMemoryProposal(args) => {
+            let response = api
+                .loop_memory_proposal_decision(
+                    args.proposal_id,
+                    "approve",
+                    &memory_proposal_decision_request(&args),
+                )
+                .await?;
+            if args.json {
+                print_json(&response)?;
+            } else {
+                print_memory_proposal_decision("Approved", &response);
+            }
+        }
+        LoopsCommand::RejectMemoryProposal(args) => {
+            let response = api
+                .loop_memory_proposal_decision(
+                    args.proposal_id,
+                    "reject",
+                    &memory_proposal_decision_request(&args),
+                )
+                .await?;
+            if args.json {
+                print_json(&response)?;
+            } else {
+                print_memory_proposal_decision("Rejected", &response);
+            }
+        }
+        LoopsCommand::EditMemoryProposal(args) => {
+            let request = memory_proposal_edit_request(&args)?;
+            let response = api
+                .loop_memory_proposal_decision(args.proposal_id, "edit", &request)
+                .await?;
+            if args.json {
+                print_json(&response)?;
+            } else {
+                print_memory_proposal_decision("Edited", &response);
+            }
+        }
         LoopsCommand::Replay(args) => {
             let original = api.loop_run_detail(args.run_id).await?;
             let request = LoopRunRequest {
@@ -341,6 +417,33 @@ fn edit_decision_request(args: &LoopApprovalEditArgs) -> LoopApprovalDecisionReq
         reason: args.reason.clone(),
         edited_action: Some(args.proposed_action.clone()),
     }
+}
+
+fn memory_proposal_decision_request(
+    args: &LoopMemoryProposalDecisionArgs,
+) -> LoopMemoryProposalDecisionRequest {
+    LoopMemoryProposalDecisionRequest {
+        reviewer: args.reviewer.clone(),
+        reason: args.reason.clone(),
+        edited_candidate: None,
+        edited_evidence: None,
+        edited_risk_notes: None,
+    }
+}
+
+fn memory_proposal_edit_request(
+    args: &LoopMemoryProposalEditArgs,
+) -> Result<LoopMemoryProposalDecisionRequest> {
+    if args.candidate.is_none() && args.evidence.is_none() && args.risk_notes.is_none() {
+        anyhow::bail!("at least one of --candidate, --evidence, or --risk-notes is required");
+    }
+    Ok(LoopMemoryProposalDecisionRequest {
+        reviewer: args.reviewer.clone(),
+        reason: args.reason.clone(),
+        edited_candidate: args.candidate.clone(),
+        edited_evidence: args.evidence.clone(),
+        edited_risk_notes: args.risk_notes.clone(),
+    })
 }
 
 fn print_setting_response(
@@ -563,6 +666,54 @@ fn print_loop_approvals(response: &mem_api::LoopApprovalsResponse) {
         if let Some(reason) = &approval.decision_reason {
             println!("  decision: {reason}");
         }
+    }
+}
+
+fn print_loop_memory_proposals(response: &mem_api::LoopMemoryProposalsResponse) {
+    if response.proposals.is_empty() {
+        println!("No loop memory proposals found.");
+        return;
+    }
+    println!("Loop memory proposals: {}", response.proposals.len());
+    for proposal in &response.proposals {
+        println!(
+            "- {} loop={} type={} status={} confidence={:.2} created={}",
+            proposal.id,
+            proposal.loop_id,
+            proposal.proposal_type,
+            proposal.status,
+            proposal.confidence,
+            proposal.created_at.to_rfc3339()
+        );
+        if let Some(project) = &proposal.project {
+            println!("  project: {project}");
+        }
+        if let Some(run_id) = proposal.run_id {
+            println!("  run: {run_id}");
+        }
+        if let Some(target_id) = proposal.target_memory_id {
+            println!("  target: {target_id}");
+        }
+        if let Some(risk) = &proposal.risk_notes {
+            println!("  risk: {risk}");
+        }
+    }
+}
+
+fn print_memory_proposal_decision(
+    action: &str,
+    response: &mem_api::LoopMemoryProposalDecisionResponse,
+) {
+    println!(
+        "{} memory proposal {} [{}].",
+        action, response.proposal.id, response.proposal.status
+    );
+    println!(
+        "Loop: {} type={} confidence={:.2}",
+        response.proposal.loop_id, response.proposal.proposal_type, response.proposal.confidence
+    );
+    if let Some(memory_id) = response.memory_id {
+        println!("Memory: {memory_id}");
     }
 }
 
