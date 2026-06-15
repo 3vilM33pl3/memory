@@ -28,7 +28,7 @@ pub(crate) struct LoopApprovalsQuery {
     pub(crate) limit: Option<i64>,
 }
 
-pub(crate) async fn register_builtin_loop_definitions(pool: &PgPool) -> Result<()> {
+pub async fn register_builtin_loop_definitions(pool: &PgPool) -> Result<()> {
     for definition in builtin_loop_definitions() {
         validate_definition(&definition).map_err(|message| anyhow::anyhow!(message))?;
         let record = definition.to_record(chrono::Utc::now());
@@ -438,6 +438,28 @@ pub(crate) async fn reject_loop_approval(
         )
         .await?,
     ))
+}
+
+pub async fn list_registered_loop_definitions(pool: &PgPool) -> Result<Vec<LoopDefinitionRecord>> {
+    fetch_loop_definitions(pool)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))
+}
+
+pub async fn record_control_plane_loop_run(
+    pool: &PgPool,
+    loop_id: &str,
+    request: &LoopRunRequest,
+) -> Result<LoopRunResponse> {
+    create_control_plane_loop_run(pool, loop_id, request)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))
+}
+
+pub async fn read_loop_run_detail(pool: &PgPool, run_id: Uuid) -> Result<LoopRunDetail> {
+    fetch_loop_run_detail(pool, run_id)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))
 }
 
 async fn fetch_loop_definitions(pool: &PgPool) -> Result<Vec<LoopDefinitionRecord>, ApiError> {
