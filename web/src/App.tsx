@@ -12,6 +12,7 @@ import { QueryTab } from "./features/query/QueryTab";
 import { ReviewTab } from "./features/review/ReviewTab";
 import { ResumeTab } from "./features/resume/ResumeTab";
 import { WatchersTab } from "./features/watchers/WatchersTab";
+import { SkillsTab } from "./features/skills/SkillsTab";
 import { useAppShell } from "./hooks/useAppShell";
 import { MORE_TABS, PRIMARY_TABS, type Tab } from "./tabs";
 
@@ -28,7 +29,6 @@ export default function App() {
     overview,
     runtimeStatus,
     skillFilter,
-    setSkillFilter,
     serviceVersion,
     helpOpen,
     setHelpOpen,
@@ -114,6 +114,18 @@ export default function App() {
     handleToggleEmbeddingCreation,
     handleReembedEmbeddingBackend,
     handleReindexEmbeddingBackend,
+    skillInventory,
+    skillDetail,
+    selectedSkill,
+    selectedSkillIndex,
+    setSelectedSkillIndex,
+    setSkillFilter,
+    skillsLoading,
+    skillsOperation,
+    skillsBusy,
+    skillsError,
+    refreshSkills,
+    handleRepairSkills,
     automations,
     activeAutomation,
     selectedAutomationIndex,
@@ -194,9 +206,8 @@ export default function App() {
         <span>Provenance {runtimeStatus?.provenance.status ?? "unknown"} {runtimeStatus?.provenance.last_finished_at ? `last ${new Date(runtimeStatus.provenance.last_finished_at).toLocaleString()}` : "not run"}</span>
         <RuntimeSkillsStatus
           serviceVersion={serviceVersion}
-          skillFilter={skillFilter}
           skills={runtimeStatus?.skills ?? null}
-          onSkillFilterChange={setSkillFilter}
+          onOpenSkills={() => setTab("skills")}
         />
         <span>db {overview.database_status}</span>
         <span>{overview.memory_entries_total} memories</span>
@@ -341,6 +352,23 @@ export default function App() {
       ) : null}
 
       {tab === "watchers" ? <WatchersTab overview={overview} project={project} /> : null}
+      {tab === "skills" ? (
+        <SkillsTab
+          inventory={skillInventory}
+          detail={skillDetail}
+          selectedSkill={selectedSkill}
+          selectedSkillIndex={selectedSkillIndex}
+          filter={skillFilter}
+          loading={skillsLoading}
+          busy={skillsBusy}
+          operation={skillsOperation}
+          error={skillsError}
+          onFilterChange={setSkillFilter}
+          onRefresh={() => void refreshSkills()}
+          onRepair={() => void handleRepairSkills()}
+          onSelectSkill={setSelectedSkillIndex}
+        />
+      ) : null}
       {tab === "embeddings" ? (
         <EmbeddingsTab
           embeddingBackends={embeddingBackends}

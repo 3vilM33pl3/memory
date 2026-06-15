@@ -1,4 +1,4 @@
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { RuntimeSkillsStatus } from "./RuntimeSkillsStatus";
@@ -30,39 +30,31 @@ const skills: RuntimeSkillStatus = {
 };
 
 describe("RuntimeSkillsStatus", () => {
-  it("opens skill detail rows from the details button", () => {
+  it("renders a compact summary and opens the skills tab", () => {
+    const onOpenSkills = vi.fn();
     const view = render(
       <RuntimeSkillsStatus
         serviceVersion="0.9.4-dev"
-        skillFilter="all"
         skills={skills}
-        onSkillFilterChange={vi.fn()}
+        onOpenSkills={onOpenSkills}
       />,
     );
 
-    fireEvent.click(view.getByRole("button", { name: "Details" }));
+    fireEvent.click(screen.getByRole("button", { name: /Skills/ }));
 
-    expect(view.container.querySelector('[aria-label="Skill details"]')).toBeInTheDocument();
-    expect(view.getByText("Umbrella entrypoint for Memory Layer workflows.")).toBeInTheDocument();
-    expect(view.getByText("/repo/.agents/skills/memory-remember/SKILL.md")).toBeInTheDocument();
+    expect(onOpenSkills).toHaveBeenCalled();
+    expect(view.getByText(/0 missing, 1 outdated/)).toBeInTheDocument();
   });
 
-  it("opens details when the filter changes", () => {
-    const onSkillFilterChange = vi.fn();
-    const view = render(
+  it("falls back to the service version", () => {
+    render(
       <RuntimeSkillsStatus
         serviceVersion="0.9.4-dev"
-        skillFilter="memory-layer"
-        skills={skills}
-        onSkillFilterChange={onSkillFilterChange}
+        skills={null}
+        onOpenSkills={vi.fn()}
       />,
     );
 
-    const select = view.container.querySelector("select");
-    expect(select).not.toBeNull();
-    fireEvent.change(select as HTMLSelectElement, { target: { value: "all" } });
-
-    expect(onSkillFilterChange).toHaveBeenCalledWith("all");
-    expect(view.container.querySelector('[aria-label="Skill details"]')).toBeInTheDocument();
+    expect(screen.getByText(/v0.9.4-dev unknown/)).toBeInTheDocument();
   });
 });

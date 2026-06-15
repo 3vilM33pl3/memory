@@ -11,8 +11,9 @@ import { useMemoriesController } from "../features/memories/useMemoriesControlle
 import { useQueryController } from "../features/query/useQueryController";
 import { useResumeController } from "../features/resume/useResumeController";
 import { useReviewController } from "../features/review/useReviewController";
+import { useSkillsController } from "../features/skills/useSkillsController";
 import { type Tab } from "../tabs";
-import type { DiagnosticInfo, ProjectMemoriesResponse, ProjectOverviewResponse, RuntimeStatusResponse, StreamRequest } from "../types";
+import type { DiagnosticInfo, ProjectMemoriesResponse, ProjectOverviewResponse, RuntimeStatusResponse, SkillInventoryFilter, StreamRequest } from "../types";
 import { EMPTY_OVERVIEW } from "./defaultOverview";
 import { useGlobalShortcuts } from "./useGlobalShortcuts";
 import { useProjectStream } from "./useProjectStream";
@@ -29,7 +30,7 @@ export function useAppShell() {
   const [statusMessage, setStatusMessage] = useState("Connecting to Memory Layer...");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusResponse | null>(null);
-  const [skillFilter, setSkillFilter] = useState("memory-layer");
+  const [skillFilter, setSkillFilter] = useState<SkillInventoryFilter>("memory-layer");
   const [helpOpen, setHelpOpen] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -130,6 +131,14 @@ export function useAppShell() {
     effectiveRepoRoot,
     setStatusMessage,
     refreshProject,
+  });
+  const skills = useSkillsController({
+    activeTab: tab,
+    effectiveRepoRoot,
+    skillFilter,
+    setSkillFilter,
+    setStatusMessage,
+    recordLocalDiagnostic,
   });
   const bundles = useBundlesController({
     project,
@@ -250,8 +259,6 @@ export function useAppShell() {
     connectionState,
     overview,
     runtimeStatus,
-    skillFilter,
-    setSkillFilter,
     serviceVersion,
     helpOpen,
     setHelpOpen,
@@ -270,6 +277,7 @@ export function useAppShell() {
     ...review,
     ...embeddings,
     ...automations,
+    ...skills,
     ...resume,
     ...bundles,
   };

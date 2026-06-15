@@ -135,6 +135,11 @@ select {
   grid-column: span 3;
   justify-self: start;
   white-space: nowrap;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
 }
 
 .skill-details-toggle {

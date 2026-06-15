@@ -63,6 +63,13 @@ const WEB_HELP: Record<Tab, { title: string; purpose: string; layout: string[]; 
     controls: [...SHARED_CONTROLS],
     workflows: ["Use this tab when captures are not appearing.", "Check owner/session and stale heartbeat before restarting anything."],
   },
+  skills: {
+    title: "Skills Help",
+    purpose: "Inspect and repair repo-local Memory Layer skills used by coding agents.",
+    layout: ["Toolbar filters Memory Layer versus all focused skills and runs refresh or repair.", "Left list shows status, local/template versions, and repair action for each skill.", "Right pane shows path, template source, status detail, and SKILL.md content."],
+    controls: ["Use Repair skills to install missing skills or replace stale Memory-owned skills.", ...SHARED_CONTROLS],
+    workflows: ["Open this tab when the status strip reports stale or missing skills.", "Review a skill path and instructions before asking an agent to use it.", "Repair skills here or use memory doctor --fix / memory upgrade from a terminal."],
+  },
   embeddings: {
     title: "Embeddings Help",
     purpose: "Inspect embedding backends, switch semantic search, compare coverage, and backfill missing vectors.",

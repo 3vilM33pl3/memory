@@ -7,6 +7,7 @@ export const PRIMARY_TABS = [
   "project",
   "review",
   "watchers",
+  "skills",
   "embeddings",
   "resume",
 ] as const;

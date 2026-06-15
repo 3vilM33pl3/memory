@@ -975,6 +975,56 @@ export interface RuntimeSkillDetail {
   path: string;
 }
 
+export type SkillInventoryFilter = "memory-layer" | "all";
+
+export type SkillVersionStatus =
+  | "up_to_date"
+  | "missing"
+  | "outdated"
+  | "newer_than_template"
+  | "unversioned"
+  | "invalid_version"
+  | "template_missing";
+
+export type SkillBundleStatus = "ok" | "warn" | "error";
+
+export type SkillUpgradeAction = "install" | "replace" | "replace_forced" | "skip";
+
+export interface SkillVersionInfo {
+  name: string;
+  project_path: string;
+  template_path?: string | null;
+  project_version?: string | null;
+  template_version?: string | null;
+  status: SkillVersionStatus;
+  action: SkillUpgradeAction;
+  detail?: string | null;
+}
+
+export interface SkillInventoryReport {
+  project_root: string;
+  project_skill_root: string;
+  template_root?: string | null;
+  bundle_version: string;
+  status: SkillBundleStatus;
+  summary: string;
+  filter: SkillInventoryFilter;
+  skills: SkillVersionInfo[];
+}
+
+export interface SkillContentResponse {
+  skill: SkillVersionInfo;
+  content?: string | null;
+  content_truncated: boolean;
+}
+
+export interface SkillUpgradeReport {
+  dry_run: boolean;
+  force: boolean;
+  backup_root?: string | null;
+  inventory: SkillInventoryReport;
+}
+
 export interface RuntimeRestartNotice {
   version: string;
   reason: string;

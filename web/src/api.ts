@@ -36,6 +36,10 @@ import type {
   LoopSettingsUpdateRequest,
   LoopSettingResponse,
   RuntimeStatusResponse,
+  SkillContentResponse,
+  SkillInventoryFilter,
+  SkillInventoryReport,
+  SkillUpgradeReport,
   UpToSpeedRequest,
   UpToSpeedResponse,
 } from "./types";
@@ -118,6 +122,36 @@ export async function getRuntimeStatus(
   if (repoRoot) params.set("repo_root", repoRoot);
   params.set("skill_filter", skillFilter);
   return parseJson(await apiFetch(`/v1/runtime/status?${params.toString()}`));
+}
+
+export async function getSkills(
+  repoRoot: string,
+  filter: SkillInventoryFilter,
+): Promise<SkillInventoryReport> {
+  const params = new URLSearchParams({ repo_root: repoRoot, filter });
+  return parseJson(await apiFetch(`/v1/skills?${params.toString()}`));
+}
+
+export async function getSkill(
+  repoRoot: string,
+  skillName: string,
+  filter: SkillInventoryFilter,
+): Promise<SkillContentResponse> {
+  const params = new URLSearchParams({ repo_root: repoRoot, filter });
+  return parseJson(await apiFetch(`/v1/skills/${encodeURIComponent(skillName)}?${params.toString()}`));
+}
+
+export async function repairSkills(
+  repoRoot: string,
+  filter: SkillInventoryFilter,
+): Promise<SkillUpgradeReport> {
+  return parseJson(
+    await apiFetch("/v1/skills/repair", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repo_root: repoRoot, filter }),
+    }),
+  );
 }
 
 export async function getUpToSpeed(request: UpToSpeedRequest): Promise<UpToSpeedResponse> {
