@@ -143,6 +143,10 @@ The backend owns:
 - provenance
 - stats and operational reporting
 
+### Loop Automation
+
+Loop automation is the service-owned control plane for background and manual agent loops. It registers built-in loop definitions, resolves per-scope settings, routes normalized trigger events, records run ledgers and traces, and gates risky actions through approvals. See [Loop Automation Control Plane](loop-automation.md).
+
 ### PostgreSQL
 
 PostgreSQL stores:
@@ -207,6 +211,7 @@ It does not write directly to database tables. It only orchestrates the existing
 ## Related Docs
 
 - [How Memory Layer Works](how-it-works.md)
+- [Loop Automation Control Plane](loop-automation.md)
 - [Graph And Curation Foundations](graph-and-curation-foundations.md)
 - [Hidden Memory Daemon](hidden-memory-daemon.md)
 - [Developer Documentation](../README.md)
