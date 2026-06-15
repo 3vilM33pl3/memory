@@ -97,7 +97,7 @@ The status strip shows the same operational components as the TUI bottom bar:
 - `Service`: backend version, primary/relay role, and service identity.
 - `Manager`: watcher-manager state, mode, tracked sessions, and warnings.
 - `Watchers`: active/unhealthy watcher counts.
-- `Skill filter`: selects whether the status strip checks only the
+- `Skills` dropdown: selects whether the status strip checks only the
   `memory-layer` umbrella skill, which is the default, or the full focused-skill
   bundle.
 - `Skills`: repo-local skill version and status for the selected filter. Use

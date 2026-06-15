@@ -118,12 +118,27 @@ select {
   align-items: center;
   gap: 0.35rem;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .status-filter select {
   width: auto;
-  min-width: 8.5rem;
+  min-width: 7.6rem;
   padding: 0.22rem 0.4rem;
+}
+
+.runtime-skills-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: nowrap;
+  grid-column: span 3;
+  justify-self: start;
+  white-space: nowrap;
+}
+
+.skill-status-summary {
+  color: var(--muted);
 }
 
 .panel {
@@ -618,6 +633,12 @@ pre {
 
   .status-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .runtime-skills-status {
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+    white-space: normal;
   }
 
   .filters-grid {
