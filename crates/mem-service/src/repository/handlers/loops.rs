@@ -1572,6 +1572,24 @@ async fn create_control_plane_loop_run_with_trigger(
             .execute(pool)
             .await
             .map_err(ApiError::sql)?;
+        } else if definition.loop_id == mem_loops::LOOP_MEMORY_HYGIENE && !blocked {
+            let hygiene =
+                emit_memory_hygiene_proposals(pool, run_id, request, &definition.loop_id).await?;
+            sqlx::query(
+                r#"
+                UPDATE loop_runs
+                SET output_summary = $2,
+                    output_json = output_json || jsonb_build_object('memory_hygiene', $3::jsonb),
+                    updated_at = now()
+                WHERE id = $1
+                "#,
+            )
+            .bind(run_id)
+            .bind(&hygiene.summary)
+            .bind(&hygiene.output)
+            .execute(pool)
+            .await
+            .map_err(ApiError::sql)?;
         }
     }
     Ok(LoopRunResponse {
@@ -2538,6 +2556,7 @@ struct ContextRefreshResult {
 
 struct ContextRefreshProposalDraft {
     proposal_type: String,
+    target_memory_id: Option<Uuid>,
     candidate: serde_json::Value,
     evidence: serde_json::Value,
     confidence: f32,
@@ -2563,7 +2582,7 @@ async fn emit_context_pack_refresh_proposals(
             loop_id: loop_id.to_string(),
             proposal_type: draft.proposal_type,
             run_id: Some(run_id),
-            target_memory_id: None,
+            target_memory_id: draft.target_memory_id,
             candidate: draft.candidate,
             evidence: draft.evidence,
             confidence: draft.confidence,
@@ -2653,6 +2672,7 @@ fn architecture_summary_draft(
             "memory_type": "architecture",
             "tags": ["loop-engineering", "context-pack-refresh", "architecture"]
         }),
+        target_memory_id: None,
         evidence: evidence_refs(&[
             ("docs/developer/architecture/overview.md", &overview),
             ("docs/developer/architecture/code-map.md", &code_map),
@@ -2682,6 +2702,7 @@ fn command_list_draft(request: &LoopRunRequest) -> ContextRefreshProposalDraft {
             "memory_type": "documentation",
             "tags": ["loop-engineering", "context-pack-refresh", "commands"]
         }),
+        target_memory_id: None,
         evidence: evidence_refs(&[
             ("CONTRIBUTING.md", &contributing),
             ("Cargo.toml", &cargo),
@@ -2708,6 +2729,7 @@ fn conventions_draft(request: &LoopRunRequest) -> ContextRefreshProposalDraft {
             "memory_type": "convention",
             "tags": ["loop-engineering", "context-pack-refresh", "conventions"]
         }),
+        target_memory_id: None,
         evidence: evidence_refs(&[("AGENTS.md", &agents), ("CONTRIBUTING.md", &contributing)]),
         confidence: 0.80,
         risk_notes: "Generated conventions should be reviewed because instruction docs can contain broad guidance.".to_string(),
@@ -2733,6 +2755,7 @@ fn module_map_draft(request: &LoopRunRequest) -> ContextRefreshProposalDraft {
             "memory_type": "architecture",
             "tags": ["loop-engineering", "context-pack-refresh", "module-map"]
         }),
+        target_memory_id: None,
         evidence: evidence_refs(&[
             ("docs/developer/architecture/code-map.md", &code_map),
             ("Cargo.toml", &cargo),
@@ -2783,6 +2806,7 @@ fn stale_memory_warnings_draft(
             "memory_type": "debugging",
             "tags": ["loop-engineering", "context-pack-refresh", "stale-memory"]
         }),
+        target_memory_id: None,
         evidence: json!([{
             "source_kind": "note",
             "excerpt": "Context-pack builder flagged stale, contradictory, excluded, or warning-producing context."
@@ -2814,6 +2838,225 @@ fn evidence_refs(items: &[(&str, &str)]) -> serde_json::Value {
             })
             .collect(),
     )
+}
+
+struct MemoryHygieneResult {
+    summary: String,
+    output: serde_json::Value,
+}
+
+async fn emit_memory_hygiene_proposals(
+    pool: &PgPool,
+    run_id: Uuid,
+    request: &LoopRunRequest,
+    loop_id: &str,
+) -> Result<MemoryHygieneResult, ApiError> {
+    let project = request
+        .project
+        .as_deref()
+        .ok_or_else(|| ApiError::validation(ValidationError::new("project is required")))?;
+    let memories = crate::repository::fetch_project_memories(pool, project, Some("active"), 200, 0)
+        .await
+        .map_err(ApiError::sql)?
+        .items;
+    let drafts = memory_hygiene_proposal_drafts(&memories);
+    let mut proposal_ids = Vec::new();
+    for draft in drafts {
+        let create = LoopMemoryProposalCreateRequest {
+            project: project.to_string(),
+            loop_id: loop_id.to_string(),
+            proposal_type: draft.proposal_type,
+            run_id: Some(run_id),
+            target_memory_id: draft.target_memory_id,
+            candidate: draft.candidate,
+            evidence: draft.evidence,
+            confidence: draft.confidence,
+            risk_notes: Some(draft.risk_notes),
+        };
+        create.validate().map_err(ApiError::validation)?;
+        let created = insert_loop_memory_proposal(pool, &create).await?;
+        proposal_ids.push(created.proposal.id);
+    }
+    let summary = if proposal_ids.is_empty() {
+        "Memory Hygiene found no duplicate, stale, contradictory, or low-confidence candidates in the inspected sample."
+            .to_string()
+    } else {
+        format!(
+            "Memory Hygiene produced {} reviewable cleanup proposal(s).",
+            proposal_ids.len()
+        )
+    };
+    let output = json!({
+        "proposal_ids": proposal_ids,
+        "proposal_count": proposal_ids.len(),
+        "inspected_memory_count": memories.len(),
+        "sensitive_content_policy": "summaries_and_ids_only"
+    });
+    append_loop_trace(
+        pool,
+        run_id,
+        "memory_hygiene",
+        "Memory Hygiene proposals",
+        output.clone(),
+        false,
+    )
+    .await?;
+    Ok(MemoryHygieneResult { summary, output })
+}
+
+fn memory_hygiene_proposal_drafts(
+    memories: &[ProjectMemoryListItem],
+) -> Vec<ContextRefreshProposalDraft> {
+    let mut drafts = Vec::new();
+    drafts.extend(duplicate_memory_drafts(memories));
+    drafts.extend(stale_or_low_confidence_drafts(memories));
+    drafts.extend(related_memory_link_drafts(memories));
+    drafts.truncate(12);
+    drafts
+}
+
+fn duplicate_memory_drafts(memories: &[ProjectMemoryListItem]) -> Vec<ContextRefreshProposalDraft> {
+    let mut by_summary: BTreeMap<String, Vec<&ProjectMemoryListItem>> = BTreeMap::new();
+    for memory in memories {
+        let key = normalize_hygiene_text(&memory.summary);
+        if key.len() >= 12 {
+            by_summary.entry(key).or_default().push(memory);
+        }
+    }
+    by_summary
+        .values()
+        .filter(|group| group.len() > 1)
+        .take(4)
+        .filter_map(|group| {
+            let mut ordered = group.clone();
+            ordered.sort_by(|a, b| {
+                b.confidence
+                    .partial_cmp(&a.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(b.importance.cmp(&a.importance))
+            });
+            let keep = ordered.first()?;
+            let duplicate = ordered.get(1)?;
+            Some(ContextRefreshProposalDraft {
+                proposal_type: "merge".to_string(),
+                candidate: json!({
+                    "related_memory_id": keep.id,
+                    "relation_type": "duplicates",
+                    "summary": format!("Merge likely duplicate memory into {}", keep.id),
+                    "evidence_summary": format!(
+                        "Duplicate summaries: target `{}` and related `{}`.",
+                        duplicate.summary, keep.summary
+                    )
+                }),
+                evidence: json!([{
+                    "source_kind": "note",
+                    "excerpt": format!(
+                        "Likely duplicate summaries. Target: {} (confidence {:.2}, importance {}). Related: {} (confidence {:.2}, importance {}).",
+                        duplicate.id, duplicate.confidence, duplicate.importance,
+                        keep.id, keep.confidence, keep.importance
+                    )
+                }]),
+                confidence: 0.74,
+                risk_notes: "Duplicate detection uses summary normalization only; review before approving merge relation.".to_string(),
+                target_memory_id: Some(duplicate.id),
+            })
+        })
+        .collect()
+}
+
+fn stale_or_low_confidence_drafts(
+    memories: &[ProjectMemoryListItem],
+) -> Vec<ContextRefreshProposalDraft> {
+    let stale_before = chrono::Utc::now() - chrono::Duration::days(180);
+    memories
+        .iter()
+        .filter(|memory| {
+            memory.confidence < 0.45
+                || (memory.updated_at < stale_before && memory.importance <= 2)
+        })
+        .take(5)
+        .map(|memory| {
+            let stale = memory.updated_at < stale_before;
+            ContextRefreshProposalDraft {
+                proposal_type: "deprecate".to_string(),
+                candidate: json!({
+                    "summary": format!("Deprecate low-signal memory {}", memory.id),
+                    "reason": if stale { "stale_low_importance" } else { "low_confidence" },
+                    "memory_summary": memory.summary,
+                    "confidence": memory.confidence,
+                    "importance": memory.importance,
+                    "updated_at": memory.updated_at
+                }),
+                evidence: json!([{
+                    "source_kind": "note",
+                    "excerpt": format!(
+                        "Memory {} summary `{}` has confidence {:.2}, importance {}, updated at {}.",
+                        memory.id, memory.summary, memory.confidence, memory.importance, memory.updated_at
+                    )
+                }]),
+                confidence: if stale { 0.68 } else { 0.64 },
+                risk_notes: "Deprecation proposal uses metadata and summary only; inspect full memory before approval.".to_string(),
+                target_memory_id: Some(memory.id),
+            }
+        })
+        .collect()
+}
+
+fn related_memory_link_drafts(
+    memories: &[ProjectMemoryListItem],
+) -> Vec<ContextRefreshProposalDraft> {
+    let mut drafts = Vec::new();
+    for (index, left) in memories.iter().enumerate() {
+        if drafts.len() >= 3 {
+            break;
+        }
+        let Some(shared_tag) = left.tags.first() else {
+            continue;
+        };
+        let Some(right) = memories.iter().skip(index + 1).find(|candidate| {
+            candidate.memory_type == left.memory_type
+                && candidate.tags.iter().any(|tag| tag == shared_tag)
+                && normalize_hygiene_text(&candidate.summary)
+                    != normalize_hygiene_text(&left.summary)
+        }) else {
+            continue;
+        };
+        drafts.push(ContextRefreshProposalDraft {
+            proposal_type: "link".to_string(),
+            candidate: json!({
+                "related_memory_id": right.id,
+                "relation_type": "related_to",
+                "summary": format!("Link related memories sharing tag `{shared_tag}`"),
+                "shared_tag": shared_tag,
+                "left_summary": left.summary,
+                "right_summary": right.summary
+            }),
+            evidence: json!([{
+                "source_kind": "note",
+                "excerpt": format!(
+                    "Memories {} and {} share type {} and tag `{}`.",
+                    left.id, right.id, left.memory_type, shared_tag
+                )
+            }]),
+            confidence: 0.60,
+            risk_notes:
+                "Related-memory link is low-risk but should still be reviewed for usefulness."
+                    .to_string(),
+            target_memory_id: Some(left.id),
+        });
+    }
+    drafts
+}
+
+fn normalize_hygiene_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_alphanumeric() || ch.is_whitespace())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 async fn cancel_loop_run_record(

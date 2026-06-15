@@ -383,6 +383,95 @@ async fn loop_repository_approves_memory_proposal_and_writes_provenance() {
         .expect("cleanup test project");
 }
 
+#[tokio::test]
+async fn loop_repository_memory_hygiene_emits_cleanup_proposals() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-loop-hygiene");
+    let repo_root = format!("/tmp/{project}");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+
+    mem_service::repository::handlers::loops::register_builtin_loop_definitions(&pool)
+        .await
+        .expect("register builtin loops");
+    let project_id =
+        mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+            .await
+            .expect("upsert project");
+    enable_loop_for_project(&pool, project_id, &project, mem_loops::LOOP_MEMORY_HYGIENE).await;
+    insert_hygiene_memory_fixture(
+        &pool,
+        project_id,
+        "Duplicate hygiene memory",
+        "Duplicate hygiene memory",
+        0.92,
+        4,
+    )
+    .await;
+    insert_hygiene_memory_fixture(
+        &pool,
+        project_id,
+        "Duplicate hygiene memory",
+        "Duplicate hygiene memory",
+        0.71,
+        2,
+    )
+    .await;
+    insert_hygiene_memory_fixture(
+        &pool,
+        project_id,
+        "Low confidence hygiene memory",
+        "Low confidence hygiene memory",
+        0.31,
+        1,
+    )
+    .await;
+
+    let run = mem_service::repository::handlers::loops::record_control_plane_loop_run(
+        &pool,
+        mem_loops::LOOP_MEMORY_HYGIENE,
+        &LoopRunRequest {
+            project: Some(project.clone()),
+            repo_root: Some(repo_root.clone()),
+            scope_type: None,
+            scope_id: None,
+            dry_run: true,
+            reason: Some("memory hygiene repository test".to_string()),
+            trigger_payload: None,
+        },
+    )
+    .await
+    .expect("run memory hygiene loop")
+    .run;
+
+    assert_eq!(run.summary.status, LoopRunStatus::Succeeded);
+    assert!(
+        run.memory_proposals
+            .iter()
+            .any(|proposal| proposal.proposal_type == "merge")
+    );
+    assert!(
+        run.memory_proposals
+            .iter()
+            .any(|proposal| proposal.proposal_type == "deprecate")
+    );
+    assert!(
+        run.traces
+            .iter()
+            .any(|trace| trace.trace_type == "memory_hygiene")
+    );
+
+    cleanup_loop_run(&pool, run.summary.id).await;
+    cleanup_loop_triggers(&pool, &repo_root).await;
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
 async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     let memory_id = Uuid::new_v4();
     sqlx::query(
@@ -403,6 +492,43 @@ async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     .execute(pool)
     .await
     .expect("insert memory fixture");
+    memory_id
+}
+
+async fn insert_hygiene_memory_fixture(
+    pool: &PgPool,
+    project_id: Uuid,
+    summary: &str,
+    canonical_text: &str,
+    confidence: f32,
+    importance: i32,
+) -> Uuid {
+    let memory_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO memory_entries
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
+             summary, memory_type, scope, importance, confidence, status,
+             created_at, updated_at, archived_at, search_document)
+        VALUES ($1, $2, $1, 1, FALSE, $3, $4, 'implementation', 'project',
+                $5, $6, 'active', now(), now(), NULL,
+                to_tsvector('english', $3 || ' ' || $4))
+        "#,
+    )
+    .bind(memory_id)
+    .bind(project_id)
+    .bind(canonical_text)
+    .bind(summary)
+    .bind(importance)
+    .bind(confidence)
+    .execute(pool)
+    .await
+    .expect("insert hygiene memory fixture");
+    sqlx::query("INSERT INTO memory_tags (memory_entry_id, tag) VALUES ($1, 'hygiene-test')")
+        .bind(memory_id)
+        .execute(pool)
+        .await
+        .expect("insert hygiene tag");
     memory_id
 }
 
@@ -480,6 +606,16 @@ async fn cleanup_approval(pool: &PgPool, approval_id: Uuid) {
 }
 
 async fn enable_project_loop(pool: &PgPool, project_id: Uuid, project: &str) {
+    enable_loop_for_project(
+        pool,
+        project_id,
+        project,
+        mem_loops::LOOP_CONTEXT_PACK_REFRESH,
+    )
+    .await;
+}
+
+async fn enable_loop_for_project(pool: &PgPool, project_id: Uuid, project: &str, loop_id: &str) {
     sqlx::query(
         r#"
         INSERT INTO loop_settings (
@@ -495,7 +631,7 @@ async fn enable_project_loop(pool: &PgPool, project_id: Uuid, project: &str) {
             updated_at = now()
         "#,
     )
-    .bind(mem_loops::LOOP_CONTEXT_PACK_REFRESH)
+    .bind(loop_id)
     .bind(project)
     .bind(project_id)
     .bind(LoopMode::SuggestOnly.as_str())

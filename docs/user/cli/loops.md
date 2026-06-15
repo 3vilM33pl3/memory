@@ -74,6 +74,12 @@ it records the pack and emits pending memory proposals for an architecture
 summary, command list, conventions, module map, and stale-memory warnings when
 the pack found any. Those proposals remain review-only until approved.
 
+When the built-in `memory_hygiene` loop runs and is not blocked by policy, it
+inspects active memory summaries and metadata for likely duplicates,
+low-confidence or stale low-importance memories, and related same-tag memories.
+It emits `merge`, `deprecate`, and `link` proposals using summaries and ids only,
+so full canonical text is not copied into hygiene reports.
+
 ## Approvals
 
 ```bash
