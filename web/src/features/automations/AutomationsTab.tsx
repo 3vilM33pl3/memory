@@ -128,7 +128,7 @@ function automationStateLabel(card: AutomationCardState, globalKillSwitch: boole
   const settings = card.effectiveSettings;
   if (globalKillSwitch || settings?.global_kill_switch) return "globally stopped";
   if (!settings?.enabled) return "disabled";
-  if (settings.blocked_reasons.length) return "blocked";
+  if ((settings.blocked_reasons ?? []).length) return "blocked";
   return modeLabel(settings.mode);
 }
 
@@ -419,11 +419,11 @@ export function AutomationsTab({
               <Metric label="Paused until" value={formatDateTime(activeAutomation.effectiveSettings?.paused_until)} />
               <Metric label="Snoozed until" value={formatDateTime(activeAutomation.effectiveSettings?.snoozed_until)} />
               <Metric label="Last run" value={activeAutomation.lastRun ? `${activeAutomation.lastRun.status} ${formatDateTime(activeAutomation.lastRun.started_at)}` : "never"} />
-              {activeAutomation.effectiveSettings?.blocked_reasons.length ? (
+              {(activeAutomation.effectiveSettings?.blocked_reasons ?? []).length ? (
                 <div className="detail-section">
                   <h3>Blocked reasons</h3>
                   <ul>
-                    {activeAutomation.effectiveSettings.blocked_reasons.map((reason) => (
+                    {(activeAutomation.effectiveSettings?.blocked_reasons ?? []).map((reason) => (
                       <li key={reason}>{label(reason)}</li>
                     ))}
                   </ul>
@@ -508,9 +508,9 @@ export function AutomationsTab({
                         <div className="detail-section">
                           <h3>Diagnostics</h3>
                           <p>{activeLoopRun.summary.output_summary || "No diagnostic summary recorded."}</p>
-                          {activeLoopRun.summary.blocked_reasons.length ? (
+                          {(activeLoopRun.summary.blocked_reasons ?? []).length ? (
                             <ul>
-                              {activeLoopRun.summary.blocked_reasons.map((reason) => (
+                              {(activeLoopRun.summary.blocked_reasons ?? []).map((reason) => (
                                 <li key={reason}>{label(reason)}</li>
                               ))}
                             </ul>

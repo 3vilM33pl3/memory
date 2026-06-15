@@ -204,6 +204,35 @@ describe("AutomationsTab", () => {
     expect(screen.getAllByText("succeeded", { exact: false })[0]).toBeInTheDocument();
   });
 
+  it("renders enabled automations when the service omits empty blocked reasons", () => {
+    const enabledAutomation: AutomationCardState = {
+      ...automation,
+      definition: {
+        ...automation.definition,
+        loop_id: "memory_hygiene",
+        name: "Memory Hygiene",
+      },
+      effectiveSettings: {
+        loop_id: "memory_hygiene",
+        enabled: true,
+        mode: "autonomous_safe",
+        scope_type: "repo",
+        scope_id: "/home/olivier/Projects/memory",
+        global_kill_switch: false,
+      },
+      lastRun: null,
+    };
+
+    renderTab({
+      automations: [enabledAutomation],
+      activeAutomation: enabledAutomation,
+    });
+
+    expect(screen.getAllByText("Memory Hygiene")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("autonomous safe")[0]).toBeInTheDocument();
+    expect(screen.queryByText("Blocked reasons")).not.toBeInTheDocument();
+  });
+
   it("calls loop control actions", () => {
     const props = renderTab();
 

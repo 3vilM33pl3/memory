@@ -73,7 +73,7 @@ export interface EffectiveLoopSettings {
   scope_type: LoopScopeType;
   scope_id: string;
   global_kill_switch: boolean;
-  blocked_reasons: string[];
+  blocked_reasons?: string[];
   budgets?: Record<string, unknown> | null;
   approval_overrides?: Record<string, unknown> | null;
   paused_until?: string | null;
@@ -159,7 +159,7 @@ export interface LoopRunSummary {
   finished_at?: string | null;
   output_summary?: string | null;
   trace_count: number;
-  blocked_reasons: string[];
+  blocked_reasons?: string[];
 }
 
 export interface LoopTriggerEventRecord {

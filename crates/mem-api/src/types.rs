@@ -1556,7 +1556,7 @@ pub struct EffectiveLoopSettings {
     pub scope_id: String,
     #[serde(default)]
     pub global_kill_switch: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub blocked_reasons: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budgets: Option<serde_json::Value>,
@@ -1827,7 +1827,7 @@ pub struct LoopRunSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_summary: Option<String>,
     pub trace_count: i32,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub blocked_reasons: Vec<String>,
 }
 
@@ -4495,6 +4495,43 @@ mod tests {
         assert_eq!(MemoryType::Task.to_string(), "task");
         assert_eq!(MemoryType::Documentation.to_string(), "documentation");
         assert_eq!(MemoryType::Refactor.to_string(), "refactor");
+    }
+
+    #[test]
+    fn loop_blocked_reasons_serialize_when_empty() {
+        let effective = EffectiveLoopSettings {
+            loop_id: "memory_hygiene".to_string(),
+            enabled: true,
+            mode: LoopMode::AutonomousSafe,
+            scope_type: LoopScopeType::Repo,
+            scope_id: "/repo".to_string(),
+            global_kill_switch: false,
+            blocked_reasons: Vec::new(),
+            budgets: None,
+            approval_overrides: None,
+            paused_until: None,
+            snoozed_until: None,
+        };
+        let effective_json =
+            serde_json::to_value(&effective).expect("serialize effective settings");
+        assert_eq!(effective_json["blocked_reasons"], serde_json::json!([]));
+
+        let summary = LoopRunSummary {
+            id: Uuid::nil(),
+            loop_id: "memory_hygiene".to_string(),
+            definition_version: 1,
+            project: Some("memory".to_string()),
+            repo_root: Some("/repo".to_string()),
+            mode: LoopMode::AutonomousSafe,
+            status: LoopRunStatus::Succeeded,
+            started_at: Utc::now(),
+            finished_at: None,
+            output_summary: None,
+            trace_count: 0,
+            blocked_reasons: Vec::new(),
+        };
+        let summary_json = serde_json::to_value(&summary).expect("serialize run summary");
+        assert_eq!(summary_json["blocked_reasons"], serde_json::json!([]));
     }
 
     #[test]
