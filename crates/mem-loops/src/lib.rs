@@ -10,6 +10,13 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
+mod sandbox;
+
+pub use sandbox::{
+    SandboxCapture, SandboxCommandLog, SandboxCommandRequest, SandboxLimits, SandboxWorkspace,
+    SandboxWorkspaceSpec, WorktreeSandboxManager,
+};
+
 pub const LOOP_CONTEXT_PACK_REFRESH: &str = "context_pack_refresh";
 pub const LOOP_MEMORY_HYGIENE: &str = "memory_hygiene";
 pub const LOOP_CI_FAILURE_TRIAGE: &str = "ci_failure_triage";

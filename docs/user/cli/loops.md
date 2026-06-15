@@ -100,6 +100,12 @@ reference, and budget, then return structured artifacts, changed files, command
 outputs, and proposed memory updates. The built-in mock runner is deterministic
 and exists for tests, replay, and later Draft PR adapter integration.
 
+Coding-oriented loops use isolated git worktrees under
+`.mem/runtime/loop-worktrees/` on generated `memory/loops/...` branches. The
+sandbox manager allowlists commands, enforces runtime and output limits, captures
+diffs, changed files, artifacts, and command logs, and refuses to clean paths
+outside the generated sandbox root. It never pushes directly to `main`.
+
 ## Approvals
 
 ```bash
