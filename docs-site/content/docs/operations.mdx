@@ -93,6 +93,7 @@ Run `memory upgrade` inside repositories only after reviewing the dry run, becau
 |---|---|
 | `memory doctor` | Configuration, database, provider, and environment checks. |
 | `memory status --project <slug>` | Combined project, service, watcher, MCP, and health view. |
+| `memory loops runs --project <slug>` | Automation run ledger and recent loop outcomes. |
 | TUI Errors tab | Persisted diagnostics with fix hints and raw errors. |
 | Browser UI Errors tab | Same diagnostic model in a browser surface. |
 | OS service logs | Startup failures, migrations, port conflicts, crashes. |
@@ -126,6 +127,10 @@ The [Browser UI](/docs/web-ui) is served by the same local service. Use it when 
 
 Keep the service bound to local interfaces unless you have added an explicit authentication and network control layer.
 
+## Automations
+
+The [Automations](/docs/automations) control plane is service-owned. Treat it like an operational surface: inspect settings before enabling loops, prefer dry-runs when exploring outputs, and review approval requests before accepting memory or repository changes.
+
 ## Next
 
-Read [Reference](/docs/reference), [Troubleshooting](/docs/help/troubleshooting), or [MCP](/docs/mcp).
+Read [Automations](/docs/automations), [Reference](/docs/reference), [Troubleshooting](/docs/help/troubleshooting), or [MCP](/docs/mcp).

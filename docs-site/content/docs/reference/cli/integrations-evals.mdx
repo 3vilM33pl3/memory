@@ -1,16 +1,18 @@
 ---
-title: "CLI: integrations and evals"
-description: "Open the TUI, manage watchers, run MCP, and evaluate Memory Layer behavior."
+title: "CLI: integrations, automations, and evals"
+description: "Open the TUI, manage watchers, operate loop automations, run MCP, and evaluate Memory Layer behavior."
 ---
 
-# CLI: integrations and evals
+# CLI: integrations, automations, and evals
 
-These commands connect Memory Layer to humans, agents, MCP clients, and evaluation suites.
+These commands connect Memory Layer to humans, agents, built-in loop automations, MCP clients, and evaluation suites.
 
 | Command | Writes | Purpose |
 |---|---:|---|
 | `memory tui` | Mostly read | Open the terminal UI. |
 | `memory watcher` | Yes | Manage project watchers and watcher daemons. |
+| `memory loops` | Mixed | Inspect and operate built-in automation loops. |
+| `memory automation` | Yes | Legacy/local automation queue controls. |
 | `memory mcp` | Mixed | Run and inspect the built-in Memory MCP server. |
 | `memory eval` | Yes | Run automated Memory quality evaluations. |
 
@@ -38,6 +40,34 @@ memory status --project memory
 ```
 
 The watcher manager is the preferred local automation path for Codex-linked sessions. Legacy per-project watcher services and foreground watcher runs remain compatibility paths.
+
+## `memory loops`
+
+Operate the built-in loop automation control plane.
+
+```bash
+memory loops list
+memory loops show memory_hygiene --project memory
+memory loops enable memory_hygiene --project memory --mode suggest_only --explicit-user-approval
+memory loops run memory_hygiene --project memory --dry-run --reason "inspect cleanup candidates"
+memory loops runs --project memory
+memory loops inspect <run-id>
+memory loops approvals --project memory
+memory loops memory-proposals --project memory --status pending
+```
+
+Use `memory loops` for the Automations tab workflows from a terminal: definitions, settings, trigger routing, manual runs, context packs, approvals, and loop-produced memory proposals. See [Automations](/docs/automations) for the built-in loop catalog and safety model.
+
+## `memory automation`
+
+Operate the older local automation queue controls where they are still used.
+
+```bash
+memory automation status --project memory
+memory automation flush --project memory --dry-run
+```
+
+Prefer `memory loops` for the current built-in automation control plane.
 
 ## `memory mcp`
 

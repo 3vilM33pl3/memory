@@ -1,0 +1,109 @@
+---
+title: "Automations"
+description: "Understand the built-in Memory Layer loop automations, what they can do, and how to run or approve them safely."
+---
+
+# Automations
+
+Automations are Memory Layer's built-in loop workflows. They are registered by the local service, scoped by project or repository, and recorded as auditable runs with traces, approvals, and proposed outputs.
+
+They are not external bots and they are not repo-local agent skills. Skills tell a coding agent how to use Memory Layer; automations are service-owned workflows that can be run manually or routed from trusted events.
+
+## How they work
+
+```bash
+memory loops list
+memory loops show memory_hygiene --project memory
+memory loops run memory_hygiene --project memory --dry-run --reason "inspect cleanup candidates"
+memory loops runs --project memory
+memory loops inspect <run-id>
+```
+
+Each automation has:
+
+| Field | Meaning |
+|---|---|
+| Loop ID | Stable identifier used by CLI, API, and run records. |
+| Default mode | Starting behavior before project-specific settings override it. |
+| Risk level | Operator signal for how much review the loop deserves. |
+| Supported triggers | Events that can route to the loop, such as `manual`, `schedule`, `memory_changed`, or `ci_failed`. |
+| Capabilities | What evidence the loop is allowed to read or request. |
+| Outputs | Reports, proposals, task packs, draft metadata, or metrics produced by the run. |
+
+Loop outputs still use Memory Layer APIs and approval flows. A loop does not get a private write path to memories or code.
+
+## Built-in loops
+
+| Loop | Default | Risk | Triggers | Outputs |
+|---|---|---:|---|---|
+| `context_pack_refresh` | `suggest_only` | Low | `manual`, `repo_docs_changed`, `memory_changed` | Context-pack diff and memory proposals. |
+| `memory_hygiene` | `suggest_only` | Medium | `manual`, `schedule`, `memory_changed` | Merge, deprecate, and link proposals plus a hygiene report. |
+| `ci_failure_triage` | `observe` | Medium | `manual`, `ci_failed` | CI triage report and optional follow-up task proposal. |
+| `agent_ready_issue_triage` | `suggest_only` | Low | `manual`, `issue_labeled`, `issue_created` | Issue report and task-pack proposal. |
+| `draft_pr` | `draft_output` | High | `manual`, `agent_ready_issue` | Draft PR metadata, checks, and memory proposals. |
+| `reviewer_drift_detection` | `suggest_only` | Medium | `manual`, `pull_request_opened`, `pull_request_updated` | Review report and architecture memory proposal when appropriate. |
+| `skill_mining` | `suggest_only` | Medium | `manual`, `run_succeeded`, `pull_request_merged` | Learned-skill memory proposal. |
+| `memory_eval` | `observe` | Low | `manual`, `schedule`, `retriever_changed` | Retrieval and context-quality metrics. |
+
+## Loop details
+
+### `context_pack_refresh`
+
+Builds or refreshes the context pack a future run would use for a project or repository. When it is not blocked by policy, it records the pack and can propose architecture summaries, command lists, conventions, module maps, and stale-memory warnings. Proposals stay pending until reviewed.
+
+### `memory_hygiene`
+
+Inspects active memory summaries and metadata for likely duplicates, low-confidence memories, stale low-importance memories, and related same-tag memories. It emits proposals using summaries and IDs only, so full canonical text is not copied into hygiene reports.
+
+### `ci_failure_triage`
+
+Classifies attached CI evidence as likely regression, flaky, environmental, dependency-related, or unknown. In observe mode it records a report only. In suggest-only mode it can propose a follow-up task for suitable regression or dependency failures. It does not write code.
+
+### `agent_ready_issue_triage`
+
+Reads an issue payload, classifies ambiguity and implementation risk, suggests labels such as `agent-ready`, `needs-human-clarification`, or `needs-design`, estimates likely files and tests, and creates a task-pack proposal for suitable low-risk work.
+
+### `draft_pr`
+
+Creates isolated draft implementation work for approved low-risk issue payloads. Sensitive areas such as auth, billing, security, migrations, secrets, deletion, or infrastructure stop at approval. Approved runs use generated worktrees and branches and never push directly to `main`.
+
+### `reviewer_drift_detection`
+
+Reviews changed files and diff metadata against remembered architecture, conventions, and safety constraints. It flags unrelated changes, missing tests, hidden behavior changes, security-sensitive diffs, and architecture drift. It does not modify code.
+
+### `skill_mining`
+
+Reads successful run or accepted PR payloads and looks for reusable development recipes. Suitable payloads become pending learned-skill memory proposals with applicability conditions, recipe steps, commands, validation evidence, and source links.
+
+### `memory_eval`
+
+Produces an internal run report for retrieval and context quality. It tracks precision/recall proxies, stale-memory injection rate, contradiction rate, accepted proposal rate, useful-run rate, cost per useful run, and context-pack comparison data.
+
+## Controls and safety
+
+Use project-scoped settings unless you intentionally want broader behavior:
+
+```bash
+memory loops enable memory_hygiene --project memory --mode suggest_only --explicit-user-approval
+memory loops pause memory_hygiene --project memory --until 2026-06-16T09:00:00Z
+memory loops disable memory_hygiene --project memory --reason "pause while reviewing output quality"
+```
+
+The global kill switch blocks routed non-manual runs. Manual `memory loops run ...` calls still record a trigger event, but they are deliberate operator actions and are not blocked by the kill switch.
+
+Approval-gated actions include memory mutation, repository writes, and runner invocation. Forbidden actions include direct pushes to `main`, deploys, secret access, destructive migrations, and enabling loops from inside a loop.
+
+## Where to inspect them
+
+| Surface | Use it for |
+|---|---|
+| Browser UI Automations tab | Inspect definitions, settings, recent runs, approvals, context packs, and memory proposals. |
+| `memory loops list` | Show registered loop definitions. |
+| `memory loops run` | Start a manual dry-run or run. |
+| `memory loops approvals` | Review pending approval requests. |
+| `memory loops memory-proposals` | Review proposals emitted by loop runs. |
+| `memory loops inspect <run-id>` | Inspect a specific run, traces, and outputs. |
+
+## Next
+
+Read [Browser UI](/docs/web-ui), [CLI reference](/docs/reference/cli/integrations-evals), or [Operations](/docs/operations).

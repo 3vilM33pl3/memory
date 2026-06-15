@@ -34,7 +34,7 @@ The documentation website source lives in [`../docs-site`](../docs-site/README.m
 
 - **Query and evidence:** [Query Tab](user/tui/query.md), [Query Command](user/cli/query.md), [Code Graph Extraction](user/cli/graph.md)
 - **Memory management:** [Memories Tab](user/tui/memories.md), [Review Tab](user/tui/review.md), [Memory Types Reference](developer/architecture/memory-types.md)
-- **Operations:** [Browser UI](user/web-ui.md), [Agents Tab](user/tui/agents.md), [Watcher Health](user/cli/watchers.md), [Errors Tab](user/tui/errors.md), [Doctor Diagnostics](user/cli/doctor.md)
+- **Operations:** [Browser UI](user/web-ui.md), [Loop Automations](user/cli/loops.md), [Agents Tab](user/tui/agents.md), [Watcher Health](user/cli/watchers.md), [Errors Tab](user/tui/errors.md), [Doctor Diagnostics](user/cli/doctor.md)
 - **Model switching:** [Embeddings Tab](user/tui/embeddings.md), [Embedding Operations](user/cli/embeddings.md)
 - **Re-entry:** [Activity Tab](user/tui/activity.md), [Get Up To Speed](user/cli/up-to-speed.md), [Resume Briefings](user/cli/resume.md)
 - **Evaluation:** [Beginner Guide To Evaluations](user/evaluation-guide.md), [Automated Evaluation](user/cli/eval.md), [Memory Improvement Evaluation](developer/evaluation-memory-improvement.md)
@@ -52,6 +52,7 @@ The documentation website source lives in [`../docs-site`](../docs-site/README.m
 - [Activities Command](user/cli/activities.md)
 - [Get Up To Speed](user/cli/up-to-speed.md)
 - [Embedding Operations](user/cli/embeddings.md)
+- [Loop Automations](user/cli/loops.md)
 - [Watcher Health](user/cli/watchers.md)
 - [TUI Command](user/cli/tui.md)
 - [Shell Completion](user/cli/completion.md)
