@@ -489,6 +489,30 @@ pre {
   color: var(--accent);
 }
 
+.trace-card {
+  padding: 0.45rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.trace-card:first-child {
+  border-top: 0;
+}
+
+.json-preview {
+  max-height: 18rem;
+  overflow: auto;
+  margin: 0.35rem 0 0;
+  padding: 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .action-card p {
   margin: 0.25rem 0 0;
   color: var(--muted);

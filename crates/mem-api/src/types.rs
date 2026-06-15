@@ -1845,8 +1845,36 @@ pub struct LoopTraceRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopMemoryProposalRecord {
+    pub id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub loop_id: String,
+    pub proposal_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_memory_id: Option<Uuid>,
+    #[serde(default)]
+    pub candidate: serde_json::Value,
+    #[serde(default)]
+    pub evidence: serde_json::Value,
+    pub confidence: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk_notes: Option<String>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopRunDetail {
     pub summary: LoopRunSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_event: Option<LoopTriggerEventRecord>,
     #[serde(default)]
     pub effective_settings: serde_json::Value,
     #[serde(default)]
@@ -1857,6 +1885,8 @@ pub struct LoopRunDetail {
     pub output: serde_json::Value,
     #[serde(default)]
     pub traces: Vec<LoopTraceRecord>,
+    #[serde(default)]
+    pub memory_proposals: Vec<LoopMemoryProposalRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

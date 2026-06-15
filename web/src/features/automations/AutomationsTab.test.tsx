@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { LoopGlobalStateResponse } from "../../types";
+import type { LoopGlobalStateResponse, LoopRunDetail } from "../../types";
 import { AutomationsTab } from "./AutomationsTab";
 import type { AutomationCardState } from "./useAutomationsController";
 
@@ -52,6 +52,65 @@ const globalState: LoopGlobalStateResponse = {
   updated_at: "2026-06-15T10:00:00Z",
 };
 
+const runDetail: LoopRunDetail = {
+  summary: automation.lastRun!,
+  run_reason: "Manual browser UI run now request.",
+  trigger_event: {
+    id: "33333333-3333-3333-3333-333333333333",
+    source: "manual",
+    event_type: "manual_run",
+    project: "memory",
+    repo_root: "/home/olivier/Projects/memory",
+    payload_hash: "abc123",
+    trust_level: "high",
+    payload: { source: "web" },
+    received_at: "2026-06-15T10:00:00Z",
+  },
+  effective_settings: { mode: "suggest_only", enabled: true },
+  policy_decisions: [
+    { action: "read_memory", allowed: true, requires_approval: false, reason: "read allowed" },
+    { action: "write_repo", allowed: false, requires_approval: true, reason: "approval required" },
+  ],
+  cost: { total_tokens: 42 },
+  output: { summary: "Control-plane loop run recorded." },
+  traces: [
+    {
+      id: "44444444-4444-4444-4444-444444444444",
+      run_id: automation.lastRun!.id,
+      sequence: 1,
+      trace_type: "policy",
+      title: "Policy evaluation",
+      payload: { decisions: 2 },
+      redacted: false,
+      created_at: "2026-06-15T10:00:00Z",
+    },
+    {
+      id: "55555555-5555-5555-5555-555555555555",
+      run_id: automation.lastRun!.id,
+      sequence: 2,
+      trace_type: "command",
+      title: "Sensitive command output",
+      payload: { secret: "hidden" },
+      redacted: true,
+      created_at: "2026-06-15T10:00:01Z",
+    },
+  ],
+  memory_proposals: [
+    {
+      id: "66666666-6666-6666-6666-666666666666",
+      run_id: automation.lastRun!.id,
+      project: "memory",
+      loop_id: "context_pack_refresh",
+      proposal_type: "add",
+      candidate: { summary: "New context fact" },
+      evidence: [],
+      confidence: 0.9,
+      status: "pending",
+      created_at: "2026-06-15T10:00:02Z",
+    },
+  ],
+};
+
 function renderTab(overrides: Partial<ComponentProps<typeof AutomationsTab>> = {}) {
   const props: ComponentProps<typeof AutomationsTab> = {
     automations: [automation],
@@ -61,6 +120,9 @@ function renderTab(overrides: Partial<ComponentProps<typeof AutomationsTab>> = {
     automationBusy: false,
     automationOperation: null,
     loopGlobalState: globalState,
+    selectedLoopRun: null,
+    selectedLoopRunApprovals: [],
+    selectedLoopRunLoading: false,
     onRefresh: vi.fn(),
     onSelectAutomation: vi.fn(),
     onSetLoopMode: vi.fn(),
@@ -68,6 +130,7 @@ function renderTab(overrides: Partial<ComponentProps<typeof AutomationsTab>> = {
     onPauseLoop: vi.fn(),
     onSnoozeLoop: vi.fn(),
     onRunLoop: vi.fn(),
+    onLoadLoopRun: vi.fn(),
     onToggleGlobalKillSwitch: vi.fn(),
     ...overrides,
   };
@@ -100,6 +163,9 @@ describe("AutomationsTab", () => {
       target: { value: "observe" },
     });
     expect(props.onSetLoopMode).toHaveBeenCalledWith("context_pack_refresh", "observe");
+
+    fireEvent.click(screen.getByRole("button", { name: "Load run" }));
+    expect(props.onLoadLoopRun).toHaveBeenCalledWith(automation.lastRun!.id);
   });
 
   it("shows the global kill switch state", () => {
@@ -112,5 +178,31 @@ describe("AutomationsTab", () => {
 
     fireEvent.click(screen.getByText("Disable global stop"));
     expect(props.onToggleGlobalKillSwitch).toHaveBeenCalled();
+  });
+
+  it("renders the selected run detail ledger", () => {
+    renderTab({
+      selectedLoopRun: runDetail,
+      selectedLoopRunApprovals: [
+        {
+          id: "77777777-7777-7777-7777-777777777777",
+          run_id: automation.lastRun!.id,
+          project: "memory",
+          loop_id: "context_pack_refresh",
+          action_type: "write_memory_proposal",
+          proposed_action: { proposal_id: "66666666-6666-6666-6666-666666666666" },
+          risk_reason: "Durable memory write requires review.",
+          status: "pending",
+          created_at: "2026-06-15T10:00:03Z",
+        },
+      ],
+    });
+
+    expect(screen.getByText("manual / manual_run")).toBeInTheDocument();
+    expect(screen.getByText("Policy gates")).toBeInTheDocument();
+    expect(screen.getByText("write repo")).toBeInTheDocument();
+    expect(screen.getByText("add · pending")).toBeInTheDocument();
+    expect(screen.getByText("write memory proposal · pending")).toBeInTheDocument();
+    expect(screen.getByText("Payload redacted.")).toBeInTheDocument();
   });
 });

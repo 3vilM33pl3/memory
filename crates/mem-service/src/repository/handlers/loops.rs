@@ -1335,7 +1335,8 @@ async fn fetch_loop_run_detail(pool: &PgPool, run_id: Uuid) -> Result<LoopRunDet
             lr.id, lr.loop_id, lr.definition_version, p.slug AS project,
             lr.repo_root, lr.mode, lr.status, lr.started_at, lr.finished_at,
             lr.output_summary, lr.trace_count, lr.blocked_reasons_json,
-            lr.effective_settings_json, lr.policy_decisions_json, lr.cost_json, lr.output_json
+            lr.effective_settings_json, lr.policy_decisions_json, lr.cost_json, lr.output_json,
+            lr.run_reason, lr.trigger_event_id
         FROM loop_runs lr
         LEFT JOIN projects p ON p.id = lr.project_id
         WHERE lr.id = $1
@@ -1347,9 +1348,17 @@ async fn fetch_loop_run_detail(pool: &PgPool, run_id: Uuid) -> Result<LoopRunDet
     .map_err(ApiError::sql)?
     .ok_or_else(|| ApiError::not_found("loop run not found"))?;
     let summary = row_to_loop_run_summary(&row)?;
+    let trigger_event_id: Option<Uuid> = row.try_get("trigger_event_id").map_err(ApiError::sql)?;
+    let trigger_event = match trigger_event_id {
+        Some(trigger_event_id) => fetch_trigger_event(pool, trigger_event_id).await?,
+        None => None,
+    };
     let traces = fetch_loop_traces(pool, run_id).await?;
+    let memory_proposals = fetch_loop_memory_proposals(pool, run_id).await?;
     Ok(LoopRunDetail {
         summary,
+        run_reason: row.try_get("run_reason").map_err(ApiError::sql)?,
+        trigger_event,
         effective_settings: row
             .try_get("effective_settings_json")
             .map_err(ApiError::sql)?,
@@ -1359,7 +1368,52 @@ async fn fetch_loop_run_detail(pool: &PgPool, run_id: Uuid) -> Result<LoopRunDet
         cost: row.try_get("cost_json").map_err(ApiError::sql)?,
         output: row.try_get("output_json").map_err(ApiError::sql)?,
         traces,
+        memory_proposals,
     })
+}
+
+async fn fetch_trigger_event(
+    pool: &PgPool,
+    trigger_event_id: Uuid,
+) -> Result<Option<LoopTriggerEventRecord>, ApiError> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            te.id, te.source, te.event_type, p.slug AS project, te.repo_root,
+            te.payload_hash, te.dedupe_key, te.trust_level, te.payload_json, te.received_at
+        FROM trigger_events te
+        LEFT JOIN projects p ON p.id = te.project_id
+        WHERE te.id = $1
+        "#,
+    )
+    .bind(trigger_event_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    row.map(row_to_trigger_event).transpose()
+}
+
+async fn fetch_loop_memory_proposals(
+    pool: &PgPool,
+    run_id: Uuid,
+) -> Result<Vec<LoopMemoryProposalRecord>, ApiError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            mp.id, mp.run_id, p.slug AS project, mp.loop_id, mp.proposal_type,
+            mp.target_memory_id, mp.candidate_json, mp.evidence_json, mp.confidence,
+            mp.risk_notes, mp.status, mp.created_at, mp.resolved_at
+        FROM memory_proposals mp
+        LEFT JOIN projects p ON p.id = mp.project_id
+        WHERE mp.run_id = $1
+        ORDER BY mp.created_at DESC
+        "#,
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    rows.into_iter().map(row_to_memory_proposal).collect()
 }
 
 async fn cancel_loop_run_record(
@@ -1635,6 +1689,26 @@ fn row_to_loop_approval(row: sqlx::postgres::PgRow) -> Result<LoopApprovalReques
         requester: row.try_get("requester").map_err(ApiError::sql)?,
         reviewer: row.try_get("reviewer").map_err(ApiError::sql)?,
         decision_reason: row.try_get("decision_reason").map_err(ApiError::sql)?,
+        created_at: row.try_get("created_at").map_err(ApiError::sql)?,
+        resolved_at: row.try_get("resolved_at").map_err(ApiError::sql)?,
+    })
+}
+
+fn row_to_memory_proposal(
+    row: sqlx::postgres::PgRow,
+) -> Result<LoopMemoryProposalRecord, ApiError> {
+    Ok(LoopMemoryProposalRecord {
+        id: row.try_get("id").map_err(ApiError::sql)?,
+        run_id: row.try_get("run_id").map_err(ApiError::sql)?,
+        project: row.try_get("project").map_err(ApiError::sql)?,
+        loop_id: row.try_get("loop_id").map_err(ApiError::sql)?,
+        proposal_type: row.try_get("proposal_type").map_err(ApiError::sql)?,
+        target_memory_id: row.try_get("target_memory_id").map_err(ApiError::sql)?,
+        candidate: row.try_get("candidate_json").map_err(ApiError::sql)?,
+        evidence: row.try_get("evidence_json").map_err(ApiError::sql)?,
+        confidence: row.try_get("confidence").map_err(ApiError::sql)?,
+        risk_notes: row.try_get("risk_notes").map_err(ApiError::sql)?,
+        status: row.try_get("status").map_err(ApiError::sql)?,
         created_at: row.try_get("created_at").map_err(ApiError::sql)?,
         resolved_at: row.try_get("resolved_at").map_err(ApiError::sql)?,
     })

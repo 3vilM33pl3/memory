@@ -102,6 +102,18 @@ async fn loop_repository_registers_definitions_and_records_run() {
             .expect("read loop run");
     assert_eq!(loaded.summary.id, run.summary.id);
     assert_eq!(loaded.summary.trace_count, 2);
+    assert_eq!(
+        loaded.run_reason.as_deref(),
+        Some("db repository integration test")
+    );
+    assert_eq!(
+        loaded
+            .trigger_event
+            .as_ref()
+            .map(|event| event.event_type.as_str()),
+        Some("manual_run")
+    );
+    assert!(loaded.memory_proposals.is_empty());
 
     cleanup_loop_run(&pool, run.summary.id).await;
     cleanup_loop_triggers(&pool, &repo_root).await;

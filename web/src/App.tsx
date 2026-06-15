@@ -119,12 +119,16 @@ export default function App() {
     automationBusy,
     automationOperation,
     loopGlobalState,
+    selectedLoopRun,
+    selectedLoopRunApprovals,
+    selectedLoopRunLoading,
     refreshAutomations,
     handleSetLoopMode,
     handleDisableLoop,
     handlePauseLoop,
     handleSnoozeLoop,
     handleRunLoop,
+    handleLoadLoopRun,
     handleToggleGlobalKillSwitch,
     resumeData,
     resumeLoading,
@@ -356,6 +360,9 @@ export default function App() {
           automationBusy={automationBusy}
           automationOperation={automationOperation}
           loopGlobalState={loopGlobalState}
+          selectedLoopRun={selectedLoopRun}
+          selectedLoopRunApprovals={selectedLoopRunApprovals}
+          selectedLoopRunLoading={selectedLoopRunLoading}
           onRefresh={() => void refreshAutomations()}
           onSelectAutomation={setSelectedAutomationIndex}
           onSetLoopMode={(loopId, mode) => void handleSetLoopMode(loopId, mode)}
@@ -363,6 +370,7 @@ export default function App() {
           onPauseLoop={(loopId) => void handlePauseLoop(loopId)}
           onSnoozeLoop={(loopId) => void handleSnoozeLoop(loopId)}
           onRunLoop={(loopId) => void handleRunLoop(loopId)}
+          onLoadLoopRun={(runId) => void handleLoadLoopRun(runId)}
           onToggleGlobalKillSwitch={() => void handleToggleGlobalKillSwitch()}
         />
       ) : null}

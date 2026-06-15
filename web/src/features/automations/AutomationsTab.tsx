@@ -1,5 +1,10 @@
 import { Metric } from "../../components/Details";
-import type { LoopGlobalStateResponse, LoopMode } from "../../types";
+import type {
+  LoopApprovalRequestRecord,
+  LoopGlobalStateResponse,
+  LoopMode,
+  LoopRunDetail,
+} from "../../types";
 import { formatDateTime } from "../../utils/format";
 import type { AutomationCardState } from "./useAutomationsController";
 
@@ -18,6 +23,9 @@ interface AutomationsTabProps {
   automationBusy: boolean;
   automationOperation: string | null;
   loopGlobalState: LoopGlobalStateResponse | null;
+  selectedLoopRun: LoopRunDetail | null;
+  selectedLoopRunApprovals: LoopApprovalRequestRecord[];
+  selectedLoopRunLoading: boolean;
   onRefresh: () => void;
   onSelectAutomation: (index: number) => void;
   onSetLoopMode: (loopId: string, mode: LoopMode) => void;
@@ -25,6 +33,7 @@ interface AutomationsTabProps {
   onPauseLoop: (loopId: string) => void;
   onSnoozeLoop: (loopId: string) => void;
   onRunLoop: (loopId: string) => void;
+  onLoadLoopRun: (runId: string) => void;
   onToggleGlobalKillSwitch: () => void;
 }
 
@@ -71,6 +80,21 @@ function modeLabel(mode: LoopMode): string {
   return label(mode);
 }
 
+function jsonPreview(value: unknown): string {
+  if (value === null || value === undefined) return "n/a";
+  return JSON.stringify(value, null, 2);
+}
+
+function policyDecisions(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    : [];
+}
+
+function traceCount(run: LoopRunDetail | null, type: string): number {
+  return run?.traces.filter((trace) => trace.trace_type === type).length ?? 0;
+}
+
 function automationStateLabel(card: AutomationCardState, globalKillSwitch: boolean): string {
   const settings = card.effectiveSettings;
   if (globalKillSwitch || settings?.global_kill_switch) return "globally stopped";
@@ -100,6 +124,9 @@ export function AutomationsTab({
   automationBusy,
   automationOperation,
   loopGlobalState,
+  selectedLoopRun,
+  selectedLoopRunApprovals,
+  selectedLoopRunLoading,
   onRefresh,
   onSelectAutomation,
   onSetLoopMode,
@@ -107,9 +134,14 @@ export function AutomationsTab({
   onPauseLoop,
   onSnoozeLoop,
   onRunLoop,
+  onLoadLoopRun,
   onToggleGlobalKillSwitch,
 }: AutomationsTabProps) {
   const globalKillSwitch = loopGlobalState?.kill_switch_enabled ?? false;
+  const activeLoopRun = selectedLoopRun?.summary.loop_id === activeAutomation?.definition.loop_id
+    ? selectedLoopRun
+    : null;
+  const decisions = policyDecisions(activeLoopRun?.policy_decisions);
   return (
     <section className="panel-stack">
       <div className="panel actions-row">
@@ -222,6 +254,120 @@ export function AutomationsTab({
                 <div className="detail-section">
                   <h3>Last output</h3>
                   <p>{activeAutomation.lastRun.output_summary}</p>
+                </div>
+              ) : null}
+              {activeAutomation.lastRun ? (
+                <div className="detail-section">
+                  <div className="detail-header">
+                    <h3>Run detail</h3>
+                    <button
+                      onClick={() => onLoadLoopRun(activeAutomation.lastRun!.id)}
+                      type="button"
+                      disabled={automationBusy}
+                    >
+                      {selectedLoopRunLoading ? "Loading..." : "Load run"}
+                    </button>
+                  </div>
+                  {activeLoopRun ? (
+                    <div className="run-detail">
+                      <div className="stats-row">
+                        <span className={activeLoopRun.summary.status === "succeeded" ? "badge badge-active" : "badge badge-archived"}>
+                          {activeLoopRun.summary.status}
+                        </span>
+                        <span>version {activeLoopRun.summary.definition_version}</span>
+                        <span>mode {modeLabel(activeLoopRun.summary.mode)}</span>
+                        <span>{activeLoopRun.summary.trace_count} traces</span>
+                        <span>{traceCount(activeLoopRun, "policy")} policy</span>
+                        <span>{traceCount(activeLoopRun, "command")} commands</span>
+                        <span>{traceCount(activeLoopRun, "artifact")} artifacts</span>
+                      </div>
+                      <Metric label="Trigger" value={activeLoopRun.trigger_event ? `${activeLoopRun.trigger_event.source} / ${activeLoopRun.trigger_event.event_type}` : "n/a"} />
+                      <Metric label="Trigger trust" value={activeLoopRun.trigger_event?.trust_level ?? "n/a"} />
+                      <Metric label="Trigger received" value={formatDateTime(activeLoopRun.trigger_event?.received_at)} />
+                      <Metric label="Run reason" value={activeLoopRun.run_reason || "n/a"} />
+                      <Metric label="Started" value={formatDateTime(activeLoopRun.summary.started_at)} />
+                      <Metric label="Finished" value={formatDateTime(activeLoopRun.summary.finished_at)} />
+                      {activeLoopRun.summary.status === "failed" || activeLoopRun.summary.status === "blocked" ? (
+                        <div className="detail-section">
+                          <h3>Diagnostics</h3>
+                          <p>{activeLoopRun.summary.output_summary || "No diagnostic summary recorded."}</p>
+                          {activeLoopRun.summary.blocked_reasons.length ? (
+                            <ul>
+                              {activeLoopRun.summary.blocked_reasons.map((reason) => (
+                                <li key={reason}>{label(reason)}</li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <div className="detail-section">
+                        <h3>Policy gates</h3>
+                        {decisions.length ? decisions.map((decision, index) => (
+                          <div className="trace-card" key={`${decision.action}-${index}`}>
+                            <strong>{label(String(decision.action ?? "unknown action"))}</strong>
+                            <div className="stats-row">
+                              <span className={decision.allowed ? "badge badge-active" : "badge badge-archived"}>
+                                {decision.allowed ? "allowed" : "blocked"}
+                              </span>
+                              <span>{decision.requires_approval ? "approval required" : "no approval"}</span>
+                              <span>{String(decision.reason ?? "no reason")}</span>
+                            </div>
+                          </div>
+                        )) : <p className="muted">No policy decisions recorded.</p>}
+                      </div>
+                      <div className="detail-section">
+                        <h3>Memory proposals</h3>
+                        {activeLoopRun.memory_proposals.length ? activeLoopRun.memory_proposals.map((proposal) => (
+                          <div className="trace-card" key={proposal.id}>
+                            <strong>{label(proposal.proposal_type)} · {proposal.status}</strong>
+                            <p>confidence {proposal.confidence.toFixed(2)}{proposal.risk_notes ? ` · ${proposal.risk_notes}` : ""}</p>
+                            <pre className="json-preview">{jsonPreview(proposal.candidate)}</pre>
+                          </div>
+                        )) : <p className="muted">No memory proposals recorded for this run.</p>}
+                      </div>
+                      <div className="detail-section">
+                        <h3>Approvals</h3>
+                        {selectedLoopRunApprovals.length ? selectedLoopRunApprovals.map((approval) => (
+                          <div className="trace-card" key={approval.id}>
+                            <strong>{label(approval.action_type)} · {approval.status}</strong>
+                            <p>{approval.risk_reason}</p>
+                            <pre className="json-preview">{jsonPreview(approval.proposed_action)}</pre>
+                          </div>
+                        )) : <p className="muted">No approvals recorded for this run.</p>}
+                      </div>
+                      <div className="detail-section">
+                        <h3>Cost summary</h3>
+                        <pre className="json-preview">{jsonPreview(activeLoopRun.cost)}</pre>
+                      </div>
+                      <div className="detail-section">
+                        <h3>Effective settings</h3>
+                        <pre className="json-preview">{jsonPreview(activeLoopRun.effective_settings)}</pre>
+                      </div>
+                      <div className="detail-section">
+                        <h3>Output</h3>
+                        <pre className="json-preview">{jsonPreview(activeLoopRun.output)}</pre>
+                      </div>
+                      <div className="detail-section">
+                        <h3>Trace ledger</h3>
+                        {activeLoopRun.traces.length ? activeLoopRun.traces.map((trace) => (
+                          <div className="trace-card" key={trace.id}>
+                            <div className="detail-header">
+                              <strong>{trace.sequence}. {trace.title}</strong>
+                              <span className="badge">{trace.trace_type}</span>
+                            </div>
+                            <p>{formatDateTime(trace.created_at)}</p>
+                            {trace.redacted ? (
+                              <p className="warning-list">Payload redacted.</p>
+                            ) : (
+                              <pre className="json-preview">{jsonPreview(trace.payload)}</pre>
+                            )}
+                          </div>
+                        )) : <p className="muted">No trace entries recorded.</p>}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="muted">Load the latest run to inspect trigger, policy, traces, proposals, approvals, output, and cost.</p>
+                  )}
                 </div>
               ) : null}
               <div className="proposal-actions automations-actions">

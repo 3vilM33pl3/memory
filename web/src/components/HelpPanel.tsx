@@ -80,8 +80,8 @@ const WEB_HELP: Record<Tab, { title: string; purpose: string; layout: string[]; 
   automations: {
     title: "Automations Help",
     purpose: "Review and control loop-engineering automations from the same backend control plane used by the CLI and MCP tools.",
-    layout: ["Toolbar shows refresh and global stop.", "Left side lists automation cards with mode, scope, risk, budget, trigger, and last run.", "Right side shows selected automation policy, outputs, blocked reasons, and run details."],
-    controls: ["Use mode menus to enable or reconfigure a loop.", "Use Disable, Pause, Snooze, and Run now from the detail pane.", ...SHARED_CONTROLS],
+    layout: ["Toolbar shows refresh and global stop.", "Left side lists automation cards with mode, scope, risk, budget, trigger, and last run.", "Right side shows selected automation policy, outputs, blocked reasons, run ledger, traces, approvals, and proposals."],
+    controls: ["Use mode menus to enable or reconfigure a loop.", "Use Load run to inspect the latest run ledger.", "Use Disable, Pause, Snooze, and Run now from the detail pane.", ...SHARED_CONTROLS],
     workflows: ["Keep high-risk loops in suggest-only or draft-output modes until reviewed.", "Use global stop before investigating unexpected loop activity.", "Check scope text before changing inherited settings."],
   },
   bundles: {

@@ -25,6 +25,7 @@ import type {
   LlmAuditStatusResponse,
   LoopDefinitionResponse,
   LoopDefinitionsResponse,
+  LoopApprovalsResponse,
   LoopGlobalStateResponse,
   LoopGlobalStateUpdateRequest,
   LoopRunRequest,
@@ -336,6 +337,23 @@ export async function getLoopRuns(options: {
   if (options.limit) params.set("limit", String(options.limit));
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return parseJson(await apiFetch(`/v1/loops/runs${suffix}`));
+}
+
+export async function getLoopRun(runId: string): Promise<LoopRunResponse> {
+  return parseJson(await apiFetch(`/v1/loops/runs/${encodeURIComponent(runId)}`));
+}
+
+export async function getLoopApprovals(options: {
+  project?: string | null;
+  status?: string | null;
+  limit?: number;
+}): Promise<LoopApprovalsResponse> {
+  const params = new URLSearchParams();
+  if (options.project) params.set("project", options.project);
+  if (options.status) params.set("status", options.status);
+  if (options.limit) params.set("limit", String(options.limit));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return parseJson(await apiFetch(`/v1/loops/approvals${suffix}`));
 }
 
 export async function getLoopGlobalState(): Promise<LoopGlobalStateResponse> {

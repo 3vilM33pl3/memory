@@ -3,8 +3,10 @@ import { useEffect, useState } from "react";
 import {
   disableLoop,
   enableLoop,
+  getLoopApprovals,
   getLoopDefinition,
   getLoopGlobalState,
+  getLoopRun,
   getLoopRuns,
   listLoopDefinitions,
   pauseLoop,
@@ -14,9 +16,12 @@ import {
 } from "../../api";
 import type {
   EffectiveLoopSettings,
+  LoopApprovalRequestRecord,
   LoopDefinitionRecord,
   LoopGlobalStateResponse,
   LoopMode,
+  LoopRunDetail,
+  LoopRunResponse,
   LoopRunSummary,
   LoopScopeType,
   LoopSettingsUpdateRequest,
@@ -60,6 +65,9 @@ export function useAutomationsController({
   const [automationsLoading, setAutomationsLoading] = useState(false);
   const [automationOperation, setAutomationOperation] = useState<string | null>(null);
   const [loopGlobalState, setLoopGlobalState] = useState<LoopGlobalStateResponse | null>(null);
+  const [selectedLoopRun, setSelectedLoopRun] = useState<LoopRunDetail | null>(null);
+  const [selectedLoopRunApprovals, setSelectedLoopRunApprovals] = useState<LoopApprovalRequestRecord[]>([]);
+  const [selectedLoopRunLoading, setSelectedLoopRunLoading] = useState(false);
 
   useEffect(() => {
     if (activeTab !== "automations") return;
@@ -106,6 +114,10 @@ export function useAutomationsController({
       setLoopGlobalState(globalPayload);
       setAutomations(cards);
       setSelectedAutomationIndex((current) => Math.min(current, Math.max(cards.length - 1, 0)));
+      setSelectedLoopRun((current) => {
+        if (!current) return null;
+        return cards.some((card) => card.lastRun?.id === current.summary.id) ? current : null;
+      });
       if (!quiet) setStatusMessage(`Loaded ${cards.length} loop automation(s).`);
     } catch (error) {
       setStatusMessage((error as Error).message);
@@ -117,12 +129,14 @@ export function useAutomationsController({
   async function runAutomationAction(loopId: string, label: string, action: () => Promise<unknown>) {
     setAutomationOperation(label);
     try {
-      await action();
+      const result = await action();
       await refreshAutomations(true);
       await refreshProject(project);
       setStatusMessage(`${label} finished for ${loopId}.`);
+      return result;
     } catch (error) {
       setStatusMessage((error as Error).message);
+      return null;
     } finally {
       setAutomationOperation(null);
     }
@@ -163,7 +177,7 @@ export function useAutomationsController({
   }
 
   async function handleRunLoop(loopId: string) {
-    await runAutomationAction(loopId, `Run ${loopId}`, () =>
+    const result = await runAutomationAction(loopId, `Run ${loopId}`, () =>
       runLoop(loopId, {
         project,
         repo_root: effectiveRepoRoot || null,
@@ -174,6 +188,35 @@ export function useAutomationsController({
         trigger_payload: { source: "web" },
       }),
     );
+    const response = result as LoopRunResponse | null;
+    if (response?.run) {
+      setSelectedLoopRun(response.run);
+      await loadLoopRunApprovals(response.run.summary.id);
+    }
+  }
+
+  async function loadLoopRunApprovals(runId: string) {
+    try {
+      const payload = await getLoopApprovals({ project, limit: 100 });
+      setSelectedLoopRunApprovals(payload.approvals.filter((approval) => approval.run_id === runId));
+    } catch (error) {
+      setSelectedLoopRunApprovals([]);
+      setStatusMessage((error as Error).message);
+    }
+  }
+
+  async function handleLoadLoopRun(runId: string) {
+    setSelectedLoopRunLoading(true);
+    try {
+      const payload = await getLoopRun(runId);
+      setSelectedLoopRun(payload.run);
+      await loadLoopRunApprovals(runId);
+      setStatusMessage(`Loaded loop run ${runId}.`);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    } finally {
+      setSelectedLoopRunLoading(false);
+    }
   }
 
   async function handleToggleGlobalKillSwitch() {
@@ -204,14 +247,18 @@ export function useAutomationsController({
     setSelectedAutomationIndex,
     automationsLoading,
     automationOperation,
-    automationBusy: automationsLoading || automationOperation !== null,
+    automationBusy: automationsLoading || automationOperation !== null || selectedLoopRunLoading,
     loopGlobalState,
+    selectedLoopRun,
+    selectedLoopRunApprovals,
+    selectedLoopRunLoading,
     refreshAutomations,
     handleSetLoopMode,
     handleDisableLoop,
     handlePauseLoop,
     handleSnoozeLoop,
     handleRunLoop,
+    handleLoadLoopRun,
     handleToggleGlobalKillSwitch,
   };
 }

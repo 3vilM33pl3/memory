@@ -65,6 +65,12 @@ Use repo root carefully. When a repo root is resolved, setting changes are store
 as repo-scoped overrides. Without a repo root they are stored as project-scoped
 overrides.
 
+Use `Load run` on an automation with a last run to inspect the run ledger. The
+detail view shows trigger source/event/trust, run reason, version, effective
+settings, policy gates, cost, output, trace records, linked memory proposals, and
+linked approval requests. Redacted trace payloads stay hidden and failed or
+blocked runs surface their diagnostic summary and blocked reasons.
+
 ## Runtime Status
 
 The status strip shows the same operational components as the TUI bottom bar:

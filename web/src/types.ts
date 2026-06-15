@@ -44,6 +44,8 @@ export type LoopScopeType = "user" | "workspace" | "project" | "repo";
 
 export type LoopRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "blocked";
 
+export type LoopApprovalStatus = "pending" | "approved" | "rejected" | "edited";
+
 export interface LoopDefinitionRecord {
   id: string;
   loop_id: string;
@@ -159,6 +161,19 @@ export interface LoopRunSummary {
   blocked_reasons: string[];
 }
 
+export interface LoopTriggerEventRecord {
+  id: string;
+  source: string;
+  event_type: string;
+  project?: string | null;
+  repo_root?: string | null;
+  payload_hash: string;
+  dedupe_key?: string | null;
+  trust_level: string;
+  payload: Record<string, unknown>;
+  received_at: string;
+}
+
 export interface LoopTraceRecord {
   id: string;
   run_id: string;
@@ -170,13 +185,32 @@ export interface LoopTraceRecord {
   created_at: string;
 }
 
+export interface LoopMemoryProposalRecord {
+  id: string;
+  run_id?: string | null;
+  project?: string | null;
+  loop_id: string;
+  proposal_type: string;
+  target_memory_id?: string | null;
+  candidate: Record<string, unknown>;
+  evidence: unknown;
+  confidence: number;
+  risk_notes?: string | null;
+  status: string;
+  created_at: string;
+  resolved_at?: string | null;
+}
+
 export interface LoopRunDetail {
   summary: LoopRunSummary;
-  effective_settings: Record<string, unknown>;
-  policy_decisions: Record<string, unknown>;
-  cost: Record<string, unknown>;
-  output: Record<string, unknown>;
+  run_reason?: string | null;
+  trigger_event?: LoopTriggerEventRecord | null;
+  effective_settings: unknown;
+  policy_decisions: unknown;
+  cost: unknown;
+  output: unknown;
   traces: LoopTraceRecord[];
+  memory_proposals: LoopMemoryProposalRecord[];
 }
 
 export interface LoopRunResponse {
@@ -186,6 +220,27 @@ export interface LoopRunResponse {
 export interface LoopRunsResponse {
   total_returned: number;
   runs: LoopRunSummary[];
+}
+
+export interface LoopApprovalRequestRecord {
+  id: string;
+  run_id?: string | null;
+  project?: string | null;
+  loop_id: string;
+  action_type: string;
+  proposed_action: Record<string, unknown>;
+  risk_reason: string;
+  status: LoopApprovalStatus;
+  requester?: string | null;
+  reviewer?: string | null;
+  decision_reason?: string | null;
+  created_at: string;
+  resolved_at?: string | null;
+}
+
+export interface LoopApprovalsResponse {
+  total_returned: number;
+  approvals: LoopApprovalRequestRecord[];
 }
 
 export interface NamedCount {
