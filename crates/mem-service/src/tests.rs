@@ -912,6 +912,33 @@ fn web_auth_token_response_names_x_api_token_header() {
 }
 
 #[test]
+fn skills_repo_root_validation_rejects_missing_and_unknown_paths() {
+    assert_eq!(
+        required_repo_root(None)
+            .expect_err("missing repo root should fail")
+            .message,
+        "repo_root must be non-empty"
+    );
+    assert!(
+        required_repo_root(Some("/definitely/not/a/memory/repo"))
+            .expect_err("unknown repo root should fail")
+            .message
+            .contains("repo_root does not exist")
+    );
+}
+
+#[test]
+fn skills_allowlist_rejects_unknown_skill_names() {
+    validate_known_skill_name("memory-layer").expect("known skill");
+    assert_eq!(
+        validate_known_skill_name("../secret")
+            .expect_err("path traversal skill should fail")
+            .message,
+        "unknown Memory skill: ../secret"
+    );
+}
+
+#[test]
 fn up_to_speed_briefing_includes_token_summary() {
     let token_usage = TokenUsageSummary {
         action_count: 2,

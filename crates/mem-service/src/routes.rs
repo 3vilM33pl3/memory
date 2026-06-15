@@ -21,12 +21,12 @@ use super::{
     project_memories, project_overview, project_replacement_policy,
     project_replacement_policy_update, project_replacement_proposal_approve,
     project_replacement_proposal_reject, project_replacement_proposals, project_resume,
-    project_up_to_speed, prune_embeddings, prune_history, query, reembed, reindex,
-    reject_loop_approval, reject_loop_memory_proposal, route_loop_trigger, run_loop,
-    runtime_status, scan_activity, set_embedding_creation_enabled, set_llm_audit_enabled,
+    project_up_to_speed, prune_embeddings, prune_history, query, read_skill, reembed, reindex,
+    reject_loop_approval, reject_loop_memory_proposal, repair_skills, route_loop_trigger, run_loop,
+    runtime_status, scan_activity, set_embedding_creation_enabled, set_llm_audit_enabled, skills,
     snooze_loop, stats, submit_loop_feedback, sync_commits, update_loop_global_state,
-    verify_provenance, watcher_heartbeat, watcher_restart_local, watcher_unregister,
-    web_auth_token, web_unavailable, websocket,
+    verify_provenance, watcher_heartbeat, watcher_restart_local, watcher_unregister, web_auth_token,
+    web_unavailable, websocket,
 };
 
 pub(crate) fn build_http_app(state: AppState) -> Router {
@@ -39,6 +39,9 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
         .route("/v1/web/auth-token", get(web_auth_token))
         .route("/v1/admin/shutdown", post(admin_shutdown))
         .route("/v1/runtime/status", get(runtime_status))
+        .route("/v1/skills", get(skills))
+        .route("/v1/skills/repair", post(repair_skills))
+        .route("/v1/skills/{skill_name}", get(read_skill))
         .route("/v1/query", post(query))
         .route("/v1/checkpoint/activity", post(checkpoint_activity))
         .route("/v1/plan/activity", post(plan_activity))

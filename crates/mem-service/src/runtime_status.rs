@@ -8,6 +8,18 @@ pub(crate) struct RuntimeStatusQuery {
     pub(crate) skill_filter: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct SkillsQuery {
+    pub(crate) repo_root: Option<String>,
+    pub(crate) filter: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct SkillRepairRequest {
+    pub(crate) repo_root: String,
+    pub(crate) filter: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct RuntimeStatusResponse {
     pub(crate) generated_at: chrono::DateTime<chrono::Utc>,
@@ -260,6 +272,77 @@ pub(crate) async fn runtime_status(
     .map_err(|e| ApiError::io(anyhow::anyhow!("runtime status task failed: {e}")))?;
 
     Ok(Json(response))
+}
+
+pub(crate) async fn skills(
+    Query(query): Query<SkillsQuery>,
+) -> Result<Json<mem_skills::SkillInventoryReport>, ApiError> {
+    let repo_root = required_repo_root(query.repo_root.as_deref())?;
+    let filter = mem_skills::SkillInventoryFilter::from_query(query.filter.as_deref());
+    let report = tokio::task::spawn_blocking(move || {
+        mem_skills::project_skill_inventory_filtered(&repo_root, false, filter)
+    })
+    .await
+    .map_err(|error| ApiError::io(anyhow::anyhow!("skill inventory task failed: {error}")))?;
+    Ok(Json(report))
+}
+
+pub(crate) async fn read_skill(
+    Path(skill_name): Path<String>,
+    Query(query): Query<SkillsQuery>,
+) -> Result<Json<mem_skills::SkillContentResponse>, ApiError> {
+    let repo_root = required_repo_root(query.repo_root.as_deref())?;
+    validate_known_skill_name(&skill_name)?;
+    let filter = mem_skills::SkillInventoryFilter::from_query(query.filter.as_deref());
+    let content = tokio::task::spawn_blocking(move || {
+        mem_skills::read_skill_content(&repo_root, &skill_name, 256_000, filter)
+    })
+    .await
+    .map_err(|error| ApiError::io(anyhow::anyhow!("skill read task failed: {error}")))?
+    .map_err(ApiError::io)?;
+    Ok(Json(content))
+}
+
+pub(crate) async fn repair_skills(
+    Json(request): Json<SkillRepairRequest>,
+) -> Result<Json<mem_skills::SkillUpgradeReport>, ApiError> {
+    let repo_root = required_repo_root(Some(&request.repo_root))?;
+    let filter = mem_skills::SkillInventoryFilter::from_query(request.filter.as_deref());
+    let report = tokio::task::spawn_blocking(move || {
+        mem_skills::upgrade_project_skills(&repo_root, false, false, filter)
+    })
+    .await
+    .map_err(|error| ApiError::io(anyhow::anyhow!("skill repair task failed: {error}")))?
+    .map_err(ApiError::io)?;
+    Ok(Json(report))
+}
+
+pub(crate) fn required_repo_root(value: Option<&str>) -> Result<PathBuf, ApiError> {
+    let value = value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::validation(ValidationError::new("repo_root must be non-empty")))?;
+    let path = PathBuf::from(value);
+    if !path.exists() {
+        return Err(ApiError::validation(ValidationError::new(format!(
+            "repo_root does not exist: {value}"
+        ))));
+    }
+    if !path.is_dir() {
+        return Err(ApiError::validation(ValidationError::new(format!(
+            "repo_root must be a directory: {value}"
+        ))));
+    }
+    Ok(path)
+}
+
+pub(crate) fn validate_known_skill_name(skill_name: &str) -> Result<(), ApiError> {
+    if mem_skills::MEMORY_SKILL_NAMES.contains(&skill_name) {
+        return Ok(());
+    }
+    Err(ApiError::validation(ValidationError::new(format!(
+        "unknown Memory skill: {skill_name}"
+    ))))
 }
 
 pub(crate) async fn agents_snapshot() -> Result<Json<serde_json::Value>, ApiError> {

@@ -18,6 +18,7 @@ mem-loops = { path = "../mem-loops" }
 mem-mcp = { path = "../mem-mcp" }
 mem-platform = { path = "../mem-platform" }
 mem-search = { path = "../mem-search" }
+mem-skills = { path = "../mem-skills" }
 mem-watch = { path = "../mem-watch" }
 futures-util.workspace = true
 reqwest.workspace = true

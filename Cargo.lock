@@ -1733,6 +1733,7 @@ dependencies = [
  "mem-mcp",
  "mem-platform",
  "mem-search",
+ "mem-skills",
  "mem-test-support",
  "mem-watch",
  "regex",
