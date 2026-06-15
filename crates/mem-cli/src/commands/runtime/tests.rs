@@ -225,6 +225,7 @@ fn root_command_doc_name(command_name: &str) -> Option<&'static str> {
         "remember" => Some("remember.md"),
         "curate" => Some("curate.md"),
         "proposals" => Some("proposals.md"),
+        "loops" => Some("loops.md"),
         "embeddings" => Some("embeddings.md"),
         "health" => Some("health.md"),
         "stats" => Some("stats.md"),
@@ -678,6 +679,52 @@ fn proposals_show_parses_uuid_and_json_flag() {
     assert_eq!(args.project, "memory");
     assert_eq!(args.id, Uuid::nil());
     assert!(args.json);
+}
+
+#[test]
+fn loops_help_mentions_explicit_user_approval() {
+    let help = rendered_help(&["memory", "loops", "enable", "--help"]);
+    assert!(help.contains("--explicit-user-approval"));
+    assert!(help.contains("Confirm that a human explicitly approved"));
+}
+
+#[test]
+fn loops_run_parses_dry_run_and_trigger_payload() {
+    let cli = Cli::parse_from([
+        "memory",
+        "loops",
+        "run",
+        "context_pack_refresh",
+        "--project",
+        "memory",
+        "--scope-type",
+        "project",
+        "--scope-id",
+        "memory",
+        "--dry-run",
+        "--trigger-payload",
+        r#"{"source":"test"}"#,
+        "--json",
+    ]);
+    let super::Command::Loops(args) = cli.command else {
+        panic!("expected loops command");
+    };
+    let super::LoopsCommand::Run(args) = args.command else {
+        panic!("expected loops run command");
+    };
+    assert_eq!(args.loop_id, "context_pack_refresh");
+    assert_eq!(args.project.as_deref(), Some("memory"));
+    assert_eq!(args.scope_type.as_deref(), Some("project"));
+    assert_eq!(args.scope_id.as_deref(), Some("memory"));
+    assert!(args.dry_run);
+    assert!(args.json);
+    assert_eq!(
+        args.trigger_payload
+            .as_ref()
+            .and_then(|payload| payload.get("source"))
+            .and_then(serde_json::Value::as_str),
+        Some("test")
+    );
 }
 
 #[cfg(not(target_os = "macos"))]

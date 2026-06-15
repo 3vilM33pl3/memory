@@ -18,6 +18,7 @@ mod health;
 mod history;
 mod init;
 pub(crate) mod init_support;
+mod loops;
 mod mcp;
 pub(crate) mod memory_ops;
 pub(crate) mod output;

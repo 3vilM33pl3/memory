@@ -3,7 +3,11 @@ use mem_api::{
     ActivityListResponse, AppConfig, ArchiveMemoryResponse, ArchiveRequest, ArchiveResponse,
     CaptureTaskRequest, CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest,
     CommitSyncResponse, CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse,
-    GraphActivityRequest, MemoryEntryResponse, PlanActivityRequest, ProjectCommitsResponse,
+    GraphActivityRequest, LoopApprovalDecisionRequest, LoopApprovalDecisionResponse,
+    LoopApprovalStatus, LoopApprovalsResponse, LoopCancelRequest, LoopDefinitionResponse,
+    LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
+    LoopGlobalStateUpdateRequest, LoopRunRequest, LoopRunResponse, LoopRunStatus, LoopRunsResponse,
+    LoopSettingsUpdateRequest, MemoryEntryResponse, PlanActivityRequest, ProjectCommitsResponse,
     ProjectMemoriesResponse, ProjectMemoryBundlePreview, ProjectMemoryExportOptions,
     ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectOverviewResponse,
     ProvenanceVerificationRequest, ProvenanceVerificationResponse, PruneEmbeddingsRequest,
@@ -690,6 +694,280 @@ impl ApiClient {
                 .delete(service_url(&self.config, "/v1/memory"))
                 .headers(write_headers(&self.config)?)
                 .json(&DeleteMemoryRequest { memory_id })
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_definitions(&self) -> Result<LoopDefinitionsResponse> {
+        get_json(
+            self.client
+                .get(service_url(&self.config, "/v1/loops"))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_definition(
+        &self,
+        loop_id: &str,
+        project: Option<&str>,
+        repo_root: Option<&str>,
+    ) -> Result<LoopDefinitionResponse> {
+        let mut request = self
+            .client
+            .get(service_url(&self.config, &format!("/v1/loops/{loop_id}")));
+        let mut query = Vec::new();
+        if let Some(project) = project {
+            query.push(("project", project));
+        }
+        if let Some(repo_root) = repo_root {
+            query.push(("repo_root", repo_root));
+        }
+        if !query.is_empty() {
+            request = request.query(&query);
+        }
+        get_json(request.send().await?).await
+    }
+
+    pub(crate) async fn loop_enable(
+        &self,
+        loop_id: &str,
+        request: &LoopSettingsUpdateRequest,
+    ) -> Result<mem_api::LoopSettingResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/loops/{loop_id}/enable"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_disable(
+        &self,
+        loop_id: &str,
+        request: &LoopSettingsUpdateRequest,
+    ) -> Result<mem_api::LoopSettingResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/loops/{loop_id}/disable"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_pause(
+        &self,
+        loop_id: &str,
+        request: &LoopSettingsUpdateRequest,
+    ) -> Result<mem_api::LoopSettingResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/loops/{loop_id}/pause"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_snooze(
+        &self,
+        loop_id: &str,
+        request: &LoopSettingsUpdateRequest,
+    ) -> Result<mem_api::LoopSettingResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/loops/{loop_id}/snooze"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_run(
+        &self,
+        loop_id: &str,
+        request: &LoopRunRequest,
+    ) -> Result<LoopRunResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/loops/{loop_id}/run"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_runs(
+        &self,
+        project: Option<&str>,
+        loop_id: Option<&str>,
+        status: Option<LoopRunStatus>,
+        limit: i64,
+    ) -> Result<LoopRunsResponse> {
+        let mut query = vec![("limit", limit.to_string())];
+        if let Some(project) = project {
+            query.push(("project", project.to_string()));
+        }
+        if let Some(loop_id) = loop_id {
+            query.push(("loop_id", loop_id.to_string()));
+        }
+        if let Some(status) = status {
+            query.push(("status", status.as_str().to_string()));
+        }
+        get_json(
+            self.client
+                .get(service_url(&self.config, "/v1/loops/runs"))
+                .query(&query)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_run_detail(&self, run_id: Uuid) -> Result<LoopRunResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/loops/runs/{run_id}"),
+                ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_cancel(
+        &self,
+        run_id: Uuid,
+        request: &LoopCancelRequest,
+    ) -> Result<LoopRunResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/loops/runs/{run_id}/cancel"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_feedback(
+        &self,
+        run_id: Uuid,
+        request: &LoopFeedbackRequest,
+    ) -> Result<LoopRunResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/loops/runs/{run_id}/feedback"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_approvals(
+        &self,
+        project: Option<&str>,
+        status: Option<LoopApprovalStatus>,
+        limit: i64,
+    ) -> Result<LoopApprovalsResponse> {
+        let mut query = vec![("limit", limit.to_string())];
+        if let Some(project) = project {
+            query.push(("project", project.to_string()));
+        }
+        if let Some(status) = status {
+            query.push(("status", status.as_str().to_string()));
+        }
+        get_json(
+            self.client
+                .get(service_url(&self.config, "/v1/loops/approvals"))
+                .query(&query)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_approval_decision(
+        &self,
+        approval_id: Uuid,
+        approved: bool,
+        request: &LoopApprovalDecisionRequest,
+    ) -> Result<LoopApprovalDecisionResponse> {
+        let action = if approved { "approve" } else { "reject" };
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/loops/approvals/{approval_id}/{action}"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_global_state(&self) -> Result<LoopGlobalStateResponse> {
+        get_json(
+            self.client
+                .get(service_url(&self.config, "/v1/loops/global-kill-switch"))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_set_global_state(
+        &self,
+        request: &LoopGlobalStateUpdateRequest,
+    ) -> Result<LoopGlobalStateResponse> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/loops/global-kill-switch"))
+                .headers(write_headers(&self.config)?)
+                .json(request)
                 .send()
                 .await?,
         )

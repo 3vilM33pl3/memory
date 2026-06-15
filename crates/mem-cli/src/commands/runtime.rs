@@ -973,6 +973,22 @@ Examples:
 See also:
   docs/user/cli/automation.md";
 
+const LOOPS_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Inspect and operate the loop automation control plane. Use --json for automation and --dry-run before manual runs.
+  Enabling loops can require explicit user approval; pass --explicit-user-approval when the operator has approved the change.
+  The current CLI records policy-checked control-plane runs; runner adapters are introduced separately.
+
+Examples:
+  memory loops list
+  memory loops enable context_pack_refresh --project memory --mode suggest_only --explicit-user-approval
+  memory loops run context_pack_refresh --project memory --dry-run --reason \"manual smoke test\"
+  memory loops runs --project memory
+  memory loops approvals --project memory
+
+See also:
+  docs/user/cli/loops.md";
+
 const TUI_AFTER_HELP: &str = "\
 Agent notes:
   Opens the terminal UI for interactive browsing, querying, activity, watcher, and embedding views.
@@ -1074,6 +1090,8 @@ pub(in crate::commands) enum Command {
     Curate(CurateArgs),
     #[command(about = "Review pending memory replacement proposals.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
     Proposals(ProposalsArgs),
+    #[command(about = "Inspect and operate loop automations.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Loops(LoopsArgs),
     #[command(about = "Rebuild and maintain embedding spaces.", after_help = EMBEDDINGS_GROUP_AFTER_HELP)]
     Embeddings(EmbeddingsArgs),
     #[command(about = "Check backend service health.", after_help = HEALTH_AFTER_HELP)]
@@ -2218,6 +2236,296 @@ pub(in crate::commands) struct ProposalsResolveArgs {
 
 #[derive(Debug, Args)]
 #[command(
+    about = "Inspect and operate loop automations.",
+    after_help = LOOPS_GROUP_AFTER_HELP
+)]
+pub(in crate::commands) struct LoopsArgs {
+    #[command(subcommand)]
+    pub(crate) command: LoopsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(in crate::commands) enum LoopsCommand {
+    #[command(about = "List registered loop automation definitions.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    List(LoopListArgs),
+    #[command(about = "Show one loop definition and effective settings.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Show(LoopShowArgs),
+    #[command(about = "Enable a loop automation for a scope.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Enable(LoopEnableArgs),
+    #[command(about = "Disable a loop automation for a scope.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Disable(LoopDisableArgs),
+    #[command(about = "Pause a loop automation until a timestamp.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Pause(LoopPauseArgs),
+    #[command(about = "Snooze a loop automation until a timestamp.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Snooze(LoopSnoozeArgs),
+    #[command(about = "Create a manual policy-checked loop run.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Run(LoopRunArgs),
+    #[command(about = "List loop runs.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Runs(LoopRunsArgs),
+    #[command(about = "Inspect one loop run.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Inspect(LoopInspectArgs),
+    #[command(about = "Cancel a queued or running loop run.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Cancel(LoopCancelArgs),
+    #[command(about = "Attach feedback to a loop run.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Feedback(LoopFeedbackArgs),
+    #[command(about = "List pending or resolved loop approval requests.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Approvals(LoopApprovalsArgs),
+    #[command(about = "Approve a loop approval request.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Approve(LoopApprovalDecisionArgs),
+    #[command(about = "Reject a loop approval request.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Reject(LoopApprovalDecisionArgs),
+    #[command(about = "Replay a prior loop run as a new policy-checked run.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Replay(LoopReplayArgs),
+    #[command(about = "Read or change the global loop kill switch.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    GlobalKillSwitch(LoopGlobalKillSwitchArgs),
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopListArgs {
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopShowArgs {
+    /// Loop identifier, such as context_pack_refresh.
+    pub(crate) loop_id: String,
+    /// Project slug used to resolve effective settings.
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    /// Repository root used to resolve effective settings.
+    #[arg(long)]
+    pub(crate) repo_root: Option<PathBuf>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args, Clone)]
+pub(in crate::commands) struct LoopSettingArgs {
+    /// Loop identifier, such as context_pack_refresh.
+    pub(crate) loop_id: String,
+    /// Project slug to scope the setting.
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    /// Repository root to scope the setting.
+    #[arg(long)]
+    pub(crate) repo_root: Option<PathBuf>,
+    /// Explicit setting scope type.
+    #[arg(long, value_parser = ["user", "workspace", "project", "repo"])]
+    pub(crate) scope_type: Option<String>,
+    /// Explicit setting scope id.
+    #[arg(long)]
+    pub(crate) scope_id: Option<String>,
+    /// Actor that made the setting change.
+    #[arg(long)]
+    pub(crate) updated_by: Option<String>,
+    /// Human-readable reason for the change.
+    #[arg(long)]
+    pub(crate) reason: Option<String>,
+    /// Confirm that a human explicitly approved this loop setting change.
+    #[arg(long)]
+    pub(crate) explicit_user_approval: bool,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopEnableArgs {
+    #[command(flatten)]
+    pub(crate) setting: LoopSettingArgs,
+    /// Mode to use when enabling the loop.
+    #[arg(long, value_parser = [
+        "observe",
+        "suggest_only",
+        "suggest-only",
+        "draft_output",
+        "draft-output",
+        "autonomous_safe",
+        "autonomous-safe"
+    ])]
+    pub(crate) mode: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopDisableArgs {
+    #[command(flatten)]
+    pub(crate) setting: LoopSettingArgs,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopPauseArgs {
+    #[command(flatten)]
+    pub(crate) setting: LoopSettingArgs,
+    /// RFC3339 timestamp until which the loop should stay paused.
+    #[arg(long)]
+    pub(crate) until: DateTime<Utc>,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopSnoozeArgs {
+    #[command(flatten)]
+    pub(crate) setting: LoopSettingArgs,
+    /// RFC3339 timestamp until which the loop should stay snoozed.
+    #[arg(long)]
+    pub(crate) until: DateTime<Utc>,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopRunArgs {
+    /// Loop identifier, such as context_pack_refresh.
+    pub(crate) loop_id: String,
+    /// Project slug for the run.
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    /// Repository root for the run.
+    #[arg(long)]
+    pub(crate) repo_root: Option<PathBuf>,
+    /// Scope type for the run.
+    #[arg(long, value_parser = ["user", "workspace", "project", "repo"])]
+    pub(crate) scope_type: Option<String>,
+    /// Scope id for the run.
+    #[arg(long)]
+    pub(crate) scope_id: Option<String>,
+    /// Record a dry-run loop execution.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    /// Human-readable reason for the manual run.
+    #[arg(long)]
+    pub(crate) reason: Option<String>,
+    /// JSON trigger payload to attach to the run.
+    #[arg(long, value_parser = parse_json_value_arg)]
+    pub(crate) trigger_payload: Option<serde_json::Value>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopRunsArgs {
+    /// Project slug to filter by.
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    /// Loop id to filter by.
+    #[arg(long)]
+    pub(crate) loop_id: Option<String>,
+    /// Status to filter by.
+    #[arg(long, value_parser = ["queued", "running", "succeeded", "failed", "cancelled", "canceled", "blocked"])]
+    pub(crate) status: Option<String>,
+    /// Maximum number of runs to return.
+    #[arg(long, default_value_t = 20)]
+    pub(crate) limit: i64,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopInspectArgs {
+    /// Loop run id.
+    pub(crate) run_id: Uuid,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopCancelArgs {
+    /// Loop run id.
+    pub(crate) run_id: Uuid,
+    /// Human-readable cancellation reason.
+    #[arg(long)]
+    pub(crate) reason: Option<String>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopFeedbackArgs {
+    /// Loop run id.
+    pub(crate) run_id: Uuid,
+    /// Feedback rating, such as useful, noisy, or unsafe.
+    #[arg(long)]
+    pub(crate) rating: String,
+    /// Optional feedback note.
+    #[arg(long)]
+    pub(crate) note: Option<String>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopApprovalsArgs {
+    /// Project slug to filter by.
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    /// Approval status to filter by.
+    #[arg(long, value_parser = ["pending", "approved", "rejected", "edited"])]
+    pub(crate) status: Option<String>,
+    /// Maximum number of approvals to return.
+    #[arg(long, default_value_t = 20)]
+    pub(crate) limit: i64,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopApprovalDecisionArgs {
+    /// Loop approval request id.
+    pub(crate) approval_id: Uuid,
+    /// Reviewer identity.
+    #[arg(long)]
+    pub(crate) reviewer: Option<String>,
+    /// Human-readable decision reason.
+    #[arg(long)]
+    pub(crate) reason: Option<String>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopReplayArgs {
+    /// Prior loop run id to replay as a new control-plane run.
+    pub(crate) run_id: Uuid,
+    /// Record the replay as a dry run.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    /// Human-readable replay reason.
+    #[arg(long)]
+    pub(crate) reason: Option<String>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopGlobalKillSwitchArgs {
+    /// Set the global kill switch. Omit to only read the current state.
+    #[arg(long = "enabled")]
+    pub(crate) kill_switch_enabled: Option<bool>,
+    /// Actor that changed the kill switch.
+    #[arg(long)]
+    pub(crate) updated_by: Option<String>,
+    /// Human-readable reason for the change.
+    #[arg(long)]
+    pub(crate) reason: Option<String>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+fn parse_json_value_arg(value: &str) -> std::result::Result<serde_json::Value, String> {
+    serde_json::from_str(value).map_err(|err| format!("invalid JSON: {err}"))
+}
+
+#[derive(Debug, Args)]
+#[command(
     about = "Manage embedding indexes and spaces for semantic retrieval.",
     after_help = EMBEDDINGS_GROUP_AFTER_HELP
 )]
@@ -2450,6 +2758,10 @@ pub(super) async fn run() -> Result<()> {
         Command::Proposals(args) => {
             let api = ApiClient::new(client, config);
             crate::commands::proposals::handle(args, &api).await?;
+        }
+        Command::Loops(args) => {
+            let api = ApiClient::new(client, config);
+            crate::commands::loops::handle(args, &api).await?;
         }
         Command::Embeddings(args) => {
             crate::commands::embeddings::handle(args, client, config).await?
