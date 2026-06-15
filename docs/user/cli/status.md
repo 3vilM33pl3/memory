@@ -15,6 +15,8 @@ It aggregates:
 - project watcher service status
 - MCP service/project status and exposed surface counts
 - doctor checks, including config and skill-bundle checks
+- runtime component status; the default skill row is filtered to the
+  `memory-layer` umbrella skill so headers stay focused
 
 ## Output Contract
 
@@ -26,6 +28,7 @@ It aggregates:
 Use the narrower commands when you already know which subsystem you need:
 
 - `memory doctor --project memory` for the full setup checklist and repair hints
+- `memory upgrade --dry-run` for the full repo-local focused-skill bundle view
 - `memory health` for only `/healthz`
 - `memory stats` for only `/v1/stats`
 - `memory service status` for the packaged service manager

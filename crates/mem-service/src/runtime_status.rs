@@ -110,6 +110,7 @@ pub(crate) const GLOBAL_TUI_RESTART_MARKER: &str =
 pub(crate) const GLOBAL_TUI_RESTART_MARKER: &str =
     "/usr/local/var/memory-layer/tui-restart-required.json";
 
+#[cfg(test)]
 pub(crate) const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-direct-task-start",
     "memory-github-init",
@@ -120,6 +121,7 @@ pub(crate) const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-query-resume",
     "memory-remember",
 ];
+const DEFAULT_RUNTIME_SKILL_FILTER: &[&str] = &["memory-layer"];
 
 pub(crate) async fn runtime_status(
     State(state): State<AppState>,
@@ -583,7 +585,7 @@ pub(crate) fn runtime_skill_status(
     let skill_root = root.join(".agents").join("skills");
     let mut missing = 0usize;
     let mut outdated = 0usize;
-    for skill in MEMORY_SKILL_NAMES {
+    for skill in DEFAULT_RUNTIME_SKILL_FILTER {
         let path = skill_root.join(skill).join("SKILL.md");
         let Some(version) = read_skill_version(&path) else {
             missing += 1;
@@ -599,9 +601,9 @@ pub(crate) fn runtime_skill_status(
         "warn"
     };
     let summary = if status == "ok" {
-        format!("{} skills current", MEMORY_SKILL_NAMES.len())
+        "memory-layer skill current".to_string()
     } else {
-        format!("{missing} missing, {outdated} outdated")
+        format!("memory-layer skill: {missing} missing, {outdated} outdated")
     };
     RuntimeSkillStatus {
         bundle_version: expected_version.to_string(),
