@@ -171,6 +171,26 @@ async fn loop_repository_routes_trigger_events_and_dedupes() {
     assert!(response.decisions[0].eligible);
     assert_eq!(response.decisions[0].run_id, Some(response.runs[0].id));
     assert_eq!(response.runs[0].status, LoopRunStatus::Succeeded);
+    let loaded_run =
+        mem_service::repository::handlers::loops::read_loop_run_detail(&pool, response.runs[0].id)
+            .await
+            .expect("read routed loop run");
+    assert!(
+        loaded_run.memory_proposals.len() >= 4,
+        "context_pack_refresh should emit pending memory proposals"
+    );
+    assert!(
+        loaded_run
+            .memory_proposals
+            .iter()
+            .all(|proposal| proposal.status == "pending")
+    );
+    assert!(
+        loaded_run
+            .traces
+            .iter()
+            .any(|trace| trace.trace_type == "context_refresh")
+    );
 
     let duplicate =
         mem_service::repository::handlers::loops::route_loop_trigger_event(&pool, &request)

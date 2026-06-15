@@ -1547,6 +1547,32 @@ async fn create_control_plane_loop_run_with_trigger(
         .execute(pool)
         .await
         .map_err(ApiError::sql)?;
+
+        if definition.loop_id == mem_loops::LOOP_CONTEXT_PACK_REFRESH && !blocked {
+            let refresh = emit_context_pack_refresh_proposals(
+                pool,
+                run_id,
+                request,
+                &definition.loop_id,
+                &context_pack,
+            )
+            .await?;
+            sqlx::query(
+                r#"
+                UPDATE loop_runs
+                SET output_summary = $2,
+                    output_json = output_json || jsonb_build_object('context_refresh', $3::jsonb),
+                    updated_at = now()
+                WHERE id = $1
+                "#,
+            )
+            .bind(run_id)
+            .bind(&refresh.summary)
+            .bind(&refresh.output)
+            .execute(pool)
+            .await
+            .map_err(ApiError::sql)?;
+        }
     }
     Ok(LoopRunResponse {
         run: fetch_loop_run_detail(pool, run_id).await?,
@@ -2503,6 +2529,291 @@ fn context_instruction_refs(repo_root: Option<&str>) -> Vec<LoopContextInstructi
             })
         })
         .collect()
+}
+
+struct ContextRefreshResult {
+    summary: String,
+    output: serde_json::Value,
+}
+
+struct ContextRefreshProposalDraft {
+    proposal_type: String,
+    candidate: serde_json::Value,
+    evidence: serde_json::Value,
+    confidence: f32,
+    risk_notes: String,
+}
+
+async fn emit_context_pack_refresh_proposals(
+    pool: &PgPool,
+    run_id: Uuid,
+    request: &LoopRunRequest,
+    loop_id: &str,
+    context_pack: &LoopContextPackResponse,
+) -> Result<ContextRefreshResult, ApiError> {
+    let project = request
+        .project
+        .as_deref()
+        .ok_or_else(|| ApiError::validation(ValidationError::new("project is required")))?;
+    let drafts = context_pack_refresh_proposal_drafts(request, context_pack);
+    let mut proposal_ids = Vec::new();
+    for draft in drafts {
+        let create = LoopMemoryProposalCreateRequest {
+            project: project.to_string(),
+            loop_id: loop_id.to_string(),
+            proposal_type: draft.proposal_type,
+            run_id: Some(run_id),
+            target_memory_id: None,
+            candidate: draft.candidate,
+            evidence: draft.evidence,
+            confidence: draft.confidence,
+            risk_notes: Some(draft.risk_notes),
+        };
+        create.validate().map_err(ApiError::validation)?;
+        let created = insert_loop_memory_proposal(pool, &create).await?;
+        proposal_ids.push(created.proposal.id);
+    }
+    let stale_count = context_pack
+        .pack
+        .memories
+        .iter()
+        .filter(|memory| memory.stale || memory.contradictory)
+        .count();
+    let summary = format!(
+        "Context Pack Refresh produced {} memory proposal(s), {} stale/contradictory warning(s), and a context-pack diff.",
+        proposal_ids.len(),
+        stale_count + context_pack.pack.warnings.len()
+    );
+    let output = json!({
+        "proposal_ids": proposal_ids,
+        "proposal_count": proposal_ids.len(),
+        "stale_or_contradictory_memory_count": stale_count,
+        "warning_count": context_pack.pack.warnings.len(),
+        "context_pack_id": context_pack.pack.id,
+        "context_diff": context_pack.diff,
+    });
+    append_loop_trace(
+        pool,
+        run_id,
+        "context_refresh",
+        "Context Pack Refresh proposals",
+        output.clone(),
+        false,
+    )
+    .await?;
+    Ok(ContextRefreshResult { summary, output })
+}
+
+fn context_pack_refresh_proposal_drafts(
+    request: &LoopRunRequest,
+    context_pack: &LoopContextPackResponse,
+) -> Vec<ContextRefreshProposalDraft> {
+    let mut drafts = vec![
+        architecture_summary_draft(request, context_pack),
+        command_list_draft(request),
+        conventions_draft(request),
+        module_map_draft(request),
+    ];
+    if let Some(stale) = stale_memory_warnings_draft(context_pack) {
+        drafts.push(stale);
+    }
+    drafts
+}
+
+fn architecture_summary_draft(
+    request: &LoopRunRequest,
+    context_pack: &LoopContextPackResponse,
+) -> ContextRefreshProposalDraft {
+    let overview = repo_file_excerpt(
+        request.repo_root.as_deref(),
+        "docs/developer/architecture/overview.md",
+    )
+    .unwrap_or_else(|| "Architecture overview file was not available.".to_string());
+    let code_map = repo_file_excerpt(
+        request.repo_root.as_deref(),
+        "docs/developer/architecture/code-map.md",
+    )
+    .unwrap_or_else(|| "Code map file was not available.".to_string());
+    let selected = context_pack
+        .pack
+        .memories
+        .iter()
+        .take(8)
+        .map(|memory| format!("- [{}] {}", memory.memory_type, memory.summary))
+        .collect::<Vec<_>>()
+        .join("\n");
+    ContextRefreshProposalDraft {
+        proposal_type: "add".to_string(),
+        candidate: json!({
+            "canonical_text": format!(
+                "# Context Pack Architecture Summary\n\n## Architecture Overview\n{}\n\n## Code Map\n{}\n\n## Selected Memory Context\n{}",
+                overview, code_map, if selected.is_empty() { "- No memories selected.".to_string() } else { selected }
+            ),
+            "summary": "Context Pack Refresh architecture summary",
+            "memory_type": "architecture",
+            "tags": ["loop-engineering", "context-pack-refresh", "architecture"]
+        }),
+        evidence: evidence_refs(&[
+            ("docs/developer/architecture/overview.md", &overview),
+            ("docs/developer/architecture/code-map.md", &code_map),
+        ]),
+        confidence: 0.78,
+        risk_notes:
+            "Generated architecture summary should be reviewed before becoming durable memory."
+                .to_string(),
+    }
+}
+
+fn command_list_draft(request: &LoopRunRequest) -> ContextRefreshProposalDraft {
+    let contributing = repo_file_excerpt(request.repo_root.as_deref(), "CONTRIBUTING.md")
+        .unwrap_or_else(|| "CONTRIBUTING.md was not available.".to_string());
+    let package_json = repo_file_excerpt(request.repo_root.as_deref(), "web/package.json")
+        .unwrap_or_else(|| "web/package.json was not available.".to_string());
+    let cargo = repo_file_excerpt(request.repo_root.as_deref(), "Cargo.toml")
+        .unwrap_or_else(|| "Cargo.toml was not available.".to_string());
+    ContextRefreshProposalDraft {
+        proposal_type: "add".to_string(),
+        candidate: json!({
+            "canonical_text": format!(
+                "# Context Pack Command List\n\n## Validation Guidance\n{}\n\n## Rust Workspace\n{}\n\n## Web Scripts\n{}",
+                contributing, cargo, package_json
+            ),
+            "summary": "Context Pack Refresh command list",
+            "memory_type": "documentation",
+            "tags": ["loop-engineering", "context-pack-refresh", "commands"]
+        }),
+        evidence: evidence_refs(&[
+            ("CONTRIBUTING.md", &contributing),
+            ("Cargo.toml", &cargo),
+            ("web/package.json", &package_json),
+        ]),
+        confidence: 0.76,
+        risk_notes: "Generated command list should be checked for obsolete or environment-specific commands.".to_string(),
+    }
+}
+
+fn conventions_draft(request: &LoopRunRequest) -> ContextRefreshProposalDraft {
+    let agents = repo_file_excerpt(request.repo_root.as_deref(), "AGENTS.md")
+        .unwrap_or_else(|| "AGENTS.md was not available.".to_string());
+    let contributing = repo_file_excerpt(request.repo_root.as_deref(), "CONTRIBUTING.md")
+        .unwrap_or_else(|| "CONTRIBUTING.md was not available.".to_string());
+    ContextRefreshProposalDraft {
+        proposal_type: "add".to_string(),
+        candidate: json!({
+            "canonical_text": format!(
+                "# Context Pack Conventions\n\n## Agent Instructions\n{}\n\n## Contribution Expectations\n{}",
+                agents, contributing
+            ),
+            "summary": "Context Pack Refresh conventions",
+            "memory_type": "convention",
+            "tags": ["loop-engineering", "context-pack-refresh", "conventions"]
+        }),
+        evidence: evidence_refs(&[("AGENTS.md", &agents), ("CONTRIBUTING.md", &contributing)]),
+        confidence: 0.80,
+        risk_notes: "Generated conventions should be reviewed because instruction docs can contain broad guidance.".to_string(),
+    }
+}
+
+fn module_map_draft(request: &LoopRunRequest) -> ContextRefreshProposalDraft {
+    let code_map = repo_file_excerpt(
+        request.repo_root.as_deref(),
+        "docs/developer/architecture/code-map.md",
+    )
+    .unwrap_or_else(|| "Code map file was not available.".to_string());
+    let cargo = repo_file_excerpt(request.repo_root.as_deref(), "Cargo.toml")
+        .unwrap_or_else(|| "Cargo.toml was not available.".to_string());
+    ContextRefreshProposalDraft {
+        proposal_type: "add".to_string(),
+        candidate: json!({
+            "canonical_text": format!(
+                "# Context Pack Module Map\n\n## Code Map\n{}\n\n## Workspace Manifest\n{}",
+                code_map, cargo
+            ),
+            "summary": "Context Pack Refresh module map",
+            "memory_type": "architecture",
+            "tags": ["loop-engineering", "context-pack-refresh", "module-map"]
+        }),
+        evidence: evidence_refs(&[
+            ("docs/developer/architecture/code-map.md", &code_map),
+            ("Cargo.toml", &cargo),
+        ]),
+        confidence: 0.78,
+        risk_notes: "Generated module map should be reviewed before replacing or augmenting durable architecture memory.".to_string(),
+    }
+}
+
+fn stale_memory_warnings_draft(
+    context_pack: &LoopContextPackResponse,
+) -> Option<ContextRefreshProposalDraft> {
+    let flagged = context_pack
+        .pack
+        .memories
+        .iter()
+        .filter(|memory| memory.stale || memory.contradictory)
+        .map(|memory| {
+            format!(
+                "- {} [{}] stale={} contradictory={} freshness={}",
+                memory.summary,
+                memory.memory_id,
+                memory.stale,
+                memory.contradictory,
+                memory.freshness
+            )
+        })
+        .collect::<Vec<_>>();
+    if flagged.is_empty() && context_pack.pack.warnings.is_empty() {
+        return None;
+    }
+    let warnings = context_pack
+        .pack
+        .warnings
+        .iter()
+        .map(|warning| format!("- {warning}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(ContextRefreshProposalDraft {
+        proposal_type: "add".to_string(),
+        candidate: json!({
+            "canonical_text": format!(
+                "# Context Pack Stale Memory Warnings\n\n## Flagged Memories\n{}\n\n## Pack Warnings\n{}",
+                if flagged.is_empty() { "- No stale or contradictory memories flagged.".to_string() } else { flagged.join("\n") },
+                if warnings.is_empty() { "- No pack warnings.".to_string() } else { warnings }
+            ),
+            "summary": "Context Pack Refresh stale memory warnings",
+            "memory_type": "debugging",
+            "tags": ["loop-engineering", "context-pack-refresh", "stale-memory"]
+        }),
+        evidence: json!([{
+            "source_kind": "note",
+            "excerpt": "Context-pack builder flagged stale, contradictory, excluded, or warning-producing context."
+        }]),
+        confidence: 0.72,
+        risk_notes: "Generated stale-memory warning should be checked before durable cleanup work."
+            .to_string(),
+    })
+}
+
+fn repo_file_excerpt(repo_root: Option<&str>, relative: &str) -> Option<String> {
+    let path = FsPath::new(repo_root?).join(relative);
+    let contents = fs::read_to_string(path).ok()?;
+    let excerpt = contents.lines().take(80).collect::<Vec<_>>().join("\n");
+    Some(excerpt.chars().take(3_000).collect())
+}
+
+fn evidence_refs(items: &[(&str, &str)]) -> serde_json::Value {
+    serde_json::Value::Array(
+        items
+            .iter()
+            .filter(|(_, excerpt)| !excerpt.is_empty())
+            .map(|(path, excerpt)| {
+                json!({
+                    "source_kind": "file",
+                    "file_path": path,
+                    "excerpt": excerpt.chars().take(600).collect::<String>()
+                })
+            })
+            .collect(),
+    )
 }
 
 async fn cancel_loop_run_record(

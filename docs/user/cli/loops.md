@@ -69,6 +69,11 @@ references, selected memories, source refs, confidence, freshness, stale or
 contradictory flags, exclusions, warnings, estimated token usage, and a diff
 against the previous context-pack trace for the same loop/project.
 
+When the built-in `context_pack_refresh` loop runs and is not blocked by policy,
+it records the pack and emits pending memory proposals for an architecture
+summary, command list, conventions, module map, and stale-memory warnings when
+the pack found any. Those proposals remain review-only until approved.
+
 ## Approvals
 
 ```bash
