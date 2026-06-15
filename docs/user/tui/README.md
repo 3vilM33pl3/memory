@@ -9,6 +9,7 @@ Memory Layer's TUI is the fastest way to browse project memory, ask cited questi
 - Query answers show citations, confidence, diagnostics, and the ranked memories behind the answer.
 - Agents and Watchers show live distributed agent state, token pressure, context usage, rate limits, heartbeats, and recovery behavior.
 - Skills shows the repo-local Memory skill bundle, version freshness, file paths, and repair controls.
+- Automations shows loop-engineering definitions, effective modes, latest runs, and pending approval counts.
 - Embeddings shows every configured backend and per-project coverage so model switching is visible instead of hidden in config files.
 - Activity and Resume turn persisted operations into get-up-to-speed context for new or returning agents.
 - Errors turns backend, provider, watcher, and TUI failures into actionable diagnostics with fix hints.
@@ -51,6 +52,8 @@ Shared navigation:
   - See active watchers, heartbeat state, restart attempts, and watcher recovery details.
 - [Skills Tab](skills.md)
   - Inspect repo-local Memory skills, `SKILL.md` content, version freshness, and repair outdated bundle files.
+- [Automations Tab](automations.md)
+  - Inspect loop definitions, effective settings, latest runs, and pending approval requests.
 - [Embeddings Tab](embeddings.md)
   - List configured embedding backends, see their per-project coverage, and activate a different backend without leaving the TUI.
 - [Resume Tab](resume.md)
@@ -66,6 +69,7 @@ Shared navigation:
 - If you want high-level health or recent operational activity, open [Project Tab](project.md); for pending-proposal review, open [Review Tab](review.md).
 - If you want watcher liveness and watchdog status, open [Watchers Tab](watchers.md).
 - If repo-local skills look stale or you want to inspect the exact skill instructions an agent will read, open [Skills Tab](skills.md).
+- If you want to see loop-engineering automation state without opening the browser UI, open [Automations Tab](automations.md).
 - If you want to see which embedding backends are configured and switch which one search uses, open [Embeddings Tab](embeddings.md).
 - If you are returning after time away, open [Resume Tab](resume.md) for the re-entry briefing.
 

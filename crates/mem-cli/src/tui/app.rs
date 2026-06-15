@@ -14,10 +14,10 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 #[cfg(test)]
 pub(in crate::tui) use mem_agenttop::AgentSnapshot;
 use mem_api::{
-    ActivityDetails, ActivityEvent, MemoryEntryResponse, Profile, ProjectMemoriesResponse,
-    QueryFilters, QueryRequest, QueryResponse, QueryResult, ReplacementPolicy, ResumeCheckpoint,
-    ResumeRequest, StreamRequest, StreamResponse, UpToSpeedRequest, load_repo_replacement_policy,
-    read_capnp_text_frame, write_capnp_text_frame,
+    ActivityDetails, ActivityEvent, LoopApprovalStatus, MemoryEntryResponse, Profile,
+    ProjectMemoriesResponse, QueryFilters, QueryRequest, QueryResponse, QueryResult,
+    ReplacementPolicy, ResumeCheckpoint, ResumeRequest, StreamRequest, StreamResponse,
+    UpToSpeedRequest, load_repo_replacement_policy, read_capnp_text_frame, write_capnp_text_frame,
 };
 use ratatui::{layout::Rect, widgets::TableState};
 #[cfg(unix)]
@@ -308,16 +308,105 @@ async fn load_project_refresh(
     let overview_fut = api.project_overview(&project);
     let memories_fut = api.project_memories(&project);
     let proposals_fut = api.replacement_proposals(&project);
-    let (health, overview, memories, proposals) =
-        tokio::join!(health_fut, overview_fut, memories_fut, proposals_fut);
+    let automations_fut = load_automation_snapshot(api, &project, &repo_root);
+    let (health, overview, memories, proposals, automations) = tokio::join!(
+        health_fut,
+        overview_fut,
+        memories_fut,
+        proposals_fut,
+        automations_fut
+    );
     ProjectRefreshResult {
         mode,
         health: health.map_err(|error| error.to_string()),
         overview: overview.map_err(|error| error.to_string()),
         memories: memories.map_err(|error| error.to_string()),
         proposals: proposals.map_err(|error| error.to_string()),
+        automations,
         skill_inventory: mem_skills::project_skill_inventory(&repo_root, false),
     }
+}
+
+async fn load_automation_snapshot(
+    api: &ApiClient,
+    project: &str,
+    repo_root: &std::path::Path,
+) -> Result<AutomationSnapshot, String> {
+    let repo_root = repo_root.display().to_string();
+    let definitions = api
+        .loop_definitions()
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut warnings = Vec::new();
+    let mut items = Vec::with_capacity(definitions.definitions.len());
+
+    for definition in definitions.definitions {
+        let detail = api
+            .loop_definition(&definition.loop_id, Some(project), Some(&repo_root))
+            .await;
+        let effective_settings = match detail {
+            Ok(detail) => detail.effective_settings,
+            Err(error) => {
+                warnings.push(format!(
+                    "{} settings unavailable: {error}",
+                    definition.loop_id
+                ));
+                None
+            }
+        };
+
+        let latest_run = match api
+            .loop_runs(Some(project), Some(&definition.loop_id), None, 1)
+            .await
+        {
+            Ok(response) => response.runs.into_iter().next(),
+            Err(error) => {
+                warnings.push(format!(
+                    "{} latest run unavailable: {error}",
+                    definition.loop_id
+                ));
+                None
+            }
+        };
+
+        items.push(AutomationListItem {
+            definition,
+            effective_settings,
+            latest_run,
+        });
+    }
+
+    let global_state = match api.loop_global_state().await {
+        Ok(state) => Some(state),
+        Err(error) => {
+            warnings.push(format!("global kill switch unavailable: {error}"));
+            None
+        }
+    };
+
+    let pending_approvals = match api
+        .loop_approvals(
+            Some(project),
+            None,
+            None,
+            Some(LoopApprovalStatus::Pending),
+            50,
+        )
+        .await
+    {
+        Ok(response) => response.approvals,
+        Err(error) => {
+            warnings.push(format!("pending approvals unavailable: {error}"));
+            Vec::new()
+        }
+    };
+
+    Ok(AutomationSnapshot {
+        items,
+        pending_approvals,
+        global_state,
+        warnings,
+    })
 }
 
 impl App {
@@ -345,6 +434,8 @@ impl App {
         embeddings_table_state.select(Some(0));
         let mut skills_table_state = TableState::default();
         skills_table_state.select(Some(0));
+        let mut automations_table_state = TableState::default();
+        automations_table_state.select(Some(0));
         let mut review_table_state = TableState::default();
         review_table_state.select(Some(0));
         Self {
@@ -434,6 +525,13 @@ impl App {
                 detail_scroll: 0,
                 operation: None,
                 message: None,
+            },
+            automations: AutomationsTabState {
+                snapshot: None,
+                error: None,
+                selected_index: 0,
+                table_state: automations_table_state,
+                detail_scroll: 0,
             },
             embeddings: EmbeddingsTabState {
                 embedding_backends_snapshot: None,
@@ -791,6 +889,22 @@ impl App {
                 self.review.replacement_selected_index = 0;
                 self.review.review_table_state.select(None);
                 self.chrome.status_message = error.to_string();
+            }
+        }
+
+        match result.automations {
+            Ok(snapshot) => {
+                self.automations.error = None;
+                self.automations.snapshot = Some(snapshot);
+                self.clamp_automation_selection();
+            }
+            Err(error) => {
+                had_error = true;
+                self.automations.error = Some(error.clone());
+                self.automations.snapshot = None;
+                self.automations.selected_index = 0;
+                self.automations.table_state.select(None);
+                self.chrome.status_message = error;
             }
         }
 
@@ -1776,6 +1890,21 @@ impl App {
             }
             KeyCode::Char('u') if self.active_tab == TabKind::Skills => {
                 self.repair_skills();
+            }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Automations => {
+                self.select_automation(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Automations => {
+                self.select_automation(-1);
+            }
+            KeyCode::PageDown if self.active_tab == TabKind::Automations => {
+                self.scroll_automation_detail(8);
+            }
+            KeyCode::PageUp if self.active_tab == TabKind::Automations => {
+                self.scroll_automation_detail(-8);
+            }
+            KeyCode::Home if self.active_tab == TabKind::Automations => {
+                self.automations.detail_scroll = 0;
             }
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.chrome.input_mode = InputMode::Search(self.filters.text.clone());
@@ -2879,6 +3008,57 @@ impl App {
         self.skills
             .table_state
             .select(Some(self.skills.selected_index));
+    }
+
+    fn scroll_automation_detail(&mut self, delta: i16) {
+        self.automations.detail_scroll = if delta.is_negative() {
+            self.automations
+                .detail_scroll
+                .saturating_sub(delta.unsigned_abs())
+        } else {
+            self.automations
+                .detail_scroll
+                .saturating_add(u16::try_from(delta).unwrap_or(0))
+        };
+    }
+
+    fn select_automation(&mut self, delta: isize) {
+        let len = self
+            .automations
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.items.len())
+            .unwrap_or(0);
+        if len == 0 {
+            self.automations.selected_index = 0;
+            self.automations.table_state.select(None);
+            return;
+        }
+        let cur = self.automations.selected_index as isize;
+        let next = ((cur + delta) % len as isize + len as isize) % len as isize;
+        self.automations.selected_index = next as usize;
+        self.automations.detail_scroll = 0;
+        self.automations
+            .table_state
+            .select(Some(self.automations.selected_index));
+    }
+
+    fn clamp_automation_selection(&mut self) {
+        let len = self
+            .automations
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.items.len())
+            .unwrap_or(0);
+        if len == 0 {
+            self.automations.selected_index = 0;
+            self.automations.table_state.select(None);
+            return;
+        }
+        self.automations.selected_index = self.automations.selected_index.min(len - 1);
+        self.automations
+            .table_state
+            .select(Some(self.automations.selected_index));
     }
 
     fn repair_skills(&mut self) {

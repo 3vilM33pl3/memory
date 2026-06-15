@@ -1,5 +1,6 @@
 pub(super) mod activity;
 pub(super) mod agents;
+pub(super) mod automations;
 pub(super) mod embeddings;
 pub(super) mod errors;
 pub(super) mod memories;
@@ -65,6 +66,7 @@ pub(in crate::tui) fn dispatch_update(
         TabKind::Review => review::update(event, &mut app.review, &mut ctx),
         TabKind::Watchers => watchers::update(event, &mut app.watchers, &mut ctx),
         TabKind::Skills => skills::update(event, &mut app.skills, &mut ctx),
+        TabKind::Automations => automations::update(event, &mut app.automations, &mut ctx),
         TabKind::Embeddings => embeddings::update(event, &mut app.embeddings, &mut ctx),
         TabKind::Resume => resume::update(event, &mut app.resume, &mut ctx),
     }

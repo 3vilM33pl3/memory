@@ -1,0 +1,44 @@
+---
+title: "Automations tab"
+description: "Inspect loop-engineering automation definitions, settings, runs, and approvals from the TUI."
+---
+
+# Automations tab
+
+The Automations tab is the terminal inspection surface for Memory Layer's
+loop-engineering control plane. It shows registered loop definitions, effective
+settings for the current project/repo, latest run status, pending approval
+counts, and global kill-switch state when available.
+
+## Inventory
+
+Each row shows:
+
+- loop id
+- effective mode
+- effective scope
+- latest run status
+- pending approval count
+
+The detail pane expands the selected loop with its name, description, risk
+level, default mode, effective settings, latest run, pending approval requests,
+and load warnings.
+
+## Controls
+
+| Key | Action |
+|---|---|
+| `j` / `k` | Move the selected automation |
+| `PgUp` / `PgDn` | Scroll selected automation detail |
+| `Home` | Jump detail scroll back to the top |
+| `r` | Refresh the project snapshot |
+
+## Mutating controls
+
+The TUI tab is read-oriented. Use the Browser UI or `memory loops ...` commands
+for changing modes, starting manual runs, approving/rejecting requests, or
+toggling the global kill switch.
+
+## Next
+
+Read [Automations](/docs/automations), [Browser UI](/docs/web-ui), or [CLI loop commands](/docs/reference/cli/integrations-evals).

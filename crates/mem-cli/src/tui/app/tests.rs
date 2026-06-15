@@ -3,13 +3,14 @@ use crossterm::event::{Event, KeyCode, KeyEvent};
 
 #[cfg_attr(target_os = "macos", allow(unused_imports))]
 use super::{
-    AgentSnapshot, App, BackendConnectionState, BackgroundEvent, ManagerState, MemoriesFocus,
-    ProjectRefreshResult, QueryHistoryEntry, QueryRoundtripTiming, RefreshMode, TabKind, Theme,
-    ToolVersions, UiStatus, activity_duration, activity_tokens, backend_activity_detail_lines,
-    build_memory_detail_lines, collect_error_items, context_gradient_color, current_query_display,
-    derive_manager_state, empty_overview, filled_bar_cells, format_context_percent,
-    format_epoch_reset_time, format_query_citation_numbers, format_query_timing_with_percent,
-    format_timestamp, format_timestamp_full, format_timestamp_medium, format_timestamp_short,
+    AgentSnapshot, App, AutomationSnapshot, BackendConnectionState, BackgroundEvent, ManagerState,
+    MemoriesFocus, ProjectRefreshResult, QueryHistoryEntry, QueryRoundtripTiming, RefreshMode,
+    TabKind, Theme, ToolVersions, UiStatus, activity_duration, activity_tokens,
+    backend_activity_detail_lines, build_memory_detail_lines, collect_error_items,
+    context_gradient_color, current_query_display, derive_manager_state, empty_overview,
+    filled_bar_cells, format_context_percent, format_epoch_reset_time,
+    format_query_citation_numbers, format_query_timing_with_percent, format_timestamp,
+    format_timestamp_full, format_timestamp_medium, format_timestamp_short,
     format_timestamp_timeline, latest_plan_display, llm_audit_status_lines,
     manager_service_enabled, manager_service_running, manager_status_detail, manager_status_label,
     manager_unit_path, memory_detail_max_scroll, normalized_percent, query_input_display,
@@ -721,6 +722,7 @@ fn backend_connection_state_starts_connecting_then_tracks_health() {
             project: "memory".to_string(),
             proposals: Vec::new(),
         }),
+        automations: Ok(empty_automation_snapshot()),
         skill_inventory: project_skill_inventory(Path::new("."), false),
     };
     app.apply_project_refresh(result.clone());
@@ -764,6 +766,7 @@ fn project_refresh_selects_first_memory_for_detail_loading() {
             project: "memory".to_string(),
             proposals: Vec::new(),
         }),
+        automations: Ok(empty_automation_snapshot()),
         skill_inventory: project_skill_inventory(Path::new("."), false),
     });
 
@@ -1120,6 +1123,15 @@ fn test_project_memory_list_item(
     }
 }
 
+fn empty_automation_snapshot() -> AutomationSnapshot {
+    AutomationSnapshot {
+        items: Vec::new(),
+        pending_approvals: Vec::new(),
+        global_state: None,
+        warnings: Vec::new(),
+    }
+}
+
 #[test]
 fn agents_tab_initial_selection_prefers_current_project() {
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -1199,8 +1211,9 @@ fn tab_order_restores_activity_after_query() {
     assert_eq!(TabKind::Review.index(), 6);
     assert_eq!(TabKind::Watchers.index(), 7);
     assert_eq!(TabKind::Skills.index(), 8);
-    assert_eq!(TabKind::Embeddings.index(), 9);
-    assert_eq!(TabKind::Resume.index(), 10);
+    assert_eq!(TabKind::Automations.index(), 9);
+    assert_eq!(TabKind::Embeddings.index(), 10);
+    assert_eq!(TabKind::Resume.index(), 11);
 
     assert_eq!(TabKind::Memories.prev(), TabKind::Resume);
     assert_eq!(TabKind::Memories.next(), TabKind::Agents);
@@ -1216,8 +1229,10 @@ fn tab_order_restores_activity_after_query() {
     assert_eq!(TabKind::Watchers.prev(), TabKind::Review);
     assert_eq!(TabKind::Watchers.next(), TabKind::Skills);
     assert_eq!(TabKind::Skills.prev(), TabKind::Watchers);
-    assert_eq!(TabKind::Skills.next(), TabKind::Embeddings);
-    assert_eq!(TabKind::Embeddings.prev(), TabKind::Skills);
+    assert_eq!(TabKind::Skills.next(), TabKind::Automations);
+    assert_eq!(TabKind::Automations.prev(), TabKind::Skills);
+    assert_eq!(TabKind::Automations.next(), TabKind::Embeddings);
+    assert_eq!(TabKind::Embeddings.prev(), TabKind::Automations);
     assert_eq!(TabKind::Embeddings.next(), TabKind::Resume);
     assert_eq!(TabKind::Resume.prev(), TabKind::Embeddings);
     assert_eq!(TabKind::Resume.next(), TabKind::Memories);

@@ -8,10 +8,11 @@ use std::{
 use chrono::{DateTime, Utc};
 use mem_agenttop::AgentSnapshot;
 use mem_api::{
-    ActivityEvent, LlmAuditStatusResponse, MemoryEntryResponse, MemoryStatus, MemoryType, Profile,
-    ProjectMemoriesResponse, ProjectMemoryListItem, ProjectOverviewResponse, QueryRequest,
-    QueryResponse, ReplacementPolicy, ReplacementProposalListResponse, ReplacementProposalRecord,
-    ResumeResponse, UpToSpeedResponse,
+    ActivityEvent, EffectiveLoopSettings, LlmAuditStatusResponse, LoopApprovalRequestRecord,
+    LoopDefinitionRecord, LoopGlobalStateResponse, LoopRunSummary, MemoryEntryResponse,
+    MemoryStatus, MemoryType, Profile, ProjectMemoriesResponse, ProjectMemoryListItem,
+    ProjectOverviewResponse, QueryRequest, QueryResponse, ReplacementPolicy,
+    ReplacementProposalListResponse, ReplacementProposalRecord, ResumeResponse, UpToSpeedResponse,
 };
 use ratatui::widgets::TableState;
 use serde::Deserialize;
@@ -39,6 +40,7 @@ pub(super) struct App {
     pub(in crate::tui) review: ReviewTabState,
     pub(in crate::tui) watchers: WatchersTabState,
     pub(in crate::tui) skills: SkillsTabState,
+    pub(in crate::tui) automations: AutomationsTabState,
     pub(in crate::tui) embeddings: EmbeddingsTabState,
     pub(in crate::tui) filters: Filters,
     pub(in crate::tui) background_tx: mpsc::UnboundedSender<BackgroundEvent>,
@@ -161,6 +163,29 @@ pub(super) struct SkillsTabState {
     pub(in crate::tui) detail_scroll: u16,
     pub(in crate::tui) operation: Option<String>,
     pub(in crate::tui) message: Option<String>,
+}
+
+pub(super) struct AutomationsTabState {
+    pub(in crate::tui) snapshot: Option<AutomationSnapshot>,
+    pub(in crate::tui) error: Option<String>,
+    pub(in crate::tui) selected_index: usize,
+    pub(in crate::tui) table_state: TableState,
+    pub(in crate::tui) detail_scroll: u16,
+}
+
+#[derive(Clone)]
+pub(super) struct AutomationSnapshot {
+    pub(in crate::tui) items: Vec<AutomationListItem>,
+    pub(in crate::tui) pending_approvals: Vec<LoopApprovalRequestRecord>,
+    pub(in crate::tui) global_state: Option<LoopGlobalStateResponse>,
+    pub(in crate::tui) warnings: Vec<String>,
+}
+
+#[derive(Clone)]
+pub(super) struct AutomationListItem {
+    pub(in crate::tui) definition: LoopDefinitionRecord,
+    pub(in crate::tui) effective_settings: Option<EffectiveLoopSettings>,
+    pub(in crate::tui) latest_run: Option<LoopRunSummary>,
 }
 
 pub(super) struct HelpState {
@@ -298,6 +323,7 @@ pub(super) struct ProjectRefreshResult {
     pub(in crate::tui) overview: Result<ProjectOverviewResponse, String>,
     pub(in crate::tui) memories: Result<ProjectMemoriesResponse, String>,
     pub(in crate::tui) proposals: Result<ReplacementProposalListResponse, String>,
+    pub(in crate::tui) automations: Result<AutomationSnapshot, String>,
     pub(in crate::tui) skill_inventory: SkillInventoryReport,
 }
 
@@ -392,11 +418,12 @@ pub(super) enum TabKind {
     Review,
     Watchers,
     Skills,
+    Automations,
     Embeddings,
     Resume,
 }
 
-pub(super) const VISIBLE_TABS: [TabKind; 11] = [
+pub(super) const VISIBLE_TABS: [TabKind; 12] = [
     TabKind::Memories,
     TabKind::Agents,
     TabKind::Query,
@@ -406,6 +433,7 @@ pub(super) const VISIBLE_TABS: [TabKind; 11] = [
     TabKind::Review,
     TabKind::Watchers,
     TabKind::Skills,
+    TabKind::Automations,
     TabKind::Embeddings,
     TabKind::Resume,
 ];
@@ -422,6 +450,7 @@ impl TabKind {
             Self::Review => "Review",
             Self::Watchers => "Watchers",
             Self::Skills => "Skills",
+            Self::Automations => "Automations",
             Self::Embeddings => "Embeddings",
             Self::Resume => "Resume",
         }
@@ -437,7 +466,8 @@ impl TabKind {
             Self::Project => Self::Review,
             Self::Review => Self::Watchers,
             Self::Watchers => Self::Skills,
-            Self::Skills => Self::Embeddings,
+            Self::Skills => Self::Automations,
+            Self::Automations => Self::Embeddings,
             Self::Embeddings => Self::Resume,
             Self::Resume => Self::Memories,
         }
@@ -454,7 +484,8 @@ impl TabKind {
             Self::Review => Self::Project,
             Self::Watchers => Self::Review,
             Self::Skills => Self::Watchers,
-            Self::Embeddings => Self::Skills,
+            Self::Automations => Self::Skills,
+            Self::Embeddings => Self::Automations,
             Self::Resume => Self::Embeddings,
         }
     }
@@ -470,8 +501,9 @@ impl TabKind {
             Self::Review => 6,
             Self::Watchers => 7,
             Self::Skills => 8,
-            Self::Embeddings => 9,
-            Self::Resume => 10,
+            Self::Automations => 9,
+            Self::Embeddings => 10,
+            Self::Resume => 11,
         }
     }
 }

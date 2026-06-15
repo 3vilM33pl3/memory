@@ -35,7 +35,9 @@ The main tabs match the TUI order:
 | Resume | Re-entry briefing with checkpoint, current thread, next steps, recent changes, context memories, timeline, warnings, and commits. |
 | Automations | Loop-engineering approval queue, automation cards, effective mode, scope, risk, last run, next trigger, daily budget, outputs, and controls. |
 
-The web-only `Automations` and `Bundles` tools remain under the More menu. `Automations` controls the shared loop control plane; `Bundles` handles memory export/import previews and transfer.
+The web-only `Bundles` tool remains under the More menu for memory export/import
+previews and transfer. `Automations` is a primary browser tab and also has a
+read-oriented TUI tab.
 
 ## Automations
 

@@ -27,9 +27,10 @@ use super::{
     markdown::render_markdown_lines,
     tabs::{
         TabRenderContext, activity::draw_activity_tab, agents::draw_agents_tab,
-        embeddings::draw_embeddings_tab, errors::draw_errors_tab, memories::draw_memories_tab,
-        project::draw_project_tab, query::draw_query_tab, resume::draw_resume_tab,
-        review::draw_review_tab, skills::draw_skills_tab, watchers::draw_watchers_tab,
+        automations::draw_automations_tab, embeddings::draw_embeddings_tab,
+        errors::draw_errors_tab, memories::draw_memories_tab, project::draw_project_tab,
+        query::draw_query_tab, resume::draw_resume_tab, review::draw_review_tab,
+        skills::draw_skills_tab, watchers::draw_watchers_tab,
     },
     theme::{Theme, themed_block, themed_focus_block},
 };
@@ -2847,6 +2848,32 @@ Inspect and repair the repo-local Memory Layer skill bundle used by coding agent
 - If repair fails, check the status message and run `memory doctor --fix` for more detail.
 "#
         }
+        TabKind::Automations => {
+            r#"# Automations Help
+
+## Purpose
+Inspect loop-engineering automations, effective settings, recent run state, and pending approval requests from the terminal.
+
+## Layout
+- Loop table: loop id, effective mode, scope, latest run status, and pending approval count.
+- Detail pane: selected loop description, risk, effective settings, latest run, pending approvals, and load warnings.
+- Global line: kill-switch state when the service reports it.
+
+## Controls
+- `j/k` or `Up/Down`: select an automation.
+- `PgUp/PgDn`: scroll the selected automation detail. `Home`: jump to top.
+- `r`: refresh project state outside help.
+
+## Workflows
+- Open this tab to see which built-in loops are registered and whether they are off, observing, suggesting, or blocked.
+- Check pending approvals before allowing higher-risk loop actions to continue.
+- Use the browser UI or `memory loops ...` commands for mutating controls.
+
+## Troubleshooting
+- If the tab is empty, verify the service registered loop definitions with `memory loops list`.
+- If settings or runs show warnings, refresh once and then inspect `memory loops show <loop_id>` or `memory loops runs --project <project>`.
+"#
+        }
         TabKind::Embeddings => {
             r#"# Embeddings Help
 
@@ -3753,6 +3780,14 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                 accent_span("refresh "),
                 Span::styled("r", Style::default().fg(Theme::TEXT)),
             ],
+            TabKind::Automations => vec![
+                accent_span("move "),
+                Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+                accent_span("detail "),
+                Span::styled("PgUp/PgDn Home  ", Style::default().fg(Theme::TEXT)),
+                accent_span("refresh "),
+                Span::styled("r", Style::default().fg(Theme::TEXT)),
+            ],
             TabKind::Embeddings => vec![
                 accent_span("move "),
                 Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
@@ -3820,6 +3855,7 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             TabKind::Review => draw_review_tab(frame, &tab_ctx, chunks[2]),
             TabKind::Watchers => draw_watchers_tab(frame, &tab_ctx, chunks[2]),
             TabKind::Skills => draw_skills_tab(frame, &tab_ctx, chunks[2]),
+            TabKind::Automations => draw_automations_tab(frame, &tab_ctx, chunks[2]),
             TabKind::Embeddings => draw_embeddings_tab(frame, &tab_ctx, chunks[2]),
         }
     } else {
