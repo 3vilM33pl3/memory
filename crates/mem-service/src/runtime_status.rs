@@ -5,6 +5,7 @@ use crate::*;
 pub(crate) struct RuntimeStatusQuery {
     pub(crate) project: Option<String>,
     pub(crate) repo_root: Option<String>,
+    pub(crate) skill_filter: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,6 +71,7 @@ pub(crate) struct RuntimeSkillStatus {
     pub(crate) bundle_version: String,
     pub(crate) status: String,
     pub(crate) summary: String,
+    pub(crate) filter: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -110,7 +112,6 @@ pub(crate) const GLOBAL_TUI_RESTART_MARKER: &str =
 pub(crate) const GLOBAL_TUI_RESTART_MARKER: &str =
     "/usr/local/var/memory-layer/tui-restart-required.json";
 
-#[cfg(test)]
 pub(crate) const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-direct-task-start",
     "memory-github-init",
@@ -122,6 +123,35 @@ pub(crate) const MEMORY_SKILL_NAMES: &[&str] = &[
     "memory-remember",
 ];
 const DEFAULT_RUNTIME_SKILL_FILTER: &[&str] = &["memory-layer"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeSkillFilter {
+    MemoryLayer,
+    All,
+}
+
+impl RuntimeSkillFilter {
+    fn from_query(value: Option<&str>) -> Self {
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            Some("all") => Self::All,
+            _ => Self::MemoryLayer,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::MemoryLayer => "memory-layer",
+            Self::All => "all",
+        }
+    }
+
+    fn skills(self) -> &'static [&'static str] {
+        match self {
+            Self::MemoryLayer => DEFAULT_RUNTIME_SKILL_FILTER,
+            Self::All => MEMORY_SKILL_NAMES,
+        }
+    }
+}
 
 pub(crate) async fn runtime_status(
     State(state): State<AppState>,
@@ -148,6 +178,7 @@ pub(crate) async fn runtime_status(
     let provenance_interval_seconds = state.config.provenance.reverify_interval.as_secs();
     let service_id = state.config.cluster.service_id.clone();
     let is_primary = state.is_primary();
+    let skill_filter = RuntimeSkillFilter::from_query(query.skill_filter.as_deref());
 
     let response = tokio::task::spawn_blocking(move || {
         let watcher_summary = watcher_summary_for_project(&watchers, &project);
@@ -156,7 +187,7 @@ pub(crate) async fn runtime_status(
             .expect("provenance runtime mutex poisoned")
             .clone();
         let manager = runtime_manager_status(&profile, &version);
-        let skills = runtime_skill_status(repo_root.as_deref(), &version);
+        let skills = runtime_skill_status(repo_root.as_deref(), &version, skill_filter);
         let restart_notice = runtime_restart_notice(startup_at, &version);
 
         RuntimeStatusResponse {
@@ -566,12 +597,14 @@ pub(crate) fn launchctl_print_succeeds(label: &str) -> bool {
 pub(crate) fn runtime_skill_status(
     repo_root: Option<&str>,
     expected_version: &str,
+    filter: RuntimeSkillFilter,
 ) -> RuntimeSkillStatus {
     let Some(repo_root) = repo_root.map(str::trim).filter(|value| !value.is_empty()) else {
         return RuntimeSkillStatus {
             bundle_version: expected_version.to_string(),
             status: "unknown".to_string(),
             summary: "repo root not resolved".to_string(),
+            filter: filter.label().to_string(),
         };
     };
     let root = FsPath::new(repo_root);
@@ -580,12 +613,14 @@ pub(crate) fn runtime_skill_status(
             bundle_version: expected_version.to_string(),
             status: "error".to_string(),
             summary: format!("repo root does not exist: {repo_root}"),
+            filter: filter.label().to_string(),
         };
     }
     let skill_root = root.join(".agents").join("skills");
     let mut missing = 0usize;
     let mut outdated = 0usize;
-    for skill in DEFAULT_RUNTIME_SKILL_FILTER {
+    let skills = filter.skills();
+    for skill in skills {
         let path = skill_root.join(skill).join("SKILL.md");
         let Some(version) = read_skill_version(&path) else {
             missing += 1;
@@ -600,15 +635,19 @@ pub(crate) fn runtime_skill_status(
     } else {
         "warn"
     };
-    let summary = if status == "ok" {
-        "memory-layer skill current".to_string()
-    } else {
-        format!("memory-layer skill: {missing} missing, {outdated} outdated")
+    let summary = match (filter, status) {
+        (RuntimeSkillFilter::MemoryLayer, "ok") => "memory-layer skill current".to_string(),
+        (RuntimeSkillFilter::MemoryLayer, _) => {
+            format!("memory-layer skill: {missing} missing, {outdated} outdated")
+        }
+        (RuntimeSkillFilter::All, "ok") => format!("{} skills current", skills.len()),
+        (RuntimeSkillFilter::All, _) => format!("{missing} missing, {outdated} outdated"),
     };
     RuntimeSkillStatus {
         bundle_version: expected_version.to_string(),
         status: status.to_string(),
         summary,
+        filter: filter.label().to_string(),
     }
 }
 

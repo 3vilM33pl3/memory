@@ -29,6 +29,7 @@ export function useAppShell() {
   const [statusMessage, setStatusMessage] = useState("Connecting to Memory Layer...");
   const [connectionState, setConnectionState] = useState<"connecting" | "live" | "offline">("connecting");
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusResponse | null>(null);
+  const [skillFilter, setSkillFilter] = useState("memory-layer");
   const [helpOpen, setHelpOpen] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -174,7 +175,7 @@ export function useAppShell() {
   useEffect(() => {
     let active = true;
     const refreshRuntimeStatus = () => {
-      void getRuntimeStatus(project, effectiveRepoRoot || null)
+      void getRuntimeStatus(project, effectiveRepoRoot || null, skillFilter)
         .then((payload) => {
           if (active) setRuntimeStatus(payload);
         })
@@ -188,7 +189,7 @@ export function useAppShell() {
       active = false;
       clearInterval(id);
     };
-  }, [effectiveRepoRoot, project, recordLocalDiagnostic]);
+  }, [effectiveRepoRoot, project, recordLocalDiagnostic, skillFilter]);
 
   useGlobalShortcuts({
     tab,
@@ -249,6 +250,8 @@ export function useAppShell() {
     connectionState,
     overview,
     runtimeStatus,
+    skillFilter,
+    setSkillFilter,
     serviceVersion,
     helpOpen,
     setHelpOpen,

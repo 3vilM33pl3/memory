@@ -962,6 +962,7 @@ export interface RuntimeSkillStatus {
   bundle_version: string;
   status: string;
   summary: string;
+  filter: string;
 }
 
 export interface RuntimeRestartNotice {

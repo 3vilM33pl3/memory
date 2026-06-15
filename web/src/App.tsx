@@ -26,6 +26,8 @@ export default function App() {
     connectionState,
     overview,
     runtimeStatus,
+    skillFilter,
+    setSkillFilter,
     serviceVersion,
     helpOpen,
     setHelpOpen,
@@ -189,6 +191,13 @@ export default function App() {
         <span>Manager v{runtimeStatus?.manager.version ?? serviceVersion} {runtimeStatus?.manager.state ?? "unknown"}{runtimeStatus?.manager.detail ? ` ${runtimeStatus.manager.detail}` : ""}</span>
         <span>Watchers v{runtimeStatus?.watchers.version ?? serviceVersion} {runtimeStatus?.watchers.status ?? "unknown"} {runtimeStatus?.watchers.detail ?? `${overview.watchers?.active_count ?? 0} active`}</span>
         <span>Provenance {runtimeStatus?.provenance.status ?? "unknown"} {runtimeStatus?.provenance.last_finished_at ? `last ${new Date(runtimeStatus.provenance.last_finished_at).toLocaleString()}` : "not run"}</span>
+        <label className="status-filter">
+          Skill filter
+          <select value={skillFilter} onChange={(event) => setSkillFilter(event.target.value)}>
+            <option value="memory-layer">Memory Layer</option>
+            <option value="all">All skills</option>
+          </select>
+        </label>
         <span>Skills v{runtimeStatus?.skills.bundle_version ?? serviceVersion} {runtimeStatus?.skills.status ?? "unknown"}{runtimeStatus?.skills.summary ? ` ${runtimeStatus.skills.summary}` : ""}</span>
         <span>db {overview.database_status}</span>
         <span>{overview.memory_entries_total} memories</span>

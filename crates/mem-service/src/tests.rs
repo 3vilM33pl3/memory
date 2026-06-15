@@ -426,11 +426,12 @@ fn runtime_skill_status_reports_memory_layer_skill_by_default() {
         .expect("write skill");
     }
 
-    let status = runtime_skill_status(root.to_str(), "0.8.6-dev");
+    let status = runtime_skill_status(root.to_str(), "0.8.6-dev", RuntimeSkillFilter::MemoryLayer);
 
     assert_eq!(status.status, "ok");
     assert_eq!(status.bundle_version, "0.8.6-dev");
     assert_eq!(status.summary, "memory-layer skill current");
+    assert_eq!(status.filter, "memory-layer");
 
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -442,11 +443,12 @@ fn runtime_skill_status_warns_on_outdated_or_missing_memory_layer_skill() {
     fs::create_dir_all(&dir).expect("create skill dir");
     fs::write(dir.join("SKILL.md"), "---\nversion: 0.1.0\n---\n").expect("write skill");
 
-    let status = runtime_skill_status(root.to_str(), "0.8.6-dev");
+    let status = runtime_skill_status(root.to_str(), "0.8.6-dev", RuntimeSkillFilter::MemoryLayer);
 
     assert_eq!(status.status, "warn");
     assert_eq!(status.summary, "memory-layer skill: 0 missing, 1 outdated");
     assert!(status.summary.contains("outdated"));
+    assert_eq!(status.filter, "memory-layer");
 
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -469,10 +471,37 @@ fn runtime_skill_status_ignores_focused_skill_versions_by_default() {
         .expect("write skill");
     }
 
-    let status = runtime_skill_status(root.to_str(), "0.8.6-dev");
+    let status = runtime_skill_status(root.to_str(), "0.8.6-dev", RuntimeSkillFilter::MemoryLayer);
 
     assert_eq!(status.status, "ok");
     assert_eq!(status.summary, "memory-layer skill current");
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn runtime_skill_status_can_show_full_skill_bundle() {
+    let root = std::env::temp_dir().join(format!("memory-skill-status-{}", Uuid::new_v4()));
+    for skill in MEMORY_SKILL_NAMES {
+        let dir = root.join(".agents").join("skills").join(skill);
+        fs::create_dir_all(&dir).expect("create skill dir");
+        let version = if *skill == "memory-direct-task-start" {
+            "0.1.0"
+        } else {
+            "0.8.6-dev"
+        };
+        fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: test\nversion: {version}\n---\n"),
+        )
+        .expect("write skill");
+    }
+
+    let status = runtime_skill_status(root.to_str(), "0.8.6-dev", RuntimeSkillFilter::All);
+
+    assert_eq!(status.status, "warn");
+    assert_eq!(status.summary, "0 missing, 1 outdated");
+    assert_eq!(status.filter, "all");
 
     fs::remove_dir_all(root).expect("cleanup");
 }

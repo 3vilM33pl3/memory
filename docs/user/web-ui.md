@@ -97,9 +97,11 @@ The status strip shows the same operational components as the TUI bottom bar:
 - `Service`: backend version, primary/relay role, and service identity.
 - `Manager`: watcher-manager state, mode, tracked sessions, and warnings.
 - `Watchers`: active/unhealthy watcher counts.
-- `Skills`: repo-local `memory-layer` umbrella skill version and status. Use
-  `memory doctor` or `memory upgrade --dry-run` for the full focused-skill
-  bundle check.
+- `Skill filter`: selects whether the status strip checks only the
+  `memory-layer` umbrella skill, which is the default, or the full focused-skill
+  bundle.
+- `Skills`: repo-local skill version and status for the selected filter. Use
+  `memory doctor` or `memory upgrade --dry-run` for repair details.
 
 If the install or upgrade process wrote a restart marker, the Web component turns into a restart state so the user knows to reload the page or restart the running UI.
 

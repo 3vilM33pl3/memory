@@ -112,6 +112,20 @@ select {
   font-size: 0.82rem;
 }
 
+.status-filter {
+  display: inline-grid;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+}
+
+.status-filter select {
+  width: auto;
+  min-width: 8.5rem;
+  padding: 0.22rem 0.4rem;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);

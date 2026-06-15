@@ -112,9 +112,11 @@ export async function getActivities(
 export async function getRuntimeStatus(
   project: string,
   repoRoot?: string | null,
+  skillFilter = "memory-layer",
 ): Promise<RuntimeStatusResponse> {
   const params = new URLSearchParams({ project });
   if (repoRoot) params.set("repo_root", repoRoot);
+  params.set("skill_filter", skillFilter);
   return parseJson(await apiFetch(`/v1/runtime/status?${params.toString()}`));
 }
 
