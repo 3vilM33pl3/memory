@@ -1615,6 +1615,31 @@ async fn create_control_plane_loop_run_with_trigger(
             .execute(pool)
             .await
             .map_err(ApiError::sql)?;
+        } else if definition.loop_id == mem_loops::LOOP_AGENT_READY_ISSUE_TRIAGE && !blocked {
+            let issue_triage = emit_agent_ready_issue_triage_report(
+                pool,
+                run_id,
+                request,
+                &definition.loop_id,
+                &effective.mode,
+                &context_pack,
+            )
+            .await?;
+            sqlx::query(
+                r#"
+                UPDATE loop_runs
+                SET output_summary = $2,
+                    output_json = output_json || jsonb_build_object('issue_triage', $3::jsonb),
+                    updated_at = now()
+                WHERE id = $1
+                "#,
+            )
+            .bind(run_id)
+            .bind(&issue_triage.summary)
+            .bind(&issue_triage.output)
+            .execute(pool)
+            .await
+            .map_err(ApiError::sql)?;
         }
     }
     Ok(LoopRunResponse {
@@ -3327,6 +3352,238 @@ fn ci_triage_diagnosis(
         "\n\nLog excerpt:\n{}",
         ci_text.chars().take(800).collect::<String>()
     )
+}
+
+struct IssueTriageResult {
+    summary: String,
+    output: serde_json::Value,
+}
+
+async fn emit_agent_ready_issue_triage_report(
+    pool: &PgPool,
+    run_id: Uuid,
+    request: &LoopRunRequest,
+    loop_id: &str,
+    mode: &LoopMode,
+    context_pack: &LoopContextPackResponse,
+) -> Result<IssueTriageResult, ApiError> {
+    let project = request
+        .project
+        .as_deref()
+        .ok_or_else(|| ApiError::validation(ValidationError::new("project is required")))?;
+    let issue = issue_payload_text(request.trigger_payload.as_ref());
+    let classification = classify_agent_ready_issue(&issue);
+    let likely_files = likely_issue_files(&issue);
+    let test_strategy = issue_test_strategy(&issue);
+    let memory_evidence = context_pack
+        .pack
+        .memories
+        .iter()
+        .take(5)
+        .map(|memory| {
+            json!({
+                "memory_id": memory.memory_id,
+                "summary": memory.summary,
+                "memory_type": memory.memory_type,
+                "confidence": memory.confidence
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut proposal_id = None;
+    if *mode == LoopMode::SuggestOnly && classification.agent_ready {
+        let create = LoopMemoryProposalCreateRequest {
+            project: project.to_string(),
+            loop_id: loop_id.to_string(),
+            proposal_type: "add".to_string(),
+            run_id: Some(run_id),
+            target_memory_id: None,
+            candidate: json!({
+                "canonical_text": format!(
+                    "# Agent-Ready Task Pack\n\nIssue:\n{}\n\nLikely files:\n{}\n\nTest strategy:\n{}\n\nSuggested labels: {}",
+                    issue,
+                    likely_files.join("\n"),
+                    test_strategy,
+                    classification.labels.join(", ")
+                ),
+                "summary": "Agent-ready issue task pack",
+                "memory_type": "task",
+                "tags": ["loop-engineering", "agent-ready", "task-pack"]
+            }),
+            evidence: json!([{
+                "source_kind": "note",
+                "excerpt": issue.chars().take(1_200).collect::<String>()
+            }]),
+            confidence: classification.confidence,
+            risk_notes: Some(
+                "Task pack proposal from issue triage; review before routing to Draft PR."
+                    .to_string(),
+            ),
+        };
+        create.validate().map_err(ApiError::validation)?;
+        let created = insert_loop_memory_proposal(pool, &create).await?;
+        proposal_id = Some(created.proposal.id);
+    }
+    let summary = format!(
+        "Agent-Ready Issue Triage suggests {} with risk {} and ambiguity {}.",
+        classification.labels.join(", "),
+        classification.risk,
+        classification.ambiguity
+    );
+    let output = json!({
+        "ambiguity": classification.ambiguity,
+        "implementation_risk": classification.risk,
+        "suggested_labels": classification.labels,
+        "missing_context": classification.missing_context,
+        "likely_files": likely_files,
+        "test_strategy": test_strategy,
+        "task_pack_proposal_id": proposal_id,
+        "memory_evidence": memory_evidence,
+        "mode": mode.as_str()
+    });
+    append_loop_trace(
+        pool,
+        run_id,
+        "issue_triage",
+        "Agent-Ready Issue Triage report",
+        output.clone(),
+        false,
+    )
+    .await?;
+    Ok(IssueTriageResult { summary, output })
+}
+
+struct IssueClassification {
+    ambiguity: &'static str,
+    risk: &'static str,
+    labels: Vec<&'static str>,
+    missing_context: Vec<&'static str>,
+    confidence: f32,
+    agent_ready: bool,
+}
+
+fn classify_agent_ready_issue(issue: &str) -> IssueClassification {
+    let lower = issue.to_lowercase();
+    let mut missing = Vec::new();
+    if !contains_any(
+        &lower,
+        &["expected", "actual", "reproduce", "acceptance", "should"],
+    ) {
+        missing.push("acceptance_criteria");
+    }
+    if contains_any(
+        &lower,
+        &[
+            "auth",
+            "billing",
+            "security",
+            "migration",
+            "secret",
+            "delete",
+        ],
+    ) {
+        return IssueClassification {
+            ambiguity: if missing.is_empty() { "medium" } else { "high" },
+            risk: "high",
+            labels: vec!["needs-design", "needs-human-clarification"],
+            missing_context: missing,
+            confidence: 0.70,
+            agent_ready: false,
+        };
+    }
+    if !missing.is_empty() || issue.trim().len() < 80 {
+        return IssueClassification {
+            ambiguity: "high",
+            risk: "medium",
+            labels: vec!["needs-human-clarification"],
+            missing_context: missing,
+            confidence: 0.68,
+            agent_ready: false,
+        };
+    }
+    IssueClassification {
+        ambiguity: "low",
+        risk: "low",
+        labels: vec!["agent-ready"],
+        missing_context: Vec::new(),
+        confidence: 0.78,
+        agent_ready: true,
+    }
+}
+
+fn issue_payload_text(payload: Option<&serde_json::Value>) -> String {
+    let Some(payload) = payload else {
+        return "No issue payload was attached to the loop run.".to_string();
+    };
+    let mut parts = Vec::new();
+    collect_issue_payload_strings(payload, &mut parts);
+    if parts.is_empty() {
+        serde_json::to_string_pretty(payload)
+            .unwrap_or_else(|_| "Unprintable issue payload.".to_string())
+    } else {
+        parts.join("\n\n")
+    }
+}
+
+fn collect_issue_payload_strings(value: &serde_json::Value, parts: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(value) => {
+            if value.len() > 3 {
+                parts.push(value.chars().take(2_000).collect());
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter().take(20) {
+                collect_issue_payload_strings(item, parts);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for key in [
+                "identifier",
+                "title",
+                "description",
+                "body",
+                "labels",
+                "comments",
+            ] {
+                if let Some(value) = object.get(key) {
+                    collect_issue_payload_strings(value, parts);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn likely_issue_files(issue: &str) -> Vec<String> {
+    let lower = issue.to_lowercase();
+    let mut files = Vec::new();
+    if contains_any(&lower, &["web", "browser", "ui", "tab"]) {
+        files.push("web/src/".to_string());
+    }
+    if contains_any(&lower, &["cli", "command", "flag"]) {
+        files.push("crates/mem-cli/src/commands/".to_string());
+    }
+    if contains_any(&lower, &["service", "api", "route", "database"]) {
+        files.push("crates/mem-service/src/".to_string());
+    }
+    if contains_any(&lower, &["memory", "query", "search", "retrieval"]) {
+        files.push("crates/mem-search/src/".to_string());
+    }
+    if files.is_empty() {
+        files.push("Inspect repo map before implementation.".to_string());
+    }
+    files
+}
+
+fn issue_test_strategy(issue: &str) -> String {
+    let lower = issue.to_lowercase();
+    if contains_any(&lower, &["web", "ui", "browser"]) {
+        "Add or update Vitest component coverage and run `npm --prefix web run test && npm --prefix web run build`.".to_string()
+    } else if contains_any(&lower, &["service", "api", "database", "route"]) {
+        "Add service/repository tests and run focused cargo tests for mem-service.".to_string()
+    } else {
+        "Run focused cargo tests for touched crates and add regression coverage for changed behavior.".to_string()
+    }
 }
 
 async fn cancel_loop_run_record(

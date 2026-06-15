@@ -86,6 +86,12 @@ or unknown. Observe mode records a triage report only. Suggest-only mode can als
 create a follow-up task proposal for suitable regression or dependency failures.
 This loop does not write code.
 
+When the built-in `agent_ready_issue_triage` loop runs, it reads the attached
+issue payload, classifies ambiguity and implementation risk, suggests labels such
+as `agent-ready`, `needs-human-clarification`, or `needs-design`, estimates
+likely files and test strategy, and creates a task-pack proposal for suitable
+low-risk issues.
+
 ## Approvals
 
 ```bash

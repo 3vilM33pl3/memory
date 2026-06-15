@@ -543,6 +543,79 @@ async fn loop_repository_ci_failure_triage_reports_and_proposes_follow_up() {
         .expect("cleanup test project");
 }
 
+#[tokio::test]
+async fn loop_repository_agent_ready_issue_triage_creates_task_pack() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-loop-issue");
+    let repo_root = format!("/tmp/{project}");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+
+    mem_service::repository::handlers::loops::register_builtin_loop_definitions(&pool)
+        .await
+        .expect("register builtin loops");
+    let project_id =
+        mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+            .await
+            .expect("upsert project");
+    enable_loop_for_project(
+        &pool,
+        project_id,
+        &project,
+        mem_loops::LOOP_AGENT_READY_ISSUE_TRIAGE,
+    )
+    .await;
+
+    let run = mem_service::repository::handlers::loops::record_control_plane_loop_run(
+        &pool,
+        mem_loops::LOOP_AGENT_READY_ISSUE_TRIAGE,
+        &LoopRunRequest {
+            project: Some(project.clone()),
+            repo_root: Some(repo_root.clone()),
+            scope_type: None,
+            scope_id: None,
+            dry_run: true,
+            reason: Some("issue triage repository test".to_string()),
+            trigger_payload: Some(serde_json::json!({
+                "identifier": "MEM-1",
+                "title": "Improve CLI command help text",
+                "description": "The CLI help should explain expected output. Acceptance: update command docs and add a focused parser/help test."
+            })),
+        },
+    )
+    .await
+    .expect("run issue triage loop")
+    .run;
+
+    assert_eq!(run.summary.status, LoopRunStatus::Succeeded);
+    assert!(
+        run.traces
+            .iter()
+            .any(|trace| trace.trace_type == "issue_triage")
+    );
+    assert_eq!(
+        run.output["issue_triage"]["suggested_labels"][0],
+        "agent-ready"
+    );
+    assert!(run.memory_proposals.iter().any(|proposal| {
+        proposal
+            .candidate
+            .get("summary")
+            .and_then(serde_json::Value::as_str)
+            == Some("Agent-ready issue task pack")
+    }));
+
+    cleanup_loop_run(&pool, run.summary.id).await;
+    cleanup_loop_triggers(&pool, &repo_root).await;
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
 async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     let memory_id = Uuid::new_v4();
     sqlx::query(
