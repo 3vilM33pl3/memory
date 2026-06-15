@@ -2,11 +2,14 @@ use crate::prelude::*;
 use crate::*;
 use mem_api::{EffectiveLoopSettings, LoopActionKind};
 use mem_loops::{
-    ContextPackBuildInput, TriggerRouteCandidate, budget_blocked, build_context_pack,
-    builtin_loop_definitions, diff_context_packs, estimate_tokens, evaluate_action,
-    resolve_effective_settings, route_trigger_event, validate_definition,
+    ContextPackBuildInput, MockLoopRunner, RunnerBudget, RunnerCapabilityProfile, RunnerInvocation,
+    RunnerTaskPack, RunnerWorkspaceRef, TriggerRouteCandidate, WorktreeSandboxManager,
+    budget_blocked, build_context_pack, builtin_loop_definitions, diff_context_packs,
+    estimate_tokens, evaluate_action, invoke_runner_with_policy, resolve_effective_settings,
+    route_trigger_event, validate_definition,
 };
 use serde_json::json;
+use std::path::PathBuf;
 
 #[derive(Debug, SerdeDeserialize)]
 pub(crate) struct LoopDefinitionQuery {
@@ -1005,6 +1008,45 @@ async fn create_loop_setting_approval(
     row_to_loop_approval(row)
 }
 
+async fn create_loop_run_approval(
+    pool: &PgPool,
+    project_id: Option<Uuid>,
+    run_id: Uuid,
+    loop_id: &str,
+    action_type: LoopActionKind,
+    proposed_action: serde_json::Value,
+    risk_reason: &str,
+    requester: Option<&str>,
+) -> Result<LoopApprovalRequestRecord, ApiError> {
+    let row = sqlx::query(
+        r#"
+        INSERT INTO approval_requests (
+            id, project_id, run_id, loop_id, action_type, proposed_action_json,
+            risk_reason, status, requester, created_at
+        )
+        VALUES (
+            gen_random_uuid(), $1, $2, $3, $4, $5,
+            $6, 'pending', $7, now()
+        )
+        RETURNING
+            id, run_id, (SELECT slug FROM projects WHERE id = approval_requests.project_id) AS project,
+            loop_id, action_type, proposed_action_json, risk_reason, status, requester,
+            reviewer, decision_reason, created_at, resolved_at
+        "#,
+    )
+    .bind(project_id)
+    .bind(run_id)
+    .bind(loop_id)
+    .bind(action_type.as_str())
+    .bind(proposed_action)
+    .bind(risk_reason)
+    .bind(requester)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    row_to_loop_approval(row)
+}
+
 async fn insert_loop_setting_audit(
     pool: &PgPool,
     loop_id: Option<&str>,
@@ -1377,6 +1419,23 @@ async fn create_control_plane_loop_run(
     .await
 }
 
+fn policy_actions_for_loop(loop_id: &str) -> Vec<LoopActionKind> {
+    let mut actions = vec![
+        LoopActionKind::ReadMemory,
+        LoopActionKind::ReadRepo,
+        LoopActionKind::WriteMemoryProposal,
+    ];
+    if loop_id == mem_loops::LOOP_DRAFT_PR {
+        actions.extend([
+            LoopActionKind::CreateBranch,
+            LoopActionKind::WriteRepo,
+            LoopActionKind::RunCommand,
+            LoopActionKind::InvokeRunner,
+        ]);
+    }
+    actions
+}
+
 async fn create_control_plane_loop_run_with_trigger(
     pool: &PgPool,
     loop_id: &str,
@@ -1401,14 +1460,10 @@ async fn create_control_plane_loop_run_with_trigger(
         manual_run,
     )
     .await?;
-    let policy_decisions = [
-        LoopActionKind::ReadMemory,
-        LoopActionKind::ReadRepo,
-        LoopActionKind::WriteMemoryProposal,
-    ]
-    .into_iter()
-    .map(|action| evaluate_action(&effective.mode, action))
-    .collect::<Vec<_>>();
+    let policy_decisions = policy_actions_for_loop(&definition.loop_id)
+        .into_iter()
+        .map(|action| evaluate_action(&effective.mode, action))
+        .collect::<Vec<_>>();
     let blocked = !effective.blocked_reasons.is_empty()
         || !policy_decisions
             .iter()
@@ -1637,6 +1692,39 @@ async fn create_control_plane_loop_run_with_trigger(
             .bind(run_id)
             .bind(&issue_triage.summary)
             .bind(&issue_triage.output)
+            .execute(pool)
+            .await
+            .map_err(ApiError::sql)?;
+        } else if definition.loop_id == mem_loops::LOOP_DRAFT_PR && !blocked {
+            let draft_pr = emit_draft_pr_loop_report(
+                pool,
+                run_id,
+                request,
+                &definition.loop_id,
+                &effective.mode,
+                &context_pack,
+            )
+            .await?;
+            sqlx::query(
+                r#"
+                UPDATE loop_runs
+                SET status = $2,
+                    output_summary = $3,
+                    output_json = output_json || jsonb_build_object('draft_pr', $4::jsonb),
+                    blocked_reasons_json = CASE
+                        WHEN $5::text IS NULL THEN blocked_reasons_json
+                        WHEN COALESCE(blocked_reasons_json, '[]'::jsonb) ? $5::text THEN blocked_reasons_json
+                        ELSE COALESCE(blocked_reasons_json, '[]'::jsonb) || jsonb_build_array($5::text)
+                    END,
+                    updated_at = now()
+                WHERE id = $1
+                "#,
+            )
+            .bind(run_id)
+            .bind(draft_pr.status.as_str())
+            .bind(&draft_pr.summary)
+            .bind(&draft_pr.output)
+            .bind(&draft_pr.blocked_reason)
             .execute(pool)
             .await
             .map_err(ApiError::sql)?;
@@ -3584,6 +3672,305 @@ fn issue_test_strategy(issue: &str) -> String {
     } else {
         "Run focused cargo tests for touched crates and add regression coverage for changed behavior.".to_string()
     }
+}
+
+struct DraftPrResult {
+    status: LoopRunStatus,
+    summary: String,
+    output: serde_json::Value,
+    blocked_reason: Option<String>,
+}
+
+async fn emit_draft_pr_loop_report(
+    pool: &PgPool,
+    run_id: Uuid,
+    request: &LoopRunRequest,
+    loop_id: &str,
+    mode: &LoopMode,
+    context_pack: &LoopContextPackResponse,
+) -> Result<DraftPrResult, ApiError> {
+    let project = request
+        .project
+        .as_deref()
+        .ok_or_else(|| ApiError::validation(ValidationError::new("project is required")))?;
+    let project_id = upsert_project_slug(pool, project)
+        .await
+        .map_err(ApiError::sql)?;
+    let issue = issue_payload_text(request.trigger_payload.as_ref());
+    let lower = issue.to_lowercase();
+    let sensitive = contains_any(
+        &lower,
+        &[
+            "auth",
+            "billing",
+            "security",
+            "migration",
+            "infrastructure",
+            "secret",
+            "delete",
+        ],
+    );
+    let approved = payload_truthy(
+        request.trigger_payload.as_ref(),
+        &["approved", "loop_approved", "explicit_user_approval"],
+    );
+    let agent_ready = contains_any(&lower, &["agent-ready", "agent_ready"]);
+    if sensitive || !approved || !agent_ready {
+        let reason = if sensitive {
+            "sensitive_area_requires_approval"
+        } else if !agent_ready {
+            "missing_agent_ready_label"
+        } else {
+            "missing_explicit_issue_approval"
+        };
+        let approval = create_loop_run_approval(
+            pool,
+            Some(project_id),
+            run_id,
+            loop_id,
+            LoopActionKind::WriteRepo,
+            json!({
+                "draft_pr": true,
+                "issue": issue,
+                "required_label": "agent-ready",
+                "requires_explicit_issue_approval": true,
+                "auto_merge": false
+            }),
+            "Draft PR loop can write repo changes and requires approved low-risk issue scope.",
+            request.reason.as_deref(),
+        )
+        .await?;
+        let output = json!({
+            "gate": {
+                "agent_ready": agent_ready,
+                "approved": approved,
+                "sensitive": sensitive,
+                "blocked_reason": reason,
+                "approval_id": approval.id
+            },
+            "draft_pr": null,
+            "auto_merge": false
+        });
+        append_loop_trace(
+            pool,
+            run_id,
+            "draft_pr_gate",
+            "Draft PR gate blocked",
+            output.clone(),
+            false,
+        )
+        .await?;
+        return Ok(DraftPrResult {
+            status: LoopRunStatus::Blocked,
+            summary: "Draft PR loop is waiting for approval before writing code.".to_string(),
+            output,
+            blocked_reason: Some(reason.to_string()),
+        });
+    }
+
+    let repo_root = request
+        .repo_root
+        .as_deref()
+        .ok_or_else(|| ApiError::validation(ValidationError::new("repo_root is required")))?;
+    let manager = WorktreeSandboxManager::default();
+    let workspace = manager
+        .create_workspace(&mem_loops::SandboxWorkspaceSpec {
+            project: project.to_string(),
+            repo_root: PathBuf::from(repo_root),
+            run_id,
+            base_ref: None,
+        })
+        .map_err(|error| ApiError::io(anyhow::anyhow!("create draft PR worktree: {error}")))?;
+    let task_pack = RunnerTaskPack {
+        title: draft_pr_issue_title(request.trigger_payload.as_ref()),
+        prompt: issue.clone(),
+        acceptance_criteria: draft_pr_acceptance_criteria(request.trigger_payload.as_ref()),
+        metadata: json!({ "expected_changed_file": "draft-pr-plan.md" }),
+    };
+    let runner_result = invoke_runner_with_policy(
+        &MockLoopRunner::success("mock-draft-pr"),
+        RunnerInvocation {
+            runner_id: "mock-draft-pr".to_string(),
+            task_pack,
+            context_pack: context_pack.pack.clone(),
+            capability_profile: RunnerCapabilityProfile {
+                can_read_repo: true,
+                can_write_repo: true,
+                can_run_commands: true,
+                can_propose_memory: true,
+                allowed_commands: draft_pr_allowed_commands(request.trigger_payload.as_ref()),
+            },
+            workspace: RunnerWorkspaceRef {
+                repo_root: repo_root.to_string(),
+                worktree_path: Some(workspace.worktree_path.display().to_string()),
+                branch: Some(workspace.branch.clone()),
+            },
+            budget: RunnerBudget {
+                max_seconds: 600,
+                max_tokens: 20_000,
+                max_cost_usd: 2.0,
+            },
+            mode: mode.clone(),
+        },
+    );
+    let checks = run_draft_pr_checks(&manager, &workspace, request.trigger_payload.as_ref())?;
+    let output = json!({
+        "gate": {
+            "agent_ready": true,
+            "approved": true,
+            "sensitive": false
+        },
+        "workspace": workspace.runner_workspace_ref(),
+        "runner": runner_result,
+        "checks": checks,
+        "draft_pr": {
+            "mode": "draft_only",
+            "branch": workspace.branch,
+            "worktree_path": workspace.worktree_path,
+            "url": null,
+            "auto_merge": false,
+            "open_pr_requires_external_git_host_adapter": true
+        }
+    });
+    append_loop_trace(
+        pool,
+        run_id,
+        "draft_pr",
+        "Draft PR gated execution",
+        output.clone(),
+        false,
+    )
+    .await?;
+    Ok(DraftPrResult {
+        status: LoopRunStatus::Succeeded,
+        summary: "Draft PR loop prepared an isolated branch and draft-only PR payload.".to_string(),
+        output,
+        blocked_reason: None,
+    })
+}
+
+fn payload_truthy(payload: Option<&serde_json::Value>, keys: &[&str]) -> bool {
+    let Some(payload) = payload else {
+        return false;
+    };
+    match payload {
+        serde_json::Value::Bool(value) => *value,
+        serde_json::Value::Array(items) => {
+            items.iter().any(|item| payload_truthy(Some(item), keys))
+        }
+        serde_json::Value::Object(object) => object.iter().any(|(key, value)| {
+            (keys.iter().any(|candidate| key == candidate)
+                && matches!(value, serde_json::Value::Bool(true)))
+                || payload_truthy(Some(value), keys)
+        }),
+        _ => false,
+    }
+}
+
+fn draft_pr_issue_title(payload: Option<&serde_json::Value>) -> String {
+    payload
+        .and_then(|payload| payload.get("title"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Draft PR loop task")
+        .to_string()
+}
+
+fn draft_pr_acceptance_criteria(payload: Option<&serde_json::Value>) -> Vec<String> {
+    payload
+        .and_then(|payload| payload.get("acceptance_criteria"))
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .filter(|items: &Vec<String>| !items.is_empty())
+        .unwrap_or_else(|| vec!["Open a draft-only PR for human review.".to_string()])
+}
+
+fn draft_pr_allowed_commands(payload: Option<&serde_json::Value>) -> Vec<String> {
+    payload
+        .and_then(|payload| payload.get("allowed_commands"))
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .filter(|items: &Vec<String>| !items.is_empty())
+        .unwrap_or_else(|| vec!["cargo".to_string(), "npm".to_string(), "sh".to_string()])
+}
+
+fn run_draft_pr_checks(
+    manager: &WorktreeSandboxManager,
+    workspace: &mem_loops::SandboxWorkspace,
+    payload: Option<&serde_json::Value>,
+) -> Result<Vec<serde_json::Value>, ApiError> {
+    if !payload_truthy(payload, &["run_checks"]) {
+        return Ok(vec![json!({
+            "status": "planned",
+            "reason": "run_checks was not enabled in the trigger payload"
+        })]);
+    }
+    let checks = payload
+        .and_then(|payload| payload.get("checks"))
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let limits = mem_loops::SandboxLimits {
+        allowed_commands: draft_pr_allowed_commands(payload),
+        ..mem_loops::SandboxLimits::default()
+    };
+    checks
+        .iter()
+        .map(|check| {
+            let request = sandbox_command_from_check(check)?;
+            let log = manager
+                .run_command(workspace, &request, &limits)
+                .map_err(|error| ApiError::io(anyhow::anyhow!("run draft PR check: {error}")))?;
+            Ok(json!({
+                "command": log.command,
+                "exit_code": log.exit_code,
+                "timed_out": log.timed_out,
+                "limit_violations": log.limit_violations,
+                "status": if log.exit_code == 0 && !log.timed_out { "passed" } else { "failed" }
+            }))
+        })
+        .collect()
+}
+
+fn sandbox_command_from_check(
+    value: &serde_json::Value,
+) -> Result<mem_loops::SandboxCommandRequest, ApiError> {
+    if let Some(command) = value.as_str() {
+        let mut parts = command.split_whitespace();
+        let Some(program) = parts.next() else {
+            return Err(ApiError::validation(ValidationError::new(
+                "check command must be non-empty",
+            )));
+        };
+        return Ok(mem_loops::SandboxCommandRequest::new(program, parts));
+    }
+    let program = value
+        .get("program")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| ApiError::validation(ValidationError::new("check.program is required")))?;
+    let args = value
+        .get("args")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(mem_loops::SandboxCommandRequest::new(program, args))
 }
 
 async fn cancel_loop_run_record(

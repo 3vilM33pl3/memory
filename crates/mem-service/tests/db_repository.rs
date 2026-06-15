@@ -4,6 +4,7 @@ use mem_api::{
     LoopTriggerRouteRequest, LoopTrustLevel, MemoryStatus, MemoryType,
 };
 use sqlx::PgPool;
+use std::{fs, path::Path, path::PathBuf, process::Command};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -616,6 +617,169 @@ async fn loop_repository_agent_ready_issue_triage_creates_task_pack() {
         .expect("cleanup test project");
 }
 
+#[tokio::test]
+async fn loop_repository_draft_pr_blocks_until_issue_is_approved() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-loop-draft-gate");
+    let repo_root = format!("/tmp/{project}");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+
+    mem_service::repository::handlers::loops::register_builtin_loop_definitions(&pool)
+        .await
+        .expect("register builtin loops");
+    let project_id =
+        mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+            .await
+            .expect("upsert project");
+    enable_loop_for_project_mode(
+        &pool,
+        project_id,
+        &project,
+        mem_loops::LOOP_DRAFT_PR,
+        LoopMode::DraftOutput,
+    )
+    .await;
+
+    let run = mem_service::repository::handlers::loops::record_control_plane_loop_run(
+        &pool,
+        mem_loops::LOOP_DRAFT_PR,
+        &LoopRunRequest {
+            project: Some(project.clone()),
+            repo_root: Some(repo_root.clone()),
+            scope_type: None,
+            scope_id: None,
+            dry_run: true,
+            reason: Some("draft pr gate repository test".to_string()),
+            trigger_payload: Some(serde_json::json!({
+                "title": "Improve CLI help",
+                "labels": ["agent-ready"]
+            })),
+        },
+    )
+    .await
+    .expect("run draft pr loop")
+    .run;
+
+    assert_eq!(run.summary.status, LoopRunStatus::Blocked);
+    assert!(
+        run.summary
+            .blocked_reasons
+            .contains(&"missing_explicit_issue_approval".to_string())
+    );
+    let pending_approvals: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM approval_requests WHERE run_id = $1 AND status = 'pending' AND action_type = 'write_repo'",
+    )
+    .bind(run.summary.id)
+    .fetch_one(&pool)
+    .await
+    .expect("count pending approvals");
+    assert_eq!(pending_approvals, 1);
+    assert_eq!(
+        run.output["draft_pr"]["gate"]["approval_id"]
+            .as_str()
+            .is_some(),
+        true
+    );
+
+    cleanup_loop_run(&pool, run.summary.id).await;
+    cleanup_loop_triggers(&pool, &repo_root).await;
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
+#[tokio::test]
+async fn loop_repository_draft_pr_creates_isolated_workspace_for_approved_issue() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-loop-draft");
+    let repo_root = init_git_repo("draft-pr");
+    let repo_root_string = repo_root.display().to_string();
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+
+    mem_service::repository::handlers::loops::register_builtin_loop_definitions(&pool)
+        .await
+        .expect("register builtin loops");
+    let project_id =
+        mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+            .await
+            .expect("upsert project");
+    enable_loop_for_project_mode(
+        &pool,
+        project_id,
+        &project,
+        mem_loops::LOOP_DRAFT_PR,
+        LoopMode::DraftOutput,
+    )
+    .await;
+
+    let run = mem_service::repository::handlers::loops::record_control_plane_loop_run(
+        &pool,
+        mem_loops::LOOP_DRAFT_PR,
+        &LoopRunRequest {
+            project: Some(project.clone()),
+            repo_root: Some(repo_root_string.clone()),
+            scope_type: None,
+            scope_id: None,
+            dry_run: true,
+            reason: Some("draft pr approved repository test".to_string()),
+            trigger_payload: Some(serde_json::json!({
+                "title": "Improve CLI help",
+                "description": "Acceptance: update help text.",
+                "labels": ["agent-ready"],
+                "approved": true,
+                "run_checks": true,
+                "allowed_commands": ["sh"],
+                "checks": [{"program": "sh", "args": ["-c", "true"]}]
+            })),
+        },
+    )
+    .await
+    .expect("run draft pr loop")
+    .run;
+
+    assert_eq!(run.summary.status, LoopRunStatus::Succeeded);
+    assert!(
+        run.traces
+            .iter()
+            .any(|trace| trace.trace_type == "draft_pr")
+    );
+    assert_eq!(run.output["draft_pr"]["draft_pr"]["auto_merge"], false);
+    assert_eq!(
+        run.output["draft_pr"]["draft_pr"]["mode"].as_str(),
+        Some("draft_only")
+    );
+    assert!(
+        run.output["draft_pr"]["draft_pr"]["branch"]
+            .as_str()
+            .is_some_and(|branch| branch.starts_with("memory/loops/"))
+    );
+    assert_eq!(
+        run.output["draft_pr"]["checks"][0]["status"].as_str(),
+        Some("passed")
+    );
+    let worktree_path = run.output["draft_pr"]["draft_pr"]["worktree_path"]
+        .as_str()
+        .expect("worktree path");
+    assert!(Path::new(worktree_path).exists());
+
+    cleanup_loop_run(&pool, run.summary.id).await;
+    cleanup_loop_triggers(&pool, &repo_root_string).await;
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+    let _ = fs::remove_dir_all(repo_root);
+}
+
 async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     let memory_id = Uuid::new_v4();
     sqlx::query(
@@ -760,6 +924,16 @@ async fn enable_project_loop(pool: &PgPool, project_id: Uuid, project: &str) {
 }
 
 async fn enable_loop_for_project(pool: &PgPool, project_id: Uuid, project: &str, loop_id: &str) {
+    enable_loop_for_project_mode(pool, project_id, project, loop_id, LoopMode::SuggestOnly).await;
+}
+
+async fn enable_loop_for_project_mode(
+    pool: &PgPool,
+    project_id: Uuid,
+    project: &str,
+    loop_id: &str,
+    mode: LoopMode,
+) {
     sqlx::query(
         r#"
         INSERT INTO loop_settings (
@@ -778,10 +952,45 @@ async fn enable_loop_for_project(pool: &PgPool, project_id: Uuid, project: &str,
     .bind(loop_id)
     .bind(project)
     .bind(project_id)
-    .bind(LoopMode::SuggestOnly.as_str())
+    .bind(mode.as_str())
     .execute(pool)
     .await
     .expect("enable project loop");
+}
+
+fn init_git_repo(name: &str) -> PathBuf {
+    let repo = std::env::temp_dir().join(format!("mem-service-loop-{name}-{}", Uuid::new_v4()));
+    fs::create_dir_all(&repo).expect("create temp repo");
+    git(&repo, &["init", "-b", "main"]);
+    fs::write(repo.join("README.md"), "initial\n").expect("write readme");
+    git(&repo, &["add", "README.md"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test User",
+            "commit",
+            "-m",
+            "initial",
+        ],
+    );
+    repo
+}
+
+fn git(repo: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 async fn cleanup_loop_triggers(pool: &PgPool, repo_root: &str) {

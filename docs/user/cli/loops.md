@@ -113,6 +113,13 @@ sandbox allowlist, and normalizes output back into the shared runner result
 schema. Adapter results do not include environment variables or credential
 values.
 
+The built-in `draft_pr` loop only proceeds for approved `agent-ready` issue
+payloads. Sensitive areas such as auth, billing, security, migrations, secrets,
+deletion, or infrastructure stop at a pending approval request. Approved low-risk
+runs create a generated worktree/branch, build a task and context pack, invoke
+the runner under budget and capability limits, run configured checks when
+requested, and emit draft-only PR metadata with `auto_merge = false`.
+
 ## Approvals
 
 ```bash
