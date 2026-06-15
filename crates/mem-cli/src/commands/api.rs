@@ -908,12 +908,20 @@ impl ApiClient {
     pub(crate) async fn loop_approvals(
         &self,
         project: Option<&str>,
+        run_id: Option<Uuid>,
+        loop_id: Option<&str>,
         status: Option<LoopApprovalStatus>,
         limit: i64,
     ) -> Result<LoopApprovalsResponse> {
         let mut query = vec![("limit", limit.to_string())];
         if let Some(project) = project {
             query.push(("project", project.to_string()));
+        }
+        if let Some(run_id) = run_id {
+            query.push(("run_id", run_id.to_string()));
+        }
+        if let Some(loop_id) = loop_id {
+            query.push(("loop_id", loop_id.to_string()));
         }
         if let Some(status) = status {
             query.push(("status", status.as_str().to_string()));
@@ -922,6 +930,25 @@ impl ApiClient {
             self.client
                 .get(service_url(&self.config, "/v1/loops/approvals"))
                 .query(&query)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_approval_edit(
+        &self,
+        approval_id: Uuid,
+        request: &LoopApprovalDecisionRequest,
+    ) -> Result<LoopApprovalDecisionResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/loops/approvals/{approval_id}/edit"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
                 .send()
                 .await?,
         )

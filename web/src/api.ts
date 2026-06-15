@@ -25,6 +25,7 @@ import type {
   LlmAuditStatusResponse,
   LoopDefinitionResponse,
   LoopDefinitionsResponse,
+  LoopApprovalDecisionResponse,
   LoopApprovalsResponse,
   LoopGlobalStateResponse,
   LoopGlobalStateUpdateRequest,
@@ -345,15 +346,65 @@ export async function getLoopRun(runId: string): Promise<LoopRunResponse> {
 
 export async function getLoopApprovals(options: {
   project?: string | null;
+  runId?: string | null;
+  loopId?: string | null;
   status?: string | null;
   limit?: number;
 }): Promise<LoopApprovalsResponse> {
   const params = new URLSearchParams();
   if (options.project) params.set("project", options.project);
+  if (options.runId) params.set("run_id", options.runId);
+  if (options.loopId) params.set("loop_id", options.loopId);
   if (options.status) params.set("status", options.status);
   if (options.limit) params.set("limit", String(options.limit));
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return parseJson(await apiFetch(`/v1/loops/approvals${suffix}`));
+}
+
+async function postLoopApprovalDecision(
+  approvalId: string,
+  action: "approve" | "reject" | "edit",
+  request: { reviewer?: string | null; reason?: string | null; edited_action?: unknown },
+): Promise<LoopApprovalDecisionResponse> {
+  return parseJson(
+    await apiFetch(`/v1/loops/approvals/${encodeURIComponent(approvalId)}/${action}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+}
+
+export async function approveLoopApproval(
+  approvalId: string,
+  reason?: string,
+): Promise<LoopApprovalDecisionResponse> {
+  return postLoopApprovalDecision(approvalId, "approve", {
+    reviewer: "web",
+    reason: reason || "Approved from the browser UI.",
+  });
+}
+
+export async function rejectLoopApproval(
+  approvalId: string,
+  reason?: string,
+): Promise<LoopApprovalDecisionResponse> {
+  return postLoopApprovalDecision(approvalId, "reject", {
+    reviewer: "web",
+    reason: reason || "Rejected from the browser UI.",
+  });
+}
+
+export async function editLoopApproval(
+  approvalId: string,
+  editedAction: unknown,
+  reason?: string,
+): Promise<LoopApprovalDecisionResponse> {
+  return postLoopApprovalDecision(approvalId, "edit", {
+    reviewer: "web",
+    reason: reason || "Edited from the browser UI.",
+    edited_action: editedAction,
+  });
 }
 
 export async function getLoopGlobalState(): Promise<LoopGlobalStateResponse> {

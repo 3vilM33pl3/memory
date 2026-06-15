@@ -123,6 +123,8 @@ function renderTab(overrides: Partial<ComponentProps<typeof AutomationsTab>> = {
     selectedLoopRun: null,
     selectedLoopRunApprovals: [],
     selectedLoopRunLoading: false,
+    approvalQueue: [],
+    approvalEdits: {},
     onRefresh: vi.fn(),
     onSelectAutomation: vi.fn(),
     onSetLoopMode: vi.fn(),
@@ -131,6 +133,8 @@ function renderTab(overrides: Partial<ComponentProps<typeof AutomationsTab>> = {
     onSnoozeLoop: vi.fn(),
     onRunLoop: vi.fn(),
     onLoadLoopRun: vi.fn(),
+    onApprovalEditChange: vi.fn(),
+    onApprovalDecision: vi.fn(),
     onToggleGlobalKillSwitch: vi.fn(),
     ...overrides,
   };
@@ -204,5 +208,46 @@ describe("AutomationsTab", () => {
     expect(screen.getByText("add · pending")).toBeInTheDocument();
     expect(screen.getByText("write memory proposal · pending")).toBeInTheDocument();
     expect(screen.getByText("Payload redacted.")).toBeInTheDocument();
+  });
+
+  it("renders pending approvals with edit and decision actions", () => {
+    const approval = {
+      id: "77777777-7777-7777-7777-777777777777",
+      run_id: automation.lastRun!.id,
+      project: "memory",
+      loop_id: "context_pack_refresh",
+      action_type: "write_memory_proposal",
+      proposed_action: { proposal_id: "66666666-6666-6666-6666-666666666666" },
+      risk_reason: "Durable memory write requires review.",
+      requester: "loop-agent",
+      status: "pending" as const,
+      created_at: "2026-06-15T10:00:03Z",
+    };
+    const props = renderTab({
+      selectedLoopRun: runDetail,
+      selectedLoopRunApprovals: [approval],
+      approvalQueue: [approval],
+      approvalEdits: {
+        [approval.id]: '{\n  "proposal_id": "66666666-6666-6666-6666-666666666666"\n}',
+      },
+    });
+
+    expect(screen.getByText("Approval queue")).toBeInTheDocument();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+    expect(screen.getAllByText("Memory proposal add")[0]).toBeInTheDocument();
+
+    fireEvent.change(screen.getAllByLabelText("Proposed action")[0], {
+      target: { value: '{"proposal_id":"updated"}' },
+    });
+    expect(props.onApprovalEditChange).toHaveBeenCalledWith(approval.id, '{"proposal_id":"updated"}');
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Approve" })[0]);
+    expect(props.onApprovalDecision).toHaveBeenCalledWith(approval, "approve");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Save edit" })[0]);
+    expect(props.onApprovalDecision).toHaveBeenCalledWith(approval, "edit");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Reject" })[0]);
+    expect(props.onApprovalDecision).toHaveBeenCalledWith(approval, "reject");
   });
 });

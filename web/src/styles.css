@@ -513,6 +513,26 @@ pre {
   overflow-wrap: anywhere;
 }
 
+.approval-edit-label {
+  display: block;
+  margin-top: 0.45rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.approval-edit {
+  width: 100%;
+  min-height: 8rem;
+  margin-top: 0.25rem;
+  padding: 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: 0.76rem/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  resize: vertical;
+}
+
 .action-card p {
   margin: 0.25rem 0 0;
   color: var(--muted);

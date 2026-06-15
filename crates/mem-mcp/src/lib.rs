@@ -54,6 +54,7 @@ const TOOL_MEMORY_LOOP_FEEDBACK: &str = "memory_loop_feedback";
 const TOOL_MEMORY_LOOP_LIST_APPROVALS: &str = "memory_loop_list_approvals";
 const TOOL_MEMORY_LOOP_APPROVE: &str = "memory_loop_approve";
 const TOOL_MEMORY_LOOP_REJECT: &str = "memory_loop_reject";
+const TOOL_MEMORY_LOOP_EDIT_APPROVAL: &str = "memory_loop_edit_approval";
 const TOOL_MEMORY_LOOP_GLOBAL_STATE: &str = "memory_loop_global_state";
 const TOOL_MEMORY_LOOP_SET_GLOBAL_KILL_SWITCH: &str = "memory_loop_set_global_kill_switch";
 
@@ -181,6 +182,7 @@ impl ServerHandler for MemoryMcpServer {
             TOOL_MEMORY_LOOP_LIST_APPROVALS => self.tool_loop_list_approvals(arguments).await,
             TOOL_MEMORY_LOOP_APPROVE => self.tool_loop_approve(arguments).await,
             TOOL_MEMORY_LOOP_REJECT => self.tool_loop_reject(arguments).await,
+            TOOL_MEMORY_LOOP_EDIT_APPROVAL => self.tool_loop_edit_approval(arguments).await,
             TOOL_MEMORY_LOOP_GLOBAL_STATE => self.tool_loop_global_state(arguments).await,
             TOOL_MEMORY_LOOP_SET_GLOBAL_KILL_SWITCH => {
                 self.tool_loop_set_global_kill_switch(arguments).await
@@ -759,6 +761,8 @@ impl MemoryMcpServer {
             .client
             .loop_approvals(
                 args.project.as_deref(),
+                args.run_id.as_deref(),
+                args.loop_id.as_deref(),
                 args.status.as_ref(),
                 args.limit.unwrap_or(50).clamp(1, 200),
             )
@@ -790,6 +794,7 @@ impl MemoryMcpServer {
         let request = LoopApprovalDecisionRequest {
             reviewer: args.reviewer,
             reason: args.reason,
+            edited_action: None,
         };
         let response = self
             .client
@@ -813,6 +818,7 @@ impl MemoryMcpServer {
         let request = LoopApprovalDecisionRequest {
             reviewer: args.reviewer,
             reason: args.reason,
+            edited_action: None,
         };
         let response = self
             .client
@@ -822,6 +828,30 @@ impl MemoryMcpServer {
         structured_with_text(
             format!(
                 "Rejected {} for loop {}.",
+                response.approval.id, response.approval.loop_id
+            ),
+            json!({ "response": response }),
+        )
+    }
+
+    async fn tool_loop_edit_approval(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopApprovalEditArgs = from_args(arguments)?;
+        let request = LoopApprovalDecisionRequest {
+            reviewer: args.reviewer,
+            reason: args.reason,
+            edited_action: Some(args.proposed_action),
+        };
+        let response = self
+            .client
+            .loop_approval_edit(&args.approval_id, &request)
+            .await
+            .map_err(api_error)?;
+        structured_with_text(
+            format!(
+                "Edited {} for loop {}.",
                 response.approval.id, response.approval.loop_id
             ),
             json!({ "response": response }),
@@ -1108,12 +1138,20 @@ impl MemoryApiClient {
     pub async fn loop_approvals(
         &self,
         project: Option<&str>,
+        run_id: Option<&str>,
+        loop_id: Option<&str>,
         status: Option<&LoopApprovalStatus>,
         limit: i64,
     ) -> Result<LoopApprovalsResponse> {
         let mut params = vec![format!("limit={limit}")];
         if let Some(project) = project {
             params.push(format!("project={}", urlencoding::encode(project)));
+        }
+        if let Some(run_id) = run_id {
+            params.push(format!("run_id={}", urlencoding::encode(run_id)));
+        }
+        if let Some(loop_id) = loop_id {
+            params.push(format!("loop_id={}", urlencoding::encode(loop_id)));
         }
         if let Some(status) = status {
             params.push(format!("status={}", status.as_str()));
@@ -1134,6 +1172,15 @@ impl MemoryApiClient {
             request,
         )
         .await
+    }
+
+    pub async fn loop_approval_edit(
+        &self,
+        approval_id: &str,
+        request: &LoopApprovalDecisionRequest,
+    ) -> Result<LoopApprovalDecisionResponse> {
+        self.post(&format!("/v1/loops/approvals/{approval_id}/edit"), request)
+            .await
     }
 
     pub async fn loop_global_state(&self) -> Result<LoopGlobalStateResponse> {
@@ -1409,6 +1456,8 @@ struct LoopFeedbackArgs {
 #[derive(Debug, Deserialize)]
 struct LoopApprovalsArgs {
     project: Option<String>,
+    run_id: Option<String>,
+    loop_id: Option<String>,
     status: Option<LoopApprovalStatus>,
     limit: Option<i64>,
 }
@@ -1416,6 +1465,14 @@ struct LoopApprovalsArgs {
 #[derive(Debug, Deserialize)]
 struct LoopApprovalDecisionArgs {
     approval_id: String,
+    reviewer: Option<String>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoopApprovalEditArgs {
+    approval_id: String,
+    proposed_action: Value,
     reviewer: Option<String>,
     reason: Option<String>,
 }
@@ -1710,6 +1767,8 @@ fn tool_definitions() -> Vec<Tool> {
             "List pending or resolved loop approval requests.",
             object_schema(&[
                 optional_string("project", "Project slug filter."),
+                optional_string("run_id", "Loop run UUID filter."),
+                optional_string("loop_id", "Loop identifier filter."),
                 optional_enum("status", &loop_approval_status_values()),
                 optional_integer("limit", "Maximum approvals to return."),
             ]),
@@ -1730,6 +1789,16 @@ fn tool_definitions() -> Vec<Tool> {
                 required_string("approval_id", "Loop approval UUID."),
                 optional_string("reviewer", "Reviewer identity."),
                 optional_string("reason", "Rejection reason."),
+            ]),
+        ),
+        mutating_tool(
+            TOOL_MEMORY_LOOP_EDIT_APPROVAL,
+            "Edit a loop approval request proposed action after human review.",
+            object_schema(&[
+                required_string("approval_id", "Loop approval UUID."),
+                required_object("proposed_action", "Edited proposed action JSON."),
+                optional_string("reviewer", "Reviewer identity."),
+                optional_string("reason", "Edit reason."),
             ]),
         ),
         tool(
@@ -1884,6 +1953,10 @@ fn required_string(name: &'static str, description: &'static str) -> SchemaField
 
 fn required_boolean(name: &'static str, description: &'static str) -> SchemaField {
     field(name, "boolean", description, true)
+}
+
+fn required_object(name: &'static str, description: &'static str) -> SchemaField {
+    field(name, "object", description, true)
 }
 
 fn optional_string(name: &'static str, description: &'static str) -> SchemaField {

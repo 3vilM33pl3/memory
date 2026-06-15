@@ -1,6 +1,6 @@
 use mem_api::{
-    LoopMode, LoopRunRequest, LoopRunStatus, LoopTriggerRouteRequest, LoopTrustLevel, MemoryStatus,
-    MemoryType,
+    LoopApprovalDecisionRequest, LoopApprovalStatus, LoopMode, LoopRunRequest, LoopRunStatus,
+    LoopTriggerRouteRequest, LoopTrustLevel, MemoryStatus, MemoryType,
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -190,6 +190,96 @@ async fn loop_repository_routes_trigger_events_and_dedupes() {
         .expect("cleanup test project");
 }
 
+#[tokio::test]
+async fn loop_repository_rejects_approval_and_blocks_run_safely() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-loop-approval");
+    let repo_root = format!("/tmp/{project}");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+
+    mem_service::repository::handlers::loops::register_builtin_loop_definitions(&pool)
+        .await
+        .expect("register builtin loops");
+    let project_id =
+        mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+            .await
+            .expect("upsert project");
+
+    let request = LoopRunRequest {
+        project: Some(project.clone()),
+        repo_root: Some(repo_root.clone()),
+        scope_type: None,
+        scope_id: None,
+        dry_run: true,
+        reason: Some("approval rejection test".to_string()),
+        trigger_payload: None,
+    };
+    let run = mem_service::repository::handlers::loops::record_control_plane_loop_run(
+        &pool,
+        mem_loops::LOOP_CONTEXT_PACK_REFRESH,
+        &request,
+    )
+    .await
+    .expect("create loop run")
+    .run;
+    sqlx::query("UPDATE loop_runs SET status = 'running', finished_at = NULL WHERE id = $1")
+        .bind(run.summary.id)
+        .execute(&pool)
+        .await
+        .expect("mark run active");
+
+    let proposal_id = insert_memory_proposal_fixture(&pool, project_id, run.summary.id).await;
+    let approval_id = insert_approval_fixture(&pool, project_id, run.summary.id, proposal_id).await;
+
+    let response = mem_service::repository::handlers::loops::record_loop_approval_decision(
+        &pool,
+        approval_id,
+        LoopApprovalStatus::Rejected,
+        &LoopApprovalDecisionRequest {
+            reviewer: Some("repository-test".to_string()),
+            reason: Some("Reject unsafe durable memory mutation.".to_string()),
+            edited_action: None,
+        },
+    )
+    .await
+    .expect("reject approval");
+
+    assert_eq!(response.approval.status, LoopApprovalStatus::Rejected);
+    assert_eq!(
+        response.approval.decision_reason.as_deref(),
+        Some("Reject unsafe durable memory mutation.")
+    );
+
+    let loaded =
+        mem_service::repository::handlers::loops::read_loop_run_detail(&pool, run.summary.id)
+            .await
+            .expect("read loop run");
+    assert_eq!(loaded.summary.status, LoopRunStatus::Blocked);
+    assert!(
+        loaded
+            .summary
+            .blocked_reasons
+            .contains(&"approval_rejected".to_string())
+    );
+    assert!(loaded.traces.iter().any(|trace| {
+        trace.trace_type == "approval" && trace.title == "Approval rejected" && !trace.redacted
+    }));
+    assert_eq!(loaded.memory_proposals.len(), 1);
+    assert_eq!(loaded.memory_proposals[0].status, "rejected");
+
+    cleanup_approval(&pool, approval_id).await;
+    cleanup_loop_run(&pool, run.summary.id).await;
+    cleanup_loop_triggers(&pool, &repo_root).await;
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
 async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     let memory_id = Uuid::new_v4();
     sqlx::query(
@@ -213,12 +303,77 @@ async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     memory_id
 }
 
+async fn insert_memory_proposal_fixture(pool: &PgPool, project_id: Uuid, run_id: Uuid) -> Uuid {
+    let proposal_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO memory_proposals (
+            id, run_id, project_id, loop_id, proposal_type, candidate_json,
+            evidence_json, confidence, risk_notes, status, created_at
+        )
+        VALUES (
+            $1, $2, $3, $4, 'add',
+            '{"summary": "Candidate memory from loop"}'::jsonb,
+            '[{"source": "repository test"}]'::jsonb,
+            0.9, 'requires review', 'pending', now()
+        )
+        "#,
+    )
+    .bind(proposal_id)
+    .bind(run_id)
+    .bind(project_id)
+    .bind(mem_loops::LOOP_CONTEXT_PACK_REFRESH)
+    .execute(pool)
+    .await
+    .expect("insert memory proposal fixture");
+    proposal_id
+}
+
+async fn insert_approval_fixture(
+    pool: &PgPool,
+    project_id: Uuid,
+    run_id: Uuid,
+    proposal_id: Uuid,
+) -> Uuid {
+    let approval_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO approval_requests (
+            id, run_id, project_id, loop_id, action_type, proposed_action_json,
+            risk_reason, status, requester, created_at
+        )
+        VALUES (
+            $1, $2, $3, $4, 'write_memory_proposal',
+            jsonb_build_object('proposal_id', $5::uuid::text),
+            'Durable memory write requires review.', 'pending', 'repository-test', now()
+        )
+        "#,
+    )
+    .bind(approval_id)
+    .bind(run_id)
+    .bind(project_id)
+    .bind(mem_loops::LOOP_CONTEXT_PACK_REFRESH)
+    .bind(proposal_id)
+    .execute(pool)
+    .await
+    .expect("insert approval fixture");
+    approval_id
+}
+
 async fn cleanup_loop_run(pool: &PgPool, run_id: Uuid) {
     sqlx::query("DELETE FROM loop_runs WHERE id = $1")
         .bind(run_id)
         .execute(pool)
         .await
         .expect("cleanup loop run");
+}
+
+async fn cleanup_approval(pool: &PgPool, approval_id: Uuid) {
+    sqlx::query("DELETE FROM approval_requests WHERE id = $1")
+        .bind(approval_id)
+        .execute(pool)
+        .await
+        .expect("cleanup approval");
 }
 
 async fn enable_project_loop(pool: &PgPool, project_id: Uuid, project: &str) {

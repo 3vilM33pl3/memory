@@ -24,6 +24,8 @@ pub(crate) struct LoopRunsQuery {
 #[derive(Debug, SerdeDeserialize)]
 pub(crate) struct LoopApprovalsQuery {
     pub(crate) project: Option<String>,
+    pub(crate) run_id: Option<Uuid>,
+    pub(crate) loop_id: Option<String>,
     pub(crate) status: Option<LoopApprovalStatus>,
     pub(crate) limit: Option<i64>,
 }
@@ -429,7 +431,7 @@ pub(crate) async fn approve_loop_approval(
         ));
     }
     Ok(Json(
-        resolve_loop_approval(
+        resolve_loop_approval_decision(
             state.pool()?,
             approval_id,
             LoopApprovalStatus::Approved,
@@ -458,10 +460,44 @@ pub(crate) async fn reject_loop_approval(
         ));
     }
     Ok(Json(
-        resolve_loop_approval(
+        resolve_loop_approval_decision(
             state.pool()?,
             approval_id,
             LoopApprovalStatus::Rejected,
+            &request,
+        )
+        .await?,
+    ))
+}
+
+pub(crate) async fn edit_loop_approval(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(approval_id): Path<Uuid>,
+    Json(request): Json<LoopApprovalDecisionRequest>,
+) -> Result<Json<LoopApprovalDecisionResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if request.edited_action.is_none() {
+        return Err(ApiError::validation(ValidationError::new(
+            "edited_action is required",
+        )));
+    }
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(
+                &state,
+                &format!("/v1/loops/approvals/{approval_id}/edit"),
+                &request,
+                true,
+            )
+            .await?,
+        ));
+    }
+    Ok(Json(
+        resolve_loop_approval_decision(
+            state.pool()?,
+            approval_id,
+            LoopApprovalStatus::Edited,
             &request,
         )
         .await?,
@@ -1529,12 +1565,16 @@ async fn fetch_loop_approvals(
         LEFT JOIN projects p ON p.id = ar.project_id
         WHERE ($1::uuid IS NULL OR ar.project_id = $1)
           AND ($2::text IS NULL OR ar.status = $2)
+          AND ($3::uuid IS NULL OR ar.run_id = $3)
+          AND ($4::text IS NULL OR ar.loop_id = $4)
         ORDER BY ar.created_at DESC
-        LIMIT $3
+        LIMIT $5
         "#,
     )
     .bind(project_id)
     .bind(query.status.as_ref().map(LoopApprovalStatus::as_str))
+    .bind(query.run_id)
+    .bind(&query.loop_id)
     .bind(limit)
     .fetch_all(pool)
     .await
@@ -1549,18 +1589,35 @@ async fn fetch_loop_approvals(
     })
 }
 
-async fn resolve_loop_approval(
+pub async fn record_loop_approval_decision(
+    pool: &PgPool,
+    approval_id: Uuid,
+    status: LoopApprovalStatus,
+    request: &LoopApprovalDecisionRequest,
+) -> Result<LoopApprovalDecisionResponse> {
+    resolve_loop_approval_decision(pool, approval_id, status, request)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))
+}
+
+async fn resolve_loop_approval_decision(
     pool: &PgPool,
     approval_id: Uuid,
     status: LoopApprovalStatus,
     request: &LoopApprovalDecisionRequest,
 ) -> Result<LoopApprovalDecisionResponse, ApiError> {
+    if status == LoopApprovalStatus::Edited && request.edited_action.is_none() {
+        return Err(ApiError::validation(ValidationError::new(
+            "edited_action is required",
+        )));
+    }
     let row = sqlx::query(
         r#"
         UPDATE approval_requests
         SET status = $2,
             reviewer = $3,
             decision_reason = $4,
+            proposed_action_json = COALESCE($5, proposed_action_json),
             resolved_at = now()
         WHERE id = $1
         RETURNING
@@ -1573,13 +1630,119 @@ async fn resolve_loop_approval(
     .bind(status.as_str())
     .bind(&request.reviewer)
     .bind(&request.reason)
+    .bind(&request.edited_action)
     .fetch_optional(pool)
     .await
     .map_err(ApiError::sql)?
     .ok_or_else(|| ApiError::not_found("loop approval not found"))?;
-    Ok(LoopApprovalDecisionResponse {
-        approval: row_to_loop_approval(row)?,
-    })
+    let approval = row_to_loop_approval(row)?;
+    persist_approval_side_effects(pool, &approval, &status, request).await?;
+    Ok(LoopApprovalDecisionResponse { approval })
+}
+
+async fn persist_approval_side_effects(
+    pool: &PgPool,
+    approval: &LoopApprovalRequestRecord,
+    status: &LoopApprovalStatus,
+    request: &LoopApprovalDecisionRequest,
+) -> Result<(), ApiError> {
+    if let Some(proposal_id) = approval_proposal_id(&approval.proposed_action) {
+        sqlx::query(
+            r#"
+            UPDATE memory_proposals
+            SET status = $2,
+                resolved_at = now()
+            WHERE id = $1
+            "#,
+        )
+        .bind(proposal_id)
+        .bind(status.as_str())
+        .execute(pool)
+        .await
+        .map_err(ApiError::sql)?;
+    }
+
+    if let Some(run_id) = approval.run_id {
+        if *status == LoopApprovalStatus::Rejected {
+            block_run_for_rejected_approval(pool, run_id, approval, request).await?;
+        }
+        append_loop_trace(
+            pool,
+            run_id,
+            "approval",
+            approval_trace_title(status),
+            json!({
+                "approval_id": approval.id,
+                "action_type": approval.action_type,
+                "status": status.as_str(),
+                "reviewer": request.reviewer,
+                "reason": request.reason,
+                "risk_reason": approval.risk_reason,
+                "proposed_action": approval.proposed_action,
+                "edited_action": request.edited_action
+            }),
+            false,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn block_run_for_rejected_approval(
+    pool: &PgPool,
+    run_id: Uuid,
+    approval: &LoopApprovalRequestRecord,
+    request: &LoopApprovalDecisionRequest,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        r#"
+        UPDATE loop_runs
+        SET status = 'blocked',
+            finished_at = COALESCE(finished_at, now()),
+            output_summary = 'Loop run blocked by rejected approval.',
+            output_json = output_json || jsonb_build_object(
+                'approval_rejected', jsonb_build_object(
+                    'approval_id', $2::uuid::text,
+                    'action_type', $3::text,
+                    'reason', $4::text
+                )
+            ),
+            blocked_reasons_json = CASE
+                WHEN COALESCE(blocked_reasons_json, '[]'::jsonb) ? 'approval_rejected'
+                    THEN blocked_reasons_json
+                ELSE COALESCE(blocked_reasons_json, '[]'::jsonb) || '["approval_rejected"]'::jsonb
+            END,
+            updated_at = now()
+        WHERE id = $1
+          AND status IN ('queued', 'running')
+        "#,
+    )
+    .bind(run_id)
+    .bind(approval.id)
+    .bind(&approval.action_type)
+    .bind(&request.reason)
+    .execute(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    Ok(())
+}
+
+fn approval_trace_title(status: &LoopApprovalStatus) -> &'static str {
+    match status {
+        LoopApprovalStatus::Pending => "Approval pending",
+        LoopApprovalStatus::Approved => "Approval accepted",
+        LoopApprovalStatus::Rejected => "Approval rejected",
+        LoopApprovalStatus::Edited => "Approval edited",
+    }
+}
+
+fn approval_proposal_id(value: &serde_json::Value) -> Option<Uuid> {
+    value
+        .get("proposal_id")
+        .or_else(|| value.get("memory_proposal_id"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
 }
 
 async fn find_project_id(pool: &PgPool, project: &str) -> Result<Option<Uuid>, ApiError> {

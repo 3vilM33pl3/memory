@@ -10,7 +10,10 @@ use serde_json::json;
 
 use crate::commands::{
     api::ApiClient,
-    runtime::{LoopApprovalDecisionArgs, LoopRunArgs, LoopSettingArgs, LoopsArgs, LoopsCommand},
+    runtime::{
+        LoopApprovalDecisionArgs, LoopApprovalEditArgs, LoopRunArgs, LoopSettingArgs, LoopsArgs,
+        LoopsCommand,
+    },
 };
 
 pub(super) async fn handle(args: LoopsArgs, api: &ApiClient) -> Result<()> {
@@ -134,7 +137,13 @@ pub(super) async fn handle(args: LoopsArgs, api: &ApiClient) -> Result<()> {
                 .map(parse_approval_status)
                 .transpose()?;
             let response = api
-                .loop_approvals(args.project.as_deref(), status, args.limit)
+                .loop_approvals(
+                    args.project.as_deref(),
+                    args.run_id,
+                    args.loop_id.as_deref(),
+                    status,
+                    args.limit,
+                )
                 .await?;
             if args.json {
                 print_json(&response)?;
@@ -164,6 +173,19 @@ pub(super) async fn handle(args: LoopsArgs, api: &ApiClient) -> Result<()> {
             } else {
                 println!(
                     "Rejected {} for loop {}.",
+                    response.approval.id, response.approval.loop_id
+                );
+            }
+        }
+        LoopsCommand::EditApproval(args) => {
+            let response = api
+                .loop_approval_edit(args.approval_id, &edit_decision_request(&args))
+                .await?;
+            if args.json {
+                print_json(&response)?;
+            } else {
+                println!(
+                    "Edited {} for loop {}.",
                     response.approval.id, response.approval.loop_id
                 );
             }
@@ -282,6 +304,15 @@ fn decision_request(args: &LoopApprovalDecisionArgs) -> LoopApprovalDecisionRequ
     LoopApprovalDecisionRequest {
         reviewer: args.reviewer.clone(),
         reason: args.reason.clone(),
+        edited_action: None,
+    }
+}
+
+fn edit_decision_request(args: &LoopApprovalEditArgs) -> LoopApprovalDecisionRequest {
+    LoopApprovalDecisionRequest {
+        reviewer: args.reviewer.clone(),
+        reason: args.reason.clone(),
+        edited_action: Some(args.proposed_action.clone()),
     }
 }
 
@@ -432,6 +463,18 @@ fn print_loop_approvals(response: &mem_api::LoopApprovalsResponse) {
             approval.created_at.to_rfc3339()
         );
         println!("  {}", approval.risk_reason);
+        if let Some(run_id) = approval.run_id {
+            println!("  run: {run_id}");
+        }
+        if let Some(requester) = &approval.requester {
+            println!("  requester: {requester}");
+        }
+        if let Some(reviewer) = &approval.reviewer {
+            println!("  reviewer: {reviewer}");
+        }
+        if let Some(reason) = &approval.decision_reason {
+            println!("  decision: {reason}");
+        }
     }
 }
 

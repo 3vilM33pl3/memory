@@ -80,9 +80,9 @@ const WEB_HELP: Record<Tab, { title: string; purpose: string; layout: string[]; 
   automations: {
     title: "Automations Help",
     purpose: "Review and control loop-engineering automations from the same backend control plane used by the CLI and MCP tools.",
-    layout: ["Toolbar shows refresh and global stop.", "Left side lists automation cards with mode, scope, risk, budget, trigger, and last run.", "Right side shows selected automation policy, outputs, blocked reasons, run ledger, traces, approvals, and proposals."],
-    controls: ["Use mode menus to enable or reconfigure a loop.", "Use Load run to inspect the latest run ledger.", "Use Disable, Pause, Snooze, and Run now from the detail pane.", ...SHARED_CONTROLS],
-    workflows: ["Keep high-risk loops in suggest-only or draft-output modes until reviewed.", "Use global stop before investigating unexpected loop activity.", "Check scope text before changing inherited settings."],
+    layout: ["Toolbar shows refresh and global stop.", "Approval queue shows pending risky actions, proposed JSON, run metadata, requester/reviewer, and linked memory proposals.", "Left side lists automation cards with mode, scope, risk, budget, trigger, and last run.", "Right side shows selected automation policy, outputs, blocked reasons, run ledger, traces, approvals, and proposals."],
+    controls: ["Use Approve, Reject, or Save edit in the approval queue after reviewing the proposed action.", "Use mode menus to enable or reconfigure a loop.", "Use Load run to inspect the latest run ledger.", "Use Disable, Pause, Snooze, and Run now from the detail pane.", ...SHARED_CONTROLS],
+    workflows: ["Review memory proposal candidates and evidence before approving durable memory changes.", "Keep high-risk loops in suggest-only or draft-output modes until reviewed.", "Use global stop before investigating unexpected loop activity.", "Check scope text before changing inherited settings."],
   },
   bundles: {
     title: "Bundles Help",

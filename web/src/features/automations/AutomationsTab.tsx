@@ -2,6 +2,7 @@ import { Metric } from "../../components/Details";
 import type {
   LoopApprovalRequestRecord,
   LoopGlobalStateResponse,
+  LoopMemoryProposalRecord,
   LoopMode,
   LoopRunDetail,
 } from "../../types";
@@ -26,6 +27,8 @@ interface AutomationsTabProps {
   selectedLoopRun: LoopRunDetail | null;
   selectedLoopRunApprovals: LoopApprovalRequestRecord[];
   selectedLoopRunLoading: boolean;
+  approvalQueue: LoopApprovalRequestRecord[];
+  approvalEdits: Record<string, string>;
   onRefresh: () => void;
   onSelectAutomation: (index: number) => void;
   onSetLoopMode: (loopId: string, mode: LoopMode) => void;
@@ -34,6 +37,11 @@ interface AutomationsTabProps {
   onSnoozeLoop: (loopId: string) => void;
   onRunLoop: (loopId: string) => void;
   onLoadLoopRun: (runId: string) => void;
+  onApprovalEditChange: (approvalId: string, value: string) => void;
+  onApprovalDecision: (
+    approval: LoopApprovalRequestRecord,
+    action: "approve" | "reject" | "edit",
+  ) => void;
   onToggleGlobalKillSwitch: () => void;
 }
 
@@ -85,6 +93,21 @@ function jsonPreview(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function proposalIdFromApproval(approval: LoopApprovalRequestRecord): string | null {
+  const proposedAction = approval.proposed_action;
+  const proposalId = proposedAction.proposal_id ?? proposedAction.memory_proposal_id;
+  return typeof proposalId === "string" ? proposalId : null;
+}
+
+function proposalForApproval(
+  approval: LoopApprovalRequestRecord,
+  proposals: LoopMemoryProposalRecord[],
+): LoopMemoryProposalRecord | null {
+  const proposalId = proposalIdFromApproval(approval);
+  if (!proposalId) return null;
+  return proposals.find((proposal) => proposal.id === proposalId) ?? null;
+}
+
 function policyDecisions(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value)
     ? value.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
@@ -127,6 +150,8 @@ export function AutomationsTab({
   selectedLoopRun,
   selectedLoopRunApprovals,
   selectedLoopRunLoading,
+  approvalQueue,
+  approvalEdits,
   onRefresh,
   onSelectAutomation,
   onSetLoopMode,
@@ -135,6 +160,8 @@ export function AutomationsTab({
   onSnoozeLoop,
   onRunLoop,
   onLoadLoopRun,
+  onApprovalEditChange,
+  onApprovalDecision,
   onToggleGlobalKillSwitch,
 }: AutomationsTabProps) {
   const globalKillSwitch = loopGlobalState?.kill_switch_enabled ?? false;
@@ -142,6 +169,78 @@ export function AutomationsTab({
     ? selectedLoopRun
     : null;
   const decisions = policyDecisions(activeLoopRun?.policy_decisions);
+  const renderApproval = (
+    approval: LoopApprovalRequestRecord,
+    proposals: LoopMemoryProposalRecord[],
+  ) => {
+    const proposal = proposalForApproval(approval, proposals);
+    const editValue = approvalEdits[approval.id] ?? jsonPreview(approval.proposed_action);
+    return (
+      <div className="trace-card" key={approval.id}>
+        <div className="detail-header">
+          <strong>{label(approval.action_type)} · {approval.status}</strong>
+          <span className={approval.status === "pending" ? "badge status-connecting" : "badge"}>
+            {approval.created_at ? formatDateTime(approval.created_at) : "n/a"}
+          </span>
+        </div>
+        <p>{approval.risk_reason}</p>
+        <div className="stats-row">
+          <span>loop {approval.loop_id}</span>
+          <span>run {approval.run_id ?? "n/a"}</span>
+          <span>requester {approval.requester ?? "n/a"}</span>
+          <span>reviewer {approval.reviewer ?? "n/a"}</span>
+        </div>
+        {approval.decision_reason ? <p className="muted">Decision: {approval.decision_reason}</p> : null}
+        {proposal ? (
+          <div className="action-card">
+            <strong>Memory proposal {label(proposal.proposal_type)}</strong>
+            <p>
+              status {proposal.status} · confidence {proposal.confidence.toFixed(2)}
+              {proposal.risk_notes ? ` · ${proposal.risk_notes}` : ""}
+            </p>
+            {proposal.target_memory_id ? <p>Target: {proposal.target_memory_id}</p> : null}
+            <pre className="json-preview">{jsonPreview({ candidate: proposal.candidate, evidence: proposal.evidence })}</pre>
+          </div>
+        ) : null}
+        <label className="approval-edit-label" htmlFor={`approval-edit-${approval.id}`}>Proposed action</label>
+        <textarea
+          id={`approval-edit-${approval.id}`}
+          className="approval-edit"
+          value={editValue}
+          disabled={approval.status !== "pending" || automationBusy}
+          onChange={(event) => onApprovalEditChange(approval.id, event.target.value)}
+          rows={6}
+        />
+        {approval.status === "pending" ? (
+          <div className="proposal-actions">
+            <button
+              className="approve-btn"
+              onClick={() => onApprovalDecision(approval, "approve")}
+              type="button"
+              disabled={automationBusy}
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => onApprovalDecision(approval, "edit")}
+              type="button"
+              disabled={automationBusy}
+            >
+              Save edit
+            </button>
+            <button
+              className="reject-btn"
+              onClick={() => onApprovalDecision(approval, "reject")}
+              type="button"
+              disabled={automationBusy}
+            >
+              Reject
+            </button>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
   return (
     <section className="panel-stack">
       <div className="panel actions-row">
@@ -162,6 +261,25 @@ export function AutomationsTab({
         <span className="muted">
           {automationOperation ? `${automationOperation}...` : `${automations.length} configured`}
         </span>
+      </div>
+
+      <div className="panel">
+        <div className="detail-header">
+          <div>
+            <h2>Approval queue</h2>
+            <p className="muted">Pending risky actions and memory proposals waiting for review.</p>
+          </div>
+          <span className={approvalQueue.length ? "badge status-connecting" : "badge badge-active"}>
+            {approvalQueue.length} pending
+          </span>
+        </div>
+        {approvalQueue.length ? (
+          <div className="list-view">
+            {approvalQueue.map((approval) => renderApproval(approval, activeLoopRun?.memory_proposals ?? []))}
+          </div>
+        ) : (
+          <p className="muted">No pending loop approvals.</p>
+        )}
       </div>
 
       <section className="panel-grid">
@@ -327,13 +445,11 @@ export function AutomationsTab({
                       </div>
                       <div className="detail-section">
                         <h3>Approvals</h3>
-                        {selectedLoopRunApprovals.length ? selectedLoopRunApprovals.map((approval) => (
-                          <div className="trace-card" key={approval.id}>
-                            <strong>{label(approval.action_type)} · {approval.status}</strong>
-                            <p>{approval.risk_reason}</p>
-                            <pre className="json-preview">{jsonPreview(approval.proposed_action)}</pre>
-                          </div>
-                        )) : <p className="muted">No approvals recorded for this run.</p>}
+                        {selectedLoopRunApprovals.length
+                          ? selectedLoopRunApprovals.map((approval) =>
+                            renderApproval(approval, activeLoopRun.memory_proposals),
+                          )
+                          : <p className="muted">No approvals recorded for this run.</p>}
                       </div>
                       <div className="detail-section">
                         <h3>Cost summary</h3>

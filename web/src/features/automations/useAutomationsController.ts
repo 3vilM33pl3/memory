@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 
 import {
+  approveLoopApproval,
   disableLoop,
   enableLoop,
+  editLoopApproval,
   getLoopApprovals,
   getLoopDefinition,
   getLoopGlobalState,
@@ -10,6 +12,7 @@ import {
   getLoopRuns,
   listLoopDefinitions,
   pauseLoop,
+  rejectLoopApproval,
   runLoop,
   snoozeLoop,
   updateLoopGlobalState,
@@ -68,6 +71,8 @@ export function useAutomationsController({
   const [selectedLoopRun, setSelectedLoopRun] = useState<LoopRunDetail | null>(null);
   const [selectedLoopRunApprovals, setSelectedLoopRunApprovals] = useState<LoopApprovalRequestRecord[]>([]);
   const [selectedLoopRunLoading, setSelectedLoopRunLoading] = useState(false);
+  const [approvalQueue, setApprovalQueue] = useState<LoopApprovalRequestRecord[]>([]);
+  const [approvalEdits, setApprovalEdits] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (activeTab !== "automations") return;
@@ -94,9 +99,10 @@ export function useAutomationsController({
   async function refreshAutomations(quiet = false) {
     setAutomationsLoading(true);
     try {
-      const [definitionsPayload, globalPayload] = await Promise.all([
+      const [definitionsPayload, globalPayload, approvalsPayload] = await Promise.all([
         listLoopDefinitions(),
         getLoopGlobalState(),
+        getLoopApprovals({ project, status: "pending", limit: 50 }),
       ]);
       const cards = await Promise.all(
         definitionsPayload.definitions.map(async (definition) => {
@@ -112,6 +118,7 @@ export function useAutomationsController({
         }),
       );
       setLoopGlobalState(globalPayload);
+      setApprovalQueue(approvalsPayload.approvals);
       setAutomations(cards);
       setSelectedAutomationIndex((current) => Math.min(current, Math.max(cards.length - 1, 0)));
       setSelectedLoopRun((current) => {
@@ -197,25 +204,73 @@ export function useAutomationsController({
 
   async function loadLoopRunApprovals(runId: string) {
     try {
-      const payload = await getLoopApprovals({ project, limit: 100 });
-      setSelectedLoopRunApprovals(payload.approvals.filter((approval) => approval.run_id === runId));
+      const payload = await getLoopApprovals({ project, runId, limit: 100 });
+      setSelectedLoopRunApprovals(payload.approvals);
     } catch (error) {
       setSelectedLoopRunApprovals([]);
       setStatusMessage((error as Error).message);
     }
   }
 
+  async function refreshLoopRunDetail(runId: string) {
+    const payload = await getLoopRun(runId);
+    setSelectedLoopRun(payload.run);
+    await loadLoopRunApprovals(runId);
+  }
+
   async function handleLoadLoopRun(runId: string) {
     setSelectedLoopRunLoading(true);
     try {
-      const payload = await getLoopRun(runId);
-      setSelectedLoopRun(payload.run);
-      await loadLoopRunApprovals(runId);
+      await refreshLoopRunDetail(runId);
       setStatusMessage(`Loaded loop run ${runId}.`);
     } catch (error) {
       setStatusMessage((error as Error).message);
     } finally {
       setSelectedLoopRunLoading(false);
+    }
+  }
+
+  function setApprovalEdit(approvalId: string, value: string) {
+    setApprovalEdits((current) => ({ ...current, [approvalId]: value }));
+  }
+
+  async function refreshApprovalSurfaces(runId?: string | null) {
+    const approvalsPayload = await getLoopApprovals({ project, status: "pending", limit: 50 });
+    setApprovalQueue(approvalsPayload.approvals);
+    if (runId) {
+      await refreshLoopRunDetail(runId);
+    } else if (selectedLoopRun) {
+      await refreshLoopRunDetail(selectedLoopRun.summary.id);
+    }
+  }
+
+  async function handleApprovalDecision(
+    approval: LoopApprovalRequestRecord,
+    action: "approve" | "reject" | "edit",
+  ) {
+    setAutomationOperation(`${action} ${approval.action_type}`);
+    try {
+      if (action === "approve") {
+        await approveLoopApproval(approval.id);
+      } else if (action === "reject") {
+        await rejectLoopApproval(approval.id);
+      } else {
+        const editText = approvalEdits[approval.id] ?? JSON.stringify(approval.proposed_action, null, 2);
+        let editedAction: unknown;
+        try {
+          editedAction = JSON.parse(editText);
+        } catch (error) {
+          throw new Error(`Edited action JSON is invalid: ${(error as Error).message}`);
+        }
+        await editLoopApproval(approval.id, editedAction);
+      }
+      await refreshApprovalSurfaces(approval.run_id);
+      await refreshAutomations(true);
+      setStatusMessage(`Loop approval ${action} finished for ${approval.action_type}.`);
+    } catch (error) {
+      setStatusMessage((error as Error).message);
+    } finally {
+      setAutomationOperation(null);
     }
   }
 
@@ -252,6 +307,8 @@ export function useAutomationsController({
     selectedLoopRun,
     selectedLoopRunApprovals,
     selectedLoopRunLoading,
+    approvalQueue,
+    approvalEdits,
     refreshAutomations,
     handleSetLoopMode,
     handleDisableLoop,
@@ -259,6 +316,8 @@ export function useAutomationsController({
     handleSnoozeLoop,
     handleRunLoop,
     handleLoadLoopRun,
+    setApprovalEdit,
+    handleApprovalDecision,
     handleToggleGlobalKillSwitch,
   };
 }

@@ -2274,6 +2274,8 @@ pub(in crate::commands) enum LoopsCommand {
     Approve(LoopApprovalDecisionArgs),
     #[command(about = "Reject a loop approval request.", after_help = LOOPS_GROUP_AFTER_HELP)]
     Reject(LoopApprovalDecisionArgs),
+    #[command(about = "Edit a loop approval request proposed action.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    EditApproval(LoopApprovalEditArgs),
     #[command(about = "Replay a prior loop run as a new policy-checked run.", after_help = LOOPS_GROUP_AFTER_HELP)]
     Replay(LoopReplayArgs),
     #[command(about = "Read or change the global loop kill switch.", after_help = LOOPS_GROUP_AFTER_HELP)]
@@ -2463,6 +2465,12 @@ pub(in crate::commands) struct LoopApprovalsArgs {
     /// Project slug to filter by.
     #[arg(long)]
     pub(crate) project: Option<String>,
+    /// Loop run id to filter by.
+    #[arg(long)]
+    pub(crate) run_id: Option<Uuid>,
+    /// Loop id to filter by.
+    #[arg(long)]
+    pub(crate) loop_id: Option<String>,
     /// Approval status to filter by.
     #[arg(long, value_parser = ["pending", "approved", "rejected", "edited"])]
     pub(crate) status: Option<String>,
@@ -2482,6 +2490,24 @@ pub(in crate::commands) struct LoopApprovalDecisionArgs {
     #[arg(long)]
     pub(crate) reviewer: Option<String>,
     /// Human-readable decision reason.
+    #[arg(long)]
+    pub(crate) reason: Option<String>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopApprovalEditArgs {
+    /// Loop approval request id.
+    pub(crate) approval_id: Uuid,
+    /// Edited proposed action JSON.
+    #[arg(long, value_parser = parse_json_value_arg)]
+    pub(crate) proposed_action: serde_json::Value,
+    /// Reviewer identity.
+    #[arg(long)]
+    pub(crate) reviewer: Option<String>,
+    /// Human-readable edit reason.
     #[arg(long)]
     pub(crate) reason: Option<String>,
     /// Emit the response as JSON.

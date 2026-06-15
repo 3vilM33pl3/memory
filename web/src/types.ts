@@ -243,6 +243,10 @@ export interface LoopApprovalsResponse {
   approvals: LoopApprovalRequestRecord[];
 }
 
+export interface LoopApprovalDecisionResponse {
+  approval: LoopApprovalRequestRecord;
+}
+
 export interface NamedCount {
   name: string;
   count: number;

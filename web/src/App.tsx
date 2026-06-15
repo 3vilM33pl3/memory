@@ -122,6 +122,8 @@ export default function App() {
     selectedLoopRun,
     selectedLoopRunApprovals,
     selectedLoopRunLoading,
+    approvalQueue,
+    approvalEdits,
     refreshAutomations,
     handleSetLoopMode,
     handleDisableLoop,
@@ -129,6 +131,8 @@ export default function App() {
     handleSnoozeLoop,
     handleRunLoop,
     handleLoadLoopRun,
+    setApprovalEdit,
+    handleApprovalDecision,
     handleToggleGlobalKillSwitch,
     resumeData,
     resumeLoading,
@@ -363,6 +367,8 @@ export default function App() {
           selectedLoopRun={selectedLoopRun}
           selectedLoopRunApprovals={selectedLoopRunApprovals}
           selectedLoopRunLoading={selectedLoopRunLoading}
+          approvalQueue={approvalQueue}
+          approvalEdits={approvalEdits}
           onRefresh={() => void refreshAutomations()}
           onSelectAutomation={setSelectedAutomationIndex}
           onSetLoopMode={(loopId, mode) => void handleSetLoopMode(loopId, mode)}
@@ -371,6 +377,8 @@ export default function App() {
           onSnoozeLoop={(loopId) => void handleSnoozeLoop(loopId)}
           onRunLoop={(loopId) => void handleRunLoop(loopId)}
           onLoadLoopRun={(runId) => void handleLoadLoopRun(runId)}
+          onApprovalEditChange={setApprovalEdit}
+          onApprovalDecision={(approval, action) => void handleApprovalDecision(approval, action)}
           onToggleGlobalKillSwitch={() => void handleToggleGlobalKillSwitch()}
         />
       ) : null}

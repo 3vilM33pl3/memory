@@ -66,11 +66,20 @@ memory loops replay <run-id> --dry-run
 ```bash
 memory loops approvals --project memory
 memory loops approvals --project memory --status pending
+memory loops approvals --project memory --run-id <run-id>
+memory loops approvals --project memory --loop-id context_pack_refresh
 memory loops approve <approval-id> --reviewer olivier --reason "Approved for this repo"
+memory loops edit-approval <approval-id> --proposed-action '{"proposal_id":"...","scope":"project"}' --reviewer olivier --reason "Narrowed scope"
 memory loops reject <approval-id> --reviewer olivier --reason "Too broad"
 ```
 
-Approval requests are created by policy gates for risky settings or actions. The CLI only resolves the approval record; the service remains responsible for applying policy and recording the decision.
+Approval requests are created by policy gates for risky settings or actions. Each
+record includes the proposed action JSON, risk reason, linked loop/run, requester,
+reviewer, and decision reason. `approve` accepts the proposed action, `reject`
+records a rejection and blocks a queued/running linked run safely, and
+`edit-approval` replaces the proposed action JSON with a reviewed version. The
+service remains responsible for applying policy, tracing the decision, and
+updating linked memory proposal status.
 
 ## Global Kill Switch
 
@@ -96,7 +105,7 @@ For automation that needs stable output:
 ```bash
 memory loops run context_pack_refresh --project memory --dry-run --json
 memory loops approvals --project memory --status pending --json
+memory loops edit-approval <approval-id> --proposed-action '{"proposal_id":"..."}' --json
 ```
 
 Loop commands require the Memory service to be reachable and use the configured local API token for write-capable operations.
-

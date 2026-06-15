@@ -32,7 +32,7 @@ The main tabs match the TUI order:
 | Watchers | Watcher presence, heartbeat state, owner agent/session, restart attempts, and recovery details. |
 | Embeddings | Configured embedding backends, active search backend, automatic creation, coverage, re-embed, and reindex controls. |
 | Resume | Re-entry briefing with checkpoint, current thread, next steps, recent changes, context memories, timeline, warnings, and commits. |
-| Automations | Loop-engineering automation cards with effective mode, scope, risk, last run, next trigger, daily budget, outputs, and controls. |
+| Automations | Loop-engineering approval queue, automation cards, effective mode, scope, risk, last run, next trigger, daily budget, outputs, and controls. |
 
 The web-only `Automations` and `Bundles` tools remain under the More menu. `Automations` controls the shared loop control plane; `Bundles` handles memory export/import previews and transfer.
 
@@ -41,6 +41,21 @@ The web-only `Automations` and `Bundles` tools remain under the More menu. `Auto
 The Automations tab is the browser control surface for loop engineering. It reads
 registered loop definitions from `/v1/loops`, resolves effective settings for the
 current project/repo root, and displays the latest loop run for each automation.
+
+The top approval queue is the human-in-the-loop review surface for risky loop
+actions and memory proposal changes. Each pending request shows:
+
+- the proposed action JSON, action type, risk reason, requester, reviewer, loop,
+  and linked run;
+- linked memory proposal candidate/evidence when the proposed action references
+  a memory proposal;
+- `Approve`, `Reject`, and `Save edit` controls. Save edit validates the edited
+  JSON before sending it to the service.
+
+Rejected approvals are recorded in the run trace and block a queued/running
+linked run so an agent cannot continue through a rejected gate. Approved,
+rejected, and edited decisions also update linked memory proposal status when
+the proposed action names a proposal id.
 
 Each automation card shows:
 
