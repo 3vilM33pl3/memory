@@ -58,6 +58,7 @@ Typical remediation paths are:
 - outdated or unversioned repo-local skills
   - run `memory upgrade --dry-run`, then `memory upgrade`
   - or run `memory doctor --fix` to download the current Memory skill bundle from GitHub and repair repo-local skills
+  - or open the TUI/Web Skills tab to inspect the affected skill files and run the same repair path interactively
 - backend unreachable
   - start the shared backend service or the local development backend
 - Ollama unreachable or model missing

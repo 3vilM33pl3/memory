@@ -30,6 +30,7 @@ The main tabs match the TUI order:
 | Project | Project-level counts, memory type/source breakdowns, embedding coverage, automation state, watcher status, and recent activity. |
 | Review | Replacement proposals with policy, target/candidate detail, and approve/reject actions. |
 | Watchers | Watcher presence, heartbeat state, owner agent/session, restart attempts, and recovery details. |
+| Skills | Repo-local Memory skills, version status, upgrade action, file paths, `SKILL.md` content, and repair controls. |
 | Embeddings | Configured embedding backends, active search backend, automatic creation, coverage, re-embed, and reindex controls. |
 | Resume | Re-entry briefing with checkpoint, current thread, next steps, recent changes, context memories, timeline, warnings, and commits. |
 | Automations | Loop-engineering approval queue, automation cards, effective mode, scope, risk, last run, next trigger, daily budget, outputs, and controls. |
@@ -89,6 +90,25 @@ contradictory memory flags, warnings, and the diff from the previous context
 pack trace for that loop/project. Redacted trace payloads stay hidden and failed
 or blocked runs surface their diagnostic summary and blocked reasons.
 
+## Skills
+
+The Skills tab is the full inventory view for repo-local Memory Layer skills.
+It defaults to the `memory-layer` umbrella skill so the main health signal stays
+quiet, but the filter can switch to the full Memory-owned bundle when you need
+to inspect focused skills such as query, resume, remember, proposal review, or
+plan execution.
+
+The list shows each skill's version, freshness, upgrade action, source path, and
+template path. Selecting a row opens the detail pane with the description,
+installed path, source/template versions, and rendered `SKILL.md` content so you
+can inspect exactly what an agent will read.
+
+Use `Repair skills` when the repo-local bundle is missing, stale, unversioned, or
+corrupt. The action uses the same repair path as `memory doctor --fix`: it
+downloads the current GitHub skill bundle when available, falls back to the
+installed template when offline, backs up replaced files, and only mutates
+Memory-owned skill directories.
+
 ## Runtime Status
 
 The status strip shows the same operational components as the TUI bottom bar:
@@ -97,13 +117,9 @@ The status strip shows the same operational components as the TUI bottom bar:
 - `Service`: backend version, primary/relay role, and service identity.
 - `Manager`: watcher-manager state, mode, tracked sessions, and warnings.
 - `Watchers`: active/unhealthy watcher counts.
-- `Skills` dropdown: selects whether the status strip checks only the
-  `memory-layer` umbrella skill, which is the default, or the full focused-skill
-  bundle.
-- `Skills`: repo-local skill version and status for the selected filter. Click
-  `Details` to inspect the checked skill names, descriptions, versions,
-  statuses, and `SKILL.md` paths. Use `memory doctor` or
-  `memory upgrade --dry-run` for repair details.
+- `Skills`: compact repo-local skill health for the selected Skills filter.
+  Click the component to open the Skills tab for the full inventory and repair
+  controls.
 
 If the install or upgrade process wrote a restart marker, the Web component turns into a restart state so the user knows to reload the page or restart the running UI.
 

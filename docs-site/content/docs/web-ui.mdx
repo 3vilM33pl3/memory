@@ -33,6 +33,7 @@ cargo run --bin memory -- service run
 | Project | Counts, memory type/source breakdowns, embedding coverage, automation state, watcher status, and recent activity. |
 | Review | Replacement proposals with policy, target/candidate detail, reason, and approve/reject actions. |
 | Watchers | Watcher presence, heartbeat state, owner agent/session, restart attempts, and recovery details. |
+| Skills | Repo-local Memory skills, version status, upgrade action, file paths, `SKILL.md` content, and repair controls. |
 | Embeddings | Configured embedding backends, active search backend, automatic creation, coverage, re-embed, and reindex controls. |
 | Resume | Re-entry briefing with checkpoint, current thread, next steps, recent changes, context memories, timeline, warnings, and commits. |
 | Automations | Built-in loop definitions, effective settings, runs, approvals, context packs, and loop memory proposals. |
@@ -45,6 +46,19 @@ The Automations tab is the browser surface for the built-in Memory Layer loop co
 
 Read [Automations](/docs/automations) for the full list of built-in loops and their safety boundaries.
 
+## Skills tab
+
+The Skills tab inventories repo-local Memory Layer skills. It defaults to the
+`memory-layer` umbrella skill for a quiet health signal and can switch to the
+full Memory-owned bundle when you need to inspect focused skills.
+
+Use it to see each skill's installed version, template version, freshness,
+upgrade action, installed path, template path, description, and `SKILL.md`
+content. `Repair skills` uses the same repair path as `memory doctor --fix`: it
+downloads the current GitHub bundle when available, falls back to the installed
+template when offline, backs up replaced files, and only mutates Memory-owned
+skill directories.
+
 ## Runtime status
 
 The status strip shows the same operational components as the TUI bottom bar:
@@ -55,7 +69,7 @@ The status strip shows the same operational components as the TUI bottom bar:
 | Service | Backend version, primary/relay role, and service identity. |
 | Manager | Watcher-manager state, mode, tracked sessions, and warnings. |
 | Watchers | Active and unhealthy watcher counts. |
-| Skills | Repo-local Memory skill bundle version and status. |
+| Skills | Compact repo-local skill health for the selected Skills filter; click it to open the Skills tab. |
 
 If an install or upgrade writes a restart marker, the Web component enters restart state so you know to reload the page or restart the running UI.
 

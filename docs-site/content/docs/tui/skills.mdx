@@ -1,0 +1,52 @@
+---
+title: "Skills tab"
+description: "Inspect and repair repo-local Memory Layer skills from the TUI."
+---
+
+# Skills tab
+
+The Skills tab shows the repo-local Memory Layer skill bundle that agents read
+from `.agents/skills/`. Use it when the status bar reports stale skills, when
+you want to inspect the exact `SKILL.md` instructions, or when you need to repair
+missing or outdated bundle files.
+
+## Inventory
+
+Each row shows:
+
+- skill name and short description
+- installed version and template version
+- freshness status such as `up_to_date`, `missing`, `outdated`, `unversioned`, or `invalid_version`
+- upgrade action such as `none`, `install`, or `replace`
+- installed path and source/template path
+
+The TUI shows the full Memory-owned skill inventory so you can inspect focused
+skills such as plan execution, remember, query/resume, proposal review, or direct
+task start without leaving the terminal.
+
+## Detail pane
+
+Selecting a skill opens a detail pane with the description, installed path,
+template path, versions, and rendered `SKILL.md` content. This is the fastest way
+to verify the instructions a local agent will actually read.
+
+## Controls
+
+| Key | Action |
+|---|---|
+| `j` / `k` | Move the selected skill |
+| `PgUp` / `PgDn` | Scroll the selected `SKILL.md` content |
+| `Home` | Jump detail scroll back to the top |
+| `u` | Repair repo-local Memory skills |
+| `r` | Refresh the project snapshot |
+
+## Repair
+
+The repair action uses the same implementation as `memory doctor --fix`. It
+downloads the current GitHub skill bundle when available, falls back to the
+installed local template when offline, backs up replaced files, and only mutates
+Memory-owned skill directories under `.agents/skills/`.
+
+## Next
+
+Read [Doctor and health](/docs/help/doctor-and-health) or [service health commands](/docs/reference/cli/service-health).
