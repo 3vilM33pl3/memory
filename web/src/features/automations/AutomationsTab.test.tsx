@@ -109,6 +109,50 @@ const runDetail: LoopRunDetail = {
       created_at: "2026-06-15T10:00:02Z",
     },
   ],
+  context_pack: {
+    id: "88888888-8888-8888-8888-888888888888",
+    loop_id: "context_pack_refresh",
+    project: "memory",
+    repo_root: "/home/olivier/Projects/memory",
+    run_id: automation.lastRun!.id,
+    generated_at: "2026-06-15T10:00:02Z",
+    token_budget: 4000,
+    estimated_tokens: 128,
+    instructions: [
+      { path: "AGENTS.md", reason: "repo instructions", estimated_tokens: 20 },
+    ],
+    memories: [
+      {
+        memory_id: "99999999-9999-9999-9999-999999999999",
+        canonical_id: "99999999-9999-9999-9999-999999999999",
+        summary: "Architecture context",
+        preview: "Use the loop control plane.",
+        memory_type: "architecture",
+        confidence: 0.92,
+        importance: 4,
+        freshness: "fresh",
+        updated_at: "2026-06-15T09:00:00Z",
+        tags: ["loop"],
+        source_refs: [{ source_kind: "file", file_path: "AGENTS.md" }],
+        estimated_tokens: 42,
+        stale: false,
+        contradictory: false,
+        inclusion_reason: "ranked by importance",
+      },
+    ],
+    exclusions: [],
+    warnings: [],
+    metadata: { builder: "deterministic" },
+  },
+  context_diff: {
+    previous_run_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    previous_pack_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    added_memory_ids: ["99999999-9999-9999-9999-999999999999"],
+    removed_memory_ids: [],
+    changed_memory_ids: [],
+    token_delta: 128,
+    warning_delta: [],
+  },
 };
 
 function renderTab(overrides: Partial<ComponentProps<typeof AutomationsTab>> = {}) {
@@ -204,6 +248,9 @@ describe("AutomationsTab", () => {
 
     expect(screen.getByText("manual / manual_run")).toBeInTheDocument();
     expect(screen.getByText("Policy gates")).toBeInTheDocument();
+    expect(screen.getByText("Context pack")).toBeInTheDocument();
+    expect(screen.getByText("Architecture context")).toBeInTheDocument();
+    expect(screen.getByText("128/4000 tokens")).toBeInTheDocument();
     expect(screen.getByText("write repo")).toBeInTheDocument();
     expect(screen.getByText("add · pending")).toBeInTheDocument();
     expect(screen.getByText("write memory proposal · pending")).toBeInTheDocument();

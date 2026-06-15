@@ -1887,6 +1887,10 @@ pub struct LoopRunDetail {
     pub traces: Vec<LoopTraceRecord>,
     #[serde(default)]
     pub memory_proposals: Vec<LoopMemoryProposalRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_pack: Option<LoopContextPack>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_diff: Option<LoopContextPackDiff>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1899,6 +1903,148 @@ pub struct LoopRunsResponse {
     pub total_returned: usize,
     #[serde(default)]
     pub runs: Vec<LoopRunSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopContextPackRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<Uuid>,
+    #[serde(default = "default_context_pack_token_budget")]
+    pub token_budget: usize,
+    #[serde(default = "default_context_pack_limit")]
+    pub limit: usize,
+}
+
+impl LoopContextPackRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self
+            .project
+            .as_deref()
+            .is_none_or(|project| project.trim().is_empty())
+        {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self.token_budget == 0 {
+            return Err(ValidationError::new("token_budget must be positive"));
+        }
+        if self.limit == 0 {
+            return Err(ValidationError::new("limit must be positive"));
+        }
+        Ok(())
+    }
+}
+
+fn default_context_pack_token_budget() -> usize {
+    4_000
+}
+
+fn default_context_pack_limit() -> usize {
+    24
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopContextPackResponse {
+    pub pack: LoopContextPack,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff: Option<LoopContextPackDiff>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopContextPack {
+    pub id: Uuid,
+    pub loop_id: String,
+    pub project: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<Uuid>,
+    pub generated_at: DateTime<Utc>,
+    pub token_budget: usize,
+    pub estimated_tokens: usize,
+    #[serde(default)]
+    pub instructions: Vec<LoopContextInstructionRef>,
+    #[serde(default)]
+    pub memories: Vec<LoopContextMemory>,
+    #[serde(default)]
+    pub exclusions: Vec<LoopContextExclusion>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopContextInstructionRef {
+    pub path: String,
+    pub reason: String,
+    pub estimated_tokens: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopContextMemory {
+    pub memory_id: Uuid,
+    pub canonical_id: Uuid,
+    pub summary: String,
+    pub preview: String,
+    pub memory_type: MemoryType,
+    pub confidence: f32,
+    pub importance: i32,
+    pub freshness: String,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub source_refs: Vec<LoopContextSourceRef>,
+    pub estimated_tokens: usize,
+    #[serde(default)]
+    pub stale: bool,
+    #[serde(default)]
+    pub contradictory: bool,
+    #[serde(default)]
+    pub inclusion_reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopContextSourceRef {
+    pub source_kind: SourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance_status: Option<SourceProvenanceStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopContextExclusion {
+    pub memory_id: Uuid,
+    pub summary: String,
+    pub reason: String,
+    pub estimated_tokens: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LoopContextPackDiff {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_run_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_pack_id: Option<Uuid>,
+    #[serde(default)]
+    pub added_memory_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub removed_memory_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub changed_memory_ids: Vec<Uuid>,
+    #[serde(default)]
+    pub token_delta: isize,
+    #[serde(default)]
+    pub warning_delta: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

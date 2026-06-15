@@ -82,9 +82,12 @@ overrides.
 
 Use `Load run` on an automation with a last run to inspect the run ledger. The
 detail view shows trigger source/event/trust, run reason, version, effective
-settings, policy gates, cost, output, trace records, linked memory proposals, and
-linked approval requests. Redacted trace payloads stay hidden and failed or
-blocked runs surface their diagnostic summary and blocked reasons.
+settings, policy gates, context pack, cost, output, trace records, linked memory
+proposals, and linked approval requests. The context pack section shows included
+memory count, estimated tokens, repo instruction references, exclusions, stale or
+contradictory memory flags, warnings, and the diff from the previous context
+pack trace for that loop/project. Redacted trace payloads stay hidden and failed
+or blocked runs surface their diagnostic summary and blocked reasons.
 
 ## Runtime Status
 

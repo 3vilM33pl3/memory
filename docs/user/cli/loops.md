@@ -54,12 +54,20 @@ memory loops run context_pack_refresh --project memory --dry-run --reason "manua
 memory loops runs --project memory
 memory loops runs --project memory --loop-id context_pack_refresh --status blocked
 memory loops inspect <run-id>
+memory loops context-pack context_pack_refresh --project memory --repo-root "$PWD"
+memory loops context-pack context_pack_refresh --run-id <run-id> --from-run
 memory loops cancel <run-id> --reason "superseded"
 memory loops feedback <run-id> --rating useful --note "Good context pack"
 memory loops replay <run-id> --dry-run
 ```
 
 `run` creates a manual control-plane run and records policy decisions, effective settings, blocked reasons, output summary, and traces. `--dry-run` is intended for local validation and CI logs. `replay` reads a previous run and creates a new policy-checked run with the same loop id and scope plus a `replay_of` trigger payload.
+
+`context-pack` builds the deterministic context pack for a loop or reads the pack
+already recorded on a run with `--from-run`. Packs include repo instruction
+references, selected memories, source refs, confidence, freshness, stale or
+contradictory flags, exclusions, warnings, estimated token usage, and a diff
+against the previous context-pack trace for the same loop/project.
 
 ## Approvals
 
@@ -106,6 +114,7 @@ For automation that needs stable output:
 memory loops run context_pack_refresh --project memory --dry-run --json
 memory loops approvals --project memory --status pending --json
 memory loops edit-approval <approval-id> --proposed-action '{"proposal_id":"..."}' --json
+memory loops context-pack context_pack_refresh --project memory --repo-root "$PWD" --json
 ```
 
 Loop commands require the Memory service to be reachable and use the configured local API token for write-capable operations.

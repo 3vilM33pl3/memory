@@ -1,9 +1,9 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use mem_api::{
-    LoopApprovalDecisionRequest, LoopApprovalStatus, LoopCancelRequest, LoopFeedbackRequest,
-    LoopGlobalStateUpdateRequest, LoopMode, LoopRunRequest, LoopRunStatus, LoopScopeType,
-    LoopSettingResponse, LoopSettingsUpdateRequest,
+    LoopApprovalDecisionRequest, LoopApprovalStatus, LoopCancelRequest, LoopContextPackResponse,
+    LoopFeedbackRequest, LoopGlobalStateUpdateRequest, LoopMode, LoopRunRequest, LoopRunStatus,
+    LoopScopeType, LoopSettingResponse, LoopSettingsUpdateRequest,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -104,6 +104,33 @@ pub(super) async fn handle(args: LoopsArgs, api: &ApiClient) -> Result<()> {
                 print_json(&response)?;
             } else {
                 print_loop_run(&response, true);
+            }
+        }
+        LoopsCommand::ContextPack(args) => {
+            let repo_root = args
+                .repo_root
+                .as_ref()
+                .map(|path| path.display().to_string());
+            let response = if args.from_run {
+                let run_id = args
+                    .run_id
+                    .ok_or_else(|| anyhow::anyhow!("--run-id is required with --from-run"))?;
+                api.loop_run_context_pack(run_id).await?
+            } else {
+                api.loop_context_pack(
+                    &args.loop_id,
+                    args.project.as_deref(),
+                    repo_root.as_deref(),
+                    args.run_id,
+                    args.token_budget,
+                    args.limit,
+                )
+                .await?
+            };
+            if args.json {
+                print_json(&response)?;
+            } else {
+                print_context_pack(&response);
             }
         }
         LoopsCommand::Cancel(args) => {
@@ -435,6 +462,15 @@ fn print_loop_run(response: &mem_api::LoopRunResponse, include_traces: bool) {
     if !run.blocked_reasons.is_empty() {
         println!("Blocked: {}", run.blocked_reasons.join(", "));
     }
+    if let Some(pack) = &response.run.context_pack {
+        println!(
+            "Context pack: {} memories, {}/{} tokens, {} warning(s)",
+            pack.memories.len(),
+            pack.estimated_tokens,
+            pack.token_budget,
+            pack.warnings.len()
+        );
+    }
     println!("Traces: {}", run.trace_count);
     if include_traces && !response.run.traces.is_empty() {
         println!("\nTrace:");
@@ -444,6 +480,58 @@ fn print_loop_run(response: &mem_api::LoopRunResponse, include_traces: bool) {
                 trace.sequence, trace.trace_type, trace.title, trace.redacted
             );
         }
+    }
+}
+
+fn print_context_pack(response: &LoopContextPackResponse) {
+    let pack = &response.pack;
+    println!(
+        "Context pack {} for {} / {}",
+        pack.id, pack.project, pack.loop_id
+    );
+    if let Some(repo_root) = &pack.repo_root {
+        println!("Repo: {repo_root}");
+    }
+    if let Some(run_id) = pack.run_id {
+        println!("Run: {run_id}");
+    }
+    println!(
+        "Budget: {}/{} estimated tokens",
+        pack.estimated_tokens, pack.token_budget
+    );
+    println!(
+        "Included: {} memories, {} instruction refs, {} exclusions, {} warnings",
+        pack.memories.len(),
+        pack.instructions.len(),
+        pack.exclusions.len(),
+        pack.warnings.len()
+    );
+    if let Some(diff) = &response.diff {
+        println!(
+            "Diff: +{} -{} ~{} token_delta={}",
+            diff.added_memory_ids.len(),
+            diff.removed_memory_ids.len(),
+            diff.changed_memory_ids.len(),
+            diff.token_delta
+        );
+    }
+    for memory in pack.memories.iter().take(8) {
+        println!(
+            "- {} [{}] conf={:.2} freshness={}{}{}",
+            memory.summary,
+            memory.memory_type,
+            memory.confidence,
+            memory.freshness,
+            if memory.stale { " stale" } else { "" },
+            if memory.contradictory {
+                " contradictory"
+            } else {
+                ""
+            }
+        );
+    }
+    for warning in &pack.warnings {
+        println!("warning: {warning}");
     }
 }
 

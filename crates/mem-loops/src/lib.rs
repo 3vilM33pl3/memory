@@ -1,10 +1,13 @@
 use chrono::{DateTime, Utc};
 use mem_api::{
-    EffectiveLoopSettings, LoopActionKind, LoopDefinitionRecord, LoopMode, LoopRiskLevel,
-    LoopScopeType, LoopSettingRecord, LoopTriggerRouteDecision,
+    EffectiveLoopSettings, LoopActionKind, LoopContextExclusion, LoopContextInstructionRef,
+    LoopContextMemory, LoopContextPack, LoopContextPackDiff, LoopContextSourceRef,
+    LoopDefinitionRecord, LoopMode, LoopRiskLevel, LoopScopeType, LoopSettingRecord,
+    LoopTriggerRouteDecision, MemoryEntryResponse, MemoryStatus, SourceProvenanceStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 pub const LOOP_CONTEXT_PACK_REFRESH: &str = "context_pack_refresh";
@@ -401,6 +404,230 @@ pub fn route_trigger_event(
         .collect()
 }
 
+#[derive(Debug, Clone)]
+pub struct ContextPackBuildInput {
+    pub loop_id: String,
+    pub project: String,
+    pub repo_root: Option<String>,
+    pub run_id: Option<Uuid>,
+    pub generated_at: DateTime<Utc>,
+    pub token_budget: usize,
+    pub instructions: Vec<LoopContextInstructionRef>,
+    pub memories: Vec<MemoryEntryResponse>,
+    pub metadata: Value,
+}
+
+pub fn build_context_pack(input: ContextPackBuildInput) -> LoopContextPack {
+    let mut candidates = input.memories;
+    candidates.sort_by(|left, right| {
+        right
+            .importance
+            .cmp(&left.importance)
+            .then_with(|| {
+                right
+                    .confidence
+                    .partial_cmp(&left.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| right.updated_at.cmp(&left.updated_at))
+    });
+
+    let mut estimated_tokens = input
+        .instructions
+        .iter()
+        .map(|instruction| instruction.estimated_tokens)
+        .sum::<usize>();
+    let mut memories = Vec::new();
+    let mut exclusions = Vec::new();
+    let mut warnings = Vec::new();
+
+    for memory in candidates {
+        let memory_tokens =
+            estimate_tokens(&format!("{}\n{}", memory.summary, memory.canonical_text));
+        if memory.status != MemoryStatus::Active || memory.is_tombstone {
+            exclusions.push(LoopContextExclusion {
+                memory_id: memory.id,
+                summary: memory.summary,
+                reason: "memory is not active".to_string(),
+                estimated_tokens: memory_tokens,
+            });
+            continue;
+        }
+        if estimated_tokens + memory_tokens > input.token_budget {
+            exclusions.push(LoopContextExclusion {
+                memory_id: memory.id,
+                summary: memory.summary,
+                reason: "token budget exceeded".to_string(),
+                estimated_tokens: memory_tokens,
+            });
+            continue;
+        }
+
+        let stale = memory_is_stale(&memory, input.generated_at);
+        let contradictory = memory_is_contradictory(&memory);
+        if stale {
+            warnings.push(format!(
+                "Memory {} has stale or missing provenance.",
+                memory.id
+            ));
+        }
+        if contradictory {
+            warnings.push(format!(
+                "Memory {} may contradict other project context.",
+                memory.id
+            ));
+        }
+        estimated_tokens += memory_tokens;
+        memories.push(LoopContextMemory {
+            memory_id: memory.id,
+            canonical_id: memory.canonical_id,
+            summary: memory.summary,
+            preview: preview_text(&memory.canonical_text),
+            memory_type: memory.memory_type,
+            confidence: memory.confidence,
+            importance: memory.importance,
+            freshness: freshness_label(memory.updated_at, input.generated_at),
+            updated_at: memory.updated_at,
+            tags: memory.tags,
+            source_refs: memory
+                .sources
+                .iter()
+                .map(|source| LoopContextSourceRef {
+                    source_kind: source.source_kind.clone(),
+                    file_path: source.file_path.clone(),
+                    git_commit: source.git_commit.clone(),
+                    symbol_name: source.symbol_name.clone(),
+                    provenance_status: source.provenance.as_ref().map(|item| item.status.clone()),
+                })
+                .collect(),
+            estimated_tokens: memory_tokens,
+            stale,
+            contradictory,
+            inclusion_reason: "ranked by importance, confidence, and recency".to_string(),
+        });
+    }
+
+    LoopContextPack {
+        id: Uuid::new_v4(),
+        loop_id: input.loop_id,
+        project: input.project,
+        repo_root: input.repo_root,
+        run_id: input.run_id,
+        generated_at: input.generated_at,
+        token_budget: input.token_budget,
+        estimated_tokens,
+        instructions: input.instructions,
+        memories,
+        exclusions,
+        warnings,
+        metadata: input.metadata,
+    }
+}
+
+pub fn diff_context_packs(
+    current: &LoopContextPack,
+    previous: Option<&LoopContextPack>,
+) -> Option<LoopContextPackDiff> {
+    let previous = previous?;
+    let current_by_id = current
+        .memories
+        .iter()
+        .map(|memory| (memory.memory_id, memory))
+        .collect::<BTreeMap<_, _>>();
+    let previous_by_id = previous
+        .memories
+        .iter()
+        .map(|memory| (memory.memory_id, memory))
+        .collect::<BTreeMap<_, _>>();
+    let current_ids = current_by_id.keys().copied().collect::<BTreeSet<_>>();
+    let previous_ids = previous_by_id.keys().copied().collect::<BTreeSet<_>>();
+    let changed_memory_ids = current_ids
+        .intersection(&previous_ids)
+        .filter(|id| {
+            let Some(current_memory) = current_by_id.get(id) else {
+                return false;
+            };
+            let Some(previous_memory) = previous_by_id.get(id) else {
+                return false;
+            };
+            current_memory.updated_at != previous_memory.updated_at
+                || current_memory.confidence != previous_memory.confidence
+                || current_memory.stale != previous_memory.stale
+                || current_memory.contradictory != previous_memory.contradictory
+        })
+        .copied()
+        .collect();
+
+    Some(LoopContextPackDiff {
+        previous_run_id: previous.run_id,
+        previous_pack_id: Some(previous.id),
+        added_memory_ids: current_ids.difference(&previous_ids).copied().collect(),
+        removed_memory_ids: previous_ids.difference(&current_ids).copied().collect(),
+        changed_memory_ids,
+        token_delta: current.estimated_tokens as isize - previous.estimated_tokens as isize,
+        warning_delta: current
+            .warnings
+            .iter()
+            .filter(|warning| !previous.warnings.contains(warning))
+            .cloned()
+            .collect(),
+    })
+}
+
+pub fn estimate_tokens(text: &str) -> usize {
+    (text.chars().count() / 4).max(1)
+}
+
+fn preview_text(text: &str) -> String {
+    const MAX_CHARS: usize = 600;
+    let mut preview = text.chars().take(MAX_CHARS).collect::<String>();
+    if text.chars().count() > MAX_CHARS {
+        preview.push_str("...");
+    }
+    preview
+}
+
+fn memory_is_stale(memory: &MemoryEntryResponse, now: DateTime<Utc>) -> bool {
+    if now.signed_duration_since(memory.updated_at).num_days() > 180 {
+        return true;
+    }
+    memory.sources.iter().any(|source| {
+        source.provenance.as_ref().is_some_and(|provenance| {
+            matches!(
+                provenance.status,
+                SourceProvenanceStatus::MissingFile
+                    | SourceProvenanceStatus::MissingSymbol
+                    | SourceProvenanceStatus::Stale
+            )
+        })
+    })
+}
+
+fn memory_is_contradictory(memory: &MemoryEntryResponse) -> bool {
+    memory
+        .tags
+        .iter()
+        .any(|tag| tag.contains("contradict") || tag.contains("conflict"))
+        || memory
+            .related_memories
+            .iter()
+            .any(|related| related.relation_type == mem_api::MemoryRelationType::Duplicates)
+        || memory.summary.to_lowercase().contains("contradict")
+}
+
+fn freshness_label(updated_at: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let age_days = now.signed_duration_since(updated_at).num_days();
+    if age_days <= 7 {
+        "fresh".to_string()
+    } else if age_days <= 90 {
+        "recent".to_string()
+    } else if age_days <= 180 {
+        "aging".to_string()
+    } else {
+        "stale".to_string()
+    }
+}
+
 pub fn definition_supports_trigger(definition: &LoopDefinitionRecord, event_type: &str) -> bool {
     definition
         .trigger_spec
@@ -429,6 +656,44 @@ mod tests {
 
     fn definition() -> LoopDefinitionRecord {
         builtin_loop_definitions()[0].to_record(Utc::now())
+    }
+
+    fn memory(
+        summary: &str,
+        importance: i32,
+        confidence: f32,
+        age_days: i64,
+    ) -> MemoryEntryResponse {
+        let now = Utc::now();
+        MemoryEntryResponse {
+            id: Uuid::new_v4(),
+            project: "memory".to_string(),
+            canonical_text: format!("{summary}\nDetailed context for {summary}."),
+            summary: summary.to_string(),
+            memory_type: mem_api::MemoryType::Architecture,
+            importance,
+            confidence,
+            status: MemoryStatus::Active,
+            tags: vec!["context".to_string()],
+            sources: vec![mem_api::MemorySourceRecord {
+                id: Uuid::new_v4(),
+                task_id: None,
+                file_path: Some("AGENTS.md".to_string()),
+                git_commit: None,
+                symbol_name: None,
+                symbol_kind: None,
+                source_kind: mem_api::SourceKind::File,
+                excerpt: None,
+                provenance: None,
+            }],
+            related_memories: Vec::new(),
+            embedding_spaces: Vec::new(),
+            created_at: now - chrono::Duration::days(age_days),
+            updated_at: now - chrono::Duration::days(age_days),
+            canonical_id: Uuid::new_v4(),
+            version_no: 1,
+            is_tombstone: false,
+        }
     }
 
     #[test]
@@ -588,5 +853,75 @@ mod tests {
                 .skipped_reasons
                 .contains(&"loop_not_enabled".to_string())
         );
+    }
+
+    #[test]
+    fn context_pack_enforces_budget_and_preserves_source_refs() {
+        let included = memory("Important architecture", 5, 0.95, 2);
+        let excluded = memory(&"Large context ".repeat(200), 1, 0.7, 2);
+        let pack = build_context_pack(ContextPackBuildInput {
+            loop_id: LOOP_CONTEXT_PACK_REFRESH.to_string(),
+            project: "memory".to_string(),
+            repo_root: Some("/repo".to_string()),
+            run_id: Some(Uuid::new_v4()),
+            generated_at: Utc::now(),
+            token_budget: 80,
+            instructions: vec![LoopContextInstructionRef {
+                path: "AGENTS.md".to_string(),
+                reason: "repo instructions".to_string(),
+                estimated_tokens: 4,
+            }],
+            memories: vec![excluded, included],
+            metadata: json!({}),
+        });
+
+        assert_eq!(pack.memories.len(), 1);
+        assert_eq!(pack.memories[0].summary, "Important architecture");
+        assert_eq!(pack.memories[0].source_refs.len(), 1);
+        assert_eq!(pack.exclusions.len(), 1);
+        assert_eq!(pack.exclusions[0].reason, "token budget exceeded");
+    }
+
+    #[test]
+    fn context_pack_flags_stale_and_diff_changes() {
+        let mut old = memory("Old convention", 4, 0.9, 365);
+        old.sources[0].provenance = Some(mem_api::SourceProvenanceRecord {
+            status: SourceProvenanceStatus::Stale,
+            checked_at: Utc::now(),
+            reason: Some("file changed".to_string()),
+            resolved_path: Some("AGENTS.md".to_string()),
+        });
+        let current = build_context_pack(ContextPackBuildInput {
+            loop_id: LOOP_CONTEXT_PACK_REFRESH.to_string(),
+            project: "memory".to_string(),
+            repo_root: None,
+            run_id: Some(Uuid::new_v4()),
+            generated_at: Utc::now(),
+            token_budget: 500,
+            instructions: Vec::new(),
+            memories: vec![old.clone()],
+            metadata: json!({}),
+        });
+        let previous = LoopContextPack {
+            id: Uuid::new_v4(),
+            loop_id: current.loop_id.clone(),
+            project: current.project.clone(),
+            repo_root: None,
+            run_id: Some(Uuid::new_v4()),
+            generated_at: Utc::now(),
+            token_budget: 500,
+            estimated_tokens: 0,
+            instructions: Vec::new(),
+            memories: Vec::new(),
+            exclusions: Vec::new(),
+            warnings: Vec::new(),
+            metadata: json!({}),
+        };
+
+        assert!(current.memories[0].stale);
+        assert_eq!(current.warnings.len(), 1);
+        let diff = diff_context_packs(&current, Some(&previous)).expect("diff exists");
+        assert_eq!(diff.added_memory_ids, vec![old.id]);
+        assert!(diff.token_delta > 0);
     }
 }

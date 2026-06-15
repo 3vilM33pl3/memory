@@ -2,7 +2,8 @@ use crate::prelude::*;
 use crate::*;
 use mem_api::{EffectiveLoopSettings, LoopActionKind};
 use mem_loops::{
-    TriggerRouteCandidate, budget_blocked, builtin_loop_definitions, evaluate_action,
+    ContextPackBuildInput, TriggerRouteCandidate, budget_blocked, build_context_pack,
+    builtin_loop_definitions, diff_context_packs, estimate_tokens, evaluate_action,
     resolve_effective_settings, route_trigger_event, validate_definition,
 };
 use serde_json::json;
@@ -28,6 +29,15 @@ pub(crate) struct LoopApprovalsQuery {
     pub(crate) loop_id: Option<String>,
     pub(crate) status: Option<LoopApprovalStatus>,
     pub(crate) limit: Option<i64>,
+}
+
+#[derive(Debug, SerdeDeserialize)]
+pub(crate) struct LoopContextPackQuery {
+    pub(crate) project: Option<String>,
+    pub(crate) repo_root: Option<String>,
+    pub(crate) run_id: Option<Uuid>,
+    pub(crate) token_budget: Option<usize>,
+    pub(crate) limit: Option<usize>,
 }
 
 pub async fn register_builtin_loop_definitions(pool: &PgPool) -> Result<()> {
@@ -322,6 +332,50 @@ pub(crate) async fn route_loop_trigger(
     ))
 }
 
+pub(crate) async fn build_loop_context_pack(
+    State(state): State<AppState>,
+    Path(loop_id): Path<String>,
+    Query(query): Query<LoopContextPackQuery>,
+) -> Result<Json<LoopContextPackResponse>, ApiError> {
+    if !state.is_primary() {
+        let mut params = Vec::new();
+        if let Some(project) = &query.project {
+            params.push(format!("project={project}"));
+        }
+        if let Some(repo_root) = &query.repo_root {
+            params.push(format!("repo_root={repo_root}"));
+        }
+        if let Some(run_id) = query.run_id {
+            params.push(format!("run_id={run_id}"));
+        }
+        if let Some(token_budget) = query.token_budget {
+            params.push(format!("token_budget={token_budget}"));
+        }
+        if let Some(limit) = query.limit {
+            params.push(format!("limit={limit}"));
+        }
+        let suffix = if params.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", params.join("&"))
+        };
+        return Ok(Json(
+            proxy_get_json(&state, &format!("/v1/loops/{loop_id}/context-pack{suffix}")).await?,
+        ));
+    }
+    let request = LoopContextPackRequest {
+        project: query.project,
+        repo_root: query.repo_root,
+        run_id: query.run_id,
+        token_budget: query.token_budget.unwrap_or(4_000),
+        limit: query.limit.unwrap_or(24),
+    };
+    request.validate().map_err(ApiError::validation)?;
+    Ok(Json(
+        build_loop_context_pack_response(state.pool()?, &loop_id, &request).await?,
+    ))
+}
+
 pub(crate) async fn list_loop_runs(
     State(state): State<AppState>,
     Query(query): Query<LoopRunsQuery>,
@@ -344,6 +398,21 @@ pub(crate) async fn get_loop_run(
     Ok(Json(LoopRunResponse {
         run: fetch_loop_run_detail(state.pool()?, run_id).await?,
     }))
+}
+
+pub(crate) async fn get_loop_run_context_pack(
+    State(state): State<AppState>,
+    Path(run_id): Path<Uuid>,
+) -> Result<Json<LoopContextPackResponse>, ApiError> {
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_get_json(&state, &format!("/v1/loops/runs/{run_id}/context-pack")).await?,
+        ));
+    }
+    let response = fetch_loop_run_context_pack(state.pool()?, run_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("loop run context pack not found"))?;
+    Ok(Json(response))
 }
 
 pub(crate) async fn cancel_loop_run(
@@ -1318,6 +1387,48 @@ async fn create_control_plane_loop_run_with_trigger(
         false,
     )
     .await?;
+    let context_pack_request = LoopContextPackRequest {
+        project: request.project.clone(),
+        repo_root: request.repo_root.clone(),
+        run_id: Some(run_id),
+        token_budget: 4_000,
+        limit: 24,
+    };
+    if context_pack_request.validate().is_ok() {
+        let context_pack =
+            build_loop_context_pack_response(pool, &definition.loop_id, &context_pack_request)
+                .await?;
+        append_loop_trace(
+            pool,
+            run_id,
+            "context_pack",
+            "Context pack",
+            serde_json::to_value(&context_pack).map_err(|error| {
+                ApiError::io(anyhow::anyhow!("serialize context pack trace: {error}"))
+            })?,
+            false,
+        )
+        .await?;
+        sqlx::query(
+            r#"
+            UPDATE loop_runs
+            SET output_json = output_json || jsonb_build_object(
+                'context_pack_id', $2::uuid::text,
+                'context_pack_tokens', $3::int,
+                'context_pack_memory_count', $4::int
+            ),
+            updated_at = now()
+            WHERE id = $1
+            "#,
+        )
+        .bind(run_id)
+        .bind(context_pack.pack.id)
+        .bind(context_pack.pack.estimated_tokens as i32)
+        .bind(context_pack.pack.memories.len() as i32)
+        .execute(pool)
+        .await
+        .map_err(ApiError::sql)?;
+    }
     Ok(LoopRunResponse {
         run: fetch_loop_run_detail(pool, run_id).await?,
     })
@@ -1391,6 +1502,7 @@ async fn fetch_loop_run_detail(pool: &PgPool, run_id: Uuid) -> Result<LoopRunDet
     };
     let traces = fetch_loop_traces(pool, run_id).await?;
     let memory_proposals = fetch_loop_memory_proposals(pool, run_id).await?;
+    let context_response = context_pack_from_traces(&traces);
     Ok(LoopRunDetail {
         summary,
         run_reason: row.try_get("run_reason").map_err(ApiError::sql)?,
@@ -1405,6 +1517,10 @@ async fn fetch_loop_run_detail(pool: &PgPool, run_id: Uuid) -> Result<LoopRunDet
         output: row.try_get("output_json").map_err(ApiError::sql)?,
         traces,
         memory_proposals,
+        context_pack: context_response
+            .as_ref()
+            .map(|response| response.pack.clone()),
+        context_diff: context_response.and_then(|response| response.diff),
     })
 }
 
@@ -1450,6 +1566,155 @@ async fn fetch_loop_memory_proposals(
     .await
     .map_err(ApiError::sql)?;
     rows.into_iter().map(row_to_memory_proposal).collect()
+}
+
+async fn build_loop_context_pack_response(
+    pool: &PgPool,
+    loop_id: &str,
+    request: &LoopContextPackRequest,
+) -> Result<LoopContextPackResponse, ApiError> {
+    let project = request
+        .project
+        .as_deref()
+        .ok_or_else(|| ApiError::validation(ValidationError::new("project is required")))?;
+    let memory_rows = crate::repository::fetch_project_memories(
+        pool,
+        project,
+        Some("active"),
+        request.limit as i64 * 3,
+        0,
+    )
+    .await
+    .map_err(ApiError::sql)?;
+    let mut memories = Vec::new();
+    for item in memory_rows.items.into_iter().take(request.limit * 2) {
+        if let Some(memory) = crate::repository::handlers::memory::fetch_memory_entry(pool, item.id)
+            .await
+            .map_err(ApiError::sql)?
+        {
+            memories.push(memory);
+        }
+        if memories.len() >= request.limit {
+            break;
+        }
+    }
+    let generated_at = chrono::Utc::now();
+    let instructions = context_instruction_refs(request.repo_root.as_deref());
+    let current = build_context_pack(ContextPackBuildInput {
+        loop_id: loop_id.to_string(),
+        project: project.to_string(),
+        repo_root: request.repo_root.clone(),
+        run_id: request.run_id,
+        generated_at,
+        token_budget: request.token_budget,
+        instructions,
+        memories,
+        metadata: json!({
+            "builder": "deterministic",
+            "memory_limit": request.limit,
+            "token_estimator": "chars_div_4",
+        }),
+    });
+    let previous = fetch_previous_context_pack(
+        pool,
+        loop_id,
+        project,
+        request.repo_root.as_deref(),
+        request.run_id,
+    )
+    .await?;
+    let diff = diff_context_packs(&current, previous.as_ref());
+    Ok(LoopContextPackResponse {
+        pack: current,
+        diff,
+    })
+}
+
+async fn fetch_loop_run_context_pack(
+    pool: &PgPool,
+    run_id: Uuid,
+) -> Result<Option<LoopContextPackResponse>, ApiError> {
+    let traces = fetch_loop_traces(pool, run_id).await?;
+    Ok(context_pack_from_traces(&traces))
+}
+
+fn context_pack_from_traces(traces: &[LoopTraceRecord]) -> Option<LoopContextPackResponse> {
+    traces
+        .iter()
+        .rev()
+        .find(|trace| trace.trace_type == "context_pack")
+        .and_then(|trace| {
+            serde_json::from_value::<LoopContextPackResponse>(trace.payload.clone()).ok()
+        })
+}
+
+async fn fetch_previous_context_pack(
+    pool: &PgPool,
+    loop_id: &str,
+    project: &str,
+    repo_root: Option<&str>,
+    current_run_id: Option<Uuid>,
+) -> Result<Option<LoopContextPack>, ApiError> {
+    let row = sqlx::query(
+        r#"
+        SELECT rt.payload_json
+        FROM run_traces rt
+        JOIN loop_runs lr ON lr.id = rt.run_id
+        JOIN projects p ON p.id = lr.project_id
+        WHERE rt.trace_type = 'context_pack'
+          AND lr.loop_id = $1
+          AND p.slug = $2
+          AND ($3::text IS NULL OR lr.repo_root = $3)
+          AND ($4::uuid IS NULL OR lr.id <> $4)
+        ORDER BY rt.created_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(loop_id)
+    .bind(project)
+    .bind(repo_root)
+    .bind(current_run_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let payload: serde_json::Value = row.try_get("payload_json").map_err(ApiError::sql)?;
+    Ok(serde_json::from_value::<LoopContextPackResponse>(payload)
+        .ok()
+        .map(|response| response.pack))
+}
+
+fn context_instruction_refs(repo_root: Option<&str>) -> Vec<LoopContextInstructionRef> {
+    let Some(repo_root) = repo_root else {
+        return Vec::new();
+    };
+    let candidates = [
+        ("AGENTS.md", "repo agent instructions"),
+        (".agents/memory-layer.toml", "repo memory configuration"),
+        ("CONTRIBUTING.md", "contribution and validation guidance"),
+        (
+            "docs/developer/architecture/code-map.md",
+            "developer code map",
+        ),
+    ];
+    candidates
+        .iter()
+        .filter_map(|(relative, reason)| {
+            let path = FsPath::new(repo_root).join(relative);
+            let metadata = fs::metadata(&path).ok()?;
+            if !metadata.is_file() {
+                return None;
+            }
+            let contents = fs::read_to_string(&path).unwrap_or_default();
+            Some(LoopContextInstructionRef {
+                path: (*relative).to_string(),
+                reason: (*reason).to_string(),
+                estimated_tokens: estimate_tokens(&contents),
+            })
+        })
+        .collect()
 }
 
 async fn cancel_loop_run_record(

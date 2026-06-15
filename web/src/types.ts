@@ -12,6 +12,7 @@ export type MemoryType =
   | "task"
   | "plan"
   | "implementation"
+  | "refactor"
   | "user"
   | "feedback"
   | "project"
@@ -201,6 +202,71 @@ export interface LoopMemoryProposalRecord {
   resolved_at?: string | null;
 }
 
+export interface LoopContextInstructionRef {
+  path: string;
+  reason: string;
+  estimated_tokens: number;
+}
+
+export interface LoopContextSourceRef {
+  source_kind: SourceKind;
+  file_path?: string | null;
+  git_commit?: string | null;
+  symbol_name?: string | null;
+  provenance_status?: string | null;
+}
+
+export interface LoopContextMemory {
+  memory_id: string;
+  canonical_id: string;
+  summary: string;
+  preview: string;
+  memory_type: MemoryType;
+  confidence: number;
+  importance: number;
+  freshness: string;
+  updated_at: string;
+  tags: string[];
+  source_refs: LoopContextSourceRef[];
+  estimated_tokens: number;
+  stale: boolean;
+  contradictory: boolean;
+  inclusion_reason: string;
+}
+
+export interface LoopContextExclusion {
+  memory_id: string;
+  summary: string;
+  reason: string;
+  estimated_tokens: number;
+}
+
+export interface LoopContextPack {
+  id: string;
+  loop_id: string;
+  project: string;
+  repo_root?: string | null;
+  run_id?: string | null;
+  generated_at: string;
+  token_budget: number;
+  estimated_tokens: number;
+  instructions: LoopContextInstructionRef[];
+  memories: LoopContextMemory[];
+  exclusions: LoopContextExclusion[];
+  warnings: string[];
+  metadata: unknown;
+}
+
+export interface LoopContextPackDiff {
+  previous_run_id?: string | null;
+  previous_pack_id?: string | null;
+  added_memory_ids: string[];
+  removed_memory_ids: string[];
+  changed_memory_ids: string[];
+  token_delta: number;
+  warning_delta: string[];
+}
+
 export interface LoopRunDetail {
   summary: LoopRunSummary;
   run_reason?: string | null;
@@ -211,6 +277,8 @@ export interface LoopRunDetail {
   output: unknown;
   traces: LoopTraceRecord[];
   memory_proposals: LoopMemoryProposalRecord[];
+  context_pack?: LoopContextPack | null;
+  context_diff?: LoopContextPackDiff | null;
 }
 
 export interface LoopRunResponse {

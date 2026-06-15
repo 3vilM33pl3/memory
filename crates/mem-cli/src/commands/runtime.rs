@@ -2264,6 +2264,8 @@ pub(in crate::commands) enum LoopsCommand {
     Runs(LoopRunsArgs),
     #[command(about = "Inspect one loop run.", after_help = LOOPS_GROUP_AFTER_HELP)]
     Inspect(LoopInspectArgs),
+    #[command(about = "Build or inspect a loop context pack.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    ContextPack(LoopContextPackArgs),
     #[command(about = "Cancel a queued or running loop run.", after_help = LOOPS_GROUP_AFTER_HELP)]
     Cancel(LoopCancelArgs),
     #[command(about = "Attach feedback to a loop run.", after_help = LOOPS_GROUP_AFTER_HELP)]
@@ -2428,6 +2430,33 @@ pub(in crate::commands) struct LoopRunsArgs {
 pub(in crate::commands) struct LoopInspectArgs {
     /// Loop run id.
     pub(crate) run_id: Uuid,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct LoopContextPackArgs {
+    /// Loop identifier, such as context_pack_refresh.
+    pub(crate) loop_id: String,
+    /// Project slug for the context pack.
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    /// Repository root for repo instruction references.
+    #[arg(long)]
+    pub(crate) repo_root: Option<PathBuf>,
+    /// Existing loop run id to associate with the pack or inspect.
+    #[arg(long)]
+    pub(crate) run_id: Option<Uuid>,
+    /// Approximate token budget for included memories and instructions.
+    #[arg(long, default_value_t = 4_000)]
+    pub(crate) token_budget: usize,
+    /// Maximum active memories to consider for the pack.
+    #[arg(long, default_value_t = 24)]
+    pub(crate) limit: usize,
+    /// Read the context pack already recorded on the run id.
+    #[arg(long)]
+    pub(crate) from_run: bool,
     /// Emit the response as JSON.
     #[arg(long)]
     pub(crate) json: bool,

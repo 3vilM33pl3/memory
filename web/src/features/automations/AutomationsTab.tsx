@@ -405,6 +405,44 @@ export function AutomationsTab({
                       <Metric label="Run reason" value={activeLoopRun.run_reason || "n/a"} />
                       <Metric label="Started" value={formatDateTime(activeLoopRun.summary.started_at)} />
                       <Metric label="Finished" value={formatDateTime(activeLoopRun.summary.finished_at)} />
+                      {activeLoopRun.context_pack ? (
+                        <div className="detail-section">
+                          <h3>Context pack</h3>
+                          <div className="stats-row">
+                            <span>{activeLoopRun.context_pack.memories.length} memories</span>
+                            <span>{activeLoopRun.context_pack.estimated_tokens}/{activeLoopRun.context_pack.token_budget} tokens</span>
+                            <span>{activeLoopRun.context_pack.instructions.length} instruction refs</span>
+                            <span>{activeLoopRun.context_pack.exclusions.length} exclusions</span>
+                          </div>
+                          {activeLoopRun.context_diff ? (
+                            <div className="stats-row">
+                              <span>+{activeLoopRun.context_diff.added_memory_ids.length}</span>
+                              <span>-{activeLoopRun.context_diff.removed_memory_ids.length}</span>
+                              <span>~{activeLoopRun.context_diff.changed_memory_ids.length}</span>
+                              <span>token delta {activeLoopRun.context_diff.token_delta}</span>
+                            </div>
+                          ) : null}
+                          {activeLoopRun.context_pack.memories.slice(0, 5).map((memory) => (
+                            <div className="trace-card" key={memory.memory_id}>
+                              <strong>{memory.summary}</strong>
+                              <div className="stats-row">
+                                <span>{label(memory.memory_type)}</span>
+                                <span>conf {memory.confidence.toFixed(2)}</span>
+                                <span>{memory.freshness}</span>
+                                {memory.stale ? <span className="badge badge-archived">stale</span> : null}
+                                {memory.contradictory ? <span className="badge badge-archived">contradictory</span> : null}
+                              </div>
+                            </div>
+                          ))}
+                          {activeLoopRun.context_pack.warnings.length ? (
+                            <ul>
+                              {activeLoopRun.context_pack.warnings.map((warning) => (
+                                <li key={warning}>{warning}</li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
+                      ) : null}
                       {activeLoopRun.summary.status === "failed" || activeLoopRun.summary.status === "blocked" ? (
                         <div className="detail-section">
                           <h3>Diagnostics</h3>

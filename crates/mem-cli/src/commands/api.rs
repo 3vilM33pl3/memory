@@ -4,8 +4,8 @@ use mem_api::{
     CaptureTaskRequest, CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest,
     CommitSyncResponse, CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse,
     GraphActivityRequest, LoopApprovalDecisionRequest, LoopApprovalDecisionResponse,
-    LoopApprovalStatus, LoopApprovalsResponse, LoopCancelRequest, LoopDefinitionResponse,
-    LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
+    LoopApprovalStatus, LoopApprovalsResponse, LoopCancelRequest, LoopContextPackResponse,
+    LoopDefinitionResponse, LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
     LoopGlobalStateUpdateRequest, LoopRunRequest, LoopRunResponse, LoopRunStatus, LoopRunsResponse,
     LoopSettingsUpdateRequest, MemoryEntryResponse, PlanActivityRequest, ProjectCommitsResponse,
     ProjectMemoriesResponse, ProjectMemoryBundlePreview, ProjectMemoryExportOptions,
@@ -860,6 +860,57 @@ impl ApiClient {
                 .get(service_url(
                     &self.config,
                     &format!("/v1/loops/runs/{run_id}"),
+                ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_context_pack(
+        &self,
+        loop_id: &str,
+        project: Option<&str>,
+        repo_root: Option<&str>,
+        run_id: Option<Uuid>,
+        token_budget: usize,
+        limit: usize,
+    ) -> Result<LoopContextPackResponse> {
+        let mut query = vec![
+            ("token_budget", token_budget.to_string()),
+            ("limit", limit.to_string()),
+        ];
+        if let Some(project) = project {
+            query.push(("project", project.to_string()));
+        }
+        if let Some(repo_root) = repo_root {
+            query.push(("repo_root", repo_root.to_string()));
+        }
+        if let Some(run_id) = run_id {
+            query.push(("run_id", run_id.to_string()));
+        }
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/loops/{loop_id}/context-pack"),
+                ))
+                .query(&query)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn loop_run_context_pack(
+        &self,
+        run_id: Uuid,
+    ) -> Result<LoopContextPackResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/loops/runs/{run_id}/context-pack"),
                 ))
                 .send()
                 .await?,
