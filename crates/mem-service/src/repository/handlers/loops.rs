@@ -1752,6 +1752,24 @@ async fn create_control_plane_loop_run_with_trigger(
             .execute(pool)
             .await
             .map_err(ApiError::sql)?;
+        } else if definition.loop_id == mem_loops::LOOP_SKILL_MINING && !blocked {
+            let skill =
+                emit_skill_mining_report(pool, run_id, request, &definition.loop_id).await?;
+            sqlx::query(
+                r#"
+                UPDATE loop_runs
+                SET output_summary = $2,
+                    output_json = output_json || jsonb_build_object('skill_mining', $3::jsonb),
+                    updated_at = now()
+                WHERE id = $1
+                "#,
+            )
+            .bind(run_id)
+            .bind(&skill.summary)
+            .bind(&skill.output)
+            .execute(pool)
+            .await
+            .map_err(ApiError::sql)?;
         }
     }
     Ok(LoopRunResponse {
@@ -4200,6 +4218,116 @@ fn payload_string_field(payload: Option<&serde_json::Value>, keys: &[&str]) -> S
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_string()
+}
+
+struct SkillMiningResult {
+    summary: String,
+    output: serde_json::Value,
+}
+
+async fn emit_skill_mining_report(
+    pool: &PgPool,
+    run_id: Uuid,
+    request: &LoopRunRequest,
+    loop_id: &str,
+) -> Result<SkillMiningResult, ApiError> {
+    let project = request
+        .project
+        .as_deref()
+        .ok_or_else(|| ApiError::validation(ValidationError::new("project is required")))?;
+    let payload = request.trigger_payload.as_ref();
+    let successful = payload_truthy(
+        payload,
+        &["successful", "accepted_pr", "merged", "run_succeeded"],
+    );
+    let commands = payload_string_array(payload, &["commands", "validation_commands"]);
+    let validation = payload_string_array(payload, &["validation", "validation_evidence"]);
+    let recipe = payload_string_field(payload, &["recipe", "summary", "description"]);
+    let source_run = payload_string_field(payload, &["source_run", "run_id", "pr_url", "url"]);
+    let suitable = successful && (!recipe.trim().is_empty() || !commands.is_empty());
+    let mut proposal_id = None;
+    if suitable {
+        let title = payload_string_field(payload, &["title", "skill_title"]);
+        let title = if title.trim().is_empty() {
+            "Learned development skill".to_string()
+        } else {
+            title
+        };
+        let applicability = payload_string_array(payload, &["applicability", "conditions"]);
+        let canonical_text = format!(
+            "# {title}\n\nApplicability:\n{}\n\nRecipe:\n{}\n\nCommands:\n{}\n\nValidation evidence:\n{}\n\nSource:\n{}",
+            bullet_lines(&applicability),
+            if recipe.trim().is_empty() {
+                "Use the commands and source evidence as the initial recipe."
+            } else {
+                recipe.as_str()
+            },
+            bullet_lines(&commands),
+            bullet_lines(&validation),
+            source_run
+        );
+        let create = LoopMemoryProposalCreateRequest {
+            project: project.to_string(),
+            loop_id: loop_id.to_string(),
+            proposal_type: "add".to_string(),
+            run_id: Some(run_id),
+            target_memory_id: None,
+            candidate: json!({
+                "canonical_text": canonical_text,
+                "summary": title,
+                "memory_type": "reference",
+                "tags": ["loop-engineering", "learned-skill"]
+            }),
+            evidence: json!([{
+                "source_kind": "note",
+                "excerpt": source_run
+            }]),
+            confidence: 0.78,
+            risk_notes: Some(
+                "Learned skill proposal requires approval before durable use.".to_string(),
+            ),
+        };
+        create.validate().map_err(ApiError::validation)?;
+        let created = insert_loop_memory_proposal(pool, &create).await?;
+        proposal_id = Some(created.proposal.id);
+    }
+    let output = json!({
+        "suitable": suitable,
+        "successful": successful,
+        "commands": commands,
+        "validation_evidence": validation,
+        "source_run": source_run,
+        "skill_proposal_id": proposal_id,
+        "requires_approval": proposal_id.is_some()
+    });
+    append_loop_trace(
+        pool,
+        run_id,
+        "skill_mining",
+        "Skill Mining report",
+        output.clone(),
+        false,
+    )
+    .await?;
+    Ok(SkillMiningResult {
+        summary: if suitable {
+            "Skill Mining created a pending learned-skill proposal.".to_string()
+        } else {
+            "Skill Mining did not find a suitable reusable recipe.".to_string()
+        },
+        output,
+    })
+}
+
+fn bullet_lines(items: &[String]) -> String {
+    if items.is_empty() {
+        return "- n/a".to_string();
+    }
+    items
+        .iter()
+        .map(|item| format!("- {item}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 async fn cancel_loop_run_record(

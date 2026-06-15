@@ -127,6 +127,12 @@ diffs, and architecture drift. It does not modify code; when the payload marks
 an architecture change as intentional, it creates a pending architecture memory
 proposal for review.
 
+The `skill_mining` loop reads successful run or accepted PR payloads and looks
+for reusable recipes. Suitable payloads become pending learned-skill memory
+proposals with applicability conditions, recipe steps, commands, validation
+evidence, and source links. Approval is required before the skill becomes
+durable memory that future context packs can retrieve.
+
 ## Approvals
 
 ```bash

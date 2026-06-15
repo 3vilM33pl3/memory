@@ -882,6 +882,81 @@ async fn loop_repository_reviewer_drift_reports_findings_and_memory_proposal() {
         .expect("cleanup test project");
 }
 
+#[tokio::test]
+async fn loop_repository_skill_mining_creates_learned_skill_proposal() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-loop-skill");
+    let repo_root = format!("/tmp/{project}");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+
+    mem_service::repository::handlers::loops::register_builtin_loop_definitions(&pool)
+        .await
+        .expect("register builtin loops");
+    let project_id =
+        mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+            .await
+            .expect("upsert project");
+    enable_loop_for_project_mode(
+        &pool,
+        project_id,
+        &project,
+        mem_loops::LOOP_SKILL_MINING,
+        LoopMode::SuggestOnly,
+    )
+    .await;
+
+    let run = mem_service::repository::handlers::loops::record_control_plane_loop_run(
+        &pool,
+        mem_loops::LOOP_SKILL_MINING,
+        &LoopRunRequest {
+            project: Some(project.clone()),
+            repo_root: Some(repo_root.clone()),
+            scope_type: None,
+            scope_id: None,
+            dry_run: true,
+            reason: Some("skill mining repository test".to_string()),
+            trigger_payload: Some(serde_json::json!({
+                "successful": true,
+                "title": "Validate loop DB repository changes",
+                "applicability": ["service repository loop handlers change"],
+                "recipe": "Add a DB repository test, run focused cargo tests, then run web checks.",
+                "commands": ["cargo test -p mem-service --test db_repository"],
+                "validation_evidence": ["db_repository test passed"],
+                "source_run": "3VI-619-test"
+            })),
+        },
+    )
+    .await
+    .expect("run skill mining loop")
+    .run;
+
+    assert_eq!(run.summary.status, LoopRunStatus::Succeeded);
+    assert_eq!(run.output["skill_mining"]["suitable"], true);
+    assert!(
+        run.output["skill_mining"]["skill_proposal_id"]
+            .as_str()
+            .is_some()
+    );
+    assert!(run.memory_proposals.iter().any(|proposal| {
+        proposal
+            .candidate
+            .get("tags")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|tags| tags.iter().any(|tag| tag == "learned-skill"))
+    }));
+
+    cleanup_loop_run(&pool, run.summary.id).await;
+    cleanup_loop_triggers(&pool, &repo_root).await;
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
 async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     let memory_id = Uuid::new_v4();
     sqlx::query(
