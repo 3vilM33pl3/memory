@@ -3,10 +3,15 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
-    ActivityListResponse, AppConfig, MemoryEntryResponse, MemoryHistoryResponse,
-    ProjectMemoriesResponse, ProjectOverviewResponse, QueryAnswerMode, QueryFilters, QueryRequest,
-    QueryResponse, ReplacementProposalListResponse, ResumeCheckpoint, ResumeRequest,
-    ResumeResponse, UpToSpeedRequest, UpToSpeedResponse, read_repo_project_slug,
+    ActivityListResponse, AppConfig, LoopApprovalDecisionRequest, LoopApprovalDecisionResponse,
+    LoopApprovalStatus, LoopApprovalsResponse, LoopCancelRequest, LoopDefinitionResponse,
+    LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
+    LoopGlobalStateUpdateRequest, LoopMode, LoopRunRequest, LoopRunResponse, LoopRunStatus,
+    LoopRunsResponse, LoopScopeType, LoopSettingResponse, LoopSettingsUpdateRequest,
+    MemoryEntryResponse, MemoryHistoryResponse, ProjectMemoriesResponse, ProjectOverviewResponse,
+    QueryAnswerMode, QueryFilters, QueryRequest, QueryResponse, ReplacementProposalListResponse,
+    ResumeCheckpoint, ResumeRequest, ResumeResponse, UpToSpeedRequest, UpToSpeedResponse,
+    read_repo_project_slug,
 };
 use reqwest::Client;
 use rmcp::{
@@ -35,6 +40,22 @@ const TOOL_MEMORY_GET_MEMORY: &str = "memory_get_memory";
 const TOOL_MEMORY_MEMORY_HISTORY: &str = "memory_memory_history";
 const TOOL_MEMORY_LIST_ACTIVITIES: &str = "memory_list_activities";
 const TOOL_MEMORY_LIST_REPLACEMENT_PROPOSALS: &str = "memory_list_replacement_proposals";
+const TOOL_MEMORY_LOOP_LIST: &str = "memory_loop_list";
+const TOOL_MEMORY_LOOP_GET: &str = "memory_loop_get";
+const TOOL_MEMORY_LOOP_ENABLE: &str = "memory_loop_enable";
+const TOOL_MEMORY_LOOP_DISABLE: &str = "memory_loop_disable";
+const TOOL_MEMORY_LOOP_PAUSE: &str = "memory_loop_pause";
+const TOOL_MEMORY_LOOP_SNOOZE: &str = "memory_loop_snooze";
+const TOOL_MEMORY_LOOP_RUN: &str = "memory_loop_run";
+const TOOL_MEMORY_LOOP_RUNS: &str = "memory_loop_runs";
+const TOOL_MEMORY_LOOP_INSPECT: &str = "memory_loop_inspect";
+const TOOL_MEMORY_LOOP_CANCEL: &str = "memory_loop_cancel";
+const TOOL_MEMORY_LOOP_FEEDBACK: &str = "memory_loop_feedback";
+const TOOL_MEMORY_LOOP_LIST_APPROVALS: &str = "memory_loop_list_approvals";
+const TOOL_MEMORY_LOOP_APPROVE: &str = "memory_loop_approve";
+const TOOL_MEMORY_LOOP_REJECT: &str = "memory_loop_reject";
+const TOOL_MEMORY_LOOP_GLOBAL_STATE: &str = "memory_loop_global_state";
+const TOOL_MEMORY_LOOP_SET_GLOBAL_KILL_SWITCH: &str = "memory_loop_set_global_kill_switch";
 
 const PROMPT_GET_UP_TO_SPEED: &str = "memory_get_up_to_speed";
 const PROMPT_ANSWER_WITH_CONTEXT: &str = "memory_answer_with_context";
@@ -116,7 +137,7 @@ impl ServerHandler for MemoryMcpServer {
                 .build(),
         )
         .with_instructions(
-            "Read-only Memory Layer MCP adapter. Use tools/resources to query project memory; write operations are intentionally not exposed.",
+            "Memory Layer MCP adapter. Memory tools are read-only. Loop tools expose the loop control plane over the service API and require explicit user approval for enabling loops.",
         )
     }
 
@@ -145,6 +166,24 @@ impl ServerHandler for MemoryMcpServer {
             TOOL_MEMORY_LIST_ACTIVITIES => self.tool_list_activities(arguments).await,
             TOOL_MEMORY_LIST_REPLACEMENT_PROPOSALS => {
                 self.tool_list_replacement_proposals(arguments).await
+            }
+            TOOL_MEMORY_LOOP_LIST => self.tool_loop_list(arguments).await,
+            TOOL_MEMORY_LOOP_GET => self.tool_loop_get(arguments).await,
+            TOOL_MEMORY_LOOP_ENABLE => self.tool_loop_enable(arguments).await,
+            TOOL_MEMORY_LOOP_DISABLE => self.tool_loop_disable(arguments).await,
+            TOOL_MEMORY_LOOP_PAUSE => self.tool_loop_pause(arguments).await,
+            TOOL_MEMORY_LOOP_SNOOZE => self.tool_loop_snooze(arguments).await,
+            TOOL_MEMORY_LOOP_RUN => self.tool_loop_run(arguments).await,
+            TOOL_MEMORY_LOOP_RUNS => self.tool_loop_runs(arguments).await,
+            TOOL_MEMORY_LOOP_INSPECT => self.tool_loop_inspect(arguments).await,
+            TOOL_MEMORY_LOOP_CANCEL => self.tool_loop_cancel(arguments).await,
+            TOOL_MEMORY_LOOP_FEEDBACK => self.tool_loop_feedback(arguments).await,
+            TOOL_MEMORY_LOOP_LIST_APPROVALS => self.tool_loop_list_approvals(arguments).await,
+            TOOL_MEMORY_LOOP_APPROVE => self.tool_loop_approve(arguments).await,
+            TOOL_MEMORY_LOOP_REJECT => self.tool_loop_reject(arguments).await,
+            TOOL_MEMORY_LOOP_GLOBAL_STATE => self.tool_loop_global_state(arguments).await,
+            TOOL_MEMORY_LOOP_SET_GLOBAL_KILL_SWITCH => {
+                self.tool_loop_set_global_kill_switch(arguments).await
             }
             other => Err(McpError::new(
                 rmcp::model::ErrorCode::METHOD_NOT_FOUND,
@@ -487,6 +526,354 @@ impl MemoryMcpServer {
             .join("\n");
         structured_with_text(text, json!({ "response": response }))
     }
+
+    async fn tool_loop_list(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let _: EmptyArgs = from_args(arguments)?;
+        let response = self.client.loop_definitions().await.map_err(api_error)?;
+        let text = response
+            .definitions
+            .iter()
+            .map(|definition| {
+                format!(
+                    "- {} v{} [{} default={}] {}",
+                    definition.loop_id,
+                    definition.version,
+                    definition.risk_level,
+                    definition.default_mode,
+                    definition.description
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_get(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopGetArgs = from_args(arguments)?;
+        let project = optional_project_for_http(&self.mode, args.project)?;
+        let response = self
+            .client
+            .loop_definition(&args.loop_id, project.as_deref(), args.repo_root.as_deref())
+            .await
+            .map_err(api_error)?;
+        let text = format!(
+            "{} v{} [{} default={}]\n{}",
+            response.definition.loop_id,
+            response.definition.version,
+            response.definition.risk_level,
+            response.definition.default_mode,
+            response.definition.description
+        );
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_enable(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopSettingArgs = from_args(arguments)?;
+        let request = args.to_update_request(Some(true), args.mode.clone(), None, None);
+        let response = self
+            .client
+            .loop_enable(&args.loop_id, &request)
+            .await
+            .map_err(api_error)?;
+        let text = format_loop_setting_text("enable", &response);
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_disable(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopSettingArgs = from_args(arguments)?;
+        let request = args.to_update_request(Some(false), Some(LoopMode::Off), None, None);
+        let response = self
+            .client
+            .loop_disable(&args.loop_id, &request)
+            .await
+            .map_err(api_error)?;
+        let text = format_loop_setting_text("disable", &response);
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_pause(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopPauseArgs = from_args(arguments)?;
+        let request = args.setting.to_update_request(
+            None,
+            Some(LoopMode::Paused),
+            Some(args.paused_until),
+            None,
+        );
+        let response = self
+            .client
+            .loop_pause(&args.setting.loop_id, &request)
+            .await
+            .map_err(api_error)?;
+        let text = format_loop_setting_text("pause", &response);
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_snooze(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopSnoozeArgs = from_args(arguments)?;
+        let request = args.setting.to_update_request(
+            None,
+            Some(LoopMode::Snoozed),
+            None,
+            Some(args.snoozed_until),
+        );
+        let response = self
+            .client
+            .loop_snooze(&args.setting.loop_id, &request)
+            .await
+            .map_err(api_error)?;
+        let text = format_loop_setting_text("snooze", &response);
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_run(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopRunArgs = from_args(arguments)?;
+        let request = LoopRunRequest {
+            project: args.project,
+            repo_root: args.repo_root,
+            scope_type: args.scope_type,
+            scope_id: args.scope_id,
+            dry_run: args.dry_run.unwrap_or(true),
+            reason: args.reason,
+            trigger_payload: args.trigger_payload,
+        };
+        request.validate().map_err(validation)?;
+        let response = self
+            .client
+            .loop_run(&args.loop_id, &request)
+            .await
+            .map_err(api_error)?;
+        let text = format_loop_run_text(&response);
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_runs(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopRunsArgs = from_args(arguments)?;
+        let response = self
+            .client
+            .loop_runs(
+                args.project.as_deref(),
+                args.loop_id.as_deref(),
+                args.status.as_ref(),
+                args.limit.unwrap_or(50).clamp(1, 200),
+            )
+            .await
+            .map_err(api_error)?;
+        let text = response
+            .runs
+            .iter()
+            .map(|run| {
+                format!(
+                    "- {} {} {} {} traces={}",
+                    run.id,
+                    run.loop_id,
+                    run.status.as_str(),
+                    run.started_at.to_rfc3339(),
+                    run.trace_count
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_inspect(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: RunIdArg = from_args(arguments)?;
+        let response = self
+            .client
+            .loop_run_detail(&args.run_id)
+            .await
+            .map_err(api_error)?;
+        let text = format_loop_run_text(&response);
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_cancel(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopCancelArgs = from_args(arguments)?;
+        let request = LoopCancelRequest {
+            reason: args.reason,
+        };
+        let response = self
+            .client
+            .loop_cancel(&args.run_id, &request)
+            .await
+            .map_err(api_error)?;
+        let text = format_loop_run_text(&response);
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_feedback(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopFeedbackArgs = from_args(arguments)?;
+        let request = LoopFeedbackRequest {
+            rating: args.rating,
+            note: args.note,
+        };
+        request.validate().map_err(validation)?;
+        let response = self
+            .client
+            .loop_feedback(&args.run_id, &request)
+            .await
+            .map_err(api_error)?;
+        let text = format_loop_run_text(&response);
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_list_approvals(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopApprovalsArgs = from_args(arguments)?;
+        let response = self
+            .client
+            .loop_approvals(
+                args.project.as_deref(),
+                args.status.as_ref(),
+                args.limit.unwrap_or(50).clamp(1, 200),
+            )
+            .await
+            .map_err(api_error)?;
+        let text = response
+            .approvals
+            .iter()
+            .map(|approval| {
+                format!(
+                    "- {} {} {} [{}] {}",
+                    approval.id,
+                    approval.loop_id,
+                    approval.action_type,
+                    approval.status.as_str(),
+                    approval.risk_reason
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_loop_approve(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopApprovalDecisionArgs = from_args(arguments)?;
+        let request = LoopApprovalDecisionRequest {
+            reviewer: args.reviewer,
+            reason: args.reason,
+        };
+        let response = self
+            .client
+            .loop_approval_decision(&args.approval_id, true, &request)
+            .await
+            .map_err(api_error)?;
+        structured_with_text(
+            format!(
+                "Approved {} for loop {}.",
+                response.approval.id, response.approval.loop_id
+            ),
+            json!({ "response": response }),
+        )
+    }
+
+    async fn tool_loop_reject(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopApprovalDecisionArgs = from_args(arguments)?;
+        let request = LoopApprovalDecisionRequest {
+            reviewer: args.reviewer,
+            reason: args.reason,
+        };
+        let response = self
+            .client
+            .loop_approval_decision(&args.approval_id, false, &request)
+            .await
+            .map_err(api_error)?;
+        structured_with_text(
+            format!(
+                "Rejected {} for loop {}.",
+                response.approval.id, response.approval.loop_id
+            ),
+            json!({ "response": response }),
+        )
+    }
+
+    async fn tool_loop_global_state(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let _: EmptyArgs = from_args(arguments)?;
+        let response = self.client.loop_global_state().await.map_err(api_error)?;
+        structured_with_text(
+            format!(
+                "Global kill switch: {}",
+                if response.kill_switch_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            ),
+            json!({ "response": response }),
+        )
+    }
+
+    async fn tool_loop_set_global_kill_switch(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: LoopGlobalKillSwitchArgs = from_args(arguments)?;
+        let request = LoopGlobalStateUpdateRequest {
+            kill_switch_enabled: args.kill_switch_enabled,
+            updated_by: args.updated_by,
+            reason: args.reason,
+        };
+        let response = self
+            .client
+            .loop_set_global_state(&request)
+            .await
+            .map_err(api_error)?;
+        structured_with_text(
+            format!(
+                "Global kill switch: {}",
+                if response.kill_switch_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
+            ),
+            json!({ "response": response }),
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -603,6 +990,161 @@ impl MemoryApiClient {
     ) -> Result<ReplacementProposalListResponse> {
         self.get(&format!("/v1/projects/{project}/replacement-proposals"))
             .await
+    }
+
+    pub async fn loop_definitions(&self) -> Result<LoopDefinitionsResponse> {
+        self.get("/v1/loops").await
+    }
+
+    pub async fn loop_definition(
+        &self,
+        loop_id: &str,
+        project: Option<&str>,
+        repo_root: Option<&str>,
+    ) -> Result<LoopDefinitionResponse> {
+        let mut params = Vec::new();
+        if let Some(project) = project {
+            params.push(format!("project={}", urlencoding::encode(project)));
+        }
+        if let Some(repo_root) = repo_root {
+            params.push(format!("repo_root={}", urlencoding::encode(repo_root)));
+        }
+        let suffix = if params.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", params.join("&"))
+        };
+        self.get(&format!("/v1/loops/{loop_id}{suffix}")).await
+    }
+
+    pub async fn loop_enable(
+        &self,
+        loop_id: &str,
+        request: &LoopSettingsUpdateRequest,
+    ) -> Result<LoopSettingResponse> {
+        self.post(&format!("/v1/loops/{loop_id}/enable"), request)
+            .await
+    }
+
+    pub async fn loop_disable(
+        &self,
+        loop_id: &str,
+        request: &LoopSettingsUpdateRequest,
+    ) -> Result<LoopSettingResponse> {
+        self.post(&format!("/v1/loops/{loop_id}/disable"), request)
+            .await
+    }
+
+    pub async fn loop_pause(
+        &self,
+        loop_id: &str,
+        request: &LoopSettingsUpdateRequest,
+    ) -> Result<LoopSettingResponse> {
+        self.post(&format!("/v1/loops/{loop_id}/pause"), request)
+            .await
+    }
+
+    pub async fn loop_snooze(
+        &self,
+        loop_id: &str,
+        request: &LoopSettingsUpdateRequest,
+    ) -> Result<LoopSettingResponse> {
+        self.post(&format!("/v1/loops/{loop_id}/snooze"), request)
+            .await
+    }
+
+    pub async fn loop_run(
+        &self,
+        loop_id: &str,
+        request: &LoopRunRequest,
+    ) -> Result<LoopRunResponse> {
+        self.post(&format!("/v1/loops/{loop_id}/run"), request)
+            .await
+    }
+
+    pub async fn loop_runs(
+        &self,
+        project: Option<&str>,
+        loop_id: Option<&str>,
+        status: Option<&LoopRunStatus>,
+        limit: i64,
+    ) -> Result<LoopRunsResponse> {
+        let mut params = vec![format!("limit={limit}")];
+        if let Some(project) = project {
+            params.push(format!("project={}", urlencoding::encode(project)));
+        }
+        if let Some(loop_id) = loop_id {
+            params.push(format!("loop_id={}", urlencoding::encode(loop_id)));
+        }
+        if let Some(status) = status {
+            params.push(format!("status={}", status.as_str()));
+        }
+        self.get(&format!("/v1/loops/runs?{}", params.join("&")))
+            .await
+    }
+
+    pub async fn loop_run_detail(&self, run_id: &str) -> Result<LoopRunResponse> {
+        self.get(&format!("/v1/loops/runs/{run_id}")).await
+    }
+
+    pub async fn loop_cancel(
+        &self,
+        run_id: &str,
+        request: &LoopCancelRequest,
+    ) -> Result<LoopRunResponse> {
+        self.post(&format!("/v1/loops/runs/{run_id}/cancel"), request)
+            .await
+    }
+
+    pub async fn loop_feedback(
+        &self,
+        run_id: &str,
+        request: &LoopFeedbackRequest,
+    ) -> Result<LoopRunResponse> {
+        self.post(&format!("/v1/loops/runs/{run_id}/feedback"), request)
+            .await
+    }
+
+    pub async fn loop_approvals(
+        &self,
+        project: Option<&str>,
+        status: Option<&LoopApprovalStatus>,
+        limit: i64,
+    ) -> Result<LoopApprovalsResponse> {
+        let mut params = vec![format!("limit={limit}")];
+        if let Some(project) = project {
+            params.push(format!("project={}", urlencoding::encode(project)));
+        }
+        if let Some(status) = status {
+            params.push(format!("status={}", status.as_str()));
+        }
+        self.get(&format!("/v1/loops/approvals?{}", params.join("&")))
+            .await
+    }
+
+    pub async fn loop_approval_decision(
+        &self,
+        approval_id: &str,
+        approved: bool,
+        request: &LoopApprovalDecisionRequest,
+    ) -> Result<LoopApprovalDecisionResponse> {
+        let action = if approved { "approve" } else { "reject" };
+        self.post(
+            &format!("/v1/loops/approvals/{approval_id}/{action}"),
+            request,
+        )
+        .await
+    }
+
+    pub async fn loop_global_state(&self) -> Result<LoopGlobalStateResponse> {
+        self.get("/v1/loops/global-kill-switch").await
+    }
+
+    pub async fn loop_set_global_state(
+        &self,
+        request: &LoopGlobalStateUpdateRequest,
+    ) -> Result<LoopGlobalStateResponse> {
+        self.post("/v1/loops/global-kill-switch", request).await
     }
 
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
@@ -763,9 +1305,143 @@ struct ActivityListArgs {
     include_details: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct EmptyArgs {}
+
+#[derive(Debug, Deserialize)]
+struct LoopGetArgs {
+    loop_id: String,
+    project: Option<String>,
+    repo_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoopSettingArgs {
+    loop_id: String,
+    scope_type: Option<LoopScopeType>,
+    scope_id: Option<String>,
+    project: Option<String>,
+    repo_root: Option<String>,
+    mode: Option<LoopMode>,
+    updated_by: Option<String>,
+    reason: Option<String>,
+    explicit_user_approval: Option<bool>,
+}
+
+impl LoopSettingArgs {
+    fn to_update_request(
+        &self,
+        enabled: Option<bool>,
+        mode: Option<LoopMode>,
+        paused_until: Option<DateTime<Utc>>,
+        snoozed_until: Option<DateTime<Utc>>,
+    ) -> LoopSettingsUpdateRequest {
+        LoopSettingsUpdateRequest {
+            scope_type: self.scope_type.clone(),
+            scope_id: self.scope_id.clone(),
+            project: self.project.clone(),
+            repo_root: self.repo_root.clone(),
+            enabled,
+            mode,
+            budgets: None,
+            approval_overrides: None,
+            paused_until,
+            snoozed_until,
+            updated_by: self.updated_by.clone(),
+            reason: self.reason.clone(),
+            explicit_user_approval: self.explicit_user_approval.unwrap_or(false),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct LoopPauseArgs {
+    #[serde(flatten)]
+    setting: LoopSettingArgs,
+    paused_until: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoopSnoozeArgs {
+    #[serde(flatten)]
+    setting: LoopSettingArgs,
+    snoozed_until: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoopRunArgs {
+    loop_id: String,
+    project: Option<String>,
+    repo_root: Option<String>,
+    scope_type: Option<LoopScopeType>,
+    scope_id: Option<String>,
+    dry_run: Option<bool>,
+    reason: Option<String>,
+    trigger_payload: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoopRunsArgs {
+    project: Option<String>,
+    loop_id: Option<String>,
+    status: Option<LoopRunStatus>,
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RunIdArg {
+    run_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoopCancelArgs {
+    run_id: String,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoopFeedbackArgs {
+    run_id: String,
+    rating: String,
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoopApprovalsArgs {
+    project: Option<String>,
+    status: Option<LoopApprovalStatus>,
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoopApprovalDecisionArgs {
+    approval_id: String,
+    reviewer: Option<String>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoopGlobalKillSwitchArgs {
+    kill_switch_enabled: bool,
+    updated_by: Option<String>,
+    reason: Option<String>,
+}
+
 fn from_args<T: serde::de::DeserializeOwned>(arguments: Map<String, Value>) -> Result<T, McpError> {
     serde_json::from_value(Value::Object(arguments))
         .map_err(|error| invalid_params(format!("invalid tool arguments: {error}")))
+}
+
+fn optional_project_for_http(
+    mode: &ProjectResolutionMode,
+    project: Option<String>,
+) -> Result<Option<String>, McpError> {
+    if matches!(mode, ProjectResolutionMode::Http) && project.as_deref().is_none_or(str::is_empty) {
+        return Err(invalid_params(
+            "project is required for HTTP MCP tools because the service has no trustworthy current directory",
+        ));
+    }
+    Ok(project)
 }
 
 fn invalid_params(message: impl Into<String>) -> McpError {
@@ -817,6 +1493,39 @@ fn format_query_text(response: &QueryResponse) -> String {
         }
     }
     lines.join("\n")
+}
+
+fn format_loop_setting_text(action: &str, response: &LoopSettingResponse) -> String {
+    if let Some(approval) = &response.approval {
+        return format!(
+            "Loop {action} requires approval. Approval {} is {} for loop {}.",
+            approval.id,
+            approval.status.as_str(),
+            approval.loop_id
+        );
+    }
+    format!(
+        "Loop {action} applied for {} at {}:{}; effective mode={} enabled={} blocked={}",
+        response.setting.loop_id,
+        response.setting.scope_type,
+        response.setting.scope_id,
+        response.effective_settings.mode,
+        response.effective_settings.enabled,
+        response.effective_settings.blocked_reasons.join(", ")
+    )
+}
+
+fn format_loop_run_text(response: &LoopRunResponse) -> String {
+    let run = &response.run.summary;
+    format!(
+        "{} {} status={} mode={} traces={} blocked={}",
+        run.id,
+        run.loop_id,
+        run.status.as_str(),
+        run.mode,
+        run.trace_count,
+        run.blocked_reasons.join(", ")
+    )
 }
 
 fn tool_definitions() -> Vec<Tool> {
@@ -901,6 +1610,142 @@ fn tool_definitions() -> Vec<Tool> {
             "Read-only view of pending replacement proposals.",
             project_schema(),
         ),
+        tool(
+            TOOL_MEMORY_LOOP_LIST,
+            "List built-in loop definitions and their default modes.",
+            object_schema(&[]),
+        ),
+        tool(
+            TOOL_MEMORY_LOOP_GET,
+            "Inspect one loop definition and optional effective settings.",
+            object_schema(&[
+                required_string("loop_id", "Loop identifier."),
+                optional_string("project", "Project slug. Required for HTTP MCP."),
+                optional_string("repo_root", "Repository root for repo-scoped settings."),
+            ]),
+        ),
+        mutating_tool(
+            TOOL_MEMORY_LOOP_ENABLE,
+            "Request or apply enabling a loop. Set explicit_user_approval=true only after the user explicitly approved this change.",
+            loop_setting_schema(&[
+                optional_enum("mode", &loop_mode_values()),
+                optional_boolean(
+                    "explicit_user_approval",
+                    "True only when the user explicitly approved enabling this loop.",
+                ),
+            ]),
+        ),
+        mutating_tool(
+            TOOL_MEMORY_LOOP_DISABLE,
+            "Disable a loop for a user, project, workspace, or repo scope.",
+            loop_setting_schema(&[]),
+        ),
+        mutating_tool(
+            TOOL_MEMORY_LOOP_PAUSE,
+            "Pause a loop until a specific RFC3339 timestamp.",
+            loop_setting_schema(&[required_string(
+                "paused_until",
+                "RFC3339 timestamp when the pause expires.",
+            )]),
+        ),
+        mutating_tool(
+            TOOL_MEMORY_LOOP_SNOOZE,
+            "Snooze a loop until a specific RFC3339 timestamp.",
+            loop_setting_schema(&[required_string(
+                "snoozed_until",
+                "RFC3339 timestamp when the snooze expires.",
+            )]),
+        ),
+        mutating_tool(
+            TOOL_MEMORY_LOOP_RUN,
+            "Create a policy-checked control-plane loop run record. This slice does not execute real loop implementations.",
+            object_schema(&[
+                required_string("loop_id", "Loop identifier."),
+                optional_string("project", "Project slug."),
+                optional_string("repo_root", "Repository root for repo context."),
+                optional_enum("scope_type", &loop_scope_values()),
+                optional_string("scope_id", "Explicit scope identifier."),
+                optional_boolean("dry_run", "Record the run as dry-run intent."),
+                optional_string("reason", "Reason for the manual run."),
+                optional_object("trigger_payload", "Additional trigger payload JSON."),
+            ]),
+        ),
+        tool(
+            TOOL_MEMORY_LOOP_RUNS,
+            "List loop run ledger rows.",
+            object_schema(&[
+                optional_string("project", "Project slug filter."),
+                optional_string("loop_id", "Loop identifier filter."),
+                optional_enum("status", &loop_run_status_values()),
+                optional_integer("limit", "Maximum runs to return."),
+            ]),
+        ),
+        tool(
+            TOOL_MEMORY_LOOP_INSPECT,
+            "Inspect one loop run with traces, policy decisions, and output JSON.",
+            object_schema(&[required_string("run_id", "Loop run UUID.")]),
+        ),
+        mutating_tool(
+            TOOL_MEMORY_LOOP_CANCEL,
+            "Request cancellation for a queued or running loop run.",
+            object_schema(&[
+                required_string("run_id", "Loop run UUID."),
+                optional_string("reason", "Cancellation reason."),
+            ]),
+        ),
+        mutating_tool(
+            TOOL_MEMORY_LOOP_FEEDBACK,
+            "Attach user feedback to a loop run trace.",
+            object_schema(&[
+                required_string("run_id", "Loop run UUID."),
+                required_string(
+                    "rating",
+                    "Feedback rating such as good, bad, or needs_review.",
+                ),
+                optional_string("note", "Feedback note."),
+            ]),
+        ),
+        tool(
+            TOOL_MEMORY_LOOP_LIST_APPROVALS,
+            "List pending or resolved loop approval requests.",
+            object_schema(&[
+                optional_string("project", "Project slug filter."),
+                optional_enum("status", &loop_approval_status_values()),
+                optional_integer("limit", "Maximum approvals to return."),
+            ]),
+        ),
+        mutating_tool(
+            TOOL_MEMORY_LOOP_APPROVE,
+            "Approve a pending loop approval request after explicit user confirmation.",
+            object_schema(&[
+                required_string("approval_id", "Loop approval UUID."),
+                optional_string("reviewer", "Reviewer identity."),
+                optional_string("reason", "Approval reason."),
+            ]),
+        ),
+        mutating_tool(
+            TOOL_MEMORY_LOOP_REJECT,
+            "Reject a pending loop approval request.",
+            object_schema(&[
+                required_string("approval_id", "Loop approval UUID."),
+                optional_string("reviewer", "Reviewer identity."),
+                optional_string("reason", "Rejection reason."),
+            ]),
+        ),
+        tool(
+            TOOL_MEMORY_LOOP_GLOBAL_STATE,
+            "Read the loop automation global kill-switch state.",
+            object_schema(&[]),
+        ),
+        mutating_tool(
+            TOOL_MEMORY_LOOP_SET_GLOBAL_KILL_SWITCH,
+            "Enable or disable the loop automation global kill switch.",
+            object_schema(&[
+                required_boolean("kill_switch_enabled", "Desired global kill-switch state."),
+                optional_string("updated_by", "Actor changing the kill switch."),
+                optional_string("reason", "Reason for the change."),
+            ]),
+        ),
     ]
 }
 
@@ -910,6 +1755,20 @@ fn tool(name: &'static str, description: &'static str, schema: Map<String, Value
             .read_only(true)
             .destructive(false)
             .idempotent(true)
+            .open_world(false),
+    )
+}
+
+fn mutating_tool(
+    name: &'static str,
+    description: &'static str,
+    schema: Map<String, Value>,
+) -> Tool {
+    Tool::new(name, description, schema).with_annotations(
+        ToolAnnotations::new()
+            .read_only(false)
+            .destructive(false)
+            .idempotent(false)
             .open_world(false),
     )
 }
@@ -995,6 +1854,23 @@ fn project_schema() -> Map<String, Value> {
     )])
 }
 
+fn loop_setting_schema(extra: &[SchemaField]) -> Map<String, Value> {
+    let mut fields = vec![
+        required_string("loop_id", "Loop identifier."),
+        optional_enum("scope_type", &loop_scope_values()),
+        optional_string("scope_id", "Explicit scope identifier."),
+        optional_string(
+            "project",
+            "Project slug for project or repo scoped settings.",
+        ),
+        optional_string("repo_root", "Repository root for repo scoped settings."),
+        optional_string("updated_by", "Actor changing the setting."),
+        optional_string("reason", "Reason for the setting change."),
+    ];
+    fields.extend_from_slice(extra);
+    object_schema(&fields)
+}
+
 #[derive(Debug, Clone)]
 struct SchemaField {
     name: &'static str,
@@ -1004,6 +1880,10 @@ struct SchemaField {
 
 fn required_string(name: &'static str, description: &'static str) -> SchemaField {
     field(name, "string", description, true)
+}
+
+fn required_boolean(name: &'static str, description: &'static str) -> SchemaField {
+    field(name, "boolean", description, true)
 }
 
 fn optional_string(name: &'static str, description: &'static str) -> SchemaField {
@@ -1020,6 +1900,10 @@ fn optional_number(name: &'static str, description: &'static str) -> SchemaField
 
 fn optional_boolean(name: &'static str, description: &'static str) -> SchemaField {
     field(name, "boolean", description, false)
+}
+
+fn optional_object(name: &'static str, description: &'static str) -> SchemaField {
+    field(name, "object", description, false)
 }
 
 fn optional_enum(name: &'static str, values: &[&str]) -> SchemaField {
@@ -1041,6 +1925,37 @@ fn field(
         schema: json!({ "type": kind, "description": description }),
         required,
     }
+}
+
+fn loop_mode_values() -> [&'static str; 7] {
+    [
+        "off",
+        "observe",
+        "suggest_only",
+        "draft_output",
+        "autonomous_safe",
+        "paused",
+        "snoozed",
+    ]
+}
+
+fn loop_scope_values() -> [&'static str; 4] {
+    ["user", "workspace", "project", "repo"]
+}
+
+fn loop_run_status_values() -> [&'static str; 6] {
+    [
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "blocked",
+    ]
+}
+
+fn loop_approval_status_values() -> [&'static str; 4] {
+    ["pending", "approved", "rejected", "edited"]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1152,13 +2067,16 @@ mod tests {
     use axum::{Json, Router, routing::post};
 
     #[test]
-    fn exposes_expected_read_only_tools() {
+    fn exposes_expected_tools() {
         let names = tool_definitions()
             .into_iter()
             .map(|tool| tool.name.into_owned())
             .collect::<Vec<_>>();
         assert!(names.contains(&TOOL_MEMORY_QUERY.to_string()));
         assert!(names.contains(&TOOL_MEMORY_LIST_REPLACEMENT_PROPOSALS.to_string()));
+        assert!(names.contains(&TOOL_MEMORY_LOOP_LIST.to_string()));
+        assert!(names.contains(&TOOL_MEMORY_LOOP_ENABLE.to_string()));
+        assert!(names.contains(&TOOL_MEMORY_LOOP_SET_GLOBAL_KILL_SWITCH.to_string()));
         assert!(!names.iter().any(|name| name.contains("remember")));
     }
 
@@ -1174,6 +2092,23 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert_eq!(required, json!(["question"]));
+    }
+
+    #[test]
+    fn loop_enable_schema_requires_loop_and_exposes_approval_flag() {
+        let enable = tool_definitions()
+            .into_iter()
+            .find(|tool| tool.name == TOOL_MEMORY_LOOP_ENABLE)
+            .expect("loop enable tool exists");
+        let schema = enable.schema_as_json_value();
+        assert_eq!(
+            schema.get("required").cloned().unwrap_or_default(),
+            json!(["loop_id"])
+        );
+        assert_eq!(
+            schema.pointer("/properties/explicit_user_approval/type"),
+            Some(&json!("boolean"))
+        );
     }
 
     #[test]
