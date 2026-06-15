@@ -1008,6 +1008,7 @@ async fn create_loop_setting_approval(
     row_to_loop_approval(row)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_loop_run_approval(
     pool: &PgPool,
     project_id: Option<Uuid>,

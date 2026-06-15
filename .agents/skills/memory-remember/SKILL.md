@@ -1,6 +1,6 @@
 ---
 name: memory-remember
-version: 0.9.4
+version: 0.9.5
 description: Remember meaningful completed work by capturing task context and curating it into durable project memory with provenance
 ---
 

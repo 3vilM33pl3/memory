@@ -679,11 +679,10 @@ async fn loop_repository_draft_pr_blocks_until_issue_is_approved() {
     .await
     .expect("count pending approvals");
     assert_eq!(pending_approvals, 1);
-    assert_eq!(
+    assert!(
         run.output["draft_pr"]["gate"]["approval_id"]
             .as_str()
-            .is_some(),
-        true
+            .is_some()
     );
 
     cleanup_loop_run(&pool, run.summary.id).await;

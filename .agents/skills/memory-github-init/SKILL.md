@@ -1,6 +1,6 @@
 ---
 name: memory-github-init
-version: 0.9.4
+version: 0.9.5
 description: Guide first-time GitHub repository initialization for a Memory Layer project; use when setting up or auditing GitHub remotes, repository metadata, Actions workflows, secrets, variables, branch protection, required checks, or Memory Layer repo onboarding, with discovery and dry-run review before write-capable changes
 ---
 

@@ -1370,10 +1370,11 @@ impl fmt::Display for LoopScopeType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum LoopTrustLevel {
     High,
+    #[default]
     Medium,
     Low,
     DataOnly,
@@ -1387,12 +1388,6 @@ impl LoopTrustLevel {
             Self::Low => "low",
             Self::DataOnly => "data_only",
         }
-    }
-}
-
-impl Default for LoopTrustLevel {
-    fn default() -> Self {
-        Self::Medium
     }
 }
 

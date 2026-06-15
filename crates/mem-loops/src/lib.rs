@@ -153,6 +153,7 @@ pub fn builtin_loop_definitions() -> Vec<BuiltinLoopDefinition> {
     ]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn builtin(
     loop_id: &'static str,
     name: &'static str,
@@ -1111,9 +1112,8 @@ mod tests {
         assert_eq!(result.changed_files[0].path, "crates/mem-cli/src/main.rs");
         assert_eq!(result.command_outputs[0].exit_code, 0);
         assert_eq!(result.memory_updates[0].proposal_type, "add");
-        assert_eq!(
+        assert!(
             result.metadata["context_pack_id"].as_str().is_some(),
-            true,
             "runner results include traceable context metadata"
         );
     }
