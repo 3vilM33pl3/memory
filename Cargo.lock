@@ -1755,6 +1755,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mem-skills"
+version = "0.9.4"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "mem-api",
+ "mem-platform",
+ "reqwest",
+ "semver",
+ "serde",
+ "zip",
+]
+
+[[package]]
 name = "mem-test-support"
 version = "0.9.4"
 dependencies = [

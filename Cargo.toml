@@ -12,6 +12,7 @@ members = [
   "crates/mem-eval",
   "crates/mem-ingest",
   "crates/mem-search",
+  "crates/mem-skills",
   "crates/mem-loops",
   "crates/mem-service",
   "crates/mem-mcp",
