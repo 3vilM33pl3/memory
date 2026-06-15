@@ -259,6 +259,17 @@ async fn mutate_loop_setting(
     }
 
     let setting = upsert_loop_setting(pool, &definition.loop_id, &scope, &request).await?;
+    insert_loop_setting_audit(
+        pool,
+        Some(&definition.loop_id),
+        Some(&setting),
+        "setting_update",
+        request.updated_by.as_deref(),
+        request.reason.as_deref(),
+        serde_json::to_value(&setting)
+            .map_err(|error| ApiError::io(anyhow::anyhow!("serialize loop setting: {error}")))?,
+    )
+    .await?;
     let effective_settings = load_effective_loop_settings(
         pool,
         &definition,
@@ -538,12 +549,24 @@ async fn store_loop_global_state(
     .fetch_one(pool)
     .await
     .map_err(ApiError::sql)?;
-    Ok(LoopGlobalStateResponse {
+    let response = LoopGlobalStateResponse {
         kill_switch_enabled: row.try_get("kill_switch_enabled").map_err(ApiError::sql)?,
         updated_by: row.try_get("updated_by").map_err(ApiError::sql)?,
         reason: row.try_get("reason").map_err(ApiError::sql)?,
         updated_at: row.try_get("updated_at").map_err(ApiError::sql)?,
-    })
+    };
+    insert_loop_setting_audit(
+        pool,
+        None,
+        None,
+        "global_kill_switch_update",
+        request.updated_by.as_deref(),
+        request.reason.as_deref(),
+        serde_json::to_value(&response)
+            .map_err(|error| ApiError::io(anyhow::anyhow!("serialize global state: {error}")))?,
+    )
+    .await?;
+    Ok(response)
 }
 
 #[derive(Debug, Clone)]
@@ -730,6 +753,39 @@ async fn create_loop_setting_approval(
     .await
     .map_err(ApiError::sql)?;
     row_to_loop_approval(row)
+}
+
+async fn insert_loop_setting_audit(
+    pool: &PgPool,
+    loop_id: Option<&str>,
+    setting: Option<&LoopSettingRecord>,
+    action: &str,
+    actor: Option<&str>,
+    reason: Option<&str>,
+    payload: serde_json::Value,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        r#"
+        INSERT INTO loop_setting_audit (
+            id, loop_id, setting_id, action, scope_type, scope_id,
+            repo_root, actor, reason, payload_json, created_at
+        )
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+        "#,
+    )
+    .bind(loop_id)
+    .bind(setting.map(|setting| setting.id))
+    .bind(action)
+    .bind(setting.map(|setting| setting.scope_type.as_str()))
+    .bind(setting.map(|setting| setting.scope_id.as_str()))
+    .bind(setting.and_then(|setting| setting.repo_root.as_deref()))
+    .bind(actor)
+    .bind(reason)
+    .bind(payload)
+    .execute(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    Ok(())
 }
 
 async fn load_effective_loop_settings(
