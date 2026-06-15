@@ -7,6 +7,7 @@ pub(super) mod project;
 pub(super) mod query;
 pub(super) mod resume;
 pub(super) mod review;
+pub(super) mod skills;
 pub(super) mod watchers;
 
 use crossterm::event::Event;
@@ -63,6 +64,7 @@ pub(in crate::tui) fn dispatch_update(
         TabKind::Project => project::update(event, &mut app.project_tab, &mut ctx),
         TabKind::Review => review::update(event, &mut app.review, &mut ctx),
         TabKind::Watchers => watchers::update(event, &mut app.watchers, &mut ctx),
+        TabKind::Skills => skills::update(event, &mut app.skills, &mut ctx),
         TabKind::Embeddings => embeddings::update(event, &mut app.embeddings, &mut ctx),
         TabKind::Resume => resume::update(event, &mut app.resume, &mut ctx),
     }

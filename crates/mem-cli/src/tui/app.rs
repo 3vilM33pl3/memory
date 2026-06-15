@@ -28,7 +28,6 @@ use crate::{
     commands::{
         api::ApiClient,
         service_support::{enable_relay_discovery_and_restart_backend, load_tui_restart_notice},
-        skill_support::project_skill_inventory,
     },
     resume,
 };
@@ -317,7 +316,7 @@ async fn load_project_refresh(
         overview: overview.map_err(|error| error.to_string()),
         memories: memories.map_err(|error| error.to_string()),
         proposals: proposals.map_err(|error| error.to_string()),
-        skill_inventory: project_skill_inventory(&repo_root, false),
+        skill_inventory: mem_skills::project_skill_inventory(&repo_root, false),
     }
 }
 
@@ -344,6 +343,8 @@ impl App {
         let (embeddings_wake_tx, embeddings_wake_rx) = std_mpsc::channel();
         let mut embeddings_table_state = TableState::default();
         embeddings_table_state.select(Some(0));
+        let mut skills_table_state = TableState::default();
+        skills_table_state.select(Some(0));
         let mut review_table_state = TableState::default();
         review_table_state.select(Some(0));
         Self {
@@ -427,6 +428,13 @@ impl App {
                 review_table_state,
             },
             watchers: WatchersTabState { watcher_scroll: 0 },
+            skills: SkillsTabState {
+                selected_index: 0,
+                table_state: skills_table_state,
+                detail_scroll: 0,
+                operation: None,
+                message: None,
+            },
             embeddings: EmbeddingsTabState {
                 embedding_backends_snapshot: None,
                 embedding_backends_error: None,
@@ -465,7 +473,7 @@ impl App {
             meta: RuntimeMeta {
                 overview: empty_overview(project),
                 versions,
-                skill_inventory: project_skill_inventory(&repo_root, false),
+                skill_inventory: mem_skills::project_skill_inventory(&repo_root, false),
                 startup_at: Utc::now(),
                 profile,
             },
@@ -1193,6 +1201,35 @@ impl App {
                     }
                 }
             }
+            BackgroundEvent::SkillsRepairCompleted { result } => {
+                self.skills.operation = None;
+                match result {
+                    Ok(report) => {
+                        self.meta.skill_inventory = report.inventory;
+                        self.clamp_skill_selection();
+                        self.skills.message = Some(format!(
+                            "Repair complete: {}{}",
+                            self.meta.skill_inventory.summary,
+                            report
+                                .backup_root
+                                .as_deref()
+                                .map(|path| format!("; backup {path}"))
+                                .unwrap_or_default()
+                        ));
+                        self.chrome.status_message = self
+                            .skills
+                            .message
+                            .clone()
+                            .unwrap_or_else(|| "Skill repair complete.".to_string());
+                        self.chrome.ui_status = UiStatus::Ready;
+                    }
+                    Err(error) => {
+                        self.skills.message = Some(format!("Repair failed: {error}"));
+                        self.chrome.status_message = format!("Skill repair failed: {error}");
+                        self.chrome.ui_status = UiStatus::Error;
+                    }
+                }
+            }
             BackgroundEvent::EmbeddingReindexCompleted { name, result } => {
                 self.embeddings.embeddings_operation = None;
                 match result {
@@ -1721,6 +1758,24 @@ impl App {
             }
             KeyCode::Home if self.active_tab == TabKind::Watchers => {
                 self.watchers.watcher_scroll = 0;
+            }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabKind::Skills => {
+                self.select_skill(1);
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabKind::Skills => {
+                self.select_skill(-1);
+            }
+            KeyCode::PageDown if self.active_tab == TabKind::Skills => {
+                self.scroll_skill_detail(8);
+            }
+            KeyCode::PageUp if self.active_tab == TabKind::Skills => {
+                self.scroll_skill_detail(-8);
+            }
+            KeyCode::Home if self.active_tab == TabKind::Skills => {
+                self.skills.detail_scroll = 0;
+            }
+            KeyCode::Char('u') if self.active_tab == TabKind::Skills => {
+                self.repair_skills();
             }
             KeyCode::Char('/') if key.modifiers.is_empty() => {
                 self.chrome.input_mode = InputMode::Search(self.filters.text.clone());
@@ -2783,6 +2838,69 @@ impl App {
                 .watcher_scroll
                 .saturating_add(u16::try_from(delta).unwrap_or(0))
         };
+    }
+
+    fn scroll_skill_detail(&mut self, delta: i16) {
+        self.skills.detail_scroll = if delta.is_negative() {
+            self.skills
+                .detail_scroll
+                .saturating_sub(delta.unsigned_abs())
+        } else {
+            self.skills
+                .detail_scroll
+                .saturating_add(u16::try_from(delta).unwrap_or(0))
+        };
+    }
+
+    fn select_skill(&mut self, delta: isize) {
+        let len = self.meta.skill_inventory.skills.len();
+        if len == 0 {
+            self.skills.selected_index = 0;
+            self.skills.table_state.select(None);
+            return;
+        }
+        let cur = self.skills.selected_index as isize;
+        let next = ((cur + delta) % len as isize + len as isize) % len as isize;
+        self.skills.selected_index = next as usize;
+        self.skills.detail_scroll = 0;
+        self.skills
+            .table_state
+            .select(Some(self.skills.selected_index));
+    }
+
+    fn clamp_skill_selection(&mut self) {
+        let len = self.meta.skill_inventory.skills.len();
+        if len == 0 {
+            self.skills.selected_index = 0;
+            self.skills.table_state.select(None);
+            return;
+        }
+        self.skills.selected_index = self.skills.selected_index.min(len.saturating_sub(1));
+        self.skills
+            .table_state
+            .select(Some(self.skills.selected_index));
+    }
+
+    fn repair_skills(&mut self) {
+        if self.skills.operation.is_some() {
+            return;
+        }
+        self.skills.operation = Some("repairing skills".to_string());
+        self.skills.message = None;
+        self.chrome.status_message = "Repairing repo-local Memory skills...".to_string();
+        self.chrome.ui_status = UiStatus::Busy;
+        let repo_root = self.repo_root.clone();
+        let tx = self.background_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = mem_skills::upgrade_project_skills(
+                &repo_root,
+                false,
+                false,
+                mem_skills::SkillInventoryFilter::All,
+            )
+            .map_err(|error| error.to_string());
+            let _ = tx.send(BackgroundEvent::SkillsRepairCompleted { result });
+        });
     }
 
     fn open_help_for_active_tab(&mut self) {

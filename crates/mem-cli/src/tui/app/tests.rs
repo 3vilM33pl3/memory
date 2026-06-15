@@ -18,10 +18,7 @@ use super::{
     should_attempt_stream_reconnect, skill_bundle_status_color, tui_status_color,
     tui_status_detail, tui_status_label, watcher_bar_status_label,
 };
-use crate::commands::{
-    service_support::TuiRestartNotice,
-    skill_support::{SkillBundleStatus, project_skill_inventory},
-};
+use crate::commands::service_support::TuiRestartNotice;
 use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
@@ -31,6 +28,7 @@ use mem_api::{
     QueryResult, QueryResultDebug, ReplacementProposalListResponse, StreamResponse, TokenUsage,
     WatcherPresenceSummary,
 };
+use mem_skills::{SkillBundleStatus, project_skill_inventory};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -1200,8 +1198,9 @@ fn tab_order_restores_activity_after_query() {
     assert_eq!(TabKind::Project.index(), 5);
     assert_eq!(TabKind::Review.index(), 6);
     assert_eq!(TabKind::Watchers.index(), 7);
-    assert_eq!(TabKind::Embeddings.index(), 8);
-    assert_eq!(TabKind::Resume.index(), 9);
+    assert_eq!(TabKind::Skills.index(), 8);
+    assert_eq!(TabKind::Embeddings.index(), 9);
+    assert_eq!(TabKind::Resume.index(), 10);
 
     assert_eq!(TabKind::Memories.prev(), TabKind::Resume);
     assert_eq!(TabKind::Memories.next(), TabKind::Agents);
@@ -1215,8 +1214,10 @@ fn tab_order_restores_activity_after_query() {
     assert_eq!(TabKind::Review.prev(), TabKind::Project);
     assert_eq!(TabKind::Review.next(), TabKind::Watchers);
     assert_eq!(TabKind::Watchers.prev(), TabKind::Review);
-    assert_eq!(TabKind::Watchers.next(), TabKind::Embeddings);
-    assert_eq!(TabKind::Embeddings.prev(), TabKind::Watchers);
+    assert_eq!(TabKind::Watchers.next(), TabKind::Skills);
+    assert_eq!(TabKind::Skills.prev(), TabKind::Watchers);
+    assert_eq!(TabKind::Skills.next(), TabKind::Embeddings);
+    assert_eq!(TabKind::Embeddings.prev(), TabKind::Skills);
     assert_eq!(TabKind::Embeddings.next(), TabKind::Resume);
     assert_eq!(TabKind::Resume.prev(), TabKind::Embeddings);
     assert_eq!(TabKind::Resume.next(), TabKind::Memories);

@@ -17,7 +17,8 @@ use ratatui::widgets::TableState;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 
-use crate::commands::{service_support::TuiRestartNotice, skill_support::SkillInventoryReport};
+use crate::commands::service_support::TuiRestartNotice;
+use mem_skills::SkillInventoryReport;
 
 use super::app::StreamSession;
 
@@ -37,6 +38,7 @@ pub(super) struct App {
     pub(in crate::tui) project_tab: ProjectTabState,
     pub(in crate::tui) review: ReviewTabState,
     pub(in crate::tui) watchers: WatchersTabState,
+    pub(in crate::tui) skills: SkillsTabState,
     pub(in crate::tui) embeddings: EmbeddingsTabState,
     pub(in crate::tui) filters: Filters,
     pub(in crate::tui) background_tx: mpsc::UnboundedSender<BackgroundEvent>,
@@ -151,6 +153,14 @@ pub(super) struct ProjectTabState {
 
 pub(super) struct WatchersTabState {
     pub(in crate::tui) watcher_scroll: u16,
+}
+
+pub(super) struct SkillsTabState {
+    pub(in crate::tui) selected_index: usize,
+    pub(in crate::tui) table_state: TableState,
+    pub(in crate::tui) detail_scroll: u16,
+    pub(in crate::tui) operation: Option<String>,
+    pub(in crate::tui) message: Option<String>,
 }
 
 pub(super) struct HelpState {
@@ -338,6 +348,9 @@ pub(super) enum BackgroundEvent {
         name: String,
         result: Result<(mem_api::ReembedResponse, mem_api::EmbeddingBackendsResponse), String>,
     },
+    SkillsRepairCompleted {
+        result: Result<mem_skills::SkillUpgradeReport, String>,
+    },
     EmbeddingReindexCompleted {
         name: String,
         result: Result<(mem_api::ReindexResponse, mem_api::EmbeddingBackendsResponse), String>,
@@ -378,11 +391,12 @@ pub(super) enum TabKind {
     Project,
     Review,
     Watchers,
+    Skills,
     Embeddings,
     Resume,
 }
 
-pub(super) const VISIBLE_TABS: [TabKind; 10] = [
+pub(super) const VISIBLE_TABS: [TabKind; 11] = [
     TabKind::Memories,
     TabKind::Agents,
     TabKind::Query,
@@ -391,6 +405,7 @@ pub(super) const VISIBLE_TABS: [TabKind; 10] = [
     TabKind::Project,
     TabKind::Review,
     TabKind::Watchers,
+    TabKind::Skills,
     TabKind::Embeddings,
     TabKind::Resume,
 ];
@@ -406,6 +421,7 @@ impl TabKind {
             Self::Project => "Project",
             Self::Review => "Review",
             Self::Watchers => "Watchers",
+            Self::Skills => "Skills",
             Self::Embeddings => "Embeddings",
             Self::Resume => "Resume",
         }
@@ -420,7 +436,8 @@ impl TabKind {
             Self::Errors => Self::Project,
             Self::Project => Self::Review,
             Self::Review => Self::Watchers,
-            Self::Watchers => Self::Embeddings,
+            Self::Watchers => Self::Skills,
+            Self::Skills => Self::Embeddings,
             Self::Embeddings => Self::Resume,
             Self::Resume => Self::Memories,
         }
@@ -436,7 +453,8 @@ impl TabKind {
             Self::Project => Self::Errors,
             Self::Review => Self::Project,
             Self::Watchers => Self::Review,
-            Self::Embeddings => Self::Watchers,
+            Self::Skills => Self::Watchers,
+            Self::Embeddings => Self::Skills,
             Self::Resume => Self::Embeddings,
         }
     }
@@ -451,8 +469,9 @@ impl TabKind {
             Self::Project => 5,
             Self::Review => 6,
             Self::Watchers => 7,
-            Self::Embeddings => 8,
-            Self::Resume => 9,
+            Self::Skills => 8,
+            Self::Embeddings => 9,
+            Self::Resume => 10,
         }
     }
 }

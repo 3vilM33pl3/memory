@@ -1590,6 +1590,7 @@ dependencies = [
  "mem-mcp",
  "mem-platform",
  "mem-service",
+ "mem-skills",
  "mem-watch",
  "notify",
  "ratatui",

@@ -542,7 +542,10 @@ pub fn read_skill_content(
         .into_iter()
         .find(|skill| skill.name == skill_name)
     else {
-        anyhow::bail!("skill `{skill_name}` is not included by filter `{}`", filter.label());
+        anyhow::bail!(
+            "skill `{skill_name}` is not included by filter `{}`",
+            filter.label()
+        );
     };
     let path = repo_root
         .join(".agents")
@@ -597,8 +600,8 @@ fn read_http_url(url: &str) -> Result<Vec<u8>> {
 }
 
 fn extract_github_skill_template_archive(bytes: &[u8]) -> Result<PathBuf> {
-    let state_dir =
-        mem_platform::preferred_user_state_dir().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    let state_dir = mem_platform::preferred_user_state_dir()
+        .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
     let cache_root = state_dir.join("skill-template-github");
     let target = cache_root.join("main");
     let tmp = cache_root.join(format!(
@@ -743,6 +746,9 @@ mod tests {
     #[test]
     fn simple_yaml_value_reads_quoted_versions() {
         let lines = ["name: test", "version: \"0.9.4\""];
-        assert_eq!(simple_yaml_value(&lines, "version").as_deref(), Some("0.9.4"));
+        assert_eq!(
+            simple_yaml_value(&lines, "version").as_deref(),
+            Some("0.9.4")
+        );
     }
 }

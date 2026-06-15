@@ -19,7 +19,8 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Tabs, Wrap},
 };
 
-use crate::commands::{memory_ops::SourceKindString, skill_support::SkillBundleStatus};
+use crate::commands::memory_ops::SourceKindString;
+use mem_skills::SkillBundleStatus;
 
 use super::{
     app::*,
@@ -28,7 +29,7 @@ use super::{
         TabRenderContext, activity::draw_activity_tab, agents::draw_agents_tab,
         embeddings::draw_embeddings_tab, errors::draw_errors_tab, memories::draw_memories_tab,
         project::draw_project_tab, query::draw_query_tab, resume::draw_resume_tab,
-        review::draw_review_tab, watchers::draw_watchers_tab,
+        review::draw_review_tab, skills::draw_skills_tab, watchers::draw_watchers_tab,
     },
     theme::{Theme, themed_block, themed_focus_block},
 };
@@ -2819,6 +2820,33 @@ Show project watchers, heartbeat state, agent ownership, service identity, resta
 - If only manual watchers exist, start through the manager-integrated path.
 "#
         }
+        TabKind::Skills => {
+            r#"# Skills Help
+
+## Purpose
+Inspect and repair the repo-local Memory Layer skill bundle used by coding agents.
+
+## Layout
+- Skill table: Memory-owned skill name, status, local version, template version, and pending repair action.
+- Detail pane: selected skill path, template path, version detail, and SKILL.md content.
+- Status line: current inventory summary or repair result.
+
+## Controls
+- `j/k` or `Up/Down`: select a skill.
+- `PgUp/PgDn`: scroll selected SKILL.md detail. `Home`: jump to top.
+- `u`: repair repo-local Memory skills using the current template/GitHub fallback path.
+- `r`: refresh project state outside help.
+
+## Workflows
+- Open this tab when the footer reports stale, missing, or unversioned skills.
+- Review the selected skill's SKILL.md before asking an agent to use it.
+- Use `u`, `memory doctor --fix`, or `memory upgrade` to repair Memory-owned skills.
+
+## Troubleshooting
+- If content is missing, verify the project has `.agents/skills/<name>/SKILL.md`.
+- If repair fails, check the status message and run `memory doctor --fix` for more detail.
+"#
+        }
         TabKind::Embeddings => {
             r#"# Embeddings Help
 
@@ -3715,6 +3743,16 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                 accent_span("jump "),
                 Span::styled("Home", Style::default().fg(Theme::TEXT)),
             ],
+            TabKind::Skills => vec![
+                accent_span("move "),
+                Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+                accent_span("detail "),
+                Span::styled("PgUp/PgDn Home  ", Style::default().fg(Theme::TEXT)),
+                accent_span("repair "),
+                Span::styled("u  ", Style::default().fg(Theme::TEXT)),
+                accent_span("refresh "),
+                Span::styled("r", Style::default().fg(Theme::TEXT)),
+            ],
             TabKind::Embeddings => vec![
                 accent_span("move "),
                 Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
@@ -3781,6 +3819,7 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             TabKind::Project => draw_project_tab(frame, &tab_ctx, chunks[2]),
             TabKind::Review => draw_review_tab(frame, &tab_ctx, chunks[2]),
             TabKind::Watchers => draw_watchers_tab(frame, &tab_ctx, chunks[2]),
+            TabKind::Skills => draw_skills_tab(frame, &tab_ctx, chunks[2]),
             TabKind::Embeddings => draw_embeddings_tab(frame, &tab_ctx, chunks[2]),
         }
     } else {
