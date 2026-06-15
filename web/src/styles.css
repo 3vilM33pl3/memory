@@ -137,17 +137,16 @@ select {
   white-space: nowrap;
 }
 
+.skill-details-toggle {
+  padding: 0.22rem 0.45rem;
+}
+
 .skill-status-summary {
   border: 0;
   background: transparent;
   color: var(--muted);
   padding: 0;
   text-align: left;
-}
-
-.skill-status-summary:hover {
-  color: var(--accent);
-  border-color: transparent;
 }
 
 .skill-details-panel {

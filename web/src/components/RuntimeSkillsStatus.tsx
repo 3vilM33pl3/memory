@@ -36,13 +36,16 @@ export function RuntimeSkillsStatus({
         </label>
         <button
           type="button"
-          className="skill-status-summary"
+          className="skill-details-toggle"
           aria-expanded={detailsOpen}
           onClick={() => setDetailsOpen((current) => !current)}
         >
+          Details
+        </button>
+        <span className="skill-status-summary">
           v{skills?.bundle_version ?? serviceVersion} {skills?.status ?? "unknown"}
           {skills?.summary ? ` ${skills.summary}` : ""}
-        </button>
+        </span>
       </span>
 
       {detailsOpen ? (

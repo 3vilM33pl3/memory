@@ -101,7 +101,7 @@ The status strip shows the same operational components as the TUI bottom bar:
   `memory-layer` umbrella skill, which is the default, or the full focused-skill
   bundle.
 - `Skills`: repo-local skill version and status for the selected filter. Click
-  the status text to inspect the checked skill names, descriptions, versions,
+  `Details` to inspect the checked skill names, descriptions, versions,
   statuses, and `SKILL.md` paths. Use `memory doctor` or
   `memory upgrade --dry-run` for repair details.
 

@@ -30,7 +30,7 @@ const skills: RuntimeSkillStatus = {
 };
 
 describe("RuntimeSkillsStatus", () => {
-  it("opens skill detail rows from the status summary", () => {
+  it("opens skill detail rows from the details button", () => {
     const view = render(
       <RuntimeSkillsStatus
         serviceVersion="0.9.4-dev"
@@ -40,7 +40,7 @@ describe("RuntimeSkillsStatus", () => {
       />,
     );
 
-    fireEvent.click(view.getByRole("button", { name: /0 missing, 1 outdated/ }));
+    fireEvent.click(view.getByRole("button", { name: "Details" }));
 
     expect(view.container.querySelector('[aria-label="Skill details"]')).toBeInTheDocument();
     expect(view.getByText("Umbrella entrypoint for Memory Layer workflows.")).toBeInTheDocument();
