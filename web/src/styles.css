@@ -138,6 +138,94 @@ select {
 }
 
 .skill-status-summary {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  text-align: left;
+}
+
+.skill-status-summary:hover {
+  color: var(--accent);
+  border-color: transparent;
+}
+
+.skill-details-panel {
+  display: grid;
+  gap: 0.5rem;
+  grid-column: 1 / -1;
+  order: 1;
+  margin: -0.1rem 0 0.45rem;
+  padding: 0.55rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.skill-details-header,
+.skill-detail-main,
+.skill-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.skill-details-header {
+  justify-content: space-between;
+}
+
+.skill-details-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: 0.45rem;
+}
+
+.skill-detail-row {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  background: #0b1420;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.skill-detail-row p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.skill-detail-status {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.skill-detail-status-ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.skill-detail-status-outdated,
+.skill-detail-status-missing {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.skill-detail-meta {
+  flex-wrap: wrap;
+  color: var(--muted);
+}
+
+.skill-detail-meta code {
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.skill-details-empty {
+  margin: 0;
   color: var(--muted);
 }
 

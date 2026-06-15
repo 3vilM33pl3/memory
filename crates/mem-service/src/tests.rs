@@ -432,6 +432,12 @@ fn runtime_skill_status_reports_memory_layer_skill_by_default() {
     assert_eq!(status.bundle_version, "0.8.6-dev");
     assert_eq!(status.summary, "memory-layer skill current");
     assert_eq!(status.filter, "memory-layer");
+    assert_eq!(status.details.len(), 1);
+    assert_eq!(status.details[0].id, "memory-layer");
+    assert_eq!(status.details[0].name, "test");
+    assert_eq!(status.details[0].version.as_deref(), Some("0.8.6-dev"));
+    assert_eq!(status.details[0].status, "ok");
+    assert!(status.details[0].path.ends_with("memory-layer/SKILL.md"));
 
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -449,6 +455,9 @@ fn runtime_skill_status_warns_on_outdated_or_missing_memory_layer_skill() {
     assert_eq!(status.summary, "memory-layer skill: 0 missing, 1 outdated");
     assert!(status.summary.contains("outdated"));
     assert_eq!(status.filter, "memory-layer");
+    assert_eq!(status.details.len(), 1);
+    assert_eq!(status.details[0].status, "outdated");
+    assert_eq!(status.details[0].version.as_deref(), Some("0.1.0"));
 
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -502,6 +511,33 @@ fn runtime_skill_status_can_show_full_skill_bundle() {
     assert_eq!(status.status, "warn");
     assert_eq!(status.summary, "0 missing, 1 outdated");
     assert_eq!(status.filter, "all");
+    assert_eq!(status.details.len(), MEMORY_SKILL_NAMES.len());
+    let outdated = status
+        .details
+        .iter()
+        .find(|skill| skill.id == "memory-direct-task-start")
+        .expect("outdated skill detail");
+    assert_eq!(outdated.status, "outdated");
+    assert!(outdated.path.ends_with("memory-direct-task-start/SKILL.md"));
+
+    fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn runtime_skill_status_reports_missing_skill_detail_path() {
+    let root = std::env::temp_dir().join(format!("memory-skill-status-{}", Uuid::new_v4()));
+    fs::create_dir_all(root.join(".agents").join("skills")).expect("create skill root");
+
+    let status = runtime_skill_status(root.to_str(), "0.8.6-dev", RuntimeSkillFilter::MemoryLayer);
+
+    assert_eq!(status.status, "warn");
+    assert_eq!(status.summary, "memory-layer skill: 1 missing, 0 outdated");
+    assert_eq!(status.details.len(), 1);
+    assert_eq!(status.details[0].id, "memory-layer");
+    assert_eq!(status.details[0].name, "memory-layer");
+    assert_eq!(status.details[0].status, "missing");
+    assert_eq!(status.details[0].version, None);
+    assert!(status.details[0].path.ends_with("memory-layer/SKILL.md"));
 
     fs::remove_dir_all(root).expect("cleanup");
 }

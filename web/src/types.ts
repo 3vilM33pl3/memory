@@ -963,6 +963,16 @@ export interface RuntimeSkillStatus {
   status: string;
   summary: string;
   filter: string;
+  details: RuntimeSkillDetail[];
+}
+
+export interface RuntimeSkillDetail {
+  id: string;
+  name: string;
+  description?: string | null;
+  version?: string | null;
+  status: string;
+  path: string;
 }
 
 export interface RuntimeRestartNotice {

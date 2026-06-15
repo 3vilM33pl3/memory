@@ -100,8 +100,10 @@ The status strip shows the same operational components as the TUI bottom bar:
 - `Skills` dropdown: selects whether the status strip checks only the
   `memory-layer` umbrella skill, which is the default, or the full focused-skill
   bundle.
-- `Skills`: repo-local skill version and status for the selected filter. Use
-  `memory doctor` or `memory upgrade --dry-run` for repair details.
+- `Skills`: repo-local skill version and status for the selected filter. Click
+  the status text to inspect the checked skill names, descriptions, versions,
+  statuses, and `SKILL.md` paths. Use `memory doctor` or
+  `memory upgrade --dry-run` for repair details.
 
 If the install or upgrade process wrote a restart marker, the Web component turns into a restart state so the user knows to reload the page or restart the running UI.
 

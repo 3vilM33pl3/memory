@@ -72,6 +72,17 @@ pub(crate) struct RuntimeSkillStatus {
     pub(crate) status: String,
     pub(crate) summary: String,
     pub(crate) filter: String,
+    pub(crate) details: Vec<RuntimeSkillDetail>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RuntimeSkillDetail {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) description: Option<String>,
+    pub(crate) version: Option<String>,
+    pub(crate) status: String,
+    pub(crate) path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -605,6 +616,7 @@ pub(crate) fn runtime_skill_status(
             status: "unknown".to_string(),
             summary: "repo root not resolved".to_string(),
             filter: filter.label().to_string(),
+            details: Vec::new(),
         };
     };
     let root = FsPath::new(repo_root);
@@ -614,21 +626,36 @@ pub(crate) fn runtime_skill_status(
             status: "error".to_string(),
             summary: format!("repo root does not exist: {repo_root}"),
             filter: filter.label().to_string(),
+            details: Vec::new(),
         };
     }
     let skill_root = root.join(".agents").join("skills");
     let mut missing = 0usize;
     let mut outdated = 0usize;
     let skills = filter.skills();
+    let mut details = Vec::with_capacity(skills.len());
     for skill in skills {
         let path = skill_root.join(skill).join("SKILL.md");
-        let Some(version) = read_skill_version(&path) else {
-            missing += 1;
-            continue;
+        let metadata = read_skill_metadata(&path);
+        let status = match metadata.version.as_deref() {
+            None => {
+                missing += 1;
+                "missing"
+            }
+            Some(version) if version.trim() != expected_version.trim() => {
+                outdated += 1;
+                "outdated"
+            }
+            Some(_) => "ok",
         };
-        if version.trim() != expected_version.trim() {
-            outdated += 1;
-        }
+        details.push(RuntimeSkillDetail {
+            id: (*skill).to_string(),
+            name: metadata.name.unwrap_or_else(|| (*skill).to_string()),
+            description: metadata.description,
+            version: metadata.version,
+            status: status.to_string(),
+            path: path.display().to_string(),
+        });
     }
     let status = if missing == 0 && outdated == 0 {
         "ok"
@@ -648,23 +675,49 @@ pub(crate) fn runtime_skill_status(
         status: status.to_string(),
         summary,
         filter: filter.label().to_string(),
+        details,
     }
 }
 
-pub(crate) fn read_skill_version(path: &FsPath) -> Option<String> {
-    let contents = fs::read_to_string(path).ok()?;
-    contents.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("version:")
-            .map(|value| {
-                value
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .to_string()
-            })
-            .filter(|value| !value.is_empty())
-    })
+#[derive(Debug, Default)]
+pub(crate) struct SkillMetadata {
+    pub(crate) name: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) version: Option<String>,
+}
+
+pub(crate) fn read_skill_metadata(path: &FsPath) -> SkillMetadata {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return SkillMetadata::default();
+    };
+    let mut metadata = SkillMetadata::default();
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            continue;
+        }
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let value = value
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .to_string();
+        if value.is_empty() {
+            continue;
+        }
+        match key.trim() {
+            "name" => metadata.name = Some(value),
+            "description" => metadata.description = Some(value),
+            "version" => metadata.version = Some(value),
+            _ => {}
+        }
+    }
+    metadata
 }
 
 pub(crate) fn runtime_restart_notice(
