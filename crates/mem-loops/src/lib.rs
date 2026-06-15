@@ -10,8 +10,10 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
+mod runners;
 mod sandbox;
 
+pub use runners::{AgentCliRunner, AgentRunnerConfig, AgentRunnerKind, render_agent_runner_prompt};
 pub use sandbox::{
     SandboxCapture, SandboxCommandLog, SandboxCommandRequest, SandboxLimits, SandboxWorkspace,
     SandboxWorkspaceSpec, WorktreeSandboxManager,

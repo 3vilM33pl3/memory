@@ -106,6 +106,13 @@ sandbox manager allowlists commands, enforces runtime and output limits, capture
 diffs, changed files, artifacts, and command logs, and refuses to clean paths
 outside the generated sandbox root. It never pushes directly to `main`.
 
+Codex CLI, Claude Code, and OpenHands adapters sit behind the same runner
+contract. Each adapter is independently disabled by default, uses an isolated
+prompt renderer, invokes only the configured command template through the
+sandbox allowlist, and normalizes output back into the shared runner result
+schema. Adapter results do not include environment variables or credential
+values.
+
 ## Approvals
 
 ```bash
