@@ -149,6 +149,9 @@ pub(crate) async fn build_state(
                 .context(
                     "run migrations (pgvector extension 'vector' must be installed in PostgreSQL)",
                 )?;
+            register_builtin_loop_definitions(&pool)
+                .await
+                .context("register builtin loop definitions")?;
             (ServiceRole::Primary, Some(pool))
         }
         Err(error) if config.cluster.enabled => {

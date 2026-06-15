@@ -20,7 +20,7 @@ pub(crate) use error::*;
 pub(crate) use handlers::{activity::*, curation::*, query::*};
 pub(crate) use repository::events::*;
 pub(crate) use repository::handlers::{
-    bundle::*, embeddings::*, memory::*, project::*, provenance::*, system::*,
+    bundle::*, embeddings::*, loops::*, memory::*, project::*, provenance::*, system::*,
 };
 pub(crate) use repository::stream::*;
 pub(crate) use runtime::*;

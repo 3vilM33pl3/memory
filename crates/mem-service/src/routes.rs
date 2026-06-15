@@ -8,17 +8,20 @@ use tower_http::{
 };
 
 use super::{
-    AppState, activate_embedding_backend, admin_shutdown, agents_snapshot, archive, archive_memory,
-    capture_task, checkpoint_activity, curate_memory, deactivate_embedding_backend, delete_memory,
-    get_memory, get_memory_history, graph_activity, healthz, list_embedding_backends,
-    llm_audit_status, plan_activity, project_activities, project_bundle_export,
+    AppState, activate_embedding_backend, admin_shutdown, agents_snapshot, approve_loop_approval,
+    archive, archive_memory, cancel_loop_run, capture_task, checkpoint_activity, curate_memory,
+    deactivate_embedding_backend, delete_memory, disable_loop, enable_loop, get_loop_definition,
+    get_loop_global_state, get_loop_run, get_memory, get_memory_history, graph_activity, healthz,
+    list_embedding_backends, list_loop_approvals, list_loop_definitions, list_loop_runs,
+    llm_audit_status, pause_loop, plan_activity, project_activities, project_bundle_export,
     project_bundle_export_preview, project_bundle_import, project_bundle_import_preview,
     project_commit_detail, project_commits, project_memories, project_overview,
     project_replacement_policy, project_replacement_policy_update,
     project_replacement_proposal_approve, project_replacement_proposal_reject,
     project_replacement_proposals, project_resume, project_up_to_speed, prune_embeddings,
-    prune_history, query, reembed, reindex, runtime_status, scan_activity,
-    set_embedding_creation_enabled, set_llm_audit_enabled, stats, sync_commits, verify_provenance,
+    prune_history, query, reembed, reindex, reject_loop_approval, run_loop, runtime_status,
+    scan_activity, set_embedding_creation_enabled, set_llm_audit_enabled, snooze_loop, stats,
+    submit_loop_feedback, sync_commits, update_loop_global_state, verify_provenance,
     watcher_heartbeat, watcher_restart_local, watcher_unregister, web_auth_token, web_unavailable,
     websocket,
 };
@@ -59,6 +62,33 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
             "/v1/config/llm-audit",
             get(llm_audit_status).post(set_llm_audit_enabled),
         )
+        .route("/v1/loops", get(list_loop_definitions))
+        .route(
+            "/v1/loops/global-kill-switch",
+            get(get_loop_global_state).post(update_loop_global_state),
+        )
+        .route("/v1/loops/runs", get(list_loop_runs))
+        .route("/v1/loops/runs/{run_id}", get(get_loop_run))
+        .route("/v1/loops/runs/{run_id}/cancel", post(cancel_loop_run))
+        .route(
+            "/v1/loops/runs/{run_id}/feedback",
+            post(submit_loop_feedback),
+        )
+        .route("/v1/loops/approvals", get(list_loop_approvals))
+        .route(
+            "/v1/loops/approvals/{approval_id}/approve",
+            post(approve_loop_approval),
+        )
+        .route(
+            "/v1/loops/approvals/{approval_id}/reject",
+            post(reject_loop_approval),
+        )
+        .route("/v1/loops/{loop_id}", get(get_loop_definition))
+        .route("/v1/loops/{loop_id}/enable", post(enable_loop))
+        .route("/v1/loops/{loop_id}/disable", post(disable_loop))
+        .route("/v1/loops/{loop_id}/pause", post(pause_loop))
+        .route("/v1/loops/{loop_id}/snooze", post(snooze_loop))
+        .route("/v1/loops/{loop_id}/run", post(run_loop))
         .route("/v1/memory/{id}", get(get_memory))
         .route("/v1/memory/{id}/archive", post(archive_memory))
         .route("/v1/memory/{id}/history", get(get_memory_history))

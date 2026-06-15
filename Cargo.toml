@@ -12,6 +12,7 @@ members = [
   "crates/mem-eval",
   "crates/mem-ingest",
   "crates/mem-search",
+  "crates/mem-loops",
   "crates/mem-service",
   "crates/mem-mcp",
 ]
@@ -44,7 +45,7 @@ futures-util = "0.3.31"
 rmcp = { version = "1.7.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 socket2 = "0.5.10"
 tokio-tungstenite = { version = "0.24.0", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
-uuid = { version = "1.18.1", features = ["serde", "v4"] }
+uuid = { version = "1.18.1", features = ["serde", "v4", "v5"] }
 sha2 = "0.10.9"
 humantime-serde = "1.1.1"
 notify = "8.2.0"
