@@ -1,6 +1,8 @@
 use crate::prelude::*;
 use crate::*;
 
+const HTTP_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(2);
+
 pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env())
@@ -92,8 +94,7 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
                 }
                 result = tokio::signal::ctrl_c() => {
                     result.context("listen for ctrl-c")?;
-                    request_runtime_shutdown(&shutdown_handle);
-                    http_server.await.context("join mem-service task")??;
+                    shutdown_http_server(&shutdown_handle, &mut http_server, "ctrl-c").await?;
                     abort_tasks(&mut proto_tasks);
                     abort_tasks(&mut cluster_tasks);
                     break;
@@ -101,8 +102,7 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
                 result = wait_for_config_change(path, config_fingerprint) => {
                     config_fingerprint = result.context("watch config file")?;
                     tracing::info!(path = %path.display(), "config changed; restarting backend");
-                    request_runtime_shutdown(&shutdown_handle);
-                    http_server.await.context("join mem-service task")??;
+                    shutdown_http_server(&shutdown_handle, &mut http_server, "config-reload").await?;
                     abort_tasks(&mut proto_tasks);
                     abort_tasks(&mut cluster_tasks);
                 }
@@ -115,8 +115,7 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
                 }
                 result = tokio::signal::ctrl_c() => {
                     result.context("listen for ctrl-c")?;
-                    request_runtime_shutdown(&shutdown_handle);
-                    http_server.await.context("join mem-service task")??;
+                    shutdown_http_server(&shutdown_handle, &mut http_server, "ctrl-c").await?;
                     abort_tasks(&mut proto_tasks);
                     abort_tasks(&mut cluster_tasks);
                     break;
@@ -231,6 +230,43 @@ pub(crate) fn request_runtime_shutdown(shutdown: &Arc<Mutex<Option<oneshot::Send
     if let Some(sender) = shutdown.lock().expect("shutdown mutex poisoned").take() {
         let _ = sender.send(());
     }
+}
+
+pub(crate) async fn shutdown_http_server(
+    shutdown: &Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    http_server: &mut JoinHandle<std::io::Result<()>>,
+    reason: &str,
+) -> Result<()> {
+    shutdown_http_server_with_timeout(shutdown, http_server, HTTP_SHUTDOWN_GRACE_PERIOD, reason)
+        .await
+}
+
+pub(crate) async fn shutdown_http_server_with_timeout(
+    shutdown: &Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    http_server: &mut JoinHandle<std::io::Result<()>>,
+    grace_period: Duration,
+    reason: &str,
+) -> Result<()> {
+    request_runtime_shutdown(shutdown);
+    tokio::select! {
+        result = &mut *http_server => {
+            result.context("join mem-service task")??;
+        }
+        _ = tokio::time::sleep(grace_period) => {
+            tracing::warn!(
+                reason,
+                grace_period_ms = grace_period.as_millis(),
+                "HTTP server did not stop during graceful shutdown window; aborting"
+            );
+            http_server.abort();
+            match http_server.await {
+                Ok(result) => result.context("run mem-service task after forced shutdown")?,
+                Err(error) if error.is_cancelled() => {}
+                Err(error) => return Err(error).context("join mem-service task after forced shutdown"),
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) async fn bind_http_listener_with_handoff(

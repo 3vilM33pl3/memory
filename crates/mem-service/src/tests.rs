@@ -513,6 +513,30 @@ fn runtime_restart_marker_detects_current_process_needs_restart() {
     ));
 }
 
+#[tokio::test]
+async fn shutdown_http_server_aborts_hung_graceful_shutdown() {
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let shutdown = Arc::new(Mutex::new(Some(shutdown_tx)));
+    let mut http_server = tokio::spawn(async move {
+        let _ = shutdown_rx.await;
+        std::future::pending::<std::io::Result<()>>().await
+    });
+
+    let started_at = std::time::Instant::now();
+    shutdown_http_server_with_timeout(
+        &shutdown,
+        &mut http_server,
+        Duration::from_millis(10),
+        "test",
+    )
+    .await
+    .expect("shutdown completes");
+
+    assert!(started_at.elapsed() < StdDuration::from_secs(1));
+    assert!(http_server.is_finished());
+    assert!(shutdown.lock().expect("shutdown mutex").is_none());
+}
+
 #[test]
 fn openai_embedding_space_aliases_legacy_and_compatible_keys() {
     assert_eq!(
