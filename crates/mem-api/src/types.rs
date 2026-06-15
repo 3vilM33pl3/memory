@@ -1390,6 +1390,18 @@ impl LoopTrustLevel {
     }
 }
 
+impl Default for LoopTrustLevel {
+    fn default() -> Self {
+        Self::Medium
+    }
+}
+
+impl fmt::Display for LoopTrustLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum LoopRunStatus {
@@ -1676,6 +1688,126 @@ impl LoopRunRequest {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopTriggerRouteRequest {
+    pub source: String,
+    pub event_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedupe_key: Option<String>,
+    #[serde(default)]
+    pub trust_level: LoopTrustLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debounce_seconds: Option<i64>,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidate_loop_ids: Vec<String>,
+}
+
+impl LoopTriggerRouteRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.source.trim().is_empty() {
+            return Err(ValidationError::new("source must be non-empty"));
+        }
+        if self.event_type.trim().is_empty() {
+            return Err(ValidationError::new("event_type must be non-empty"));
+        }
+        if self
+            .project
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self
+            .repo_root
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(ValidationError::new("repo_root must be non-empty"));
+        }
+        if self
+            .dedupe_key
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(ValidationError::new("dedupe_key must be non-empty"));
+        }
+        if self.debounce_seconds.is_some_and(|seconds| seconds < 0) {
+            return Err(ValidationError::new(
+                "debounce_seconds must be greater than or equal to zero",
+            ));
+        }
+        if self
+            .candidate_loop_ids
+            .iter()
+            .any(|loop_id| loop_id.trim().is_empty())
+        {
+            return Err(ValidationError::new(
+                "candidate_loop_ids must not contain empty loop ids",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopTriggerEventRecord {
+    pub id: Uuid,
+    pub source: String,
+    pub event_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
+    pub payload_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedupe_key: Option<String>,
+    pub trust_level: LoopTrustLevel,
+    #[serde(default)]
+    pub payload: serde_json::Value,
+    pub received_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopTriggerRouteDecision {
+    pub loop_id: String,
+    pub supported: bool,
+    pub eligible: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_reasons: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<LoopMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_type: Option<LoopScopeType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopTriggerRouteResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<LoopTriggerEventRecord>,
+    #[serde(default)]
+    pub duplicate: bool,
+    #[serde(default)]
+    pub debounced: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decisions: Vec<LoopTriggerRouteDecision>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runs: Vec<LoopRunSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

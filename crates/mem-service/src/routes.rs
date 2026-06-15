@@ -19,11 +19,11 @@ use super::{
     project_replacement_policy, project_replacement_policy_update,
     project_replacement_proposal_approve, project_replacement_proposal_reject,
     project_replacement_proposals, project_resume, project_up_to_speed, prune_embeddings,
-    prune_history, query, reembed, reindex, reject_loop_approval, run_loop, runtime_status,
-    scan_activity, set_embedding_creation_enabled, set_llm_audit_enabled, snooze_loop, stats,
-    submit_loop_feedback, sync_commits, update_loop_global_state, verify_provenance,
-    watcher_heartbeat, watcher_restart_local, watcher_unregister, web_auth_token, web_unavailable,
-    websocket,
+    prune_history, query, reembed, reindex, reject_loop_approval, route_loop_trigger, run_loop,
+    runtime_status, scan_activity, set_embedding_creation_enabled, set_llm_audit_enabled,
+    snooze_loop, stats, submit_loop_feedback, sync_commits, update_loop_global_state,
+    verify_provenance, watcher_heartbeat, watcher_restart_local, watcher_unregister,
+    web_auth_token, web_unavailable, websocket,
 };
 
 pub(crate) fn build_http_app(state: AppState) -> Router {
@@ -75,6 +75,7 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
             post(submit_loop_feedback),
         )
         .route("/v1/loops/approvals", get(list_loop_approvals))
+        .route("/v1/loops/triggers/route", post(route_loop_trigger))
         .route(
             "/v1/loops/approvals/{approval_id}/approve",
             post(approve_loop_approval),

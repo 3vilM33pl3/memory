@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use mem_api::{
     EffectiveLoopSettings, LoopActionKind, LoopDefinitionRecord, LoopMode, LoopRiskLevel,
-    LoopScopeType, LoopSettingRecord,
+    LoopScopeType, LoopSettingRecord, LoopTriggerRouteDecision,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -367,6 +367,53 @@ pub fn budget_blocked(budgets: Option<&Value>) -> Option<String> {
     None
 }
 
+#[derive(Debug, Clone)]
+pub struct TriggerRouteCandidate {
+    pub definition: LoopDefinitionRecord,
+    pub effective_settings: EffectiveLoopSettings,
+}
+
+pub fn route_trigger_event(
+    event_type: &str,
+    candidates: impl IntoIterator<Item = TriggerRouteCandidate>,
+) -> Vec<LoopTriggerRouteDecision> {
+    candidates
+        .into_iter()
+        .map(|candidate| {
+            let supported = definition_supports_trigger(&candidate.definition, event_type);
+            let mut skipped_reasons = Vec::new();
+            if !supported {
+                skipped_reasons.push("unsupported_trigger".to_string());
+            }
+            skipped_reasons.extend(candidate.effective_settings.blocked_reasons.clone());
+            let eligible = supported && skipped_reasons.is_empty();
+            LoopTriggerRouteDecision {
+                loop_id: candidate.definition.loop_id,
+                supported,
+                eligible,
+                skipped_reasons,
+                mode: Some(candidate.effective_settings.mode),
+                scope_type: Some(candidate.effective_settings.scope_type),
+                scope_id: Some(candidate.effective_settings.scope_id),
+                run_id: None,
+            }
+        })
+        .collect()
+}
+
+pub fn definition_supports_trigger(definition: &LoopDefinitionRecord, event_type: &str) -> bool {
+    definition
+        .trigger_spec
+        .get("supported")
+        .and_then(Value::as_array)
+        .is_some_and(|supported| {
+            supported
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|trigger| trigger == event_type)
+        })
+}
+
 fn scope_precedence(scope_type: &LoopScopeType) -> u8 {
     match scope_type {
         LoopScopeType::User => 0,
@@ -470,5 +517,76 @@ mod tests {
         let decision = evaluate_action(&LoopMode::DraftOutput, LoopActionKind::WriteRepo);
         assert!(decision.allowed);
         assert!(decision.requires_approval);
+    }
+
+    #[test]
+    fn trigger_router_marks_supported_enabled_loop_eligible() {
+        let definition = definition();
+        let now = Utc::now();
+        let effective = resolve_effective_settings(
+            &definition,
+            &[LoopSettingRecord {
+                id: Uuid::new_v4(),
+                loop_id: definition.loop_id.clone(),
+                scope_type: LoopScopeType::Project,
+                scope_id: "memory".to_string(),
+                project: Some("memory".to_string()),
+                repo_root: None,
+                enabled: Some(true),
+                mode: Some(LoopMode::SuggestOnly),
+                budgets: None,
+                approval_overrides: None,
+                paused_until: None,
+                snoozed_until: None,
+                updated_by: None,
+                reason: None,
+                updated_at: now,
+            }],
+            false,
+            false,
+            now,
+        );
+
+        let decisions = route_trigger_event(
+            "memory_changed",
+            [TriggerRouteCandidate {
+                definition,
+                effective_settings: effective,
+            }],
+        );
+
+        assert_eq!(decisions.len(), 1);
+        assert!(decisions[0].supported);
+        assert!(decisions[0].eligible);
+        assert!(decisions[0].skipped_reasons.is_empty());
+    }
+
+    #[test]
+    fn trigger_router_explains_blocked_or_unsupported_candidates() {
+        let definition = definition();
+        let now = Utc::now();
+        let disabled = resolve_effective_settings(&definition, &[], false, false, now);
+
+        let decisions = route_trigger_event(
+            "ci_failed",
+            [TriggerRouteCandidate {
+                definition,
+                effective_settings: disabled,
+            }],
+        );
+
+        assert_eq!(decisions.len(), 1);
+        assert!(!decisions[0].supported);
+        assert!(!decisions[0].eligible);
+        assert!(
+            decisions[0]
+                .skipped_reasons
+                .contains(&"unsupported_trigger".to_string())
+        );
+        assert!(
+            decisions[0]
+                .skipped_reasons
+                .contains(&"loop_not_enabled".to_string())
+        );
     }
 }

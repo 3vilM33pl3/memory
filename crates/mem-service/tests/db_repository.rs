@@ -1,4 +1,7 @@
-use mem_api::{LoopRunRequest, LoopRunStatus, MemoryStatus, MemoryType};
+use mem_api::{
+    LoopMode, LoopRunRequest, LoopRunStatus, LoopTriggerRouteRequest, LoopTrustLevel, MemoryStatus,
+    MemoryType,
+};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -107,6 +110,74 @@ async fn loop_repository_registers_definitions_and_records_run() {
         .expect("cleanup test project");
 }
 
+#[tokio::test]
+async fn loop_repository_routes_trigger_events_and_dedupes() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-loop-route");
+    let repo_root = format!("/tmp/{project}");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+
+    mem_service::repository::handlers::loops::register_builtin_loop_definitions(&pool)
+        .await
+        .expect("register builtin loops");
+    let project_id =
+        mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+            .await
+            .expect("upsert project");
+    enable_project_loop(&pool, project_id, &project).await;
+
+    let request = LoopTriggerRouteRequest {
+        source: "repository-test".to_string(),
+        event_type: "memory_changed".to_string(),
+        project: Some(project.clone()),
+        repo_root: Some(repo_root.clone()),
+        payload: serde_json::json!({"memory_id": "example"}),
+        dedupe_key: Some(format!("test:{project}:memory_changed")),
+        trust_level: LoopTrustLevel::High,
+        debounce_seconds: Some(60),
+        dry_run: false,
+        reason: Some("db repository trigger route test".to_string()),
+        candidate_loop_ids: vec![mem_loops::LOOP_CONTEXT_PACK_REFRESH.to_string()],
+    };
+
+    let response =
+        mem_service::repository::handlers::loops::route_loop_trigger_event(&pool, &request)
+            .await
+            .expect("route trigger");
+
+    assert!(!response.duplicate);
+    assert!(!response.debounced);
+    assert_eq!(response.runs.len(), 1);
+    assert_eq!(response.decisions.len(), 1);
+    assert!(response.decisions[0].supported);
+    assert!(response.decisions[0].eligible);
+    assert_eq!(response.decisions[0].run_id, Some(response.runs[0].id));
+    assert_eq!(response.runs[0].status, LoopRunStatus::Succeeded);
+
+    let duplicate =
+        mem_service::repository::handlers::loops::route_loop_trigger_event(&pool, &request)
+            .await
+            .expect("dedupe trigger");
+    assert!(duplicate.duplicate);
+    assert!(duplicate.runs.is_empty());
+    assert!(
+        duplicate.decisions[0]
+            .skipped_reasons
+            .contains(&"duplicate_trigger".to_string())
+    );
+
+    cleanup_loop_run(&pool, response.runs[0].id).await;
+    cleanup_loop_triggers(&pool, &repo_root).await;
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
 async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     let memory_id = Uuid::new_v4();
     sqlx::query(
@@ -136,6 +207,31 @@ async fn cleanup_loop_run(pool: &PgPool, run_id: Uuid) {
         .execute(pool)
         .await
         .expect("cleanup loop run");
+}
+
+async fn enable_project_loop(pool: &PgPool, project_id: Uuid, project: &str) {
+    sqlx::query(
+        r#"
+        INSERT INTO loop_settings (
+            id, loop_id, scope_type, scope_id, project_id, enabled, mode, updated_at
+        )
+        VALUES (
+            gen_random_uuid(), $1, 'project', $2, $3, TRUE, $4, now()
+        )
+        ON CONFLICT (loop_id, scope_type, scope_id) DO UPDATE SET
+            project_id = EXCLUDED.project_id,
+            enabled = EXCLUDED.enabled,
+            mode = EXCLUDED.mode,
+            updated_at = now()
+        "#,
+    )
+    .bind(mem_loops::LOOP_CONTEXT_PACK_REFRESH)
+    .bind(project)
+    .bind(project_id)
+    .bind(LoopMode::SuggestOnly.as_str())
+    .execute(pool)
+    .await
+    .expect("enable project loop");
 }
 
 async fn cleanup_loop_triggers(pool: &PgPool, repo_root: &str) {

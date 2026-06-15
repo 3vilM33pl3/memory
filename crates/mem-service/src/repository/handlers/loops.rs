@@ -2,8 +2,8 @@ use crate::prelude::*;
 use crate::*;
 use mem_api::{EffectiveLoopSettings, LoopActionKind};
 use mem_loops::{
-    budget_blocked, builtin_loop_definitions, evaluate_action, resolve_effective_settings,
-    validate_definition,
+    TriggerRouteCandidate, budget_blocked, builtin_loop_definitions, evaluate_action,
+    resolve_effective_settings, route_trigger_event, validate_definition,
 };
 use serde_json::json;
 
@@ -303,6 +303,23 @@ pub(crate) async fn run_loop(
     ))
 }
 
+pub(crate) async fn route_loop_trigger(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<LoopTriggerRouteRequest>,
+) -> Result<Json<LoopTriggerRouteResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/loops/triggers/route", &request, true).await?,
+        ));
+    }
+    Ok(Json(
+        route_loop_trigger_event_inner(state.pool()?, &request).await?,
+    ))
+}
+
 pub(crate) async fn list_loop_runs(
     State(state): State<AppState>,
     Query(query): Query<LoopRunsQuery>,
@@ -463,6 +480,15 @@ pub async fn record_control_plane_loop_run(
     request: &LoopRunRequest,
 ) -> Result<LoopRunResponse> {
     create_control_plane_loop_run(pool, loop_id, request)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))
+}
+
+pub async fn route_loop_trigger_event(
+    pool: &PgPool,
+    request: &LoopTriggerRouteRequest,
+) -> Result<LoopTriggerRouteResponse> {
+    route_loop_trigger_event_inner(pool, request)
         .await
         .map_err(|error| anyhow::anyhow!(error.message))
 }
@@ -840,10 +866,299 @@ async fn load_effective_loop_settings(
     Ok(effective)
 }
 
+struct StoredTriggerEvent {
+    event: LoopTriggerEventRecord,
+    duplicate: bool,
+    debounced: bool,
+}
+
+async fn route_loop_trigger_event_inner(
+    pool: &PgPool,
+    request: &LoopTriggerRouteRequest,
+) -> Result<LoopTriggerRouteResponse, ApiError> {
+    let definitions = fetch_route_candidate_definitions(pool, request).await?;
+    let mut candidates = Vec::with_capacity(definitions.len());
+    for definition in &definitions {
+        let mut effective = load_effective_loop_settings(
+            pool,
+            definition,
+            request.project.as_deref(),
+            request.repo_root.as_deref(),
+            false,
+        )
+        .await?;
+        if let Some(reason) = budget_blocked(effective.budgets.as_ref())
+            && !effective.blocked_reasons.contains(&reason)
+        {
+            effective.blocked_reasons.push(reason);
+        }
+        candidates.push(TriggerRouteCandidate {
+            definition: definition.clone(),
+            effective_settings: effective,
+        });
+    }
+    let mut decisions = route_trigger_event(&request.event_type, candidates);
+
+    if request.dry_run {
+        return Ok(LoopTriggerRouteResponse {
+            event: None,
+            duplicate: false,
+            debounced: false,
+            decisions,
+            runs: Vec::new(),
+        });
+    }
+
+    let project_id = match request.project.as_deref() {
+        Some(project) => Some(
+            upsert_project_slug(pool, project)
+                .await
+                .map_err(ApiError::sql)?,
+        ),
+        None => None,
+    };
+    let stored = store_trigger_event(pool, request, project_id).await?;
+    if stored.duplicate || stored.debounced {
+        for decision in &mut decisions {
+            if decision.eligible {
+                decision.eligible = false;
+                decision.skipped_reasons.push(if stored.duplicate {
+                    "duplicate_trigger".to_string()
+                } else {
+                    "debounced_trigger".to_string()
+                });
+            }
+        }
+        return Ok(LoopTriggerRouteResponse {
+            event: Some(stored.event),
+            duplicate: stored.duplicate,
+            debounced: stored.debounced,
+            decisions,
+            runs: Vec::new(),
+        });
+    }
+
+    let mut runs = Vec::new();
+    for decision in decisions.iter_mut().filter(|decision| decision.eligible) {
+        let run_request = LoopRunRequest {
+            project: request.project.clone(),
+            repo_root: request.repo_root.clone(),
+            scope_type: decision.scope_type.clone(),
+            scope_id: decision.scope_id.clone(),
+            dry_run: request.dry_run,
+            reason: request.reason.clone().or_else(|| {
+                Some(format!(
+                    "Routed trigger {} from {}",
+                    request.event_type, request.source
+                ))
+            }),
+            trigger_payload: Some(request.payload.clone()),
+        };
+        let run = create_control_plane_loop_run_with_trigger(
+            pool,
+            &decision.loop_id,
+            &run_request,
+            stored.event.id,
+            false,
+        )
+        .await?
+        .run;
+        decision.run_id = Some(run.summary.id);
+        runs.push(run.summary);
+    }
+
+    Ok(LoopTriggerRouteResponse {
+        event: Some(stored.event),
+        duplicate: false,
+        debounced: false,
+        decisions,
+        runs,
+    })
+}
+
+async fn fetch_route_candidate_definitions(
+    pool: &PgPool,
+    request: &LoopTriggerRouteRequest,
+) -> Result<Vec<LoopDefinitionRecord>, ApiError> {
+    if request.candidate_loop_ids.is_empty() {
+        return fetch_loop_definitions(pool).await;
+    }
+    let mut definitions = Vec::with_capacity(request.candidate_loop_ids.len());
+    for loop_id in &request.candidate_loop_ids {
+        definitions.push(fetch_loop_definition(pool, loop_id).await?);
+    }
+    Ok(definitions)
+}
+
+async fn store_trigger_event(
+    pool: &PgPool,
+    request: &LoopTriggerRouteRequest,
+    project_id: Option<Uuid>,
+) -> Result<StoredTriggerEvent, ApiError> {
+    let payload_hash =
+        hex_sha256(&serde_json::to_vec(&request.payload).map_err(|error| {
+            ApiError::io(anyhow::anyhow!("serialize trigger payload: {error}"))
+        })?);
+
+    if let Some(seconds) = request.debounce_seconds
+        && seconds > 0
+        && let Some(event) =
+            fetch_debounced_trigger_event(pool, request, project_id, &payload_hash, seconds).await?
+    {
+        return Ok(StoredTriggerEvent {
+            event,
+            duplicate: false,
+            debounced: true,
+        });
+    }
+
+    let inserted = sqlx::query(
+        r#"
+        INSERT INTO trigger_events (
+            id, source, event_type, project_id, repo_root, payload_hash,
+            dedupe_key, trust_level, payload_json, received_at
+        )
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, now())
+        ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+        RETURNING
+            id, source, event_type,
+            (SELECT slug FROM projects WHERE id = trigger_events.project_id) AS project,
+            repo_root, payload_hash, dedupe_key, trust_level, payload_json, received_at
+        "#,
+    )
+    .bind(&request.source)
+    .bind(&request.event_type)
+    .bind(project_id)
+    .bind(&request.repo_root)
+    .bind(&payload_hash)
+    .bind(&request.dedupe_key)
+    .bind(request.trust_level.as_str())
+    .bind(&request.payload)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::sql)?;
+
+    if let Some(row) = inserted {
+        return Ok(StoredTriggerEvent {
+            event: row_to_trigger_event(row)?,
+            duplicate: false,
+            debounced: false,
+        });
+    }
+
+    let event = fetch_trigger_event_by_dedupe_key(
+        pool,
+        request
+            .dedupe_key
+            .as_deref()
+            .ok_or_else(|| ApiError::validation(ValidationError::new("dedupe_key is required")))?,
+    )
+    .await?;
+    Ok(StoredTriggerEvent {
+        event,
+        duplicate: true,
+        debounced: false,
+    })
+}
+
+async fn fetch_debounced_trigger_event(
+    pool: &PgPool,
+    request: &LoopTriggerRouteRequest,
+    project_id: Option<Uuid>,
+    payload_hash: &str,
+    debounce_seconds: i64,
+) -> Result<Option<LoopTriggerEventRecord>, ApiError> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            id, source, event_type,
+            (SELECT slug FROM projects WHERE id = trigger_events.project_id) AS project,
+            repo_root, payload_hash, dedupe_key, trust_level, payload_json, received_at
+        FROM trigger_events
+        WHERE source = $1
+          AND event_type = $2
+          AND (($3::uuid IS NULL AND project_id IS NULL) OR project_id = $3)
+          AND (($4::text IS NULL AND repo_root IS NULL) OR repo_root = $4)
+          AND payload_hash = $5
+          AND received_at >= now() - ($6::int * interval '1 second')
+        ORDER BY received_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(&request.source)
+    .bind(&request.event_type)
+    .bind(project_id)
+    .bind(&request.repo_root)
+    .bind(payload_hash)
+    .bind(debounce_seconds as i32)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    row.map(row_to_trigger_event).transpose()
+}
+
+async fn fetch_trigger_event_by_dedupe_key(
+    pool: &PgPool,
+    dedupe_key: &str,
+) -> Result<LoopTriggerEventRecord, ApiError> {
+    let row = sqlx::query(
+        r#"
+        SELECT
+            id, source, event_type,
+            (SELECT slug FROM projects WHERE id = trigger_events.project_id) AS project,
+            repo_root, payload_hash, dedupe_key, trust_level, payload_json, received_at
+        FROM trigger_events
+        WHERE dedupe_key = $1
+        "#,
+    )
+    .bind(dedupe_key)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::sql)?
+    .ok_or_else(|| ApiError::not_found("trigger event not found"))?;
+    row_to_trigger_event(row)
+}
+
 async fn create_control_plane_loop_run(
     pool: &PgPool,
     loop_id: &str,
     request: &LoopRunRequest,
+) -> Result<LoopRunResponse, ApiError> {
+    let trigger_payload = request.trigger_payload.clone().unwrap_or_else(|| json!({}));
+    let trigger_record = store_trigger_event(
+        pool,
+        &LoopTriggerRouteRequest {
+            source: "manual".to_string(),
+            event_type: "manual_run".to_string(),
+            project: request.project.clone(),
+            repo_root: request.repo_root.clone(),
+            payload: trigger_payload,
+            dedupe_key: None,
+            trust_level: LoopTrustLevel::High,
+            debounce_seconds: None,
+            dry_run: false,
+            reason: request.reason.clone(),
+            candidate_loop_ids: vec![loop_id.to_string()],
+        },
+        None,
+    )
+    .await?;
+    create_control_plane_loop_run_with_trigger(
+        pool,
+        loop_id,
+        request,
+        trigger_record.event.id,
+        true,
+    )
+    .await
+}
+
+async fn create_control_plane_loop_run_with_trigger(
+    pool: &PgPool,
+    loop_id: &str,
+    request: &LoopRunRequest,
+    trigger_event_id: Uuid,
+    manual_run: bool,
 ) -> Result<LoopRunResponse, ApiError> {
     let definition = fetch_loop_definition(pool, loop_id).await?;
     let project_id = match request.project.as_deref() {
@@ -859,7 +1174,7 @@ async fn create_control_plane_loop_run(
         &definition,
         request.project.as_deref(),
         request.repo_root.as_deref(),
-        true,
+        manual_run,
     )
     .await?;
     let policy_decisions = [
@@ -884,29 +1199,6 @@ async fn create_control_plane_loop_run(
     } else {
         "Control-plane loop run recorded; real loop execution is not implemented in this slice."
     };
-    let trigger_payload = request.trigger_payload.clone().unwrap_or_else(|| json!({}));
-    let trigger_id = Uuid::new_v4();
-    let payload_hash =
-        hex_sha256(&serde_json::to_vec(&trigger_payload).map_err(|error| {
-            ApiError::io(anyhow::anyhow!("serialize trigger payload: {error}"))
-        })?);
-    sqlx::query(
-        r#"
-        INSERT INTO trigger_events (
-            id, source, event_type, project_id, repo_root, payload_hash,
-            trust_level, payload_json, received_at
-        )
-        VALUES ($1, 'manual', 'manual_run', $2, $3, $4, 'high', $5, now())
-        "#,
-    )
-    .bind(trigger_id)
-    .bind(project_id)
-    .bind(&request.repo_root)
-    .bind(payload_hash)
-    .bind(&trigger_payload)
-    .execute(pool)
-    .await
-    .map_err(ApiError::sql)?;
 
     let scope_type = request.scope_type.clone().unwrap_or_else(|| {
         if request.repo_root.is_some() {
@@ -947,7 +1239,7 @@ async fn create_control_plane_loop_run(
     .bind(&request.repo_root)
     .bind(scope_type.as_str())
     .bind(&scope_id)
-    .bind(trigger_id)
+    .bind(trigger_event_id)
     .bind(effective.mode.as_str())
     .bind(status.as_str())
     .bind(&request.reason)
@@ -1348,6 +1640,24 @@ fn row_to_loop_approval(row: sqlx::postgres::PgRow) -> Result<LoopApprovalReques
     })
 }
 
+fn row_to_trigger_event(row: sqlx::postgres::PgRow) -> Result<LoopTriggerEventRecord, ApiError> {
+    Ok(LoopTriggerEventRecord {
+        id: row.try_get("id").map_err(ApiError::sql)?,
+        source: row.try_get("source").map_err(ApiError::sql)?,
+        event_type: row.try_get("event_type").map_err(ApiError::sql)?,
+        project: row.try_get("project").map_err(ApiError::sql)?,
+        repo_root: row.try_get("repo_root").map_err(ApiError::sql)?,
+        payload_hash: row.try_get("payload_hash").map_err(ApiError::sql)?,
+        dedupe_key: row.try_get("dedupe_key").map_err(ApiError::sql)?,
+        trust_level: parse_trust_level(
+            row.try_get::<String, _>("trust_level")
+                .map_err(ApiError::sql)?,
+        )?,
+        payload: row.try_get("payload_json").map_err(ApiError::sql)?,
+        received_at: row.try_get("received_at").map_err(ApiError::sql)?,
+    })
+}
+
 fn parse_loop_mode(value: String) -> Result<LoopMode, ApiError> {
     match value.as_str() {
         "off" => Ok(LoopMode::Off),
@@ -1360,6 +1670,19 @@ fn parse_loop_mode(value: String) -> Result<LoopMode, ApiError> {
         _ => Err(ApiError::status_message(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("unknown loop mode: {value}"),
+        )),
+    }
+}
+
+fn parse_trust_level(value: String) -> Result<LoopTrustLevel, ApiError> {
+    match value.as_str() {
+        "high" => Ok(LoopTrustLevel::High),
+        "medium" => Ok(LoopTrustLevel::Medium),
+        "low" => Ok(LoopTrustLevel::Low),
+        "data_only" => Ok(LoopTrustLevel::DataOnly),
+        _ => Err(ApiError::status_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("unknown loop trust level: {value}"),
         )),
     }
 }

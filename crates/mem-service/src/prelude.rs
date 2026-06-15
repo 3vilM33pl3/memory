@@ -45,6 +45,7 @@ pub(crate) use mem_api::{
     LoopGlobalStateUpdateRequest, LoopMode, LoopRiskLevel, LoopRunDetail, LoopRunRequest,
     LoopRunResponse, LoopRunStatus, LoopRunSummary, LoopRunsResponse, LoopScopeType,
     LoopSettingRecord, LoopSettingResponse, LoopSettingsUpdateRequest, LoopTraceRecord,
+    LoopTriggerEventRecord, LoopTriggerRouteRequest, LoopTriggerRouteResponse, LoopTrustLevel,
     MemoryEntryResponse, MemoryHistoryResponse, MemorySourceRecord, PlanActivityAction,
     PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryBundleEntry,
     ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest, ProjectMemoryBundlePreview,
