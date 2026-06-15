@@ -1590,6 +1590,31 @@ async fn create_control_plane_loop_run_with_trigger(
             .execute(pool)
             .await
             .map_err(ApiError::sql)?;
+        } else if definition.loop_id == mem_loops::LOOP_CI_FAILURE_TRIAGE && !blocked {
+            let triage = emit_ci_failure_triage_report(
+                pool,
+                run_id,
+                request,
+                &definition.loop_id,
+                &effective.mode,
+                &context_pack,
+            )
+            .await?;
+            sqlx::query(
+                r#"
+                UPDATE loop_runs
+                SET output_summary = $2,
+                    output_json = output_json || jsonb_build_object('ci_triage', $3::jsonb),
+                    updated_at = now()
+                WHERE id = $1
+                "#,
+            )
+            .bind(run_id)
+            .bind(&triage.summary)
+            .bind(&triage.output)
+            .execute(pool)
+            .await
+            .map_err(ApiError::sql)?;
         }
     }
     Ok(LoopRunResponse {
@@ -3057,6 +3082,251 @@ fn normalize_hygiene_text(value: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+}
+
+struct CiTriageResult {
+    summary: String,
+    output: serde_json::Value,
+}
+
+async fn emit_ci_failure_triage_report(
+    pool: &PgPool,
+    run_id: Uuid,
+    request: &LoopRunRequest,
+    loop_id: &str,
+    mode: &LoopMode,
+    context_pack: &LoopContextPackResponse,
+) -> Result<CiTriageResult, ApiError> {
+    let project = request
+        .project
+        .as_deref()
+        .ok_or_else(|| ApiError::validation(ValidationError::new("project is required")))?;
+    let ci_text = ci_payload_text(request.trigger_payload.as_ref());
+    let classification = classify_ci_failure(&ci_text);
+    let memory_evidence = context_pack
+        .pack
+        .memories
+        .iter()
+        .take(5)
+        .map(|memory| {
+            json!({
+                "memory_id": memory.memory_id,
+                "summary": memory.summary,
+                "memory_type": memory.memory_type,
+                "confidence": memory.confidence,
+                "freshness": memory.freshness
+            })
+        })
+        .collect::<Vec<_>>();
+    let diagnosis = ci_triage_diagnosis(&classification, &ci_text, &memory_evidence);
+    let mut proposal_id = None;
+    if *mode == LoopMode::SuggestOnly && classification.follow_up_suitable {
+        let create = LoopMemoryProposalCreateRequest {
+            project: project.to_string(),
+            loop_id: loop_id.to_string(),
+            proposal_type: "add".to_string(),
+            run_id: Some(run_id),
+            target_memory_id: None,
+            candidate: json!({
+                "canonical_text": format!(
+                    "# CI Failure Follow-up Task\n\nClassification: {}\nConfidence: {:.2}\n\n{}\n\nNo code changes were made by the triage loop.",
+                    classification.kind, classification.confidence, diagnosis
+                ),
+                "summary": format!("CI triage follow-up: {}", classification.kind),
+                "memory_type": "task",
+                "tags": ["loop-engineering", "ci-triage", "follow-up-task"]
+            }),
+            evidence: json!([{
+                "source_kind": "command_output",
+                "excerpt": ci_text.chars().take(1_200).collect::<String>()
+            }]),
+            confidence: classification.confidence,
+            risk_notes: Some(
+                "Follow-up task proposal from CI triage; review before routing to Draft PR."
+                    .to_string(),
+            ),
+        };
+        create.validate().map_err(ApiError::validation)?;
+        let created = insert_loop_memory_proposal(pool, &create).await?;
+        proposal_id = Some(created.proposal.id);
+    }
+    let summary = format!(
+        "CI Failure Triage classified failure as {} with confidence {:.2}.",
+        classification.kind, classification.confidence
+    );
+    let output = json!({
+        "classification": classification.kind,
+        "confidence": classification.confidence,
+        "diagnosis": diagnosis,
+        "evidence_excerpt": ci_text.chars().take(1_200).collect::<String>(),
+        "memory_evidence": memory_evidence,
+        "follow_up_proposal_id": proposal_id,
+        "mode": mode.as_str(),
+        "code_written": false
+    });
+    append_loop_trace(
+        pool,
+        run_id,
+        "ci_triage",
+        "CI Failure Triage report",
+        output.clone(),
+        false,
+    )
+    .await?;
+    Ok(CiTriageResult { summary, output })
+}
+
+struct CiFailureClassification {
+    kind: &'static str,
+    confidence: f32,
+    follow_up_suitable: bool,
+}
+
+fn classify_ci_failure(text: &str) -> CiFailureClassification {
+    let lower = text.to_lowercase();
+    if contains_any(
+        &lower,
+        &[
+            "timeout",
+            "timed out",
+            "connection reset",
+            "network",
+            "rate limit",
+        ],
+    ) {
+        return CiFailureClassification {
+            kind: "environmental",
+            confidence: 0.74,
+            follow_up_suitable: false,
+        };
+    }
+    if contains_any(
+        &lower,
+        &[
+            "lockfile",
+            "dependency",
+            "version conflict",
+            "unresolved import",
+            "package not found",
+        ],
+    ) {
+        return CiFailureClassification {
+            kind: "dependency-related",
+            confidence: 0.72,
+            follow_up_suitable: true,
+        };
+    }
+    if contains_any(
+        &lower,
+        &["flaky", "intermittent", "rerun", "race condition"],
+    ) {
+        return CiFailureClassification {
+            kind: "flaky",
+            confidence: 0.68,
+            follow_up_suitable: false,
+        };
+    }
+    if contains_any(
+        &lower,
+        &[
+            "assertion",
+            "test failed",
+            "expected",
+            "panic",
+            "compile error",
+            "type error",
+        ],
+    ) {
+        return CiFailureClassification {
+            kind: "likely regression",
+            confidence: 0.76,
+            follow_up_suitable: true,
+        };
+    }
+    CiFailureClassification {
+        kind: "unknown",
+        confidence: 0.45,
+        follow_up_suitable: false,
+    }
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
+}
+
+fn ci_payload_text(payload: Option<&serde_json::Value>) -> String {
+    let Some(payload) = payload else {
+        return "No CI payload was attached to the loop run.".to_string();
+    };
+    let mut parts = Vec::new();
+    collect_ci_payload_strings(payload, &mut parts);
+    if parts.is_empty() {
+        serde_json::to_string_pretty(payload)
+            .unwrap_or_else(|_| "Unprintable CI payload.".to_string())
+    } else {
+        parts.join("\n")
+    }
+}
+
+fn collect_ci_payload_strings(value: &serde_json::Value, parts: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(value) => {
+            if value.len() > 3 {
+                parts.push(value.chars().take(2_000).collect());
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter().take(20) {
+                collect_ci_payload_strings(item, parts);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for key in [
+                "workflow",
+                "job",
+                "step",
+                "status",
+                "conclusion",
+                "error",
+                "message",
+                "log",
+                "logs",
+                "stderr",
+                "stdout",
+            ] {
+                if let Some(value) = object.get(key) {
+                    collect_ci_payload_strings(value, parts);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn ci_triage_diagnosis(
+    classification: &CiFailureClassification,
+    ci_text: &str,
+    memory_evidence: &[serde_json::Value],
+) -> String {
+    let memory_lines = memory_evidence
+        .iter()
+        .filter_map(|value| value.get("summary").and_then(serde_json::Value::as_str))
+        .take(5)
+        .map(|summary| format!("- {summary}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "The CI evidence matches `{}` signals. Review the attached log excerpt first, then compare against the relevant memories below.\n\nRelevant memories:\n{}",
+        classification.kind,
+        if memory_lines.is_empty() {
+            "- No relevant memories were selected.".to_string()
+        } else {
+            memory_lines
+        }
+    ) + &format!(
+        "\n\nLog excerpt:\n{}",
+        ci_text.chars().take(800).collect::<String>()
+    )
 }
 
 async fn cancel_loop_run_record(

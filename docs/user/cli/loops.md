@@ -80,6 +80,12 @@ low-confidence or stale low-importance memories, and related same-tag memories.
 It emits `merge`, `deprecate`, and `link` proposals using summaries and ids only,
 so full canonical text is not copied into hygiene reports.
 
+When the built-in `ci_failure_triage` loop runs, it classifies attached CI
+payload evidence as likely regression, flaky, environmental, dependency-related,
+or unknown. Observe mode records a triage report only. Suggest-only mode can also
+create a follow-up task proposal for suitable regression or dependency failures.
+This loop does not write code.
+
 ## Approvals
 
 ```bash
