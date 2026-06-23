@@ -5,7 +5,7 @@ description: "Use the service-hosted web interface for memories, query evidence,
 
 # Browser UI
 
-The browser UI is the web companion to the TUI. It is served by `mem-service` and uses the same backend APIs for memories, query, activities, watchers, embeddings, resume briefings, errors, and curation review.
+The browser UI is the web companion to the TUI. It is served by `mem-service` and uses the same backend APIs for memories, query, code graph inspection, activities, watchers, embeddings, resume briefings, errors, and curation review.
 
 Open it while the service is running:
 
@@ -28,6 +28,7 @@ cargo run --bin memory -- service run
 | Memories | Canonical memories, filters, markdown-style canonical text, embeddings, sources, history, and related memories. |
 | Agents | Local Codex and Claude sessions, current-project sorting, tokens, context pressure, child processes, ports, and rate limits. |
 | Query | Cited answers, ranked memory results, lexical/semantic/graph timing, token usage, ranking explanations, and graph connections. |
+| Graph | 3D WebGL code graph neighborhoods from the latest `memory graph extract` run, with search/file/symbol/edge filters and node/edge detail. |
 | Activity | Persisted activity, token and duration metadata, get-up-to-speed briefings, and LLM audit/debug status. |
 | Errors | Persisted diagnostics and browser-session errors with explanations, fix hints, doctor hints, commands, and raw errors. |
 | Project | Counts, memory type/source breakdowns, embedding coverage, automation state, watcher status, and recent activity. |
@@ -60,6 +61,27 @@ content. `Repair skills` uses the same repair path as `memory doctor --fix`: it
 downloads the current GitHub bundle when available, falls back to the installed
 template when offline, backs up replaced files, and only mutates Memory-owned
 skill directories.
+
+## Graph tab
+
+The Graph tab is a WebGL-only 3D explorer for the parser-backed code graph. It
+reads the latest completed graph run from the service and does not extract or
+mutate graph data from the browser.
+
+Build or refresh the graph from the CLI:
+
+```bash
+memory graph extract --project memory
+```
+
+The default view is a bounded neighborhood. Filters can seed the graph from text
+search, file path, symbol name, edge kind, depth, node cap, and edge cap. The
+service enforces hard caps of depth `2`, `1000` nodes, and `2000` edges. Capped
+responses show a truncation reason in the tab.
+
+Query graph connections and graph extraction activity details include actions
+that open the Graph tab with matching file, symbol, edge kind, or run id filters.
+Browsers without WebGL show an unsupported state; there is no SVG or 2D fallback.
 
 ## Runtime status
 

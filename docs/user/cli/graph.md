@@ -31,6 +31,17 @@ memory graph status --project memory --text
 
 Shows the latest completed extraction run, analyzer version, strategy version, symbol counts, reference counts, graph node/edge counts, evidence counts, and unresolved/ambiguous reference counts.
 
+## Browser Explorer
+
+After a completed extraction exists, the browser UI `Graph` tab can inspect it as
+a bounded 3D WebGL neighborhood. Start the service, open the browser UI, and use
+the Graph tab filters for text, file path, symbol, edge kind, depth, node cap,
+and edge cap.
+
+The browser view is read-only. It uses the existing graph tables and does not run
+extraction from the web UI. Query graph connections and graph extraction
+activities can open the Graph tab with matching filters.
+
 ## Use In Query
 
 After a completed extraction exists, `memory query` and the TUI `Query` tab automatically use it. The query pipeline looks for code symbols, references, and one-hop graph neighbors that match the question, then maps those graph hits back to memories through `memory_sources.file_path` provenance.
