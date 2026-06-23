@@ -1,3 +1,5 @@
+import { lazy, Suspense } from "react";
+
 import { HelpPanel } from "./components/HelpPanel";
 import { RuntimeSkillsStatus } from "./components/RuntimeSkillsStatus";
 import { ActivityTab } from "./features/activity/ActivityTab";
@@ -15,6 +17,8 @@ import { WatchersTab } from "./features/watchers/WatchersTab";
 import { SkillsTab } from "./features/skills/SkillsTab";
 import { useAppShell } from "./hooks/useAppShell";
 import { MORE_TABS, PRIMARY_TABS, type Tab } from "./tabs";
+
+const GraphTab = lazy(() => import("./features/graph/GraphTab").then((module) => ({ default: module.GraphTab })));
 
 export default function App() {
   const {
@@ -69,6 +73,19 @@ export default function App() {
     queryRoundtripMs,
     includeStale,
     setIncludeStale,
+    graphFilters,
+    graphStatus,
+    codeGraph,
+    graphLoading,
+    graphError,
+    selectedGraphNode,
+    selectedGraphEdge,
+    openGraph,
+    handleGraphFilterChange,
+    handleGraphSubmit,
+    refreshGraph,
+    selectGraphNode,
+    selectGraphEdge,
     handleQuerySubmit,
     applyQueryHistory,
     setQueryHistoryCursor,
@@ -291,7 +308,30 @@ export default function App() {
           onResetHistoryCursor={() => setQueryHistoryCursor(null)}
           onSelectResult={setSelectedQueryIndex}
           onDelete={(memoryId) => void handleDelete(memoryId)}
+          onOpenGraph={(seed) => {
+            openGraph(seed);
+            setTab("graph");
+          }}
         />
+      ) : null}
+      {tab === "graph" ? (
+        <Suspense fallback={<p className="loading-indicator">Loading graph viewer...</p>}>
+          <GraphTab
+            project={project}
+            filters={graphFilters}
+            status={graphStatus}
+            graph={codeGraph}
+            loading={graphLoading}
+            error={graphError}
+            selectedNode={selectedGraphNode}
+            selectedEdge={selectedGraphEdge}
+            onFilterChange={handleGraphFilterChange}
+            onSubmit={handleGraphSubmit}
+            onRefresh={refreshGraph}
+            onSelectNode={selectGraphNode}
+            onSelectEdge={selectGraphEdge}
+          />
+        </Suspense>
       ) : null}
       {tab === "activity" ? (
         <ActivityTab
@@ -308,6 +348,10 @@ export default function App() {
           onLoadUpToSpeed={(includeLlmSummary) => void handleUpToSpeed(includeLlmSummary)}
           onToggleLlmAudit={() => void handleToggleLlmAudit()}
           onSelectActivity={setSelectedActivityIndex}
+          onOpenGraph={(seed) => {
+            openGraph(seed);
+            setTab("graph");
+          }}
         />
       ) : null}
       {tab === "errors" ? (

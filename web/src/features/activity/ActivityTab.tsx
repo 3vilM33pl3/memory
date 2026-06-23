@@ -1,6 +1,7 @@
 import { RichText } from "../../components/RichText";
 import type { ActivityEvent, LlmAuditStatusResponse, UpToSpeedResponse } from "../../types";
 import { activityDurationLabel, activityTokenLabel, formatDateTime, formatTokens } from "../../utils/format";
+import type { GraphOpenSeed } from "../graph/useGraphController";
 import { ActivityDetail } from "./ActivityDetail";
 
 interface ActivityTabProps {
@@ -17,6 +18,7 @@ interface ActivityTabProps {
   onLoadUpToSpeed: (includeLlmSummary: boolean) => void;
   onToggleLlmAudit: () => void;
   onSelectActivity: (index: number) => void;
+  onOpenGraph?: (seed: GraphOpenSeed) => void;
 }
 
 export function ActivityTab({
@@ -33,6 +35,7 @@ export function ActivityTab({
   onLoadUpToSpeed,
   onToggleLlmAudit,
   onSelectActivity,
+  onOpenGraph,
 }: ActivityTabProps) {
   return (
     <section className="panel-stack">
@@ -104,7 +107,7 @@ export function ActivityTab({
               <p className="muted">
                 {formatDateTime(activeActivity.recorded_at)} · {activityTokenLabel(activeActivity)} · {activityDurationLabel(activeActivity)}
               </p>
-              <ActivityDetail event={activeActivity} />
+              <ActivityDetail event={activeActivity} onOpenGraph={onOpenGraph} />
             </>
           ) : (
             <p className="muted">Keep this page open while queries, captures, curation runs, and deletions happen.</p>

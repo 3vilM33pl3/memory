@@ -3,6 +3,7 @@ import type { FormEvent, RefObject } from "react";
 import { RichText } from "../../components/RichText";
 import type { MemoryEntryResponse, QueryResponse, QueryResult } from "../../types";
 import { formatCitationNumbers, formatNumber, formatTokens } from "../../utils/format";
+import type { GraphOpenSeed } from "../graph/useGraphController";
 
 interface QueryTabProps {
   queryRef: RefObject<HTMLInputElement | null>;
@@ -24,6 +25,7 @@ interface QueryTabProps {
   onResetHistoryCursor: () => void;
   onSelectResult: (index: number) => void;
   onDelete: (memoryId: string) => void;
+  onOpenGraph?: (seed: GraphOpenSeed) => void;
 }
 
 export function QueryTab({
@@ -46,6 +48,7 @@ export function QueryTab({
   onResetHistoryCursor,
   onSelectResult,
   onDelete,
+  onOpenGraph,
 }: QueryTabProps) {
   return (
     <section className="panel-stack">
@@ -199,6 +202,20 @@ export function QueryTab({
                         {connection.edge_kind ? ` · ${connection.edge_kind}` : ""}
                         {connection.neighbor_symbol ? ` -> ${connection.neighbor_symbol}` : ""}
                       </span>
+                      {onOpenGraph ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onOpenGraph({
+                              file_path: connection.file_path,
+                              symbol: connection.symbol ?? connection.neighbor_symbol ?? null,
+                              edge_kind: connection.edge_kind ?? null,
+                            })
+                          }
+                        >
+                          Open in Graph
+                        </button>
+                      ) : null}
                     </div>
                   ))}
                 </section>

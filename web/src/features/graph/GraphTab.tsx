@@ -1,0 +1,312 @@
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
+
+import type { CodeGraphEdge, CodeGraphNode, CodeGraphResponse, CodeGraphStatusResponse } from "../../types";
+import type { GraphFilterForm } from "./useGraphController";
+
+type RenderNode = CodeGraphNode & {
+  val: number;
+  color: string;
+};
+
+type RenderLink = CodeGraphEdge & {
+  color: string;
+  width: number;
+};
+
+interface GraphTabProps {
+  project: string;
+  filters: GraphFilterForm;
+  status: CodeGraphStatusResponse | null;
+  graph: CodeGraphResponse | null;
+  loading: boolean;
+  error: string | null;
+  selectedNode: CodeGraphNode | null;
+  selectedEdge: CodeGraphEdge | null;
+  onFilterChange: (patch: Partial<GraphFilterForm>) => void;
+  onSubmit: (event: FormEvent) => void;
+  onRefresh: () => void;
+  onSelectNode: (nodeId: string | null) => void;
+  onSelectEdge: (edgeId: string | null) => void;
+}
+
+export function GraphTab({
+  project,
+  filters,
+  status,
+  graph,
+  loading,
+  error,
+  selectedNode,
+  selectedEdge,
+  onFilterChange,
+  onSubmit,
+  onRefresh,
+  onSelectNode,
+  onSelectEdge,
+}: GraphTabProps) {
+  const [webglSupported, setWebglSupported] = useState(true);
+
+  useEffect(() => {
+    setWebglSupported(hasWebGLSupport());
+  }, []);
+
+  return (
+    <section className="graph-page">
+      <form className="graph-toolbar" onSubmit={onSubmit}>
+        <label>
+          Search
+          <input value={filters.q} onChange={(event) => onFilterChange({ q: event.target.value })} />
+        </label>
+        <label>
+          File
+          <input value={filters.file_path} onChange={(event) => onFilterChange({ file_path: event.target.value })} />
+        </label>
+        <label>
+          Symbol
+          <input value={filters.symbol} onChange={(event) => onFilterChange({ symbol: event.target.value })} />
+        </label>
+        <label>
+          Edge
+          <input value={filters.edge_kind} onChange={(event) => onFilterChange({ edge_kind: event.target.value })} />
+        </label>
+        <label>
+          Depth
+          <select value={filters.depth} onChange={(event) => onFilterChange({ depth: Number(event.target.value) })}>
+            <option value={0}>0</option>
+            <option value={1}>1</option>
+            <option value={2}>2</option>
+          </select>
+        </label>
+        <label>
+          Nodes
+          <input
+            min={1}
+            max={1000}
+            type="number"
+            value={filters.limit_nodes}
+            onChange={(event) => onFilterChange({ limit_nodes: Number(event.target.value) })}
+          />
+        </label>
+        <label>
+          Edges
+          <input
+            min={1}
+            max={2000}
+            type="number"
+            value={filters.limit_edges}
+            onChange={(event) => onFilterChange({ limit_edges: Number(event.target.value) })}
+          />
+        </label>
+        <button type="submit" disabled={loading}>{loading ? "Loading..." : "Apply"}</button>
+        <button type="button" onClick={onRefresh} disabled={loading}>Refresh</button>
+      </form>
+
+      <div className="graph-summary">
+        <span>{project}</span>
+        <span>{status?.has_graph ? `${status.graph_node_count} nodes / ${status.graph_edge_count} edges` : "no extracted graph"}</span>
+        {graph ? <span>showing {graph.stats.returned_nodes} / {graph.stats.returned_edges}</span> : null}
+        {graph?.truncated ? <span className="warning-inline">{graph.truncation_reason}</span> : null}
+        {error ? <span className="warning-inline">{error}</span> : null}
+      </div>
+
+      {!webglSupported ? (
+        <div className="graph-empty">
+          <h2>WebGL is required</h2>
+          <p>This graph explorer needs a browser with WebGL enabled.</p>
+        </div>
+      ) : graph && !graph.status.has_graph ? (
+        <div className="graph-empty">
+          <h2>No code graph extracted</h2>
+          <p>Run <code>memory graph extract --project {project}</code> and refresh this tab.</p>
+        </div>
+      ) : (
+        <div className="graph-workspace">
+          <GraphScene
+            graph={graph}
+            selectedNode={selectedNode}
+            selectedEdge={selectedEdge}
+            onSelectNode={onSelectNode}
+            onSelectEdge={onSelectEdge}
+          />
+          <GraphInspector node={selectedNode} edge={selectedEdge} graph={graph} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function GraphScene({
+  graph,
+  selectedNode,
+  selectedEdge,
+  onSelectNode,
+  onSelectEdge,
+}: {
+  graph: CodeGraphResponse | null;
+  selectedNode: CodeGraphNode | null;
+  selectedEdge: CodeGraphEdge | null;
+  onSelectNode: (nodeId: string | null) => void;
+  onSelectEdge: (edgeId: string | null) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const instanceRef = useRef<ForceGraph3DInstance<RenderNode, RenderLink> | null>(null);
+  const renderData = useMemo(() => buildRenderData(graph, selectedNode?.id ?? null, selectedEdge?.id ?? null), [graph, selectedEdge?.id, selectedNode?.id]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const instance = new ForceGraph3D(container, {
+      controlType: "orbit",
+      rendererConfig: { antialias: true, alpha: false },
+    }) as unknown as ForceGraph3DInstance<RenderNode, RenderLink>;
+    instance
+      .backgroundColor("#081019")
+      .showNavInfo(false)
+      .nodeId("id")
+      .linkSource("source")
+      .linkTarget("target")
+      .nodeLabel((node) => nodeLabel(node))
+      .linkLabel((link) => linkLabel(link))
+      .nodeVal((node) => node.val)
+      .nodeColor((node) => node.color)
+      .linkColor((link) => link.color)
+      .linkWidth((link) => link.width)
+      .linkOpacity(0.45)
+      .linkDirectionalArrowLength(3)
+      .linkDirectionalArrowRelPos(1)
+      .onNodeClick((node) => onSelectNode(node.id))
+      .onLinkClick((link) => onSelectEdge(link.id))
+      .onBackgroundClick(() => {
+        onSelectNode(null);
+        onSelectEdge(null);
+      });
+    instanceRef.current = instance;
+
+    const resize = () => {
+      instance.width(container.clientWidth || 960).height(container.clientHeight || 640);
+    };
+    resize();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null;
+    observer?.observe(container);
+
+    return () => {
+      observer?.disconnect();
+      instance._destructor();
+      instanceRef.current = null;
+      container.replaceChildren();
+    };
+  }, [onSelectEdge, onSelectNode]);
+
+  useEffect(() => {
+    const instance = instanceRef.current;
+    if (!instance) return;
+    instance.graphData(renderData);
+    if (renderData.nodes.length) {
+      window.setTimeout(() => instance.zoomToFit(500, 48), 50);
+    }
+  }, [renderData]);
+
+  return <div ref={containerRef} className="graph-scene" data-testid="graph-scene" />;
+}
+
+function GraphInspector({
+  node,
+  edge,
+  graph,
+}: {
+  node: CodeGraphNode | null;
+  edge: CodeGraphEdge | null;
+  graph: CodeGraphResponse | null;
+}) {
+  if (node) {
+    return (
+      <aside className="graph-inspector">
+        <h2>{node.label}</h2>
+        <dl>
+          <dt>Kind</dt><dd>{node.symbol_kind ?? node.node_kind}</dd>
+          <dt>Group</dt><dd>{node.group}</dd>
+          <dt>File</dt><dd>{node.file_path ?? "n/a"}</dd>
+          <dt>Lines</dt><dd>{lineRange(node.start_line, node.end_line)}</dd>
+          <dt>Degree</dt><dd>{node.degree}</dd>
+          <dt>Identity</dt><dd><code>{node.stable_identity}</code></dd>
+        </dl>
+      </aside>
+    );
+  }
+  if (edge) {
+    const source = graph?.nodes.find((candidate) => candidate.id === edge.source);
+    const target = graph?.nodes.find((candidate) => candidate.id === edge.target);
+    return (
+      <aside className="graph-inspector">
+        <h2>{edge.edge_kind}</h2>
+        <dl>
+          <dt>Source</dt><dd>{source?.label ?? edge.source}</dd>
+          <dt>Target</dt><dd>{target?.label ?? edge.target}</dd>
+          <dt>Reference</dt><dd>{edge.reference_kind ?? "n/a"}</dd>
+          <dt>File</dt><dd>{edge.file_path ?? "n/a"}</dd>
+          <dt>Lines</dt><dd>{lineRange(edge.start_line, edge.end_line)}</dd>
+          <dt>Confidence</dt><dd>{edge.confidence.toFixed(2)}</dd>
+        </dl>
+      </aside>
+    );
+  }
+  return (
+    <aside className="graph-inspector">
+      <h2>Selection</h2>
+      <p className="muted">No node or edge selected.</p>
+    </aside>
+  );
+}
+
+export function hasWebGLSupport(): boolean {
+  const canvas = document.createElement("canvas");
+  return Boolean(canvas.getContext("webgl2") ?? canvas.getContext("webgl"));
+}
+
+function buildRenderData(
+  graph: CodeGraphResponse | null,
+  selectedNodeId: string | null,
+  selectedEdgeId: string | null,
+): { nodes: RenderNode[]; links: RenderLink[] } {
+  const nodes = (graph?.nodes ?? []).map((node) => ({
+    ...node,
+    val: Math.max(3, Math.min(14, 3 + node.degree)),
+    color: node.id === selectedNodeId ? "#ffc96b" : node.seed ? "#7be0c5" : colorForGroup(node.group),
+  }));
+  const links = (graph?.edges ?? []).map((edge) => ({
+    ...edge,
+    color: edge.id === selectedEdgeId ? "#ffc96b" : colorForEdge(edge.edge_kind),
+    width: edge.id === selectedEdgeId ? 2.8 : Math.max(0.8, Math.min(2.2, edge.confidence * 2)),
+  }));
+  return { nodes, links };
+}
+
+function nodeLabel(node: RenderNode): string {
+  const location = node.file_path ? `${node.file_path}:${node.start_line ?? "?"}` : "no file";
+  return `${node.label}<br/>${node.symbol_kind ?? node.node_kind}<br/>${location}`;
+}
+
+function linkLabel(link: RenderLink): string {
+  return `${link.edge_kind}<br/>${link.file_path ?? "no file"}:${link.start_line ?? "?"}`;
+}
+
+function colorForGroup(group: string): string {
+  const palette = ["#8be3a0", "#8ab4ff", "#d7a8ff", "#ffb082", "#f48fb1", "#9ad7d1"];
+  let hash = 0;
+  for (const char of group) hash = (hash * 31 + char.charCodeAt(0)) % 997;
+  return palette[hash % palette.length];
+}
+
+function colorForEdge(edgeKind: string): string {
+  if (edgeKind.includes("call")) return "#7be0c5";
+  if (edgeKind.includes("test")) return "#ffc96b";
+  if (edgeKind.includes("import")) return "#8ab4ff";
+  return "#9cb0c6";
+}
+
+function lineRange(start?: number | null, end?: number | null): string {
+  if (!start && !end) return "n/a";
+  if (start === end || !end) return String(start);
+  return `${start}-${end}`;
+}

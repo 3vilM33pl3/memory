@@ -7,6 +7,7 @@ import { useAutomationsController } from "../features/automations/useAutomations
 import { useBundlesController } from "../features/bundles/useBundlesController";
 import { useEmbeddingsController } from "../features/embeddings/useEmbeddingsController";
 import { useErrorsController } from "../features/errors/useErrorsController";
+import { useGraphController } from "../features/graph/useGraphController";
 import { useMemoriesController } from "../features/memories/useMemoriesController";
 import { useQueryController } from "../features/query/useQueryController";
 import { useResumeController } from "../features/resume/useResumeController";
@@ -117,6 +118,12 @@ export function useAppShell() {
     setStatusMessage,
     recordLocalDiagnostic,
     refreshProject,
+  });
+  const graph = useGraphController({
+    activeTab: tab,
+    project,
+    setStatusMessage,
+    recordLocalDiagnostic,
   });
   const agents = useAgentsController({ activeTab: tab, project, effectiveRepoRoot });
   const embeddings = useEmbeddingsController({
@@ -272,6 +279,7 @@ export function useAppShell() {
     ...memories,
     ...agents,
     ...query,
+    ...graph,
     ...activity,
     ...errors,
     ...review,

@@ -2,6 +2,7 @@ export const PRIMARY_TABS = [
   "memories",
   "agents",
   "query",
+  "graph",
   "activity",
   "errors",
   "project",

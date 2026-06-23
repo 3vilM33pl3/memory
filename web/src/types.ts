@@ -635,6 +635,90 @@ export interface QueryGraphConnection {
   reason: string;
 }
 
+export interface CodeGraphViewFilters {
+  run_id?: string | null;
+  q?: string | null;
+  file_path?: string | null;
+  symbol?: string | null;
+  edge_kind?: string | null;
+  depth: number;
+  limit_nodes: number;
+  limit_edges: number;
+}
+
+export interface CodeGraphStatusResponse {
+  project: string;
+  has_graph: boolean;
+  latest_run_id?: string | null;
+  repo_root?: string | null;
+  git_head?: string | null;
+  since?: string | null;
+  analyzer_version?: string | null;
+  strategy_version?: string | null;
+  status?: string | null;
+  completed_at?: string | null;
+  symbol_count: number;
+  reference_count: number;
+  resolved_reference_count: number;
+  unresolved_reference_count: number;
+  ambiguous_reference_count: number;
+  graph_node_count: number;
+  graph_edge_count: number;
+  evidence_count: number;
+}
+
+export interface CodeGraphStats {
+  total_nodes: number;
+  total_edges: number;
+  total_symbols: number;
+  total_references: number;
+  unresolved_references: number;
+  returned_nodes: number;
+  returned_edges: number;
+  seed_nodes: number;
+}
+
+export interface CodeGraphNode {
+  id: string;
+  stable_identity: string;
+  label: string;
+  node_kind: string;
+  language?: string | null;
+  symbol_kind?: string | null;
+  file_path?: string | null;
+  name?: string | null;
+  qualified_name?: string | null;
+  start_line?: number | null;
+  end_line?: number | null;
+  degree: number;
+  seed: boolean;
+  group: string;
+}
+
+export interface CodeGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  edge_kind: string;
+  reference_kind?: string | null;
+  confidence: number;
+  file_path?: string | null;
+  start_line?: number | null;
+  end_line?: number | null;
+  resolution_status: string;
+}
+
+export interface CodeGraphResponse {
+  project: string;
+  status: CodeGraphStatusResponse;
+  filters: CodeGraphViewFilters;
+  stats: CodeGraphStats;
+  truncated: boolean;
+  truncation_reason?: string | null;
+  nodes: CodeGraphNode[];
+  edges: CodeGraphEdge[];
+}
+
 export interface QueryResponse {
   answer: string;
   confidence: number;

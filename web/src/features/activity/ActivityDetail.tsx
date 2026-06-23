@@ -4,8 +4,15 @@ import { KeyValueList } from "../../components/Details";
 import { RichText } from "../../components/RichText";
 import type { ActivityEvent } from "../../types";
 import { activityDurationLabel, activityTokenLabel, formatDateTime, formatTokens } from "../../utils/format";
+import type { GraphOpenSeed } from "../graph/useGraphController";
 
-export function ActivityDetail({ event }: { event: ActivityEvent }) {
+export function ActivityDetail({
+  event,
+  onOpenGraph,
+}: {
+  event: ActivityEvent;
+  onOpenGraph?: (seed: GraphOpenSeed) => void;
+}) {
   const details = event.details;
   const eventRows: [string, string][] = [
     ["Tokens", activityTokenLabel(event)],
@@ -71,6 +78,15 @@ export function ActivityDetail({ event }: { event: ActivityEvent }) {
         ["HEAD", details.git_head ?? "n/a"],
         ["Since", details.since ?? "n/a"],
       );
+      if (details.extraction_run_id && onOpenGraph) {
+        sections.push(
+          <section className="detail-section" key="open-graph">
+            <button type="button" onClick={() => onOpenGraph({ run_id: details.extraction_run_id })}>
+              Open Graph
+            </button>
+          </section>,
+        );
+      }
       break;
     case "commit_sync":
       rows.push(["Imported", String(details.imported_count)], ["Updated", String(details.updated_count)], ["Received", String(details.total_received)], ["Newest", details.newest_commit ?? "n/a"], ["Oldest", details.oldest_commit ?? "n/a"]);
@@ -90,6 +106,20 @@ export function ActivityDetail({ event }: { event: ActivityEvent }) {
                 <span className="badge">+{connection.score_boost.toFixed(2)}</span>
                 <span>{connection.reason}</span>
                 <span className="muted">{connection.file_path}</span>
+                {onOpenGraph ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOpenGraph({
+                        file_path: connection.file_path,
+                        symbol: connection.symbol ?? connection.neighbor_symbol ?? null,
+                        edge_kind: connection.edge_kind ?? null,
+                      })
+                    }
+                  >
+                    Open in Graph
+                  </button>
+                ) : null}
               </div>
             ))}
           </section>,

@@ -1,6 +1,9 @@
 import type {
   AgentSnapshotResponse,
   ArchiveResponse,
+  CodeGraphResponse,
+  CodeGraphStatusResponse,
+  CodeGraphViewFilters,
   CurateResponse,
   DeleteMemoryResponse,
   EmbeddingBackendsResponse,
@@ -87,6 +90,28 @@ export async function getHealth(): Promise<Record<string, unknown>> {
 
 export async function getOverview(project: string): Promise<ProjectOverviewResponse> {
   return parseJson(await apiFetch(`/v1/projects/${encodeURIComponent(project)}/overview`));
+}
+
+export async function getCodeGraphStatus(project: string): Promise<CodeGraphStatusResponse> {
+  return parseJson(await apiFetch(`/v1/projects/${encodeURIComponent(project)}/graph/status`));
+}
+
+export async function getCodeGraph(
+  project: string,
+  filters: Partial<CodeGraphViewFilters> = {},
+): Promise<CodeGraphResponse> {
+  const params = new URLSearchParams();
+  if (filters.run_id) params.set("run_id", filters.run_id);
+  if (filters.q) params.set("q", filters.q);
+  if (filters.file_path) params.set("file_path", filters.file_path);
+  if (filters.symbol) params.set("symbol", filters.symbol);
+  if (filters.edge_kind) params.set("edge_kind", filters.edge_kind);
+  if (filters.depth !== undefined) params.set("depth", String(filters.depth));
+  if (filters.limit_nodes !== undefined) params.set("limit_nodes", String(filters.limit_nodes));
+  if (filters.limit_edges !== undefined) params.set("limit_edges", String(filters.limit_edges));
+  const query = params.toString();
+  const suffix = query ? `?${query}` : "";
+  return parseJson(await apiFetch(`/v1/projects/${encodeURIComponent(project)}/graph${suffix}`));
 }
 
 export async function getMemories(project: string): Promise<ProjectMemoriesResponse> {

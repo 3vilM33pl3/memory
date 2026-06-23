@@ -28,6 +28,13 @@ const WEB_HELP: Record<Tab, { title: string; purpose: string; layout: string[]; 
     controls: ["Enter submits the question.", "ArrowUp/ArrowDown in the query input restores previous queries and their results.", "Click a result to inspect ranking details."],
     workflows: ["Compare answer citations with returned memories.", "Use timing fields to locate slow lexical, semantic, graph, rerank, answer, or UI phases.", "Treat graph connections as retrieval explanations, not standalone answer citations."],
   },
+  graph: {
+    title: "Graph Help",
+    purpose: "Explore the extracted code graph as a bounded 3D WebGL neighborhood.",
+    layout: ["Filter toolbar controls the graph slice.", "WebGL scene shows nodes and resolved edges.", "Inspector shows selected node or edge metadata."],
+    controls: ["Apply reloads the graph slice.", "Refresh reloads current filters.", ...SHARED_CONTROLS],
+    workflows: ["Start with a file or symbol filter.", "Open graph links from query results or graph extraction activities.", "Run memory graph extract when no graph is available."],
+  },
   activity: {
     title: "Activity Help",
     purpose: "Review persisted backend activity and generate get-up-to-speed briefings for handoff or interruption recovery.",
