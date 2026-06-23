@@ -18,15 +18,16 @@ use super::{
     list_loop_memory_proposals, list_loop_runs, llm_audit_status, pause_loop, plan_activity,
     project_activities, project_bundle_export, project_bundle_export_preview,
     project_bundle_import, project_bundle_import_preview, project_commit_detail, project_commits,
-    project_memories, project_overview, project_replacement_policy,
-    project_replacement_policy_update, project_replacement_proposal_approve,
-    project_replacement_proposal_reject, project_replacement_proposals, project_resume,
-    project_up_to_speed, prune_embeddings, prune_history, query, read_skill, reembed, reindex,
-    reject_loop_approval, reject_loop_memory_proposal, repair_skills, route_loop_trigger, run_loop,
-    runtime_status, scan_activity, set_embedding_creation_enabled, set_llm_audit_enabled, skills,
-    snooze_loop, stats, submit_loop_feedback, sync_commits, update_loop_global_state,
-    verify_provenance, watcher_heartbeat, watcher_restart_local, watcher_unregister,
-    web_auth_token, web_unavailable, websocket,
+    project_graph, project_graph_status, project_memories, project_overview,
+    project_replacement_policy, project_replacement_policy_update,
+    project_replacement_proposal_approve, project_replacement_proposal_reject,
+    project_replacement_proposals, project_resume, project_up_to_speed, prune_embeddings,
+    prune_history, query, read_skill, reembed, reindex, reject_loop_approval,
+    reject_loop_memory_proposal, repair_skills, route_loop_trigger, run_loop, runtime_status,
+    scan_activity, set_embedding_creation_enabled, set_llm_audit_enabled, skills, snooze_loop,
+    stats, submit_loop_feedback, sync_commits, update_loop_global_state, verify_provenance,
+    watcher_heartbeat, watcher_restart_local, watcher_unregister, web_auth_token, web_unavailable,
+    websocket,
 };
 
 pub(crate) fn build_http_app(state: AppState) -> Router {
@@ -171,6 +172,11 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
         )
         .route("/v1/projects/{slug}/memories", get(project_memories))
         .route("/v1/projects/{slug}/overview", get(project_overview))
+        .route(
+            "/v1/projects/{slug}/graph/status",
+            get(project_graph_status),
+        )
+        .route("/v1/projects/{slug}/graph", get(project_graph))
         .route("/v1/projects/{slug}/resume", post(project_resume))
         .route("/v1/projects/{slug}/activities", get(project_activities))
         .route("/v1/projects/{slug}/up-to-speed", post(project_up_to_speed))

@@ -1,5 +1,6 @@
 pub mod bundle;
 pub(crate) mod embeddings;
+pub(crate) mod graph;
 pub mod loops;
 pub mod memory;
 pub(crate) mod project;

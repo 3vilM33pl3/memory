@@ -1641,6 +1641,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "mem-analyze",
+ "mem-api",
  "mem-test-support",
  "serde",
  "serde_json",
@@ -1730,6 +1731,7 @@ dependencies = [
  "mem-agenttop",
  "mem-api",
  "mem-curate",
+ "mem-graph",
  "mem-loops",
  "mem-mcp",
  "mem-platform",
@@ -1752,6 +1754,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "urlencoding",
  "uuid",
  "zip",
 ]

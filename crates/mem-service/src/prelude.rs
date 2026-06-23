@@ -35,7 +35,8 @@ pub(crate) use futures_util::{SinkExt, StreamExt};
 pub(crate) use mem_api::{
     ActivateEmbeddingBackendRequest, ActivityDetails, ActivityEvent, ActivityKind,
     ActivityListResponse, AppConfig, ArchiveMemoryResponse, ArchiveRequest, ArchiveResponse,
-    CaptureTaskRequest, CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest,
+    CaptureTaskRequest, CheckpointActivityRequest, CodeGraphResponse, CodeGraphStatusResponse,
+    CodeGraphViewFilters, CodeGraphViewRequest, CommitDetailResponse, CommitSyncRequest,
     CommitSyncResponse, CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, DiagnosticInfo,
     DiagnosticSeverity, EmbeddingBackendInfo, EmbeddingBackendsResponse, GraphActivityRequest,
     LlmAuditConfig, LlmAuditMessage, LlmAuditStatusResponse, LoopApprovalDecisionRequest,

@@ -9,6 +9,7 @@ authors.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 mem-analyze = { path = "../mem-analyze" }
+mem-api = { path = "../mem-api" }
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

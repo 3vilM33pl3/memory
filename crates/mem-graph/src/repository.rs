@@ -1,6 +1,14 @@
-use std::{collections::BTreeMap, future::Future, pin::Pin};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    pin::Pin,
+};
 
 use super::*;
+use mem_api::{
+    CodeGraphEdge, CodeGraphNode, CodeGraphResponse, CodeGraphStats, CodeGraphStatusResponse,
+    CodeGraphViewFilters,
+};
 use serde_json::json;
 use sqlx::Row;
 
@@ -303,6 +311,136 @@ impl PostgresGraphRepository {
         self.status_for_run(project, run_id).await
     }
 
+    pub async fn status_response(&self, project: &str) -> Result<CodeGraphStatusResponse> {
+        Ok(self
+            .latest_status(project)
+            .await?
+            .map(|status| status_to_response(&status))
+            .unwrap_or_else(|| CodeGraphStatusResponse::empty(project)))
+    }
+
+    pub async fn visualization_graph(
+        &self,
+        project: &str,
+        mut filters: CodeGraphViewFilters,
+    ) -> Result<CodeGraphResponse> {
+        let status = if let Some(run_id) = filters.run_id {
+            self.status_for_run(project, run_id).await?
+        } else {
+            self.latest_status(project).await?
+        };
+        let Some(status) = status else {
+            return Ok(empty_graph_response(project, filters));
+        };
+
+        filters.run_id = Some(status.extraction_run_id);
+        let status_response = status_to_response(&status);
+        let mut truncation_reasons = Vec::new();
+        let mut seed_ids = self
+            .fetch_seed_node_ids(status.extraction_run_id, &filters)
+            .await?;
+        if seed_ids.len() > filters.limit_nodes {
+            seed_ids.truncate(filters.limit_nodes);
+            truncation_reasons.push(format!("seed nodes were capped at {}", filters.limit_nodes));
+        }
+
+        let seed_set: BTreeSet<Uuid> = seed_ids.iter().copied().collect();
+        let mut node_ids = seed_set.clone();
+        let mut frontier = seed_ids;
+        let mut edges_by_id = BTreeMap::new();
+
+        for _ in 0..filters.depth {
+            if frontier.is_empty() || edges_by_id.len() >= filters.limit_edges {
+                break;
+            }
+            let remaining_edges = filters.limit_edges.saturating_sub(edges_by_id.len());
+            let edge_rows = self
+                .fetch_edges_for_frontier(
+                    status.extraction_run_id,
+                    &frontier,
+                    filters.edge_kind.as_deref(),
+                    remaining_edges + 1,
+                )
+                .await?;
+            if edge_rows.len() > remaining_edges {
+                truncation_reasons.push(format!("edges were capped at {}", filters.limit_edges));
+            }
+
+            let mut next_frontier = BTreeSet::new();
+            for edge in edge_rows.into_iter().take(remaining_edges) {
+                if node_ids.insert(edge.source) {
+                    next_frontier.insert(edge.source);
+                }
+                if node_ids.insert(edge.target) {
+                    next_frontier.insert(edge.target);
+                }
+                edges_by_id.entry(edge.id).or_insert(edge);
+            }
+            frontier = next_frontier.into_iter().collect();
+        }
+
+        let mut nodes = self
+            .fetch_graph_nodes(status.extraction_run_id, &node_ids, &seed_set)
+            .await?;
+        nodes.sort_by(|left, right| {
+            right
+                .seed
+                .cmp(&left.seed)
+                .then_with(|| right.degree.cmp(&left.degree))
+                .then_with(|| left.file_path.cmp(&right.file_path))
+                .then_with(|| left.start_line.cmp(&right.start_line))
+                .then_with(|| left.label.cmp(&right.label))
+        });
+        if nodes.len() > filters.limit_nodes {
+            nodes.truncate(filters.limit_nodes);
+            truncation_reasons.push(format!("nodes were capped at {}", filters.limit_nodes));
+        }
+
+        let returned_node_ids: BTreeSet<Uuid> = nodes.iter().map(|node| node.id).collect();
+        let mut edges: Vec<CodeGraphEdge> = edges_by_id
+            .into_values()
+            .filter(|edge| {
+                returned_node_ids.contains(&edge.source) && returned_node_ids.contains(&edge.target)
+            })
+            .collect();
+        edges.sort_by(|left, right| {
+            left.edge_kind
+                .cmp(&right.edge_kind)
+                .then_with(|| left.file_path.cmp(&right.file_path))
+                .then_with(|| left.start_line.cmp(&right.start_line))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        if edges.len() > filters.limit_edges {
+            edges.truncate(filters.limit_edges);
+            truncation_reasons.push(format!("edges were capped at {}", filters.limit_edges));
+        }
+
+        let stats = CodeGraphStats {
+            total_nodes: status.graph_node_count,
+            total_edges: status.graph_edge_count,
+            total_symbols: status.symbol_count,
+            total_references: status.reference_count,
+            unresolved_references: status.unresolved_reference_count,
+            returned_nodes: nodes.len(),
+            returned_edges: edges.len(),
+            seed_nodes: seed_set.len(),
+        };
+        Ok(CodeGraphResponse {
+            project: project.to_string(),
+            status: status_response,
+            filters,
+            stats,
+            truncated: !truncation_reasons.is_empty(),
+            truncation_reason: if truncation_reasons.is_empty() {
+                None
+            } else {
+                Some(truncation_reasons.join("; "))
+            },
+            nodes,
+            edges,
+        })
+    }
+
     async fn status_for_run(
         &self,
         project: &str,
@@ -334,6 +472,213 @@ impl PostgresGraphRepository {
         .context("read graph extraction status")?;
         row.map(row_to_status).transpose()
     }
+
+    async fn fetch_seed_node_ids(
+        &self,
+        run_id: Uuid,
+        filters: &CodeGraphViewFilters,
+    ) -> Result<Vec<Uuid>> {
+        let limit = filters.limit_nodes + 1;
+        let rows = if filters.has_seed_filter() {
+            sqlx::query(
+                r#"
+                SELECT cs.graph_node_id AS id
+                FROM code_symbols cs
+                WHERE cs.extraction_run_id = $1
+                  AND ($2::text IS NULL OR cs.file_path ILIKE '%' || $2 || '%')
+                  AND (
+                    $3::text IS NULL
+                    OR cs.name ILIKE '%' || $3 || '%'
+                    OR COALESCE(cs.qualified_name, '') ILIKE '%' || $3 || '%'
+                    OR cs.display_name ILIKE '%' || $3 || '%'
+                    OR cs.stable_identity ILIKE '%' || $3 || '%'
+                  )
+                  AND (
+                    $4::text IS NULL
+                    OR cs.file_path ILIKE '%' || $4 || '%'
+                    OR cs.name ILIKE '%' || $4 || '%'
+                    OR COALESCE(cs.qualified_name, '') ILIKE '%' || $4 || '%'
+                    OR cs.display_name ILIKE '%' || $4 || '%'
+                    OR cs.stable_identity ILIKE '%' || $4 || '%'
+                  )
+                ORDER BY cs.file_path, cs.start_line, cs.display_name
+                LIMIT $5
+                "#,
+            )
+            .bind(run_id)
+            .bind(filters.file_path.as_deref())
+            .bind(filters.symbol.as_deref())
+            .bind(filters.q.as_deref())
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .context("read seeded code graph nodes")?
+        } else {
+            sqlx::query(
+                r#"
+                WITH degree_counts AS (
+                    SELECT source_node_id AS node_id, COUNT(*)::bigint AS degree
+                    FROM graph_edges
+                    WHERE extraction_run_id = $1
+                    GROUP BY source_node_id
+                    UNION ALL
+                    SELECT target_node_id AS node_id, COUNT(*)::bigint AS degree
+                    FROM graph_edges
+                    WHERE extraction_run_id = $1
+                    GROUP BY target_node_id
+                ),
+                degrees AS (
+                    SELECT node_id, SUM(degree)::bigint AS degree
+                    FROM degree_counts
+                    GROUP BY node_id
+                )
+                SELECT gn.id AS id
+                FROM graph_nodes gn
+                LEFT JOIN degrees d ON d.node_id = gn.id
+                WHERE gn.extraction_run_id = $1
+                ORDER BY COALESCE(d.degree, 0) DESC, gn.display_name
+                LIMIT $2
+                "#,
+            )
+            .bind(run_id)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .context("read overview code graph nodes")?
+        };
+
+        let mut seen = BTreeSet::new();
+        let mut ids = Vec::new();
+        for row in rows {
+            let id: Uuid = row.try_get("id")?;
+            if seen.insert(id) {
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    }
+
+    async fn fetch_edges_for_frontier(
+        &self,
+        run_id: Uuid,
+        frontier: &[Uuid],
+        edge_kind: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<CodeGraphEdge>> {
+        if frontier.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query(
+            r#"
+            SELECT ge.id, ge.source_node_id, ge.target_node_id, ge.edge_kind,
+                   ge.confidence, ge.metadata_json->>'reference_kind' AS reference_kind,
+                   ev.file_path, ev.start_line, ev.end_line
+            FROM graph_edges ge
+            LEFT JOIN graph_evidence ev ON ev.edge_id = ge.id
+            WHERE ge.extraction_run_id = $1
+              AND (ge.source_node_id = ANY($2) OR ge.target_node_id = ANY($2))
+              AND ($3::text IS NULL OR ge.edge_kind = $3)
+            ORDER BY ge.edge_kind, ge.id
+            LIMIT $4
+            "#,
+        )
+        .bind(run_id)
+        .bind(frontier)
+        .bind(edge_kind)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .context("read code graph edges")?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(CodeGraphEdge {
+                    id: row.try_get("id")?,
+                    source: row.try_get("source_node_id")?,
+                    target: row.try_get("target_node_id")?,
+                    edge_kind: row.try_get("edge_kind")?,
+                    reference_kind: row.try_get("reference_kind")?,
+                    confidence: row.try_get("confidence")?,
+                    file_path: row.try_get("file_path")?,
+                    start_line: row.try_get("start_line")?,
+                    end_line: row.try_get("end_line")?,
+                    resolution_status: "resolved".to_string(),
+                })
+            })
+            .collect()
+    }
+
+    async fn fetch_graph_nodes(
+        &self,
+        run_id: Uuid,
+        node_ids: &BTreeSet<Uuid>,
+        seed_ids: &BTreeSet<Uuid>,
+    ) -> Result<Vec<CodeGraphNode>> {
+        if node_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let ids: Vec<Uuid> = node_ids.iter().copied().collect();
+        let rows = sqlx::query(
+            r#"
+            WITH degree_counts AS (
+                SELECT source_node_id AS node_id, COUNT(*)::bigint AS degree
+                FROM graph_edges
+                WHERE extraction_run_id = $1
+                GROUP BY source_node_id
+                UNION ALL
+                SELECT target_node_id AS node_id, COUNT(*)::bigint AS degree
+                FROM graph_edges
+                WHERE extraction_run_id = $1
+                GROUP BY target_node_id
+            ),
+            degrees AS (
+                SELECT node_id, SUM(degree)::bigint AS degree
+                FROM degree_counts
+                GROUP BY node_id
+            )
+            SELECT gn.id, gn.stable_identity, gn.display_name, gn.node_kind,
+                   cs.language, cs.file_path, cs.symbol_kind, cs.name,
+                   cs.qualified_name, cs.start_line, cs.end_line,
+                   COALESCE(d.degree, 0)::bigint AS degree
+            FROM graph_nodes gn
+            LEFT JOIN code_symbols cs ON cs.graph_node_id = gn.id
+            LEFT JOIN degrees d ON d.node_id = gn.id
+            WHERE gn.extraction_run_id = $1
+              AND gn.id = ANY($2)
+            ORDER BY cs.file_path, cs.start_line, gn.display_name
+            "#,
+        )
+        .bind(run_id)
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await
+        .context("read code graph nodes")?;
+
+        rows.into_iter()
+            .map(|row| {
+                let id: Uuid = row.try_get("id")?;
+                let language: Option<String> = row.try_get("language")?;
+                let symbol_kind: Option<String> = row.try_get("symbol_kind")?;
+                let node_kind: String = row.try_get("node_kind")?;
+                Ok(CodeGraphNode {
+                    id,
+                    stable_identity: row.try_get("stable_identity")?,
+                    label: row.try_get("display_name")?,
+                    node_kind: node_kind.clone(),
+                    language: language.clone(),
+                    symbol_kind: symbol_kind.clone(),
+                    file_path: row.try_get("file_path")?,
+                    name: row.try_get("name")?,
+                    qualified_name: row.try_get("qualified_name")?,
+                    start_line: row.try_get("start_line")?,
+                    end_line: row.try_get("end_line")?,
+                    degree: row.try_get("degree")?,
+                    seed: seed_ids.contains(&id),
+                    group: language.or(symbol_kind).unwrap_or(node_kind),
+                })
+            })
+            .collect()
+    }
 }
 
 impl GraphRepository for PostgresGraphRepository {
@@ -349,6 +694,23 @@ impl GraphRepository for PostgresGraphRepository {
         project: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Option<GraphStatusReport>>> + Send + 'a>> {
         Box::pin(async move { PostgresGraphRepository::latest_status(self, project).await })
+    }
+
+    fn status_response<'a>(
+        &'a self,
+        project: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<CodeGraphStatusResponse>> + Send + 'a>> {
+        Box::pin(async move { PostgresGraphRepository::status_response(self, project).await })
+    }
+
+    fn visualization_graph<'a>(
+        &'a self,
+        project: &'a str,
+        filters: CodeGraphViewFilters,
+    ) -> Pin<Box<dyn Future<Output = Result<CodeGraphResponse>> + Send + 'a>> {
+        Box::pin(async move {
+            PostgresGraphRepository::visualization_graph(self, project, filters).await
+        })
     }
 }
 
@@ -466,4 +828,40 @@ fn row_to_status(row: sqlx::postgres::PgRow) -> Result<GraphStatusReport> {
         graph_edge_count: row.try_get("graph_edge_count")?,
         evidence_count: row.try_get("evidence_count")?,
     })
+}
+
+fn status_to_response(status: &GraphStatusReport) -> CodeGraphStatusResponse {
+    CodeGraphStatusResponse {
+        project: status.project.clone(),
+        has_graph: true,
+        latest_run_id: Some(status.extraction_run_id),
+        repo_root: Some(status.repo_root.clone()),
+        git_head: status.git_head.clone(),
+        since: status.since.clone(),
+        analyzer_version: Some(status.analyzer_version.clone()),
+        strategy_version: Some(status.strategy_version.clone()),
+        status: Some(status.status.clone()),
+        completed_at: status.completed_at,
+        symbol_count: status.symbol_count,
+        reference_count: status.reference_count,
+        resolved_reference_count: status.resolved_reference_count,
+        unresolved_reference_count: status.unresolved_reference_count,
+        ambiguous_reference_count: status.ambiguous_reference_count,
+        graph_node_count: status.graph_node_count,
+        graph_edge_count: status.graph_edge_count,
+        evidence_count: status.evidence_count,
+    }
+}
+
+fn empty_graph_response(project: &str, filters: CodeGraphViewFilters) -> CodeGraphResponse {
+    CodeGraphResponse {
+        project: project.to_string(),
+        status: CodeGraphStatusResponse::empty(project),
+        filters,
+        stats: CodeGraphStats::default(),
+        truncated: false,
+        truncation_reason: None,
+        nodes: Vec::new(),
+        edges: Vec::new(),
+    }
 }

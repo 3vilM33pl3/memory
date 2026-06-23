@@ -3,6 +3,7 @@ use std::{future::Future, pin::Pin};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_analyze::{ResolutionStatus, ResolvedAnalysisReport, resolve_analysis};
+use mem_api::{CodeGraphResponse, CodeGraphStatusResponse, CodeGraphViewFilters};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -90,6 +91,17 @@ pub trait GraphRepository {
         &'a self,
         project: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Option<GraphStatusReport>>> + Send + 'a>>;
+
+    fn status_response<'a>(
+        &'a self,
+        project: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<CodeGraphStatusResponse>> + Send + 'a>>;
+
+    fn visualization_graph<'a>(
+        &'a self,
+        project: &'a str,
+        filters: CodeGraphViewFilters,
+    ) -> Pin<Box<dyn Future<Output = Result<CodeGraphResponse>> + Send + 'a>>;
 }
 
 pub async fn run_migrations(pool: &PgPool) -> Result<()> {
