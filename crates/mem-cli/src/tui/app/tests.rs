@@ -372,6 +372,9 @@ fn dev_footer_banner_renders_centered_on_last_line() {
 
     assert!(last_line.starts_with(&" ".repeat(expected_padding)));
     assert!(last_line.contains(banner));
+    assert!(
+        (0..100).all(|x| buffer.cell((x, 27)).expect("cell in test buffer").bg == Theme::WARNING)
+    );
 }
 
 #[test]

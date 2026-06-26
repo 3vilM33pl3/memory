@@ -3898,13 +3898,13 @@ pub(super) fn footer_height(profile: Profile) -> u16 {
 
 pub(super) fn draw_dev_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(
-        Block::default().style(Style::default().bg(Theme::PANEL)),
+        Block::default().style(Style::default().bg(Theme::WARNING)),
         area,
     );
     let commit = app.meta.dev_commit_label.as_deref().unwrap_or("unknown");
     frame.render_widget(
         Paragraph::new(dev_status_line(commit))
-            .style(Style::default().bg(Theme::PANEL))
+            .style(Style::default().fg(Color::Black).bg(Theme::WARNING))
             .alignment(Alignment::Center),
         area,
     );
@@ -3915,17 +3915,23 @@ pub(super) fn dev_status_line(commit: &str) -> Line<'static> {
         Span::styled(
             "DEV MODE",
             Style::default()
-                .fg(Theme::WARNING)
-                .bg(Theme::PANEL)
+                .fg(Color::Black)
+                .bg(Theme::WARNING)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "  commit=",
-            Style::default().fg(Theme::MUTED).bg(Theme::PANEL),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Theme::WARNING)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             commit.to_string(),
-            Style::default().fg(Theme::TEXT).bg(Theme::PANEL),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Theme::WARNING)
+                .add_modifier(Modifier::BOLD),
         ),
     ])
 }
