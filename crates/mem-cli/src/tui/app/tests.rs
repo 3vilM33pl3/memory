@@ -30,6 +30,7 @@ use mem_api::{
     WatcherPresenceSummary,
 };
 use mem_skills::{SkillBundleStatus, project_skill_inventory};
+use ratatui::{Terminal, backend::TestBackend};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -340,6 +341,37 @@ fn dev_commit_label_formats_clean_dirty_and_unknown_states() {
 fn footer_height_adds_dev_banner_without_changing_prod_footer() {
     assert_eq!(super::footer_height(Profile::Prod), 4);
     assert_eq!(super::footer_height(Profile::Dev), 5);
+}
+
+#[test]
+fn dev_footer_banner_renders_centered_on_last_line() {
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = App::new(
+        "memory".to_string(),
+        PathBuf::from("/tmp/memory"),
+        ToolVersions {
+            mem_cli: "0.9.5-dev".to_string(),
+            mem_service: "0.9.5-dev".to_string(),
+            watch_manager: "0.9.5-dev".to_string(),
+            memory_watch: "0.9.5-dev".to_string(),
+        },
+        false,
+        Profile::Dev,
+        tx,
+    );
+    app.meta.dev_commit_label = Some("288690845510+dirty".to_string());
+
+    let mut terminal = Terminal::new(TestBackend::new(100, 28)).unwrap();
+    terminal.draw(|frame| super::draw(frame, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let last_line = (0..100)
+        .map(|x| buffer.cell((x, 27)).expect("cell in test buffer").symbol())
+        .collect::<String>();
+    let banner = "DEV MODE  commit=288690845510+dirty";
+    let expected_padding = (100 - banner.len()) / 2;
+
+    assert!(last_line.starts_with(&" ".repeat(expected_padding)));
+    assert!(last_line.contains(banner));
 }
 
 #[test]

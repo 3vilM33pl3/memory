@@ -13,7 +13,7 @@ use mem_api::{
     repo_agent_settings_path,
 };
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Tabs, Wrap},
@@ -3882,8 +3882,8 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     frame.render_widget(footer, footer_chunks[0]);
     match app.meta.profile {
         Profile::Dev => {
-            draw_dev_status_bar(frame, app, footer_chunks[1]);
-            draw_bottom_status_bar(frame, app, footer_chunks[2]);
+            draw_bottom_status_bar(frame, app, footer_chunks[1]);
+            draw_dev_status_bar(frame, app, footer_chunks[2]);
         }
         Profile::Prod => draw_bottom_status_bar(frame, app, footer_chunks[1]),
     }
@@ -3903,7 +3903,9 @@ pub(super) fn draw_dev_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, are
     );
     let commit = app.meta.dev_commit_label.as_deref().unwrap_or("unknown");
     frame.render_widget(
-        Paragraph::new(dev_status_line(commit)).style(Style::default().bg(Theme::PANEL)),
+        Paragraph::new(dev_status_line(commit))
+            .style(Style::default().bg(Theme::PANEL))
+            .alignment(Alignment::Center),
         area,
     );
 }
