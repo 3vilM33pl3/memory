@@ -133,15 +133,15 @@ export function useGraphController({
     [codeGraph?.edges, selectedGraphEdgeId],
   );
 
-  function selectGraphNode(nodeId: string | null) {
+  const selectGraphNode = useCallback((nodeId: string | null) => {
     setSelectedGraphNodeId(nodeId);
     if (nodeId) setSelectedGraphEdgeId(null);
-  }
+  }, []);
 
-  function selectGraphEdge(edgeId: string | null) {
+  const selectGraphEdge = useCallback((edgeId: string | null) => {
     setSelectedGraphEdgeId(edgeId);
     if (edgeId) setSelectedGraphNodeId(null);
-  }
+  }, []);
 
   return {
     graphFilters,

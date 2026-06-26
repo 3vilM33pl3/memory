@@ -151,7 +151,14 @@ function GraphScene({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<ForceGraph3DInstance<RenderNode, RenderLink> | null>(null);
+  const onSelectNodeRef = useRef(onSelectNode);
+  const onSelectEdgeRef = useRef(onSelectEdge);
   const renderData = useMemo(() => buildRenderData(graph, selectedNode?.id ?? null, selectedEdge?.id ?? null), [graph, selectedEdge?.id, selectedNode?.id]);
+
+  useEffect(() => {
+    onSelectNodeRef.current = onSelectNode;
+    onSelectEdgeRef.current = onSelectEdge;
+  }, [onSelectEdge, onSelectNode]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -175,11 +182,11 @@ function GraphScene({
       .linkOpacity(0.45)
       .linkDirectionalArrowLength(3)
       .linkDirectionalArrowRelPos(1)
-      .onNodeClick((node) => onSelectNode(node.id))
-      .onLinkClick((link) => onSelectEdge(link.id))
+      .onNodeClick((node) => onSelectNodeRef.current(node.id))
+      .onLinkClick((link) => onSelectEdgeRef.current(link.id))
       .onBackgroundClick(() => {
-        onSelectNode(null);
-        onSelectEdge(null);
+        onSelectNodeRef.current(null);
+        onSelectEdgeRef.current(null);
       });
     instanceRef.current = instance;
 
@@ -196,7 +203,7 @@ function GraphScene({
       instanceRef.current = null;
       container.replaceChildren();
     };
-  }, [onSelectEdge, onSelectNode]);
+  }, []);
 
   useEffect(() => {
     const instance = instanceRef.current;

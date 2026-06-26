@@ -18,6 +18,21 @@ test("Graph tab renders a nonblank WebGL scene without layout overlap", async ({
   await page.waitForTimeout(1500);
   await expect(await canvasHasMultipleColors(canvas)).toBeTruthy();
 
+  const canvasBox = await canvas.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  if (canvasBox) {
+    await canvas.click({
+      position: {
+        x: Math.floor(canvasBox.width / 2),
+        y: Math.floor(canvasBox.height / 2),
+      },
+    });
+  }
+  await page.waitForTimeout(500);
+  const clickedCanvas = scene.locator("canvas").first();
+  await expect(clickedCanvas).toBeVisible();
+  await expect(await canvasHasMultipleColors(clickedCanvas)).toBeTruthy();
+
   const toolbarBox = await page.locator(".graph-toolbar").boundingBox();
   const sceneBox = await scene.boundingBox();
   const inspectorBox = await page.locator(".graph-inspector").boundingBox();
