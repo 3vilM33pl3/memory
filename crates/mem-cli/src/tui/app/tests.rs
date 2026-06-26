@@ -30,7 +30,7 @@ use mem_api::{
     WatcherPresenceSummary,
 };
 use mem_skills::{SkillBundleStatus, project_skill_inventory};
-use ratatui::{Terminal, backend::TestBackend};
+use ratatui::{Terminal, backend::TestBackend, style::Color};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -369,11 +369,19 @@ fn dev_footer_banner_renders_centered_on_last_line() {
         .collect::<String>();
     let banner = "DEV MODE  commit=288690845510+dirty";
     let expected_padding = (100 - banner.len()) / 2;
+    let dev_mode_start = last_line.find("DEV MODE").expect("dev mode label rendered");
 
     assert!(last_line.starts_with(&" ".repeat(expected_padding)));
     assert!(last_line.contains(banner));
     assert!(
         (0..100).all(|x| buffer.cell((x, 27)).expect("cell in test buffer").bg == Theme::WARNING)
+    );
+    assert_eq!(
+        buffer
+            .cell((dev_mode_start as u16, 27))
+            .expect("cell in test buffer")
+            .fg,
+        Color::Rgb(120, 0, 0)
     );
 }
 

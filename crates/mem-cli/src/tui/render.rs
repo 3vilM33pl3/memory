@@ -3915,7 +3915,7 @@ pub(super) fn dev_status_line(commit: &str) -> Line<'static> {
         Span::styled(
             "DEV MODE",
             Style::default()
-                .fg(Color::Black)
+                .fg(Color::Rgb(120, 0, 0))
                 .bg(Theme::WARNING)
                 .add_modifier(Modifier::BOLD),
         ),
