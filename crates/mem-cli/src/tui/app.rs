@@ -574,6 +574,8 @@ impl App {
                 skill_inventory: mem_skills::project_skill_inventory(&repo_root, false),
                 startup_at: Utc::now(),
                 profile,
+                dev_commit_label: (profile == Profile::Dev)
+                    .then(|| detect_dev_commit_label(&repo_root)),
             },
             filters: Filters::default(),
             background_tx,

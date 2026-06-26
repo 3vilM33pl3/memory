@@ -320,6 +320,29 @@ fn query_input_display_truncates_long_text_from_left() {
 }
 
 #[test]
+fn dev_commit_label_formats_clean_dirty_and_unknown_states() {
+    assert_eq!(
+        super::format_dev_commit_label(Some("288690845510"), false),
+        "288690845510"
+    );
+    assert_eq!(
+        super::format_dev_commit_label(Some("288690845510"), true),
+        "288690845510+dirty"
+    );
+    assert_eq!(super::format_dev_commit_label(None, true), "unknown");
+    assert_eq!(
+        super::format_dev_commit_label(Some("   "), false),
+        "unknown"
+    );
+}
+
+#[test]
+fn footer_height_adds_dev_banner_without_changing_prod_footer() {
+    assert_eq!(super::footer_height(Profile::Prod), 4);
+    assert_eq!(super::footer_height(Profile::Dev), 5);
+}
+
+#[test]
 fn stale_query_completion_does_not_replace_current_query_state() {
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut app = App::new(

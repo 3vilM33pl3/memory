@@ -3601,7 +3601,7 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Min(10),
-            Constraint::Length(4),
+            Constraint::Length(footer_height(app.meta.profile)),
         ])
         .split(frame.area());
 
@@ -3862,9 +3862,17 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         draw_backend_recovery(frame, app, chunks[2]);
     }
 
+    let footer_constraints = match app.meta.profile {
+        Profile::Dev => vec![
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ],
+        Profile::Prod => vec![Constraint::Length(3), Constraint::Length(1)],
+    };
     let footer_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Length(1)])
+        .constraints(footer_constraints)
         .split(chunks[3]);
 
     let footer = Paragraph::new(app.chrome.status_message.clone())
@@ -3872,7 +3880,52 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         .wrap(Wrap { trim: false })
         .block(themed_block("Status"));
     frame.render_widget(footer, footer_chunks[0]);
-    draw_bottom_status_bar(frame, app, footer_chunks[1]);
+    match app.meta.profile {
+        Profile::Dev => {
+            draw_dev_status_bar(frame, app, footer_chunks[1]);
+            draw_bottom_status_bar(frame, app, footer_chunks[2]);
+        }
+        Profile::Prod => draw_bottom_status_bar(frame, app, footer_chunks[1]),
+    }
+}
+
+pub(super) fn footer_height(profile: Profile) -> u16 {
+    match profile {
+        Profile::Dev => 5,
+        Profile::Prod => 4,
+    }
+}
+
+pub(super) fn draw_dev_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Theme::PANEL)),
+        area,
+    );
+    let commit = app.meta.dev_commit_label.as_deref().unwrap_or("unknown");
+    frame.render_widget(
+        Paragraph::new(dev_status_line(commit)).style(Style::default().bg(Theme::PANEL)),
+        area,
+    );
+}
+
+pub(super) fn dev_status_line(commit: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            "DEV MODE",
+            Style::default()
+                .fg(Theme::WARNING)
+                .bg(Theme::PANEL)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "  commit=",
+            Style::default().fg(Theme::MUTED).bg(Theme::PANEL),
+        ),
+        Span::styled(
+            commit.to_string(),
+            Style::default().fg(Theme::TEXT).bg(Theme::PANEL),
+        ),
+    ])
 }
 
 pub(super) fn draw_bottom_status_bar(frame: &mut ratatui::Frame<'_>, app: &App, area: Rect) {

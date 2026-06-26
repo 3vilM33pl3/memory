@@ -72,6 +72,7 @@ pub(super) struct RuntimeMeta {
     pub(in crate::tui) skill_inventory: SkillInventoryReport,
     pub(in crate::tui) startup_at: DateTime<Utc>,
     pub(in crate::tui) profile: Profile,
+    pub(in crate::tui) dev_commit_label: Option<String>,
 }
 
 pub(super) struct MemoriesTabState {
