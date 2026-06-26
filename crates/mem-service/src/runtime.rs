@@ -142,12 +142,13 @@ pub(crate) async fn build_state(
     let (events, _) = broadcast::channel(128);
     let (role, pool) = match pool_attempt {
         Ok(pool) => {
-            sqlx::migrate!("../../migrations")
-                .run(&pool)
-                .await
-                .context(
-                    "run migrations (pgvector extension 'vector' must be installed in PostgreSQL)",
-                )?;
+            let mut migrator = sqlx::migrate!("../../migrations");
+            if config.profile == mem_api::Profile::Dev {
+                migrator.set_ignore_missing(true);
+            }
+            migrator.run(&pool).await.context(
+                "run migrations (pgvector extension 'vector' must be installed in PostgreSQL)",
+            )?;
             register_builtin_loop_definitions(&pool)
                 .await
                 .context("register builtin loop definitions")?;
