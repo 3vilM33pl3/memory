@@ -14,6 +14,8 @@ type RenderLink = CodeGraphEdge & {
   width: number;
 };
 
+const MAX_ISOLATE_DEPTH = 2;
+
 interface GraphTabProps {
   project: string;
   filters: GraphFilterForm;
@@ -47,8 +49,8 @@ export function GraphTab({
 }: GraphTabProps) {
   const [webglSupported, setWebglSupported] = useState(true);
   const visibleGraph = useMemo(
-    () => applyConnectedGraphIsolation(graph, filters.isolate_connected, selectedNode?.id ?? null),
-    [filters.isolate_connected, graph, selectedNode?.id],
+    () => applyConnectedGraphIsolation(graph, filters.isolate_connected, selectedNode?.id ?? null, filters.isolate_depth),
+    [filters.isolate_connected, filters.isolate_depth, graph, selectedNode?.id],
   );
   const visibleSelectedNode = useMemo(
     () => (selectedNode && visibleGraph?.nodes.some((node) => node.id === selectedNode.id) ? selectedNode : null),
@@ -118,6 +120,18 @@ export function GraphTab({
           />
           Isolate connected graph
         </label>
+        <label className="graph-degree">
+          Degrees
+          <input
+            min={1}
+            max={MAX_ISOLATE_DEPTH}
+            step={1}
+            type="number"
+            value={filters.isolate_depth}
+            disabled={!filters.isolate_connected}
+            onChange={(event) => onFilterChange({ isolate_depth: Number(event.target.value) })}
+          />
+        </label>
         <button type="submit" disabled={loading}>{loading ? "Loading..." : "Apply"}</button>
         <button type="button" onClick={onRefresh} disabled={loading}>Refresh</button>
       </form>
@@ -125,7 +139,14 @@ export function GraphTab({
       <div className="graph-summary">
         <span>{project}</span>
         <span>{status?.has_graph ? `${status.graph_node_count} nodes / ${status.graph_edge_count} edges` : "no extracted graph"}</span>
-        {graph ? <GraphShowingSummary graph={graph} visibleGraph={visibleGraph} isolateConnected={filters.isolate_connected} /> : null}
+        {graph ? (
+          <GraphShowingSummary
+            graph={graph}
+            visibleGraph={visibleGraph}
+            isolateConnected={filters.isolate_connected}
+            isolateDepth={filters.isolate_depth}
+          />
+        ) : null}
         {graph?.truncated ? <span className="warning-inline">{graph.truncation_reason}</span> : null}
         {error ? <span className="warning-inline">{error}</span> : null}
       </div>
@@ -160,17 +181,22 @@ function GraphShowingSummary({
   graph,
   visibleGraph,
   isolateConnected,
+  isolateDepth,
 }: {
   graph: CodeGraphResponse;
   visibleGraph: CodeGraphResponse | null;
   isolateConnected: boolean;
+  isolateDepth: number;
 }) {
   if (!isolateConnected) {
     return <span>showing {graph.stats.returned_nodes} / {graph.stats.returned_edges}</span>;
   }
+  const normalizedDepth = normalizeIsolationDepth(isolateDepth);
+  const degreeLabel = normalizedDepth === 1 ? "degree" : "degrees";
   return (
     <span>
-      showing {visibleGraph?.stats.returned_nodes ?? 0} / {visibleGraph?.stats.returned_edges ?? 0} isolated from{" "}
+      showing {visibleGraph?.stats.returned_nodes ?? 0} / {visibleGraph?.stats.returned_edges ?? 0} within{" "}
+      {normalizedDepth} {degreeLabel} from{" "}
       {graph.stats.returned_nodes} / {graph.stats.returned_edges}
     </span>
   );
@@ -315,6 +341,7 @@ export function applyConnectedGraphIsolation(
   graph: CodeGraphResponse | null,
   isolateConnected: boolean,
   selectedNodeId: string | null,
+  isolateDepth: number,
 ): CodeGraphResponse | null {
   if (!graph || !isolateConnected) return graph;
 
@@ -328,6 +355,7 @@ export function applyConnectedGraphIsolation(
       edges: [],
     };
   }
+  const maxDepth = normalizeIsolationDepth(isolateDepth);
 
   const adjacency = new Map<string, Set<string>>();
   for (const nodeId of graphNodeIds) adjacency.set(nodeId, new Set());
@@ -338,13 +366,15 @@ export function applyConnectedGraphIsolation(
   }
 
   const visibleNodeIds = new Set<string>();
-  const pending = [anchorNodeId];
+  const pending = [{ nodeId: anchorNodeId, depth: 0 }];
   while (pending.length) {
-    const nodeId = pending.pop();
+    const next = pending.pop();
+    const nodeId = next?.nodeId;
     if (!nodeId || visibleNodeIds.has(nodeId)) continue;
     visibleNodeIds.add(nodeId);
+    if ((next?.depth ?? 0) >= maxDepth) continue;
     for (const nextNodeId of adjacency.get(nodeId) ?? []) {
-      if (!visibleNodeIds.has(nextNodeId)) pending.push(nextNodeId);
+      if (!visibleNodeIds.has(nextNodeId)) pending.push({ nodeId: nextNodeId, depth: (next?.depth ?? 0) + 1 });
     }
   }
 
@@ -370,6 +400,11 @@ function resolveConnectedGraphAnchor(
 ): string | null {
   if (selectedNodeId && graphNodeIds.has(selectedNodeId)) return selectedNodeId;
   return graph.nodes.find((node) => node.seed)?.id ?? graph.nodes[0]?.id ?? null;
+}
+
+function normalizeIsolationDepth(isolateDepth: number): number {
+  if (!Number.isFinite(isolateDepth)) return 1;
+  return Math.max(1, Math.min(MAX_ISOLATE_DEPTH, Math.floor(isolateDepth)));
 }
 
 function buildRenderData(

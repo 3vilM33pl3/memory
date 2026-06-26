@@ -27,6 +27,7 @@ export interface GraphFilterForm {
   limit_nodes: number;
   limit_edges: number;
   isolate_connected: boolean;
+  isolate_depth: number;
 }
 
 const DEFAULT_FILTERS: GraphFilterForm = {
@@ -39,6 +40,7 @@ const DEFAULT_FILTERS: GraphFilterForm = {
   limit_nodes: 250,
   limit_edges: 500,
   isolate_connected: false,
+  isolate_depth: 1,
 };
 
 interface GraphControllerOptions {

@@ -19,7 +19,9 @@ test("Graph tab renders a nonblank WebGL scene without layout overlap", async ({
   await expect(await canvasHasMultipleColors(canvas)).toBeTruthy();
 
   await page.getByRole("checkbox", { name: "Isolate connected graph" }).check();
-  await expect(page.getByText("showing 3 / 2 isolated from 4 / 2")).toBeVisible();
+  await expect(page.getByText("showing 2 / 1 within 1 degree from 4 / 2")).toBeVisible();
+  await page.getByRole("spinbutton", { name: "Degrees" }).fill("2");
+  await expect(page.getByText("showing 3 / 2 within 2 degrees from 4 / 2")).toBeVisible();
   await page.waitForTimeout(500);
   await expect(await canvasHasMultipleColors(canvas)).toBeTruthy();
 
@@ -290,7 +292,7 @@ const graphResponse = {
     },
     {
       id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
-      source: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      source: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       target: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       edge_kind: "references",
       reference_kind: "reference",

@@ -48,6 +48,7 @@ const baseProps = {
     limit_nodes: 250,
     limit_edges: 500,
     isolate_connected: false,
+    isolate_depth: 1,
   },
   loading: false,
   error: null,
@@ -96,24 +97,54 @@ describe("GraphTab", () => {
 
     expect(onFilterChange).toHaveBeenCalledWith({ isolate_connected: true });
   });
+
+  it("emits a local filter change when isolate degree changes", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as RenderingContext);
+    const onFilterChange = vi.fn();
+
+    render(
+      <GraphTab
+        {...baseProps}
+        filters={{ ...baseProps.filters, isolate_connected: true }}
+        onFilterChange={onFilterChange}
+        status={emptyStatus}
+        graph={emptyGraph}
+      />,
+    );
+
+    const degreeInput = await screen.findByRole("spinbutton", { name: "Degrees" });
+    expect(degreeInput).toHaveValue(1);
+    fireEvent.change(degreeInput, { target: { value: "2" } });
+
+    expect(onFilterChange).toHaveBeenCalledWith({ isolate_depth: 2 });
+  });
 });
 
 describe("applyConnectedGraphIsolation", () => {
   it("leaves the fetched graph unchanged when isolation is disabled", () => {
-    expect(applyConnectedGraphIsolation(connectedGraph, false, "node-d")).toBe(connectedGraph);
+    expect(applyConnectedGraphIsolation(connectedGraph, false, "node-d", 1)).toBe(connectedGraph);
   });
 
-  it("keeps the whole connected component for the selected node", () => {
-    const isolated = applyConnectedGraphIsolation(connectedGraph, true, "node-d");
+  it("keeps direct neighbors for a one-degree selected-node radius", () => {
+    const isolated = applyConnectedGraphIsolation(connectedGraph, true, "node-a", 1);
 
-    expect(isolated?.nodes.map((node) => node.id)).toEqual(["node-d", "node-e"]);
-    expect(isolated?.edges.map((edge) => edge.id)).toEqual(["edge-de"]);
+    expect(isolated?.nodes.map((node) => node.id)).toEqual(["node-a", "node-b"]);
+    expect(isolated?.edges.map((edge) => edge.id)).toEqual(["edge-ab"]);
     expect(isolated?.stats.returned_nodes).toBe(2);
     expect(isolated?.stats.returned_edges).toBe(1);
   });
 
+  it("includes second-hop neighbors for a two-degree selected-node radius", () => {
+    const isolated = applyConnectedGraphIsolation(connectedGraph, true, "node-a", 2);
+
+    expect(isolated?.nodes.map((node) => node.id)).toEqual(["node-a", "node-b", "node-c"]);
+    expect(isolated?.edges.map((edge) => edge.id)).toEqual(["edge-ab", "edge-bc"]);
+    expect(isolated?.stats.returned_nodes).toBe(3);
+    expect(isolated?.stats.returned_edges).toBe(2);
+  });
+
   it("falls back to the seed component when no selected node is available", () => {
-    const isolated = applyConnectedGraphIsolation(connectedGraph, true, null);
+    const isolated = applyConnectedGraphIsolation(connectedGraph, true, null, 2);
 
     expect(isolated?.nodes.map((node) => node.id)).toEqual(["node-a", "node-b", "node-c"]);
     expect(isolated?.edges.map((edge) => edge.id)).toEqual(["edge-ab", "edge-bc"]);
