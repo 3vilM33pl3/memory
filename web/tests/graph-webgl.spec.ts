@@ -13,9 +13,14 @@ test("Graph tab renders a nonblank WebGL scene without layout overlap", async ({
   await expect(scene).toBeVisible();
   const canvas = scene.locator("canvas").first();
   await expect(canvas).toBeVisible();
-  await expect(page.getByText("showing 3 / 2")).toBeVisible();
+  await expect(page.getByText("showing 4 / 2")).toBeVisible();
 
   await page.waitForTimeout(1500);
+  await expect(await canvasHasMultipleColors(canvas)).toBeTruthy();
+
+  await page.getByRole("checkbox", { name: "Isolate connected graph" }).check();
+  await expect(page.getByText("showing 3 / 2 isolated from 4 / 2")).toBeVisible();
+  await page.waitForTimeout(500);
   await expect(await canvasHasMultipleColors(canvas)).toBeTruthy();
 
   const canvasBox = await canvas.boundingBox();
@@ -179,12 +184,12 @@ const graphStatusResponse = {
   strategy_version: "code-graph-resolution-v1",
   status: "completed",
   completed_at: "2026-06-23T16:00:00Z",
-  symbol_count: 3,
+  symbol_count: 4,
   reference_count: 2,
   resolved_reference_count: 2,
   unresolved_reference_count: 0,
   ambiguous_reference_count: 0,
-  graph_node_count: 3,
+  graph_node_count: 4,
   graph_edge_count: 2,
   evidence_count: 5,
 };
@@ -194,12 +199,12 @@ const graphResponse = {
   status: graphStatusResponse,
   filters: { run_id: graphStatusResponse.latest_run_id, depth: 1, limit_nodes: 250, limit_edges: 500 },
   stats: {
-    total_nodes: 3,
+    total_nodes: 4,
     total_edges: 2,
-    total_symbols: 3,
+    total_symbols: 4,
     total_references: 2,
     unresolved_references: 0,
-    returned_nodes: 3,
+    returned_nodes: 4,
     returned_edges: 2,
     seed_nodes: 1,
   },
@@ -252,6 +257,22 @@ const graphResponse = {
       degree: 1,
       seed: false,
       group: "typescript",
+    },
+    {
+      id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      stable_identity: "rust:src/isolated.rs:function:IsolatedHelper:50-60",
+      label: "IsolatedHelper",
+      node_kind: "code_symbol",
+      language: "rust",
+      symbol_kind: "function",
+      file_path: "src/isolated.rs",
+      name: "IsolatedHelper",
+      qualified_name: "IsolatedHelper",
+      start_line: 50,
+      end_line: 60,
+      degree: 0,
+      seed: false,
+      group: "rust",
     },
   ],
   edges: [

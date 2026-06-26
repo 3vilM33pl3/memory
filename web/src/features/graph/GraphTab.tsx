@@ -46,6 +46,18 @@ export function GraphTab({
   onSelectEdge,
 }: GraphTabProps) {
   const [webglSupported, setWebglSupported] = useState(true);
+  const visibleGraph = useMemo(
+    () => applyConnectedGraphIsolation(graph, filters.isolate_connected, selectedNode?.id ?? null),
+    [filters.isolate_connected, graph, selectedNode?.id],
+  );
+  const visibleSelectedNode = useMemo(
+    () => (selectedNode && visibleGraph?.nodes.some((node) => node.id === selectedNode.id) ? selectedNode : null),
+    [selectedNode, visibleGraph?.nodes],
+  );
+  const visibleSelectedEdge = useMemo(
+    () => (selectedEdge && visibleGraph?.edges.some((edge) => edge.id === selectedEdge.id) ? selectedEdge : null),
+    [selectedEdge, visibleGraph?.edges],
+  );
 
   useEffect(() => {
     setWebglSupported(hasWebGLSupport());
@@ -98,6 +110,14 @@ export function GraphTab({
             onChange={(event) => onFilterChange({ limit_edges: Number(event.target.value) })}
           />
         </label>
+        <label className="graph-checkbox">
+          <input
+            type="checkbox"
+            checked={filters.isolate_connected}
+            onChange={(event) => onFilterChange({ isolate_connected: event.target.checked })}
+          />
+          Isolate connected graph
+        </label>
         <button type="submit" disabled={loading}>{loading ? "Loading..." : "Apply"}</button>
         <button type="button" onClick={onRefresh} disabled={loading}>Refresh</button>
       </form>
@@ -105,7 +125,7 @@ export function GraphTab({
       <div className="graph-summary">
         <span>{project}</span>
         <span>{status?.has_graph ? `${status.graph_node_count} nodes / ${status.graph_edge_count} edges` : "no extracted graph"}</span>
-        {graph ? <span>showing {graph.stats.returned_nodes} / {graph.stats.returned_edges}</span> : null}
+        {graph ? <GraphShowingSummary graph={graph} visibleGraph={visibleGraph} isolateConnected={filters.isolate_connected} /> : null}
         {graph?.truncated ? <span className="warning-inline">{graph.truncation_reason}</span> : null}
         {error ? <span className="warning-inline">{error}</span> : null}
       </div>
@@ -123,16 +143,36 @@ export function GraphTab({
       ) : (
         <div className="graph-workspace">
           <GraphScene
-            graph={graph}
-            selectedNode={selectedNode}
-            selectedEdge={selectedEdge}
+            graph={visibleGraph}
+            selectedNode={visibleSelectedNode}
+            selectedEdge={visibleSelectedEdge}
             onSelectNode={onSelectNode}
             onSelectEdge={onSelectEdge}
           />
-          <GraphInspector node={selectedNode} edge={selectedEdge} graph={graph} />
+          <GraphInspector node={visibleSelectedNode} edge={visibleSelectedEdge} graph={visibleGraph} />
         </div>
       )}
     </section>
+  );
+}
+
+function GraphShowingSummary({
+  graph,
+  visibleGraph,
+  isolateConnected,
+}: {
+  graph: CodeGraphResponse;
+  visibleGraph: CodeGraphResponse | null;
+  isolateConnected: boolean;
+}) {
+  if (!isolateConnected) {
+    return <span>showing {graph.stats.returned_nodes} / {graph.stats.returned_edges}</span>;
+  }
+  return (
+    <span>
+      showing {visibleGraph?.stats.returned_nodes ?? 0} / {visibleGraph?.stats.returned_edges ?? 0} isolated from{" "}
+      {graph.stats.returned_nodes} / {graph.stats.returned_edges}
+    </span>
   );
 }
 
@@ -269,6 +309,67 @@ function GraphInspector({
 export function hasWebGLSupport(): boolean {
   const canvas = document.createElement("canvas");
   return Boolean(canvas.getContext("webgl2") ?? canvas.getContext("webgl"));
+}
+
+export function applyConnectedGraphIsolation(
+  graph: CodeGraphResponse | null,
+  isolateConnected: boolean,
+  selectedNodeId: string | null,
+): CodeGraphResponse | null {
+  if (!graph || !isolateConnected) return graph;
+
+  const graphNodeIds = new Set(graph.nodes.map((node) => node.id));
+  const anchorNodeId = resolveConnectedGraphAnchor(graph, graphNodeIds, selectedNodeId);
+  if (!anchorNodeId) {
+    return {
+      ...graph,
+      stats: { ...graph.stats, returned_nodes: 0, returned_edges: 0, seed_nodes: 0 },
+      nodes: [],
+      edges: [],
+    };
+  }
+
+  const adjacency = new Map<string, Set<string>>();
+  for (const nodeId of graphNodeIds) adjacency.set(nodeId, new Set());
+  for (const edge of graph.edges) {
+    if (!graphNodeIds.has(edge.source) || !graphNodeIds.has(edge.target)) continue;
+    adjacency.get(edge.source)?.add(edge.target);
+    adjacency.get(edge.target)?.add(edge.source);
+  }
+
+  const visibleNodeIds = new Set<string>();
+  const pending = [anchorNodeId];
+  while (pending.length) {
+    const nodeId = pending.pop();
+    if (!nodeId || visibleNodeIds.has(nodeId)) continue;
+    visibleNodeIds.add(nodeId);
+    for (const nextNodeId of adjacency.get(nodeId) ?? []) {
+      if (!visibleNodeIds.has(nextNodeId)) pending.push(nextNodeId);
+    }
+  }
+
+  const nodes = graph.nodes.filter((node) => visibleNodeIds.has(node.id));
+  const edges = graph.edges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+  return {
+    ...graph,
+    stats: {
+      ...graph.stats,
+      returned_nodes: nodes.length,
+      returned_edges: edges.length,
+      seed_nodes: nodes.filter((node) => node.seed).length,
+    },
+    nodes,
+    edges,
+  };
+}
+
+function resolveConnectedGraphAnchor(
+  graph: CodeGraphResponse,
+  graphNodeIds: Set<string>,
+  selectedNodeId: string | null,
+): string | null {
+  if (selectedNodeId && graphNodeIds.has(selectedNodeId)) return selectedNodeId;
+  return graph.nodes.find((node) => node.seed)?.id ?? graph.nodes[0]?.id ?? null;
 }
 
 function buildRenderData(

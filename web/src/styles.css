@@ -626,7 +626,7 @@ pre {
 
 .graph-toolbar {
   display: grid;
-  grid-template-columns: minmax(11rem, 1.3fr) minmax(11rem, 1.1fr) minmax(9rem, 1fr) minmax(8rem, 0.8fr) 5rem 5.5rem 5.5rem max-content max-content;
+  grid-template-columns: minmax(11rem, 1.3fr) minmax(11rem, 1.1fr) minmax(9rem, 1fr) minmax(8rem, 0.8fr) 5rem 5.5rem 5.5rem minmax(10rem, max-content) max-content max-content;
   gap: 0.4rem;
   align-items: end;
   padding: 0.45rem;
@@ -641,6 +641,18 @@ pre {
   min-width: 0;
   color: var(--muted);
   font-size: 0.76rem;
+}
+
+.graph-toolbar label.graph-checkbox {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  min-height: 2.15rem;
+  color: var(--text);
+}
+
+.graph-checkbox input {
+  margin: 0;
 }
 
 .graph-summary {
