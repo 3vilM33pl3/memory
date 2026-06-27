@@ -1,11 +1,13 @@
 use anyhow::Result;
 use mem_api::{
-    ActivityListResponse, AppConfig, ArchiveMemoryResponse, ArchiveRequest, ArchiveResponse,
-    CaptureTaskRequest, CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest,
-    CommitSyncResponse, CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse,
-    GraphActivityRequest, LoopApprovalDecisionRequest, LoopApprovalDecisionResponse,
-    LoopApprovalStatus, LoopApprovalsResponse, LoopCancelRequest, LoopContextPackResponse,
-    LoopDefinitionResponse, LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
+    ActivityListResponse, AgentWorkspaceFinishRequest, AgentWorkspaceHeartbeatRequest,
+    AgentWorkspaceListResponse, AgentWorkspaceRecord, AgentWorkspaceStartRequest, AppConfig,
+    ArchiveMemoryResponse, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
+    CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
+    CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse, GraphActivityRequest,
+    LoopApprovalDecisionRequest, LoopApprovalDecisionResponse, LoopApprovalStatus,
+    LoopApprovalsResponse, LoopCancelRequest, LoopContextPackResponse, LoopDefinitionResponse,
+    LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
     LoopGlobalStateUpdateRequest, LoopMemoryProposalCreateRequest,
     LoopMemoryProposalDecisionRequest, LoopMemoryProposalDecisionResponse,
     LoopMemoryProposalsResponse, LoopRunRequest, LoopRunResponse, LoopRunStatus, LoopRunsResponse,
@@ -298,6 +300,77 @@ impl ApiClient {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/query"))
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn agent_workspaces(
+        &self,
+        project: &str,
+        include_finished: bool,
+    ) -> Result<AgentWorkspaceListResponse> {
+        get_json(
+            self.client
+                .get(service_url(&self.config, "/v1/agents/workspaces"))
+                .query(&[
+                    ("project", project.to_string()),
+                    ("include_finished", include_finished.to_string()),
+                ])
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn start_agent_workspace(
+        &self,
+        request: &AgentWorkspaceStartRequest,
+    ) -> Result<AgentWorkspaceRecord> {
+        get_json(
+            self.client
+                .post(service_url(&self.config, "/v1/agents/workspaces/start"))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn heartbeat_agent_workspace(
+        &self,
+        workspace_id: Uuid,
+        request: &AgentWorkspaceHeartbeatRequest,
+    ) -> Result<AgentWorkspaceRecord> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/agents/workspaces/{workspace_id}/heartbeat"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn finish_agent_workspace(
+        &self,
+        workspace_id: Uuid,
+        request: &AgentWorkspaceFinishRequest,
+    ) -> Result<AgentWorkspaceRecord> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/agents/workspaces/{workspace_id}/finish"),
+                ))
+                .headers(write_headers(&self.config)?)
                 .json(request)
                 .send()
                 .await?,

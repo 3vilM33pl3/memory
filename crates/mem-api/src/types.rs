@@ -98,6 +98,155 @@ pub struct ReplacementPolicyResponse {
     pub writable: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentWorkspaceStatus {
+    Active,
+    Completed,
+    Abandoned,
+}
+
+impl fmt::Display for AgentWorkspaceStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Active => "active",
+            Self::Completed => "completed",
+            Self::Abandoned => "abandoned",
+        };
+        f.write_str(value)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentWorkspaceWarning {
+    pub code: String,
+    pub severity: DiagnosticSeverity,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentWorkspaceRecord {
+    pub id: Uuid,
+    pub project: String,
+    pub repo_root: String,
+    pub worktree_path: String,
+    pub branch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_commit: Option<String>,
+    #[serde(default)]
+    pub dirty_files: Vec<String>,
+    pub dirty_count: usize,
+    pub agent_cli: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writer_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_endpoint: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub last_heartbeat_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<DateTime<Utc>>,
+    pub status: AgentWorkspaceStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pushed_branch: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged_commit: Option<String>,
+    #[serde(default)]
+    pub warnings: Vec<AgentWorkspaceWarning>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentWorkspaceListResponse {
+    pub project: String,
+    #[serde(default)]
+    pub workspaces: Vec<AgentWorkspaceRecord>,
+    #[serde(default)]
+    pub warnings: Vec<AgentWorkspaceWarning>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentWorkspaceStartRequest {
+    pub project: String,
+    pub repo_root: String,
+    pub worktree_path: String,
+    pub branch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_commit: Option<String>,
+    #[serde(default)]
+    pub dirty_files: Vec<String>,
+    #[serde(default)]
+    pub agent_cli: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writer_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_endpoint: Option<String>,
+}
+
+impl AgentWorkspaceStartRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.project.trim().is_empty() {
+            return Err(ValidationError::new("project must be non-empty"));
+        }
+        if self.repo_root.trim().is_empty() {
+            return Err(ValidationError::new("repo_root must be non-empty"));
+        }
+        if self.worktree_path.trim().is_empty() {
+            return Err(ValidationError::new("worktree_path must be non-empty"));
+        }
+        if self.branch.trim().is_empty() {
+            return Err(ValidationError::new("branch must be non-empty"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentWorkspaceHeartbeatRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_commit: Option<String>,
+    #[serde(default)]
+    pub dirty_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_endpoint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentWorkspaceFinishRequest {
+    #[serde(default)]
+    pub status: Option<AgentWorkspaceStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_commit: Option<String>,
+    #[serde(default)]
+    pub dirty_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pushed_branch: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged_commit: Option<String>,
+}
+
 impl fmt::Display for ReplacementPolicy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {

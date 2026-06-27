@@ -375,6 +375,57 @@ Examples:
 See also:
   docs/user/cli/watchers.md";
 
+const AGENT_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Use to coordinate multiple local agents or worktrees on the same project.
+  Start records the current Git branch, worktree, dirty files, writer id, and session id.
+  Status is read-only and highlights same-branch, same-worktree, dirty-overlap, and stale-heartbeat warnings.
+  Finish marks the active workspace completed or abandoned after the branch has been pushed or merged.
+
+Examples:
+  memory agent start --project memory --task \"Graph UI follow-up\"
+  memory agent status --project memory
+  memory agent finish --project memory --summary \"Implemented graph controls\"
+
+See also:
+  docs/user/cli/agents.md";
+
+const AGENT_START_AFTER_HELP: &str = "\
+Agent notes:
+  Run once when an agent starts a task in a branch or worktree.
+  The command reads local Git metadata and writes only the coordination record to Memory Layer.
+
+Examples:
+  memory agent start --project memory
+  memory agent start --project memory --agent-cli opencode --agent-session-id session-123 --task \"Docs refresh\"
+
+See also:
+  docs/user/cli/agents.md";
+
+const AGENT_STATUS_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only view of active agent workspaces and collision warnings.
+  Use --include-finished to audit completed or abandoned entries.
+
+Examples:
+  memory agent status --project memory
+  memory agent status --project memory --include-finished --json
+
+See also:
+  docs/user/cli/agents.md";
+
+const AGENT_FINISH_AFTER_HELP: &str = "\
+Agent notes:
+  Run at the end of a branch/worktree task after pushing or intentionally abandoning the work.
+  If multiple active workspaces match the current repo and branch, pass --workspace-id.
+
+Examples:
+  memory agent finish --project memory --summary \"Pushed branch with CLI docs\"
+  memory agent finish --project memory --workspace-id 00000000-0000-0000-0000-000000000000 --abandoned
+
+See also:
+  docs/user/cli/agents.md";
+
 const WATCHER_MANAGER_GROUP_AFTER_HELP: &str = "\
 Agent notes:
   Preferred automation surface for Codex-linked sessions. The manager detects live sessions and starts one watcher per repo/session.
@@ -1050,6 +1101,8 @@ pub(in crate::commands) enum Command {
     Mcp(McpArgs),
     #[command(about = "Manage project watchers and watcher daemons.", after_help = WATCHER_GROUP_AFTER_HELP)]
     Watcher(WatcherArgs),
+    #[command(about = "Coordinate concurrent agent workspaces.", after_help = AGENT_GROUP_AFTER_HELP)]
+    Agent(AgentArgs),
     #[command(about = "Inspect configuration and environment health.", after_help = DOCTOR_AFTER_HELP)]
     Doctor(DoctorArgs),
     #[command(about = "Show the aggregate Memory Layer diagnostic status.", after_help = STATUS_AFTER_HELP)]
@@ -1351,6 +1404,83 @@ pub(in crate::commands) enum WatcherCommand {
     Status(WatchProjectArgs),
     #[command(about = "Run or manage the Codex-linked watcher manager.", after_help = WATCHER_MANAGER_GROUP_AFTER_HELP)]
     Manager(WatcherManagerArgs),
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Coordinate concurrent agent workspaces.",
+    after_help = AGENT_GROUP_AFTER_HELP
+)]
+pub(in crate::commands) struct AgentArgs {
+    #[command(subcommand)]
+    pub(crate) command: AgentCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(in crate::commands) enum AgentCommand {
+    #[command(about = "Register the current branch or worktree as active.", after_help = AGENT_START_AFTER_HELP)]
+    Start(AgentStartArgs),
+    #[command(about = "List active agent workspaces and warnings.", after_help = AGENT_STATUS_AFTER_HELP)]
+    Status(AgentStatusArgs),
+    #[command(about = "Mark an active agent workspace completed or abandoned.", after_help = AGENT_FINISH_AFTER_HELP)]
+    Finish(AgentFinishArgs),
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct AgentStartArgs {
+    #[command(flatten)]
+    pub(crate) project: ProjectArgs,
+    /// Short label for the task this agent is working on.
+    #[arg(long)]
+    pub(crate) task: Option<String>,
+    /// Override the detected Git branch name.
+    #[arg(long)]
+    pub(crate) branch: Option<String>,
+    /// Name of the agent CLI registering the workspace.
+    #[arg(long, default_value = "codex")]
+    pub(crate) agent_cli: String,
+    /// Stable session id for this agent. Defaults to environment hints or this process id.
+    #[arg(long)]
+    pub(crate) agent_session_id: Option<String>,
+    /// Emit JSON instead of human-readable text.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct AgentStatusArgs {
+    #[command(flatten)]
+    pub(crate) project: ProjectArgs,
+    /// Include completed and abandoned workspaces.
+    #[arg(long)]
+    pub(crate) include_finished: bool,
+    /// Emit JSON instead of human-readable text.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct AgentFinishArgs {
+    #[command(flatten)]
+    pub(crate) project: ProjectArgs,
+    /// Workspace id to finish when auto-detection is ambiguous.
+    #[arg(long)]
+    pub(crate) workspace_id: Option<Uuid>,
+    /// Summary of what happened in this workspace.
+    #[arg(long)]
+    pub(crate) summary: Option<String>,
+    /// Mark the workspace abandoned instead of completed.
+    #[arg(long)]
+    pub(crate) abandoned: bool,
+    /// Override whether the branch has been pushed.
+    #[arg(long)]
+    pub(crate) pushed: Option<bool>,
+    /// Merge commit that integrated this workspace, when known.
+    #[arg(long)]
+    pub(crate) merged_commit: Option<String>,
+    /// Emit JSON instead of human-readable text.
+    #[arg(long)]
+    pub(crate) json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2875,6 +3005,10 @@ pub(super) async fn run() -> Result<()> {
             command:
                 WatcherCommand::Enable(_) | WatcherCommand::Disable(_) | WatcherCommand::Status(_),
         }) => unreachable!("watcher lifecycle commands are handled before config loading"),
+        Command::Agent(args) => {
+            let api = ApiClient::new(client, config);
+            crate::commands::agent::handle(args, &api, cli_writer_id).await?;
+        }
         Command::Doctor(_) => unreachable!("doctor is handled before config loading"),
         Command::Status(args) => {
             crate::commands::status::handle(args, cli_config_path, client, config).await?

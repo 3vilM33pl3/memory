@@ -14,7 +14,8 @@ use super::{
     deactivate_embedding_backend, delete_memory, disable_loop, edit_loop_approval,
     edit_loop_memory_proposal, enable_loop, get_loop_definition, get_loop_global_state,
     get_loop_run, get_loop_run_context_pack, get_memory, get_memory_history, graph_activity,
-    healthz, list_embedding_backends, list_loop_approvals, list_loop_definitions,
+    heartbeat_agent_workspace, healthz, finish_agent_workspace, list_agent_workspaces,
+    list_embedding_backends, list_loop_approvals, list_loop_definitions,
     list_loop_memory_proposals, list_loop_runs, llm_audit_status, offline_pending, pause_loop,
     plan_activity, project_activities, project_bundle_export, project_bundle_export_preview,
     project_bundle_import, project_bundle_import_preview, project_commit_detail, project_commits,
@@ -25,9 +26,9 @@ use super::{
     prune_history, query, read_skill, reembed, reindex, reject_loop_approval,
     reject_loop_memory_proposal, repair_skills, route_loop_trigger, run_loop, runtime_status,
     scan_activity, set_embedding_creation_enabled, set_llm_audit_enabled, skills, snooze_loop,
-    stats, submit_loop_feedback, sync_commits, update_loop_global_state, verify_provenance,
-    watcher_heartbeat, watcher_restart_local, watcher_unregister, web_auth_token, web_unavailable,
-    websocket,
+    start_agent_workspace, stats, submit_loop_feedback, sync_commits, update_loop_global_state,
+    verify_provenance, watcher_heartbeat, watcher_restart_local, watcher_unregister,
+    web_auth_token, web_unavailable, websocket,
 };
 
 pub(crate) fn build_http_app(state: AppState) -> Router {
@@ -190,6 +191,16 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
         .route("/v1/watchers/restart-local", post(watcher_restart_local))
         .route("/v1/archive", post(archive))
         .route("/v1/agents", get(agents_snapshot))
+        .route("/v1/agents/workspaces", get(list_agent_workspaces))
+        .route("/v1/agents/workspaces/start", post(start_agent_workspace))
+        .route(
+            "/v1/agents/workspaces/{workspace_id}/heartbeat",
+            post(heartbeat_agent_workspace),
+        )
+        .route(
+            "/v1/agents/workspaces/{workspace_id}/finish",
+            post(finish_agent_workspace),
+        )
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
