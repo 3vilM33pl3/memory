@@ -488,6 +488,11 @@ function DemoForceGraph({
       resize();
       window.addEventListener("resize", resize);
       instance.__memoryDemoResize = resize;
+      instance.graphData({
+        nodes: graphData.nodes.map((node) => ({ ...node })),
+        links: graphData.links.map((link) => ({ ...link })),
+      });
+      if (graphData.nodes.length) window.setTimeout(() => instance.zoomToFit(500, 48), 50);
     });
     return () => {
       disposed = true;
