@@ -69,12 +69,17 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
         }
         eprintln!(
             "  database: {}",
-            if state.pool.is_some() {
+            if state.pool_available() {
                 "connected"
+            } else if state.offline.is_some() {
+                "offline degraded"
             } else {
                 "unavailable"
             }
         );
+        if let Some(offline) = &state.offline {
+            eprintln!("  offline db: {}", offline.store.path().display());
+        }
         eprintln!("  capnp unix: {}", config.service.capnp_unix_socket);
         eprintln!("  capnp tcp: {}", config.service.capnp_tcp_addr);
 
@@ -135,24 +140,17 @@ pub(crate) async fn build_state(
         .timeout(config.service.request_timeout)
         .build()
         .context("build service http client")?;
-    let pool_attempt = PgPoolOptions::new()
-        .max_connections(10)
-        .connect(&config.database.url)
-        .await;
+    let offline = build_offline_runtime(&config).await?;
+    let pool_attempt = connect_primary_pool(&config).await;
     let (events, _) = broadcast::channel(128);
     let (role, pool) = match pool_attempt {
-        Ok(pool) => {
-            let mut migrator = sqlx::migrate!("../../migrations");
-            if config.profile == mem_api::Profile::Dev {
-                migrator.set_ignore_missing(true);
-            }
-            migrator.run(&pool).await.context(
-                "run migrations (pgvector extension 'vector' must be installed in PostgreSQL)",
-            )?;
-            register_builtin_loop_definitions(&pool)
-                .await
-                .context("register builtin loop definitions")?;
-            (ServiceRole::Primary, Some(pool))
+        Ok(pool) => (ServiceRole::Primary, Some(pool)),
+        Err(error) if offline.is_some() => {
+            tracing::warn!(
+                error = %error,
+                "postgres unavailable; starting in offline degraded mode"
+            );
+            (ServiceRole::Primary, None)
         }
         Err(error) if config.cluster.enabled => {
             tracing::warn!(
@@ -171,11 +169,12 @@ pub(crate) async fn build_state(
         Arc::new(AtomicBool::new(config.embeddings.create_enabled));
     let llm_audit = Arc::new(RwLock::new(config.llm_audit.clone()));
 
-    Ok(AppState {
+    let state = AppState {
         role,
         instance_id: Uuid::new_v4().to_string(),
         startup_at: chrono::Utc::now(),
-        pool,
+        pool: Arc::new(RwLock::new(pool)),
+        offline,
         api_token: config.service.api_token.clone(),
         web_root: discover_web_root(&config),
         http_client,
@@ -194,7 +193,94 @@ pub(crate) async fn build_state(
             peers: Arc::new(Mutex::new(HashMap::new())),
         },
         shutdown,
-    })
+    };
+    start_offline_sync_task(state.clone());
+    Ok(state)
+}
+
+pub(crate) async fn connect_primary_pool(config: &AppConfig) -> Result<PgPool> {
+    let pool = PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&config.database.url)
+        .await
+        .context("connect postgres")?;
+    let mut migrator = sqlx::migrate!("../../migrations");
+    if config.profile == mem_api::Profile::Dev {
+        migrator.set_ignore_missing(true);
+    }
+    migrator
+        .run(&pool)
+        .await
+        .context("run migrations (pgvector extension 'vector' must be installed in PostgreSQL)")?;
+    register_builtin_loop_definitions(&pool)
+        .await
+        .context("register builtin loop definitions")?;
+    Ok(pool)
+}
+
+async fn build_offline_runtime(config: &AppConfig) -> Result<Option<OfflineRuntime>> {
+    if !config.offline.enabled {
+        return Ok(None);
+    }
+    let path = offline_database_path(config)
+        .ok_or_else(|| anyhow::anyhow!("resolve offline DuckDB path"))?;
+    let store = OfflineStore::open(path)
+        .await
+        .context("open offline DuckDB")?;
+    Ok(Some(OfflineRuntime::new(store)))
+}
+
+fn offline_database_path(config: &AppConfig) -> Option<PathBuf> {
+    if let Some(path) = &config.offline.path {
+        return Some(path.clone());
+    }
+    config
+        .resolved_dev_overlay_path
+        .as_deref()
+        .or(config.resolved_config_path.as_deref())
+        .and_then(|path| {
+            path.parent()
+                .map(|parent| parent.join("memory-layer.duckdb"))
+        })
+        .or_else(|| preferred_user_state_dir().map(|dir| dir.join("memory-layer.duckdb")))
+}
+
+fn start_offline_sync_task(state: AppState) {
+    if state.offline.is_none() {
+        return;
+    }
+    tokio::spawn(async move {
+        loop {
+            if let Err(error) = sync_offline_once(&state).await
+                && let Some(offline) = &state.offline
+            {
+                offline
+                    .state
+                    .lock()
+                    .expect("offline sync state lock poisoned")
+                    .last_error = Some(error.to_string());
+            }
+            tokio::time::sleep(state.config.offline.reconnect_interval).await;
+        }
+    });
+}
+
+async fn sync_offline_once(state: &AppState) -> Result<()> {
+    let Some(offline) = &state.offline else {
+        return Ok(());
+    };
+    if offline.store.pending_count().await? == 0 {
+        return Ok(());
+    }
+    let pool = match state.pool() {
+        Ok(pool) => pool,
+        Err(_) => {
+            let pool = connect_primary_pool(&state.config).await?;
+            state.set_pool(pool.clone());
+            pool
+        }
+    };
+    sync_offline_batch(&pool, offline, state.config.offline.sync_batch_size).await
 }
 
 pub(crate) fn discover_web_root(config: &AppConfig) -> Option<PathBuf> {

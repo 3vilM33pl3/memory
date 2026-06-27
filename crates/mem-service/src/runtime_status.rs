@@ -30,6 +30,7 @@ pub(crate) struct RuntimeStatusResponse {
     pub(crate) manager: RuntimeManagerStatus,
     pub(crate) watchers: RuntimeWatcherStatus,
     pub(crate) provenance: RuntimeProvenanceStatus,
+    pub(crate) offline: RuntimeOfflineStatus,
     pub(crate) skills: RuntimeSkillStatus,
     pub(crate) restart_notice: Option<RuntimeRestartNotice>,
 }
@@ -76,6 +77,15 @@ pub(crate) struct RuntimeProvenanceStatus {
     pub(crate) checked_count: usize,
     pub(crate) stale_count: usize,
     pub(crate) error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RuntimeOfflineStatus {
+    pub(crate) enabled: bool,
+    pub(crate) database_path: Option<String>,
+    pub(crate) pending_count: u64,
+    pub(crate) last_sync_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub(crate) last_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -197,11 +207,17 @@ pub(crate) async fn runtime_status(
     let startup_at = state.startup_at;
     let watchers = Arc::clone(&state.watchers);
     let provenance_runtime = Arc::clone(&state.provenance);
+    let offline_runtime = state.offline.clone();
     let provenance_enabled = state.config.provenance.reverify_enabled;
     let provenance_interval_seconds = state.config.provenance.reverify_interval.as_secs();
     let service_id = state.config.cluster.service_id.clone();
     let is_primary = state.is_primary();
     let skill_filter = RuntimeSkillFilter::from_query(query.skill_filter.as_deref());
+    let offline_pending_count = if let Some(runtime) = &state.offline {
+        runtime.store.pending_count().await.unwrap_or(0)
+    } else {
+        0
+    };
 
     let response = tokio::task::spawn_blocking(move || {
         let watcher_summary = watcher_summary_for_project(&watchers, &project);
@@ -212,6 +228,29 @@ pub(crate) async fn runtime_status(
         let manager = runtime_manager_status(&profile, &version);
         let skills = runtime_skill_status(repo_root.as_deref(), &version, skill_filter);
         let restart_notice = runtime_restart_notice(startup_at, &version);
+        let offline = offline_runtime
+            .as_ref()
+            .map(|runtime| {
+                let state = runtime
+                    .state
+                    .lock()
+                    .expect("offline sync state lock poisoned")
+                    .clone();
+                RuntimeOfflineStatus {
+                    enabled: true,
+                    database_path: Some(runtime.store.path().display().to_string()),
+                    pending_count: offline_pending_count,
+                    last_sync_at: state.last_sync_at,
+                    last_error: state.last_error,
+                }
+            })
+            .unwrap_or(RuntimeOfflineStatus {
+                enabled: false,
+                database_path: None,
+                pending_count: 0,
+                last_sync_at: None,
+                last_error: None,
+            });
 
         RuntimeStatusResponse {
             generated_at: chrono::Utc::now(),
@@ -264,6 +303,7 @@ pub(crate) async fn runtime_status(
                 stale_count: provenance.stale_count,
                 error: provenance.error,
             },
+            offline,
             skills,
             restart_notice,
         }

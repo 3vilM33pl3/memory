@@ -8,7 +8,8 @@ pub(crate) struct AppState {
     pub(crate) role: ServiceRole,
     pub(crate) instance_id: String,
     pub(crate) startup_at: chrono::DateTime<chrono::Utc>,
-    pub(crate) pool: Option<PgPool>,
+    pub(crate) pool: Arc<RwLock<Option<PgPool>>>,
+    pub(crate) offline: Option<OfflineRuntime>,
     pub(crate) api_token: String,
     pub(crate) config: AppConfig,
     pub(crate) web_root: Option<PathBuf>,
@@ -109,9 +110,34 @@ impl AppState {
         }
     }
 
-    pub(crate) fn pool(&self) -> Result<&PgPool, ApiError> {
+    pub(crate) fn pool(&self) -> Result<PgPool, ApiError> {
         self.pool
-            .as_ref()
-            .ok_or_else(|| ApiError::service_unavailable("relay has no local database connection"))
+            .read()
+            .expect("database pool lock poisoned")
+            .clone()
+            .ok_or_else(|| {
+                if self.offline.is_some() {
+                    ApiError::service_unavailable(
+                        "PostgreSQL is unavailable; service is running in offline degraded mode",
+                    )
+                } else {
+                    ApiError::service_unavailable("relay has no local database connection")
+                }
+            })
+    }
+
+    pub(crate) fn pool_available(&self) -> bool {
+        self.pool
+            .read()
+            .expect("database pool lock poisoned")
+            .is_some()
+    }
+
+    pub(crate) fn set_pool(&self, pool: PgPool) {
+        *self.pool.write().expect("database pool lock poisoned") = Some(pool);
+    }
+
+    pub(crate) fn offline_store(&self) -> Option<OfflineStore> {
+        self.offline.as_ref().map(|runtime| runtime.store.clone())
     }
 }

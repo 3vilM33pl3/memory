@@ -2,6 +2,7 @@ mod auth;
 mod error;
 mod handlers;
 mod mcp_http;
+mod offline;
 mod prelude;
 pub mod repository;
 mod routes;
@@ -18,6 +19,7 @@ pub use runtime::run_service;
 pub(crate) use auth::*;
 pub(crate) use error::*;
 pub(crate) use handlers::{activity::*, curation::*, query::*};
+pub(crate) use offline::*;
 pub(crate) use repository::events::*;
 pub(crate) use repository::handlers::{
     bundle::*, embeddings::*, loops::*, memory::*, project::*, provenance::*, system::*,

@@ -15,11 +15,11 @@ pub(crate) async fn curate_memory(
     }
     let project = request.project.clone();
     let mut response = if request.dry_run {
-        preview_curate(state.pool()?, &request)
+        preview_curate(&state.pool()?, &request)
             .await
             .map_err(ApiError::sql)?
     } else {
-        curate(state.pool()?, &request)
+        curate(&state.pool()?, &request)
             .await
             .map_err(ApiError::sql)?
     };
@@ -30,7 +30,7 @@ pub(crate) async fn curate_memory(
     if !embedders.is_empty() {
         let rebuild_result = if request.raw_capture_id.is_some() {
             rebuild_memory_chunks_for_automatic_creation(
-                state.pool()?,
+                &state.pool()?,
                 &request.project,
                 &response.memory_ids,
                 &embedders,
@@ -41,7 +41,7 @@ pub(crate) async fn curate_memory(
             .await
         } else {
             rebuild_chunks_for_automatic_creation(
-                state.pool()?,
+                &state.pool()?,
                 &request.project,
                 &embedders,
                 state
@@ -118,7 +118,7 @@ pub(crate) async fn project_replacement_proposals(
         ));
     }
     Ok(Json(
-        list_replacement_proposals(state.pool()?, &slug)
+        list_replacement_proposals(&state.pool()?, &slug)
             .await
             .map_err(ApiError::sql)?,
     ))
@@ -141,7 +141,7 @@ pub(crate) async fn project_replacement_proposal_approve(
             .await?,
         ));
     }
-    let response = approve_replacement_proposal(state.pool()?, &slug, proposal_id)
+    let response = approve_replacement_proposal(&state.pool()?, &slug, proposal_id)
         .await
         .map_err(ApiError::sql)?;
     if let Some(new_memory_id) = response.new_memory_id {
@@ -185,7 +185,7 @@ pub(crate) async fn project_replacement_proposal_reject(
             .await?,
         ));
     }
-    let response = reject_replacement_proposal(state.pool()?, &slug, proposal_id)
+    let response = reject_replacement_proposal(&state.pool()?, &slug, proposal_id)
         .await
         .map_err(ApiError::sql)?;
     notify_project_refreshed(&state, slug.clone());

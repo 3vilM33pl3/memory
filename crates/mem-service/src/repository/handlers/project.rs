@@ -15,11 +15,11 @@ pub(crate) async fn sync_commits(
     }
     let project = request.project.clone();
     let response = if request.dry_run {
-        preview_project_commit_sync(state.pool()?, &request)
+        preview_project_commit_sync(&state.pool()?, &request)
             .await
             .map_err(ApiError::sql)?
     } else {
-        sync_project_commits(state.pool()?, &request)
+        sync_project_commits(&state.pool()?, &request)
             .await
             .map_err(ApiError::sql)?
     };
@@ -88,7 +88,7 @@ pub(crate) async fn project_memories(
 
     Ok(Json(
         fetch_project_memories(
-            state.pool()?,
+            &state.pool()?,
             &slug,
             status_filter.as_deref(),
             limit,
@@ -131,7 +131,7 @@ pub(crate) async fn project_commits(
     let limit = params.limit.unwrap_or(50).clamp(1, 500);
     let offset = params.offset.unwrap_or(0).max(0);
     Ok(Json(
-        fetch_project_commits(state.pool()?, &slug, limit, offset)
+        fetch_project_commits(&state.pool()?, &slug, limit, offset)
             .await
             .map_err(ApiError::sql)?,
     ))
@@ -146,7 +146,7 @@ pub(crate) async fn project_commit_detail(
             proxy_get_json(&state, &format!("/v1/projects/{slug}/commits/{hash}")).await?,
         ));
     }
-    let commit = fetch_project_commit(state.pool()?, &slug, &hash)
+    let commit = fetch_project_commit(&state.pool()?, &slug, &hash)
         .await
         .map_err(ApiError::sql)?
         .ok_or_else(|| ApiError::not_found("project commit not found"))?;
@@ -187,7 +187,7 @@ pub(crate) async fn project_resume(
         });
     }
 
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let since = request
         .checkpoint
         .as_ref()
@@ -310,7 +310,7 @@ pub(crate) async fn project_activities(
     }
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
     let mut items = fetch_project_activities(
-        state.pool()?,
+        &state.pool()?,
         &slug,
         query.since,
         query.before,
@@ -371,7 +371,7 @@ pub(crate) async fn build_up_to_speed_response(
     slug: &str,
     request: &UpToSpeedRequest,
 ) -> Result<UpToSpeedResponse, ApiError> {
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let limit = request.limit.clamp(1, 50);
     let overview_fut = fetch_project_overview_with_watchers(state, slug);
     let activities_fut = fetch_project_activities(pool, slug, None, None, None, limit, true);

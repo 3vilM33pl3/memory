@@ -3208,6 +3208,11 @@ pub(super) fn service_status_detail(app: &App) -> Option<String> {
     if !is_relay && !matches!(database_status, "ok" | "up") {
         parts.push(format!("db {database_status}"));
     }
+    if let Some(count) = app.service.offline_pending_count
+        && count > 0
+    {
+        parts.push(format!("{count} offline pending"));
+    }
     (!parts.is_empty()).then_some(parts.join(", "))
 }
 

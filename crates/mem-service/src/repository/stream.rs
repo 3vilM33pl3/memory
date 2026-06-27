@@ -309,9 +309,8 @@ pub(crate) async fn process_stream_request(
     request: StreamRequest,
 ) -> Result<Vec<StreamResponse>> {
     let pool = state
-        .pool
-        .as_ref()
-        .context("primary state missing database pool")?;
+        .pool()
+        .map_err(|error| anyhow::anyhow!(error.message))?;
     let mut responses = Vec::new();
     match request {
         StreamRequest::Health => responses.push(StreamResponse::Health {
@@ -324,24 +323,24 @@ pub(crate) async fn process_stream_request(
         }
         StreamRequest::ProjectMemories { project } => {
             responses.push(StreamResponse::ProjectMemories {
-                value: fetch_project_memories(pool, &project, None, 500, 0).await?,
+                value: fetch_project_memories(&pool, &project, None, 500, 0).await?,
             });
         }
         StreamRequest::MemoryDetail { memory_id } => {
             responses.push(StreamResponse::MemoryDetail {
-                value: fetch_memory_entry(pool, memory_id).await?,
+                value: fetch_memory_entry(&pool, memory_id).await?,
             });
         }
         StreamRequest::SubscribeProject { project } => {
             subscriptions.project = Some(project.clone());
             let overview = fetch_project_overview_with_watchers(state, &project).await?;
-            let memories = fetch_project_memories(pool, &project, None, 500, 0).await?;
+            let memories = fetch_project_memories(&pool, &project, None, 500, 0).await?;
             responses.push(StreamResponse::ProjectSnapshot { overview, memories });
             responses.extend(recent_activity_responses(&state.recent_activity, &project).await);
         }
         StreamRequest::SubscribeMemory { memory_id } => {
             subscriptions.memory_id = Some(memory_id);
-            let detail = fetch_memory_entry(pool, memory_id).await?;
+            let detail = fetch_memory_entry(&pool, memory_id).await?;
             responses.push(StreamResponse::MemorySnapshot { detail });
         }
         StreamRequest::UnsubscribeMemory => {
@@ -361,9 +360,8 @@ pub(crate) async fn render_subscription_updates(
     event: &ServiceEvent,
 ) -> Result<Vec<StreamResponse>> {
     let pool = state
-        .pool
-        .as_ref()
-        .context("primary state missing database pool")?;
+        .pool()
+        .map_err(|error| anyhow::anyhow!(error.message))?;
     let mut responses = Vec::new();
     if let Some(project) = &subscriptions.project
         && project == &event.project
@@ -372,14 +370,14 @@ pub(crate) async fn render_subscription_updates(
             responses.push(stream_activity_response(event.clone()));
         }
         let overview = fetch_project_overview_with_watchers(state, project).await?;
-        let memories = fetch_project_memories(pool, project, None, 500, 0).await?;
+        let memories = fetch_project_memories(&pool, project, None, 500, 0).await?;
         responses.push(StreamResponse::ProjectChanged { overview, memories });
     }
 
     if let Some(memory_id) = subscriptions.memory_id
         && event.memory_id == Some(memory_id)
     {
-        let detail = fetch_memory_entry(pool, memory_id).await?;
+        let detail = fetch_memory_entry(&pool, memory_id).await?;
         responses.push(StreamResponse::MemoryChanged { detail });
     }
 
@@ -403,15 +401,43 @@ pub(crate) async fn recent_activity_responses(
 
 pub(crate) async fn health_payload(state: &AppState) -> Result<serde_json::Value> {
     if state.is_primary() {
-        let pool = state
+        let pending = offline_pending_count(state).await?;
+        let Some(pool) = state
             .pool
-            .as_ref()
-            .context("primary state missing database pool")?;
-        sqlx::query("SELECT 1").execute(pool).await?;
+            .read()
+            .expect("database pool lock poisoned")
+            .clone()
+        else {
+            return Ok(serde_json::json!({
+                "status": "degraded",
+                "role": "primary",
+                "database": "offline",
+                "offline_pending": pending,
+                "offline_database": state.offline.as_ref().map(|offline| offline.store.path().display().to_string()),
+                "instance_id": state.instance_id,
+                "service_id": state.config.cluster.service_id,
+                "version": state.config.profile.display_version(env!("CARGO_PKG_VERSION"))
+            }));
+        };
+        if let Err(error) = sqlx::query("SELECT 1").execute(&pool).await {
+            return Ok(serde_json::json!({
+                "status": if state.offline.is_some() { "degraded" } else { "error" },
+                "role": "primary",
+                "database": "offline",
+                "database_error": error.to_string(),
+                "offline_pending": pending,
+                "offline_database": state.offline.as_ref().map(|offline| offline.store.path().display().to_string()),
+                "instance_id": state.instance_id,
+                "service_id": state.config.cluster.service_id,
+                "version": state.config.profile.display_version(env!("CARGO_PKG_VERSION"))
+            }));
+        }
         Ok(serde_json::json!({
             "status": "ok",
             "role": "primary",
             "database": "up",
+            "offline_pending": pending,
+            "offline_database": state.offline.as_ref().map(|offline| offline.store.path().display().to_string()),
             "instance_id": state.instance_id,
             "service_id": state.config.cluster.service_id,
             "version": state.config.profile.display_version(env!("CARGO_PKG_VERSION"))
@@ -422,12 +448,20 @@ pub(crate) async fn health_payload(state: &AppState) -> Result<serde_json::Value
             "status": if upstream.is_some() { "ok" } else { "degraded" },
             "role": "relay",
             "database": "down",
+            "offline_pending": offline_pending_count(state).await?,
             "instance_id": state.instance_id,
             "service_id": state.config.cluster.service_id,
             "version": state.config.profile.display_version(env!("CARGO_PKG_VERSION")),
             "upstream": upstream
         }))
     }
+}
+
+async fn offline_pending_count(state: &AppState) -> Result<u64> {
+    let Some(store) = state.offline_store() else {
+        return Ok(0);
+    };
+    store.pending_count().await
 }
 
 pub(crate) async fn relay_upstream_health(state: &AppState) -> Result<Option<serde_json::Value>> {

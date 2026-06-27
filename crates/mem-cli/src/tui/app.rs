@@ -552,6 +552,8 @@ impl App {
                 service_role: None,
                 service_health_state: None,
                 service_database_state: None,
+                offline_pending_count: None,
+                offline_database_path: None,
                 manager_status: None,
                 restart_notice: None,
                 stream_connecting: false,
@@ -815,6 +817,13 @@ impl App {
                     .get("database")
                     .and_then(|value| value.as_str())
                     .map(ToOwned::to_owned);
+                self.service.offline_pending_count = health
+                    .get("offline_pending")
+                    .and_then(|value| value.as_u64());
+                self.service.offline_database_path = health
+                    .get("offline_database")
+                    .and_then(|value| value.as_str())
+                    .map(ToOwned::to_owned);
             }
             Err(_) => {
                 had_error = true;
@@ -940,6 +949,8 @@ impl App {
         self.service.service_role = None;
         self.service.service_health_state = None;
         self.service.service_database_state = None;
+        self.service.offline_pending_count = None;
+        self.service.offline_database_path = None;
         self.meta.overview.service_status = "error".to_string();
         self.meta.overview.database_status = "unknown".to_string();
         self.meta.overview.watchers = None;
