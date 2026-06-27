@@ -128,6 +128,12 @@ kind, depth, node cap, and edge cap. The service enforces hard caps of depth `2`
 `1000` nodes, and `2000` edges. When results are capped, the tab shows the
 truncation reason.
 
+Clicking a node selects it. Shift-clicking a second node switches the current
+browser view to the nodes and edges that connect those two nodes through any
+simple path in the loaded graph. This is a local view mode; normal node
+selection, clearing the selection, Back/Forward, or refreshing the graph exits
+it.
+
 Query result graph connections and graph extraction activity details include
 actions that open the Graph tab with matching file, symbol, edge kind, or run id
 filters.

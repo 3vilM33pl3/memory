@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CodeGraphEdge, CodeGraphNode, CodeGraphResponse, CodeGraphStatusResponse } from "../../types";
-import { applyConnectedGraphIsolation, buildRenderData, GraphTab } from "./GraphTab";
+import { applyConnectedGraphIsolation, applyGraphConnectionView, buildRenderData, GraphTab } from "./GraphTab";
 
 const emptyStatus: CodeGraphStatusResponse = {
   project: "memory",
@@ -54,6 +54,7 @@ const baseProps = {
   error: null,
   selectedNode: null,
   selectedEdge: null,
+  connectionView: null,
   onFilterChange: vi.fn(),
   onSubmit: vi.fn(),
   onRefresh: vi.fn(),
@@ -200,6 +201,22 @@ describe("GraphTab", () => {
     expect(onGoBackSelection).toHaveBeenCalled();
     expect(onGoForwardSelection).toHaveBeenCalled();
   });
+
+  it("shows connection summary text when a connection view is active", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+
+    render(
+      <GraphTab
+        {...baseProps}
+        status={connectionStatus}
+        graph={{ ...connectionGraph, status: { ...connectionStatus, has_graph: false } }}
+        selectedNode={connectionGraph.nodes.find((node) => node.id === "node-d") ?? null}
+        connectionView={{ sourceNodeId: "node-a", targetNodeId: "node-d" }}
+      />,
+    );
+
+    expect(await screen.findByText("connecting node-a to node-d, showing 4 / 4")).toBeInTheDocument();
+  });
 });
 
 describe("applyConnectedGraphIsolation", () => {
@@ -240,6 +257,34 @@ describe("applyConnectedGraphIsolation", () => {
 
     expect(isolated?.nodes.map((node) => node.id)).toEqual(["node-a", "node-b", "node-c"]);
     expect(isolated?.edges.map((edge) => edge.id)).toEqual(["edge-ab", "edge-bc"]);
+  });
+});
+
+describe("applyGraphConnectionView", () => {
+  it("includes all parallel connecting paths instead of only the shortest path", () => {
+    const connected = applyGraphConnectionView(connectionGraph, { sourceNodeId: "node-a", targetNodeId: "node-d" });
+
+    expect(connected?.nodes.map((node) => node.id)).toEqual(["node-a", "node-b", "node-c", "node-d"]);
+    expect(connected?.edges.map((edge) => edge.id)).toEqual(["edge-ab", "edge-bd", "edge-ac", "edge-cd"]);
+    expect(connected?.stats.returned_nodes).toBe(4);
+    expect(connected?.stats.returned_edges).toBe(4);
+  });
+
+  it("excludes side branches and side cycles that do not connect both endpoints", () => {
+    const connected = applyGraphConnectionView(connectionGraph, { sourceNodeId: "node-a", targetNodeId: "node-d" });
+
+    expect(connected?.nodes.map((node) => node.id)).not.toContain("node-e");
+    expect(connected?.nodes.map((node) => node.id)).not.toContain("node-g");
+    expect(connected?.edges.map((edge) => edge.id)).not.toContain("edge-be");
+    expect(connected?.edges.map((edge) => edge.id)).not.toContain("edge-eg");
+    expect(connected?.edges.map((edge) => edge.id)).not.toContain("edge-gb");
+  });
+
+  it("returns only endpoints when the endpoints are disconnected", () => {
+    const connected = applyGraphConnectionView(connectionGraph, { sourceNodeId: "node-a", targetNodeId: "node-f" });
+
+    expect(connected?.nodes.map((node) => node.id)).toEqual(["node-a", "node-f"]);
+    expect(connected?.edges).toEqual([]);
   });
 });
 
@@ -299,6 +344,54 @@ const connectedGraph: CodeGraphResponse = {
     graphEdge("edge-bc", "node-b", "node-c"),
     graphEdge("edge-cf", "node-c", "node-f"),
     graphEdge("edge-de", "node-d", "node-e"),
+  ],
+};
+
+const connectionStatus: CodeGraphStatusResponse = {
+  project: "memory",
+  has_graph: true,
+  symbol_count: 7,
+  reference_count: 7,
+  resolved_reference_count: 7,
+  unresolved_reference_count: 0,
+  ambiguous_reference_count: 0,
+  graph_node_count: 7,
+  graph_edge_count: 7,
+  evidence_count: 14,
+};
+
+const connectionGraph: CodeGraphResponse = {
+  project: "memory",
+  status: connectionStatus,
+  filters: { depth: 1, limit_nodes: 250, limit_edges: 500 },
+  stats: {
+    total_nodes: 7,
+    total_edges: 7,
+    total_symbols: 7,
+    total_references: 7,
+    unresolved_references: 0,
+    returned_nodes: 7,
+    returned_edges: 7,
+    seed_nodes: 1,
+  },
+  truncated: false,
+  nodes: [
+    graphNode("node-a", true),
+    graphNode("node-b"),
+    graphNode("node-c"),
+    graphNode("node-d"),
+    graphNode("node-e"),
+    graphNode("node-f"),
+    graphNode("node-g"),
+  ],
+  edges: [
+    graphEdge("edge-ab", "node-a", "node-b"),
+    graphEdge("edge-bd", "node-b", "node-d"),
+    graphEdge("edge-ac", "node-a", "node-c"),
+    graphEdge("edge-cd", "node-c", "node-d"),
+    graphEdge("edge-be", "node-b", "node-e"),
+    graphEdge("edge-eg", "node-e", "node-g"),
+    graphEdge("edge-gb", "node-g", "node-b"),
   ],
 };
 

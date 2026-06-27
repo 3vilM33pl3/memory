@@ -76,6 +76,7 @@ export default function App() {
     graphFilters,
     graphStatus,
     codeGraph,
+    graphConnectionView,
     graphLoading,
     graphError,
     selectedGraphNode,
@@ -330,6 +331,7 @@ export default function App() {
             error={graphError}
             selectedNode={selectedGraphNode}
             selectedEdge={selectedGraphEdge}
+            connectionView={graphConnectionView}
             onFilterChange={handleGraphFilterChange}
             onSubmit={handleGraphSubmit}
             onRefresh={refreshGraph}

@@ -14,6 +14,11 @@ type GraphSelection =
   | { kind: "edge"; id: string }
   | { kind: "none" };
 
+export interface GraphConnectionView {
+  sourceNodeId: string;
+  targetNodeId: string;
+}
+
 export interface GraphOpenSeed {
   run_id?: string | null;
   q?: string | null;
@@ -68,6 +73,7 @@ export function useGraphController({
   const [graphError, setGraphError] = useState<string | null>(null);
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
   const [selectedGraphEdgeId, setSelectedGraphEdgeId] = useState<string | null>(null);
+  const [graphConnectionView, setGraphConnectionView] = useState<GraphConnectionView | null>(null);
   const [graphSelectionHistory, setGraphSelectionHistory] = useState<GraphSelection[]>([]);
   const [graphSelectionHistoryIndex, setGraphSelectionHistoryIndex] = useState(-1);
   const selectedGraphNodeIdRef = useRef<string | null>(null);
@@ -168,6 +174,7 @@ export function useGraphController({
 
   const openGraph = useCallback(
     (seed: GraphOpenSeed = {}) => {
+      setGraphConnectionView(null);
       const nextFilters: GraphFilterForm = {
         ...DEFAULT_FILTERS,
         run_id: seed.run_id?.trim() ?? "",
@@ -188,6 +195,7 @@ export function useGraphController({
 
   function handleGraphSubmit(event: FormEvent) {
     event.preventDefault();
+    setGraphConnectionView(null);
     void loadGraph(graphFilters);
   }
 
@@ -201,24 +209,32 @@ export function useGraphController({
   );
 
   const selectGraphNode = useCallback(
-    (nodeId: string | null) => {
+    (nodeId: string | null, options: { shiftKey?: boolean } = {}) => {
+      if (options.shiftKey && nodeId && selectedGraphNodeId && selectedGraphNodeId !== nodeId) {
+        setGraphConnectionView({ sourceNodeId: selectedGraphNodeId, targetNodeId: nodeId });
+      } else {
+        setGraphConnectionView(null);
+      }
       pushGraphSelection(nodeId ? { kind: "node", id: nodeId } : { kind: "none" });
     },
-    [pushGraphSelection],
+    [pushGraphSelection, selectedGraphNodeId],
   );
 
   const selectGraphEdge = useCallback(
     (edgeId: string | null) => {
+      setGraphConnectionView(null);
       pushGraphSelection(edgeId ? { kind: "edge", id: edgeId } : { kind: "none" });
     },
     [pushGraphSelection],
   );
 
   const clearGraphSelection = useCallback(() => {
+    setGraphConnectionView(null);
     pushGraphSelection({ kind: "none" });
   }, [pushGraphSelection]);
 
   const goBackGraphSelection = useCallback(() => {
+    setGraphConnectionView(null);
     setGraphSelectionHistoryIndex((currentIndex) => {
       if (currentIndex <= 0) return currentIndex;
       const nextIndex = currentIndex - 1;
@@ -229,6 +245,7 @@ export function useGraphController({
   }, [applySelection, graphSelectionHistory]);
 
   const goForwardGraphSelection = useCallback(() => {
+    setGraphConnectionView(null);
     setGraphSelectionHistoryIndex((currentIndex) => {
       if (currentIndex >= graphSelectionHistory.length - 1) return currentIndex;
       const nextIndex = currentIndex + 1;
@@ -242,6 +259,7 @@ export function useGraphController({
     graphFilters,
     graphStatus,
     codeGraph,
+    graphConnectionView,
     graphLoading,
     graphError,
     selectedGraphNode,
@@ -249,7 +267,10 @@ export function useGraphController({
     openGraph,
     handleGraphFilterChange,
     handleGraphSubmit,
-    refreshGraph: () => void loadGraph(graphFilters),
+    refreshGraph: () => {
+      setGraphConnectionView(null);
+      void loadGraph(graphFilters);
+    },
     selectGraphNode,
     selectGraphEdge,
     clearGraphSelection,

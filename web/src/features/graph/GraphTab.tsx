@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 
 import type { CodeGraphEdge, CodeGraphNode, CodeGraphResponse, CodeGraphStatusResponse } from "../../types";
-import type { GraphFilterForm } from "./useGraphController";
+import type { GraphConnectionView, GraphFilterForm } from "./useGraphController";
 
 type RenderNode = CodeGraphNode & {
   val: number;
@@ -27,10 +27,11 @@ interface GraphTabProps {
   error: string | null;
   selectedNode: CodeGraphNode | null;
   selectedEdge: CodeGraphEdge | null;
+  connectionView: GraphConnectionView | null;
   onFilterChange: (patch: Partial<GraphFilterForm>) => void;
   onSubmit: (event: FormEvent) => void;
   onRefresh: () => void;
-  onSelectNode: (nodeId: string | null) => void;
+  onSelectNode: (nodeId: string | null, options?: { shiftKey?: boolean }) => void;
   onSelectEdge: (edgeId: string | null) => void;
   onClearSelection: () => void;
   canGoBackSelection: boolean;
@@ -48,6 +49,7 @@ export function GraphTab({
   error,
   selectedNode,
   selectedEdge,
+  connectionView,
   onFilterChange,
   onSubmit,
   onRefresh,
@@ -60,9 +62,15 @@ export function GraphTab({
   onGoForwardSelection,
 }: GraphTabProps) {
   const [webglSupported, setWebglSupported] = useState(true);
+  const connectionGraph = useMemo(
+    () => applyGraphConnectionView(graph, connectionView),
+    [connectionView, graph],
+  );
   const visibleGraph = useMemo(
-    () => applyConnectedGraphIsolation(graph, filters.isolate_connected, selectedNode?.id ?? null, filters.isolate_depth),
-    [filters.isolate_connected, filters.isolate_depth, graph, selectedNode?.id],
+    () =>
+      connectionGraph ??
+      applyConnectedGraphIsolation(graph, filters.isolate_connected, selectedNode?.id ?? null, filters.isolate_depth),
+    [connectionGraph, filters.isolate_connected, filters.isolate_depth, graph, selectedNode?.id],
   );
   const visibleSelectedNode = useMemo(
     () => visibleGraph?.nodes.find((node) => selectedNode && node.id === selectedNode.id) ?? null,
@@ -182,6 +190,7 @@ export function GraphTab({
           <GraphShowingSummary
             graph={graph}
             visibleGraph={visibleGraph}
+            connectionView={connectionView}
             isolateConnected={filters.isolate_connected}
             isolateDepth={filters.isolate_depth}
           />
@@ -220,14 +229,34 @@ export function GraphTab({
 function GraphShowingSummary({
   graph,
   visibleGraph,
+  connectionView,
   isolateConnected,
   isolateDepth,
 }: {
   graph: CodeGraphResponse;
   visibleGraph: CodeGraphResponse | null;
+  connectionView: GraphConnectionView | null;
   isolateConnected: boolean;
   isolateDepth: number;
 }) {
+  if (connectionView) {
+    const source = graph.nodes.find((node) => node.id === connectionView.sourceNodeId);
+    const target = graph.nodes.find((node) => node.id === connectionView.targetNodeId);
+    if ((visibleGraph?.stats.returned_edges ?? 0) === 0) {
+      return (
+        <span>
+          no connecting path in loaded graph between {source?.label ?? connectionView.sourceNodeId} and{" "}
+          {target?.label ?? connectionView.targetNodeId}
+        </span>
+      );
+    }
+    return (
+      <span>
+        connecting {source?.label ?? connectionView.sourceNodeId} to {target?.label ?? connectionView.targetNodeId},
+        showing {visibleGraph?.stats.returned_nodes ?? 0} / {visibleGraph?.stats.returned_edges ?? 0}
+      </span>
+    );
+  }
   if (!isolateConnected) {
     return <span>showing {graph.stats.returned_nodes} / {graph.stats.returned_edges}</span>;
   }
@@ -253,7 +282,7 @@ function GraphScene({
   graph: CodeGraphResponse | null;
   selectedNode: CodeGraphNode | null;
   selectedEdge: CodeGraphEdge | null;
-  onSelectNode: (nodeId: string | null) => void;
+  onSelectNode: (nodeId: string | null, options?: { shiftKey?: boolean }) => void;
   onSelectEdge: (edgeId: string | null) => void;
   onClearSelection: () => void;
 }) {
@@ -292,7 +321,7 @@ function GraphScene({
       .linkOpacity(0.45)
       .linkDirectionalArrowLength(3)
       .linkDirectionalArrowRelPos(1)
-      .onNodeClick((node) => onSelectNodeRef.current(node.id))
+      .onNodeClick((node, event) => onSelectNodeRef.current(node.id, { shiftKey: event.shiftKey }))
       .onLinkClick((link) => onSelectEdgeRef.current(link.id))
       .onBackgroundClick(() => {
         onClearSelectionRef.current();
@@ -438,6 +467,180 @@ export function applyConnectedGraphIsolation(
     nodes,
     edges,
   };
+}
+
+export function applyGraphConnectionView(
+  graph: CodeGraphResponse | null,
+  connectionView: GraphConnectionView | null,
+): CodeGraphResponse | null {
+  if (!graph || !connectionView) return null;
+
+  const graphNodeIds = new Set(graph.nodes.map((node) => node.id));
+  const { sourceNodeId, targetNodeId } = connectionView;
+  if (!graphNodeIds.has(sourceNodeId) || !graphNodeIds.has(targetNodeId) || sourceNodeId === targetNodeId) {
+    return null;
+  }
+
+  const blocks = findBiconnectedEdgeBlocks(graph);
+  const routeBlocks = findBlockRoute(blocks, sourceNodeId, targetNodeId);
+  const visibleEdgeIds = new Set(routeBlocks.flatMap((block) => block.edgeIds));
+  const visibleNodeIds = new Set<string>([sourceNodeId, targetNodeId]);
+  for (const edge of graph.edges) {
+    if (!visibleEdgeIds.has(edge.id)) continue;
+    visibleNodeIds.add(edge.source);
+    visibleNodeIds.add(edge.target);
+  }
+
+  const nodes = graph.nodes.filter((node) => visibleNodeIds.has(node.id));
+  const edges = graph.edges.filter((edge) => visibleEdgeIds.has(edge.id));
+  return {
+    ...graph,
+    stats: {
+      ...graph.stats,
+      returned_nodes: nodes.length,
+      returned_edges: edges.length,
+      seed_nodes: nodes.filter((node) => node.seed).length,
+    },
+    nodes,
+    edges,
+  };
+}
+
+interface GraphEdgeBlock {
+  edgeIds: string[];
+  nodeIds: Set<string>;
+}
+
+function findBiconnectedEdgeBlocks(graph: CodeGraphResponse): GraphEdgeBlock[] {
+  const adjacency = new Map<string, Array<{ nextNodeId: string; edge: CodeGraphEdge }>>();
+  for (const node of graph.nodes) adjacency.set(node.id, []);
+  for (const edge of graph.edges) {
+    if (!adjacency.has(edge.source) || !adjacency.has(edge.target)) continue;
+    adjacency.get(edge.source)?.push({ nextNodeId: edge.target, edge });
+    adjacency.get(edge.target)?.push({ nextNodeId: edge.source, edge });
+  }
+
+  const discovery = new Map<string, number>();
+  const low = new Map<string, number>();
+  const edgeStack: CodeGraphEdge[] = [];
+  const blocks: GraphEdgeBlock[] = [];
+  let time = 0;
+
+  const visit = (nodeId: string, parentEdgeId: string | null) => {
+    discovery.set(nodeId, ++time);
+    low.set(nodeId, discovery.get(nodeId) ?? time);
+
+    for (const { nextNodeId, edge } of adjacency.get(nodeId) ?? []) {
+      if (edge.id === parentEdgeId) continue;
+      if (!discovery.has(nextNodeId)) {
+        edgeStack.push(edge);
+        visit(nextNodeId, edge.id);
+        low.set(nodeId, Math.min(low.get(nodeId) ?? 0, low.get(nextNodeId) ?? 0));
+        if ((low.get(nextNodeId) ?? 0) >= (discovery.get(nodeId) ?? 0)) {
+          const blockEdges: CodeGraphEdge[] = [];
+          let nextEdge: CodeGraphEdge | undefined;
+          do {
+            nextEdge = edgeStack.pop();
+            if (nextEdge) blockEdges.push(nextEdge);
+          } while (nextEdge && nextEdge.id !== edge.id);
+          blocks.push(toGraphEdgeBlock(blockEdges));
+        }
+      } else if ((discovery.get(nextNodeId) ?? 0) < (discovery.get(nodeId) ?? 0)) {
+        edgeStack.push(edge);
+        low.set(nodeId, Math.min(low.get(nodeId) ?? 0, discovery.get(nextNodeId) ?? 0));
+      }
+    }
+  };
+
+  for (const node of graph.nodes) {
+    if (!discovery.has(node.id)) visit(node.id, null);
+  }
+
+  return blocks;
+}
+
+function toGraphEdgeBlock(edges: CodeGraphEdge[]): GraphEdgeBlock {
+  const nodeIds = new Set<string>();
+  for (const edge of edges) {
+    nodeIds.add(edge.source);
+    nodeIds.add(edge.target);
+  }
+  return { edgeIds: edges.map((edge) => edge.id), nodeIds };
+}
+
+function findBlockRoute(blocks: GraphEdgeBlock[], sourceNodeId: string, targetNodeId: string): GraphEdgeBlock[] {
+  const blocksByNode = new Map<string, number[]>();
+  blocks.forEach((block, blockIndex) => {
+    for (const nodeId of block.nodeIds) {
+      const nodeBlocks = blocksByNode.get(nodeId) ?? [];
+      nodeBlocks.push(blockIndex);
+      blocksByNode.set(nodeId, nodeBlocks);
+    }
+  });
+
+  const tree = new Map<string, Set<string>>();
+  const addTreeEdge = (left: string, right: string) => {
+    if (!tree.has(left)) tree.set(left, new Set());
+    if (!tree.has(right)) tree.set(right, new Set());
+    tree.get(left)?.add(right);
+    tree.get(right)?.add(left);
+  };
+  blocks.forEach((block, blockIndex) => {
+    const blockKey = blockTreeBlockKey(blockIndex);
+    if (!tree.has(blockKey)) tree.set(blockKey, new Set());
+    for (const nodeId of block.nodeIds) {
+      if ((blocksByNode.get(nodeId)?.length ?? 0) > 1) {
+        addTreeEdge(blockKey, blockTreeArticulationKey(nodeId));
+      }
+    }
+  });
+
+  const sourceKey = blockTreeKeyForNode(blocksByNode, sourceNodeId);
+  const targetKey = blockTreeKeyForNode(blocksByNode, targetNodeId);
+  if (!sourceKey || !targetKey) return [];
+
+  const previous = new Map<string, string | null>();
+  const pending = [sourceKey];
+  previous.set(sourceKey, null);
+  while (pending.length && !previous.has(targetKey)) {
+    const currentKey = pending.shift();
+    if (!currentKey) continue;
+    for (const nextKey of tree.get(currentKey) ?? []) {
+      if (previous.has(nextKey)) continue;
+      previous.set(nextKey, currentKey);
+      pending.push(nextKey);
+    }
+  }
+  if (!previous.has(targetKey)) return [];
+
+  const routeBlockIds = new Set<number>();
+  let currentKey: string | null = targetKey;
+  while (currentKey) {
+    const blockId = parseBlockTreeBlockKey(currentKey);
+    if (blockId !== null) routeBlockIds.add(blockId);
+    currentKey = previous.get(currentKey) ?? null;
+  }
+  return [...routeBlockIds].sort((left, right) => left - right).map((blockId) => blocks[blockId]);
+}
+
+function blockTreeKeyForNode(blocksByNode: Map<string, number[]>, nodeId: string): string | null {
+  const nodeBlocks = blocksByNode.get(nodeId) ?? [];
+  if (!nodeBlocks.length) return null;
+  return nodeBlocks.length > 1 ? blockTreeArticulationKey(nodeId) : blockTreeBlockKey(nodeBlocks[0]);
+}
+
+function blockTreeBlockKey(blockId: number): string {
+  return `block:${blockId}`;
+}
+
+function blockTreeArticulationKey(nodeId: string): string {
+  return `articulation:${nodeId}`;
+}
+
+function parseBlockTreeBlockKey(key: string): number | null {
+  if (!key.startsWith("block:")) return null;
+  const blockId = Number(key.slice("block:".length));
+  return Number.isInteger(blockId) ? blockId : null;
 }
 
 function resolveConnectedGraphAnchor(

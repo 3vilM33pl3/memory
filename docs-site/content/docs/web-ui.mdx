@@ -79,6 +79,11 @@ search, file path, symbol name, edge kind, depth, node cap, and edge cap. The
 service enforces hard caps of depth `2`, `1000` nodes, and `2000` edges. Capped
 responses show a truncation reason in the tab.
 
+Click a node to inspect it. Shift-click a second node to show the nodes and
+edges that connect both nodes through any simple path in the loaded graph. The
+connection view is local to the browser and clears on normal selection,
+Back/Forward, background clear, or graph refresh.
+
 Query graph connections and graph extraction activity details include actions
 that open the Graph tab with matching file, symbol, edge kind, or run id filters.
 Browsers without WebGL show an unsupported state; there is no SVG or 2D fallback.

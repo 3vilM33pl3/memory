@@ -87,6 +87,41 @@ describe("useGraphController", () => {
     expect(result.current.canGoBackGraphSelection).toBe(false);
     expect(result.current.canGoForwardGraphSelection).toBe(false);
   });
+
+  it("enters and exits graph connection view from shift-click node selection", async () => {
+    const { result } = renderGraphController();
+
+    await waitFor(() => expect(result.current.selectedGraphNode?.id).toBe("node-a"));
+
+    act(() => result.current.selectGraphNode("node-b", { shiftKey: true }));
+
+    expect(result.current.graphConnectionView).toEqual({ sourceNodeId: "node-a", targetNodeId: "node-b" });
+    expect(result.current.selectedGraphNode?.id).toBe("node-b");
+
+    act(() => result.current.selectGraphNode("node-a"));
+
+    expect(result.current.graphConnectionView).toBeNull();
+    expect(result.current.selectedGraphNode?.id).toBe("node-a");
+  });
+
+  it("clears graph connection view when navigating selection history or refreshing", async () => {
+    const { result } = renderGraphController();
+
+    await waitFor(() => expect(result.current.selectedGraphNode?.id).toBe("node-a"));
+
+    act(() => result.current.selectGraphNode("node-b", { shiftKey: true }));
+    expect(result.current.graphConnectionView).not.toBeNull();
+
+    act(() => result.current.goBackGraphSelection());
+    expect(result.current.graphConnectionView).toBeNull();
+
+    act(() => result.current.selectGraphNode("node-b", { shiftKey: true }));
+    expect(result.current.graphConnectionView).not.toBeNull();
+
+    act(() => result.current.refreshGraph());
+
+    await waitFor(() => expect(result.current.graphConnectionView).toBeNull());
+  });
 });
 
 function renderGraphController() {
