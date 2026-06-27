@@ -7,6 +7,7 @@ import type { GraphFilterForm } from "./useGraphController";
 type RenderNode = CodeGraphNode & {
   val: number;
   color: string;
+  selected: boolean;
   isolate_degree?: number;
 };
 
@@ -457,23 +458,27 @@ type VisibleCodeGraphNode = CodeGraphNode & {
   isolate_degree?: number;
 };
 
-function buildRenderData(
+export function buildRenderData(
   graph: CodeGraphResponse | null,
   selectedNodeId: string | null,
   selectedEdgeId: string | null,
 ): { nodes: RenderNode[]; links: RenderLink[] } {
-  const nodes = (graph?.nodes ?? []).map((node) => ({
-    ...node,
-    val: Math.max(3, Math.min(14, 3 + node.degree)),
-    color:
-      (node as VisibleCodeGraphNode).isolate_degree !== undefined
-        ? colorForIsolationDegree((node as VisibleCodeGraphNode).isolate_degree ?? 0)
-        : node.id === selectedNodeId
-          ? "#ffc96b"
+  const nodes = (graph?.nodes ?? []).map((node) => {
+    const selected = node.id === selectedNodeId;
+    const baseValue = Math.max(3, Math.min(14, 3 + node.degree));
+    return {
+      ...node,
+      selected,
+      val: selected ? Math.max(18, baseValue * 1.8) : baseValue,
+      color: selected
+        ? "#ffffff"
+        : (node as VisibleCodeGraphNode).isolate_degree !== undefined
+          ? colorForIsolationDegree((node as VisibleCodeGraphNode).isolate_degree ?? 0)
           : node.seed
             ? "#7be0c5"
             : colorForGroup(node.group),
-  }));
+    };
+  });
   const links = (graph?.edges ?? []).map((edge) => ({
     ...edge,
     color: edge.id === selectedEdgeId ? "#ffc96b" : colorForEdge(edge.edge_kind),

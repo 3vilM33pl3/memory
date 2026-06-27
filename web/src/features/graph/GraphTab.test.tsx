@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { CodeGraphEdge, CodeGraphNode, CodeGraphResponse, CodeGraphStatusResponse } from "../../types";
-import { applyConnectedGraphIsolation, GraphTab } from "./GraphTab";
+import { applyConnectedGraphIsolation, buildRenderData, GraphTab } from "./GraphTab";
 
 const emptyStatus: CodeGraphStatusResponse = {
   project: "memory",
@@ -240,6 +240,21 @@ describe("applyConnectedGraphIsolation", () => {
 
     expect(isolated?.nodes.map((node) => node.id)).toEqual(["node-a", "node-b", "node-c"]);
     expect(isolated?.edges.map((edge) => edge.id)).toEqual(["edge-ab", "edge-bc"]);
+  });
+});
+
+describe("buildRenderData", () => {
+  it("makes the selected node high contrast and larger than normal nodes", () => {
+    const isolated = applyConnectedGraphIsolation(connectedGraph, true, "node-a", 2);
+
+    const renderData = buildRenderData(isolated, "node-a", null);
+    const selectedNode = renderData.nodes.find((node) => node.id === "node-a");
+    const neighborNode = renderData.nodes.find((node) => node.id === "node-b");
+
+    expect(selectedNode?.selected).toBe(true);
+    expect(selectedNode?.color).toBe("#ffffff");
+    expect(neighborNode?.color).not.toBe("#ffffff");
+    expect(selectedNode?.val ?? 0).toBeGreaterThan(neighborNode?.val ?? 0);
   });
 });
 
