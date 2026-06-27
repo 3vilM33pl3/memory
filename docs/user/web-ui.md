@@ -25,7 +25,7 @@ The main tabs match the TUI order:
 | Memories | Canonical memories, filters, markdown-style canonical text, embeddings, sources, history, and related memories. |
 | Agents | Local Codex/Claude sessions, with the current project sorted first, plus tokens, context pressure, child processes, ports, and rate limits. |
 | Query | Cited answers, ranked memory results, lexical/semantic/graph timing, token usage, ranking explanations, and graph connections. |
-| Graph | 3D WebGL code graph neighborhoods from the latest `memory graph extract` run, with search/file/symbol/edge filters and node/edge detail. |
+| Graph | 3D WebGL graph explorer with code neighborhoods, optional memory provenance links, optional memory relationship edges, and typed node/edge detail. |
 | Activity | Persisted activity, token/duration metadata, get-up-to-speed briefings, and LLM audit/debug status. |
 | Errors | Persisted diagnostics plus browser-session errors with explanations, fix hints, `memory doctor` hints, commands, and raw errors. |
 | Project | Project-level counts, memory type/source breakdowns, embedding coverage, automation state, watcher status, and recent activity. |
@@ -114,9 +114,24 @@ Memory-owned skill directories.
 
 ## Graph Explorer
 
-The Graph tab is a WebGL-only 3D explorer for the parser-backed code graph. It
-does not extract or mutate graph data; it reads the latest completed graph run
-from the service. Build or refresh the graph with:
+The Graph tab is a WebGL-only 3D explorer with three independently visible
+layers:
+
+- `Code`: parser-backed code graph neighborhoods from the latest completed
+  graph extraction run. This layer is on by default.
+- `Provenance`: memory-to-source links derived from active memories and their
+  source records, including file, symbol, commit, and provenance verification
+  status when available. This layer is off by default.
+- `Memory relationships`: active memory-to-memory relation edges such as
+  `supports`, `supersedes`, `duplicates`, `depends_on`, and `related_to`. This
+  layer is off by default.
+
+The browser does not extract or mutate graph data. The code layer reads
+`/v1/projects/{project}/graph`; the memory layers read the separate read-only
+`/v1/projects/{project}/memory-graph` endpoint and then merge visible layers in
+the browser.
+
+Build or refresh the code graph with:
 
 ```bash
 memory graph extract --project memory
@@ -128,11 +143,22 @@ kind, depth, node cap, and edge cap. The service enforces hard caps of depth `2`
 `1000` nodes, and `2000` edges. When results are capped, the tab shows the
 truncation reason.
 
-Clicking a node selects it. Shift-clicking a second node switches the current
-browser view to the nodes and edges that connect those two nodes through any
-simple path in the loaded graph. This is a local view mode; normal node
+The layer checkboxes sit underneath the 3D scene. Hovering a checkbox or a
+visible node/edge brightens that whole layer and dims the others. Toggling the
+provenance or relationship layers only changes the browser view; it does not
+change backend code graph filters.
+
+Clicking a code node selects it. Shift-clicking a second code node switches the
+current browser view to the nodes and edges that connect those two nodes through
+any simple path in the loaded code graph. This is a local view mode; normal node
 selection, clearing the selection, Back/Forward, or refreshing the graph exits
-it.
+it. The Shift-click connection view applies only to the Code layer in this
+release.
+
+Clicking a memory node shows its memory type, confidence, importance, tags, and
+memory id. Clicking a source node shows source type, file path, symbol, commit,
+verification status, and source id. Clicking provenance or relationship edges
+shows their endpoints and edge-specific metadata.
 
 Query result graph connections and graph extraction activity details include
 actions that open the Graph tab with matching file, symbol, edge kind, or run id
