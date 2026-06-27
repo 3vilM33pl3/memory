@@ -17,8 +17,9 @@ pub(crate) use std::{
 pub(crate) use std::os::fd::AsRawFd;
 
 pub(crate) use crate::repository::{
-    fetch_project_commit, fetch_project_commits, fetch_project_memories, fetch_project_overview,
-    parse_status_filter, preview_project_commit_sync, sync_project_commits,
+    fetch_project_commit, fetch_project_commits, fetch_project_memories,
+    fetch_project_memory_graph, fetch_project_overview, parse_status_filter,
+    preview_project_commit_sync, sync_project_commits,
 };
 pub(crate) use anyhow::{Context, Result};
 pub(crate) use axum::{
@@ -54,18 +55,19 @@ pub(crate) use mem_api::{
     PlanActivityAction, PlanActivityRequest, ProjectCommitsResponse, ProjectMemoriesResponse,
     ProjectMemoryBundleEntry, ProjectMemoryBundleEntryRelation, ProjectMemoryBundleManifest,
     ProjectMemoryBundlePreview, ProjectMemoryBundleSource, ProjectMemoryExportOptions,
-    ProjectMemoryImportPreview, ProjectMemoryImportResponse, ProjectMemoryListItem,
-    ProjectOverviewResponse, ProvenanceVerificationRequest, ProvenanceVerificationResponse,
-    PruneEmbeddingsRequest, PruneEmbeddingsResponse, PruneHistoryRequest, PruneHistoryResponse,
-    QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod, QueryAnswerMode,
-    QueryGraphConnection, QueryRequest, QueryResponse, ReembedRequest, ReembedResponse,
-    ReindexRequest, ReindexResponse, RelatedMemorySummary, ReplacementPolicy,
-    ReplacementPolicyRequest, ReplacementPolicyResponse, ReplacementProposalListResponse,
-    ReplacementProposalResolutionResponse, ResumeAction, ResumeCheckpoint, ResumeRequest,
-    ResumeResponse, ScanActivityRequest, SetEmbeddingCreationRequest, SetLlmAuditRequest,
-    SourceKind, SourceProvenanceRecord, SourceProvenanceStatus, SourceProvenanceVerification,
-    StatsResponse, StreamRequest, StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest,
-    UpToSpeedResponse, ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
+    ProjectMemoryGraphResponse, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
+    ProjectMemoryListItem, ProjectOverviewResponse, ProvenanceVerificationRequest,
+    ProvenanceVerificationResponse, PruneEmbeddingsRequest, PruneEmbeddingsResponse,
+    PruneHistoryRequest, PruneHistoryResponse, QueryAnswerCitation, QueryAnswerGeneration,
+    QueryAnswerMethod, QueryAnswerMode, QueryGraphConnection, QueryRequest, QueryResponse,
+    ReembedRequest, ReembedResponse, ReindexRequest, ReindexResponse, RelatedMemorySummary,
+    ReplacementPolicy, ReplacementPolicyRequest, ReplacementPolicyResponse,
+    ReplacementProposalListResponse, ReplacementProposalResolutionResponse, ResumeAction,
+    ResumeCheckpoint, ResumeRequest, ResumeResponse, ScanActivityRequest,
+    SetEmbeddingCreationRequest, SetLlmAuditRequest, SourceKind, SourceProvenanceRecord,
+    SourceProvenanceStatus, SourceProvenanceVerification, StatsResponse, StreamRequest,
+    StreamResponse, TokenUsage, TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse,
+    ValidationError, WatcherHealth, WatcherHeartbeatRequest, WatcherPresence,
     WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
     WatcherUnregisterRequest, effective_llm_base_url, is_supported_llm_provider,
     llm_max_output_tokens_field, llm_requires_api_key, load_repo_replacement_policy,

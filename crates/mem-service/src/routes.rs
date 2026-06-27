@@ -18,7 +18,7 @@ use super::{
     list_loop_memory_proposals, list_loop_runs, llm_audit_status, pause_loop, plan_activity,
     project_activities, project_bundle_export, project_bundle_export_preview,
     project_bundle_import, project_bundle_import_preview, project_commit_detail, project_commits,
-    project_graph, project_graph_status, project_memories, project_overview,
+    project_graph, project_graph_status, project_memories, project_memory_graph, project_overview,
     project_replacement_policy, project_replacement_policy_update,
     project_replacement_proposal_approve, project_replacement_proposal_reject,
     project_replacement_proposals, project_resume, project_up_to_speed, prune_embeddings,
@@ -171,6 +171,10 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
                 .post(project_replacement_policy_update),
         )
         .route("/v1/projects/{slug}/memories", get(project_memories))
+        .route(
+            "/v1/projects/{slug}/memory-graph",
+            get(project_memory_graph),
+        )
         .route("/v1/projects/{slug}/overview", get(project_overview))
         .route(
             "/v1/projects/{slug}/graph/status",

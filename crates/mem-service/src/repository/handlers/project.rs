@@ -54,6 +54,12 @@ pub(crate) struct ProjectMemoriesParams {
 }
 
 #[derive(Debug, Default, Deserialize)]
+pub(crate) struct ProjectMemoryGraphParams {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
 pub(crate) struct ProjectCommitsParams {
     limit: Option<i64>,
     offset: Option<i64>,
@@ -96,6 +102,25 @@ pub(crate) async fn project_memories(
         )
         .await
         .map_err(ApiError::sql)?,
+    ))
+}
+
+pub(crate) async fn project_memory_graph(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Query(params): Query<ProjectMemoryGraphParams>,
+) -> Result<Json<ProjectMemoryGraphResponse>, ApiError> {
+    let limit = params.limit.unwrap_or(250).clamp(1, 1000);
+    let offset = params.offset.unwrap_or(0).max(0);
+    if !state.is_primary() {
+        let path = format!("/v1/projects/{slug}/memory-graph?limit={limit}&offset={offset}");
+        return Ok(Json(proxy_get_json(&state, &path).await?));
+    }
+
+    Ok(Json(
+        fetch_project_memory_graph(state.pool()?, &slug, limit, offset)
+            .await
+            .map_err(ApiError::sql)?,
     ))
 }
 

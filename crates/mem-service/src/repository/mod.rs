@@ -2,14 +2,21 @@ pub(crate) mod events;
 pub mod handlers;
 pub(crate) mod stream;
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::PathBuf,
+};
 
 use mem_api::{
     CommitRecord, CommitSyncRequest, CommitSyncResponse, MemoryStatus, MemoryTypeCount, NamedCount,
-    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryListItem,
-    ProjectOverviewResponse, SourceKindCount, ValidationError,
+    ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryGraphEdge,
+    ProjectMemoryGraphEdgeKind, ProjectMemoryGraphNode, ProjectMemoryGraphNodeKind,
+    ProjectMemoryGraphResponse, ProjectMemoryListItem, ProjectOverviewResponse, SourceKindCount,
+    ValidationError,
 };
-use mem_search::{effective_embedding_base_url, parse_memory_type, parse_source_kind};
+use mem_search::{
+    effective_embedding_base_url, parse_memory_type, parse_relation_type, parse_source_kind,
+};
 use mem_watch::{load_state, to_status};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -133,6 +140,263 @@ pub async fn fetch_project_memories(
         total,
         items,
     })
+}
+
+pub async fn fetch_project_memory_graph(
+    pool: &PgPool,
+    slug: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<ProjectMemoryGraphResponse, sqlx::Error> {
+    let total_query = format!(
+        r#"
+        WITH {LATEST_PROJECT_MEMORIES_CTE}
+        SELECT COUNT(*) AS count
+        FROM latest
+        WHERE is_tombstone = FALSE
+          AND status = 'active'
+        "#
+    );
+    let total = sqlx::query(&total_query)
+        .bind(slug)
+        .fetch_one(pool)
+        .await?
+        .try_get("count")?;
+
+    let memory_query = format!(
+        r#"
+        WITH {LATEST_PROJECT_MEMORIES_CTE}
+        SELECT
+            m.id,
+            m.summary,
+            m.memory_type,
+            m.confidence,
+            m.importance,
+            m.updated_at,
+            ARRAY_REMOVE(ARRAY_AGG(DISTINCT mt.tag), NULL) AS tags
+        FROM latest m
+        LEFT JOIN memory_tags mt ON mt.memory_entry_id = m.id
+        WHERE m.is_tombstone = FALSE
+          AND m.status = 'active'
+        GROUP BY m.id, m.summary, m.memory_type, m.confidence, m.importance, m.updated_at
+        ORDER BY m.updated_at DESC, m.id DESC
+        LIMIT $2 OFFSET $3
+        "#
+    );
+    let memory_rows = sqlx::query(&memory_query)
+        .bind(slug)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+    let mut nodes = Vec::new();
+    let mut memory_ids = Vec::with_capacity(memory_rows.len());
+    for row in memory_rows {
+        let memory_id: Uuid = row.try_get("id")?;
+        memory_ids.push(memory_id);
+        let summary: String = row.try_get("summary")?;
+        nodes.push(ProjectMemoryGraphNode {
+            id: memory_node_id(memory_id),
+            label: summary.clone(),
+            node_kind: ProjectMemoryGraphNodeKind::Memory,
+            memory_id: Some(memory_id),
+            source_id: None,
+            memory_type: Some(parse_memory_type(&row.try_get::<String, _>("memory_type")?)),
+            source_kind: None,
+            confidence: Some(row.try_get("confidence")?),
+            importance: Some(row.try_get("importance")?),
+            tags: row.try_get("tags")?,
+            file_path: None,
+            git_commit: None,
+            symbol_name: None,
+            symbol_kind: None,
+            provenance_status: None,
+            summary: Some(summary),
+        });
+    }
+
+    if memory_ids.is_empty() {
+        return Ok(ProjectMemoryGraphResponse {
+            project: slug.to_string(),
+            total_memories: total,
+            returned_memories: 0,
+            nodes,
+            edges: Vec::new(),
+        });
+    }
+
+    let selected_memory_ids: HashSet<Uuid> = memory_ids.iter().copied().collect();
+    let mut edges = Vec::new();
+    let mut source_nodes = BTreeMap::new();
+    let source_rows = sqlx::query(
+        r#"
+        SELECT
+            ms.id,
+            ms.memory_entry_id,
+            ms.file_path,
+            ms.git_commit,
+            ms.symbol_name,
+            ms.symbol_kind,
+            ms.source_kind,
+            v.status AS provenance_status
+        FROM memory_sources ms
+        LEFT JOIN memory_source_verifications v ON v.source_id = ms.id
+        WHERE ms.memory_entry_id = ANY($1)
+        ORDER BY ms.created_at ASC, ms.id ASC
+        "#,
+    )
+    .bind(&memory_ids)
+    .fetch_all(pool)
+    .await?;
+
+    for row in source_rows {
+        let source_id: Uuid = row.try_get("id")?;
+        let memory_id: Uuid = row.try_get("memory_entry_id")?;
+        if !selected_memory_ids.contains(&memory_id) {
+            continue;
+        }
+        let source_kind = parse_source_kind(&row.try_get::<String, _>("source_kind")?);
+        let file_path: Option<String> = row.try_get("file_path")?;
+        let git_commit: Option<String> = row.try_get("git_commit")?;
+        let symbol_name: Option<String> = row.try_get("symbol_name")?;
+        let symbol_kind: Option<String> = row.try_get("symbol_kind")?;
+        let provenance_status =
+            row.try_get::<Option<String>, _>("provenance_status")?
+                .map(|status| {
+                    crate::repository::handlers::memory::parse_source_provenance_status(&status)
+                });
+        let node_id = source_node_id(
+            source_id,
+            file_path.as_deref(),
+            git_commit.as_deref(),
+            symbol_name.as_deref(),
+        );
+        source_nodes
+            .entry(node_id.clone())
+            .or_insert_with(|| ProjectMemoryGraphNode {
+                id: node_id.clone(),
+                label: source_node_label(
+                    &source_kind,
+                    file_path.as_deref(),
+                    git_commit.as_deref(),
+                    symbol_name.as_deref(),
+                ),
+                node_kind: ProjectMemoryGraphNodeKind::Source,
+                memory_id: None,
+                source_id: Some(source_id),
+                memory_type: None,
+                source_kind: Some(source_kind.clone()),
+                confidence: None,
+                importance: None,
+                tags: Vec::new(),
+                file_path: file_path.clone(),
+                git_commit: git_commit.clone(),
+                symbol_name: symbol_name.clone(),
+                symbol_kind: symbol_kind.clone(),
+                provenance_status: provenance_status.clone(),
+                summary: None,
+            });
+        edges.push(ProjectMemoryGraphEdge {
+            id: format!("provenance:{memory_id}:{node_id}"),
+            source: memory_node_id(memory_id),
+            target: node_id,
+            edge_kind: ProjectMemoryGraphEdgeKind::Provenance,
+            relation_type: None,
+            source_kind: Some(source_kind),
+        });
+    }
+
+    nodes.extend(source_nodes.into_values());
+
+    let relation_rows = sqlx::query(
+        r#"
+        SELECT src_memory_id, dst_memory_id, relation_type
+        FROM memory_relations
+        WHERE src_memory_id = ANY($1)
+          AND dst_memory_id = ANY($1)
+        ORDER BY relation_type ASC, src_memory_id ASC, dst_memory_id ASC
+        "#,
+    )
+    .bind(&memory_ids)
+    .fetch_all(pool)
+    .await?;
+
+    for row in relation_rows {
+        let source_memory_id: Uuid = row.try_get("src_memory_id")?;
+        let target_memory_id: Uuid = row.try_get("dst_memory_id")?;
+        let relation_type = parse_relation_type(&row.try_get::<String, _>("relation_type")?);
+        edges.push(ProjectMemoryGraphEdge {
+            id: format!("relation:{source_memory_id}:{relation_type}:{target_memory_id}"),
+            source: memory_node_id(source_memory_id),
+            target: memory_node_id(target_memory_id),
+            edge_kind: ProjectMemoryGraphEdgeKind::MemoryRelation,
+            relation_type: Some(relation_type),
+            source_kind: None,
+        });
+    }
+
+    Ok(ProjectMemoryGraphResponse {
+        project: slug.to_string(),
+        total_memories: total,
+        returned_memories: memory_ids.len(),
+        nodes,
+        edges,
+    })
+}
+
+fn memory_node_id(memory_id: Uuid) -> String {
+    format!("memory:{memory_id}")
+}
+
+fn source_node_id(
+    source_id: Uuid,
+    file_path: Option<&str>,
+    git_commit: Option<&str>,
+    symbol_name: Option<&str>,
+) -> String {
+    if let Some(file_path) = file_path.filter(|value| !value.trim().is_empty()) {
+        if let Some(symbol_name) = symbol_name.filter(|value| !value.trim().is_empty()) {
+            return format!("source:file:{file_path}::{symbol_name}");
+        }
+        return format!("source:file:{file_path}");
+    }
+    if let Some(git_commit) = git_commit.filter(|value| !value.trim().is_empty()) {
+        return format!("source:git:{git_commit}");
+    }
+    if let Some(symbol_name) = symbol_name.filter(|value| !value.trim().is_empty()) {
+        return format!("source:symbol:{symbol_name}");
+    }
+    format!("source:{source_id}")
+}
+
+fn source_node_label(
+    source_kind: &mem_api::SourceKind,
+    file_path: Option<&str>,
+    git_commit: Option<&str>,
+    symbol_name: Option<&str>,
+) -> String {
+    if let Some(file_path) = file_path.filter(|value| !value.trim().is_empty()) {
+        if let Some(symbol_name) = symbol_name.filter(|value| !value.trim().is_empty()) {
+            return format!("{file_path}::{symbol_name}");
+        }
+        return file_path.to_string();
+    }
+    if let Some(git_commit) = git_commit.filter(|value| !value.trim().is_empty()) {
+        return format!("commit {}", git_commit.chars().take(12).collect::<String>());
+    }
+    if let Some(symbol_name) = symbol_name.filter(|value| !value.trim().is_empty()) {
+        return symbol_name.to_string();
+    }
+    match source_kind {
+        mem_api::SourceKind::TaskPrompt => "task prompt",
+        mem_api::SourceKind::File => "file",
+        mem_api::SourceKind::GitCommit => "git commit",
+        mem_api::SourceKind::CommandOutput => "command output",
+        mem_api::SourceKind::Test => "test",
+        mem_api::SourceKind::Note => "note",
+    }
+    .to_string()
 }
 
 pub async fn fetch_project_overview(

@@ -1,7 +1,8 @@
 use mem_api::{
     LoopApprovalDecisionRequest, LoopApprovalStatus, LoopMemoryProposalCreateRequest,
     LoopMemoryProposalDecisionRequest, LoopMode, LoopRunRequest, LoopRunStatus,
-    LoopTriggerRouteRequest, LoopTrustLevel, MemoryStatus, MemoryType,
+    LoopTriggerRouteRequest, LoopTrustLevel, MemoryStatus, MemoryType, ProjectMemoryGraphEdgeKind,
+    ProjectMemoryGraphNodeKind, SourceProvenanceStatus,
 };
 use sqlx::PgPool;
 use std::{fs, path::Path, path::PathBuf, process::Command};
@@ -42,6 +43,147 @@ async fn repository_handler_write_and_read_paths_roundtrip_memory() {
     assert!(!memory.is_tombstone);
 
     mem_test_support::cleanup_project(&pool, &memory.project)
+        .await
+        .expect("cleanup test project");
+}
+
+#[tokio::test]
+async fn repository_memory_graph_returns_provenance_and_relationship_layers() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-memory-graph");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+    let project_id =
+        mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+            .await
+            .expect("upsert project through repository handler");
+    let source_memory_id = insert_hygiene_memory_fixture(
+        &pool,
+        project_id,
+        "Graph endpoint exposes provenance",
+        "Memory graph tests derive provenance from source records.",
+        0.91,
+        4,
+    )
+    .await;
+    let target_memory_id = insert_hygiene_memory_fixture(
+        &pool,
+        project_id,
+        "Graph endpoint exposes relations",
+        "Memory graph tests derive relation edges from memory_relations.",
+        0.88,
+        3,
+    )
+    .await;
+    let first_source_id = insert_graph_memory_source(&pool, source_memory_id).await;
+    let _second_source_id = insert_graph_memory_source(&pool, target_memory_id).await;
+    sqlx::query(
+        r#"
+        INSERT INTO memory_source_verifications (source_id, status, checked_at, reason, resolved_path)
+        VALUES ($1, 'verified', now(), 'repository test', '/repo/src/graph.rs')
+        "#,
+    )
+    .bind(first_source_id)
+    .execute(&pool)
+    .await
+    .expect("insert source verification");
+    sqlx::query(
+        r#"
+        INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id)
+        VALUES ($1, $2, 'supports', $3)
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(source_memory_id)
+    .bind(target_memory_id)
+    .execute(&pool)
+    .await
+    .expect("insert memory relation");
+
+    let graph = mem_service::repository::fetch_project_memory_graph(&pool, &project, 250, 0)
+        .await
+        .expect("fetch memory graph");
+
+    assert_eq!(graph.project, project);
+    assert_eq!(graph.total_memories, 2);
+    assert_eq!(graph.returned_memories, 2);
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node.node_kind == ProjectMemoryGraphNodeKind::Memory)
+            .count(),
+        2
+    );
+    let source_nodes: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| node.node_kind == ProjectMemoryGraphNodeKind::Source)
+        .collect();
+    assert_eq!(
+        source_nodes.len(),
+        1,
+        "shared file/symbol sources should be deduped"
+    );
+    assert_eq!(source_nodes[0].file_path.as_deref(), Some("src/graph.rs"));
+    assert_eq!(
+        source_nodes[0].symbol_name.as_deref(),
+        Some("build_memory_graph")
+    );
+    assert_eq!(
+        source_nodes[0].provenance_status,
+        Some(SourceProvenanceStatus::Verified)
+    );
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .filter(|edge| edge.edge_kind == ProjectMemoryGraphEdgeKind::Provenance)
+            .count(),
+        2
+    );
+    assert!(graph.edges.iter().any(|edge| {
+        edge.edge_kind == ProjectMemoryGraphEdgeKind::MemoryRelation
+            && edge
+                .relation_type
+                .as_ref()
+                .is_some_and(|relation| relation.to_string() == "supports")
+    }));
+
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
+#[tokio::test]
+async fn repository_memory_graph_returns_empty_graph_for_empty_project() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-empty-memory-graph");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+    mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+        .await
+        .expect("upsert project through repository handler");
+
+    let graph = mem_service::repository::fetch_project_memory_graph(&pool, &project, 250, 0)
+        .await
+        .expect("fetch memory graph");
+
+    assert_eq!(graph.project, project);
+    assert_eq!(graph.total_memories, 0);
+    assert_eq!(graph.returned_memories, 0);
+    assert!(graph.nodes.is_empty());
+    assert!(graph.edges.is_empty());
+
+    mem_test_support::cleanup_project(&pool, &project)
         .await
         .expect("cleanup test project");
 }
@@ -1064,6 +1206,23 @@ async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     .await
     .expect("insert memory fixture");
     memory_id
+}
+
+async fn insert_graph_memory_source(pool: &PgPool, memory_id: Uuid) -> Uuid {
+    let source_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO memory_sources
+            (id, memory_entry_id, source_kind, file_path, symbol_name, symbol_kind, created_at)
+        VALUES ($1, $2, 'file', 'src/graph.rs', 'build_memory_graph', 'function', now())
+        "#,
+    )
+    .bind(source_id)
+    .bind(memory_id)
+    .execute(pool)
+    .await
+    .expect("insert graph memory source");
+    source_id
 }
 
 async fn insert_hygiene_memory_fixture(

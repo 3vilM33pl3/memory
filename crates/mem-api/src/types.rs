@@ -637,6 +637,76 @@ pub struct CodeGraphEdge {
     pub resolution_status: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectMemoryGraphResponse {
+    pub project: String,
+    pub total_memories: i64,
+    pub returned_memories: usize,
+    #[serde(default)]
+    pub nodes: Vec<ProjectMemoryGraphNode>,
+    #[serde(default)]
+    pub edges: Vec<ProjectMemoryGraphEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectMemoryGraphNode {
+    pub id: String,
+    pub label: String,
+    pub node_kind: ProjectMemoryGraphNodeKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<MemoryType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<SourceKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importance: Option<i32>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance_status: Option<SourceProvenanceStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectMemoryGraphNodeKind {
+    Memory,
+    Source,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectMemoryGraphEdge {
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    pub edge_kind: ProjectMemoryGraphEdgeKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation_type: Option<MemoryRelationType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<SourceKind>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectMemoryGraphEdgeKind {
+    Provenance,
+    MemoryRelation,
+}
+
 fn normalize_optional_filter(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
