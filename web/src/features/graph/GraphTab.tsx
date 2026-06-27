@@ -120,18 +120,37 @@ export function GraphTab({
           />
           Isolate connected graph
         </label>
-        <label className="graph-degree">
-          Degrees
-          <input
-            min={1}
-            max={MAX_ISOLATE_DEPTH}
-            step={1}
-            type="number"
-            value={filters.isolate_depth}
-            disabled={!filters.isolate_connected}
-            onChange={(event) => onFilterChange({ isolate_depth: Number(event.target.value) })}
-          />
-        </label>
+        <div className="graph-degree">
+          <label htmlFor="graph-isolate-depth">Degrees</label>
+          <span className="graph-degree-stepper">
+            <button
+              type="button"
+              aria-label="Decrease graph degrees"
+              disabled={!filters.isolate_connected || normalizeIsolationDepth(filters.isolate_depth) <= 1}
+              onClick={() => onFilterChange({ isolate_depth: normalizeIsolationDepth(filters.isolate_depth) - 1 })}
+            >
+              -
+            </button>
+            <input
+              id="graph-isolate-depth"
+              min={1}
+              max={MAX_ISOLATE_DEPTH}
+              step={1}
+              type="number"
+              value={filters.isolate_depth}
+              disabled={!filters.isolate_connected}
+              onChange={(event) => onFilterChange({ isolate_depth: Number(event.target.value) })}
+            />
+            <button
+              type="button"
+              aria-label="Increase graph degrees"
+              disabled={!filters.isolate_connected || normalizeIsolationDepth(filters.isolate_depth) >= MAX_ISOLATE_DEPTH}
+              onClick={() => onFilterChange({ isolate_depth: normalizeIsolationDepth(filters.isolate_depth) + 1 })}
+            >
+              +
+            </button>
+          </span>
+        </div>
         <button type="submit" disabled={loading}>{loading ? "Loading..." : "Apply"}</button>
         <button type="button" onClick={onRefresh} disabled={loading}>Refresh</button>
       </form>

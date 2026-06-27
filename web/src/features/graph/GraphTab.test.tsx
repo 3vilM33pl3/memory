@@ -118,6 +118,50 @@ describe("GraphTab", () => {
 
     expect(onFilterChange).toHaveBeenCalledWith({ isolate_depth: 2 });
   });
+
+  it("greys out degree controls until isolation is enabled", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as RenderingContext);
+
+    render(<GraphTab {...baseProps} status={emptyStatus} graph={emptyGraph} />);
+
+    expect(await screen.findByRole("spinbutton", { name: "Degrees" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Decrease graph degrees" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Increase graph degrees" })).toBeDisabled();
+  });
+
+  it("emits local filter changes from degree stepper buttons", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as RenderingContext);
+    const onFilterChange = vi.fn();
+
+    render(
+      <GraphTab
+        {...baseProps}
+        filters={{ ...baseProps.filters, isolate_connected: true }}
+        onFilterChange={onFilterChange}
+        status={emptyStatus}
+        graph={emptyGraph}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Decrease graph degrees" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Increase graph degrees" }));
+    expect(onFilterChange).toHaveBeenCalledWith({ isolate_depth: 2 });
+
+    cleanup();
+    render(
+      <GraphTab
+        {...baseProps}
+        filters={{ ...baseProps.filters, isolate_connected: true, isolate_depth: 2 }}
+        onFilterChange={onFilterChange}
+        status={emptyStatus}
+        graph={emptyGraph}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Increase graph degrees" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Decrease graph degrees" }));
+    expect(onFilterChange).toHaveBeenCalledWith({ isolate_depth: 1 });
+  });
 });
 
 describe("applyConnectedGraphIsolation", () => {

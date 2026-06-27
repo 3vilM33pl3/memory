@@ -626,7 +626,7 @@ pre {
 
 .graph-toolbar {
   display: grid;
-  grid-template-columns: minmax(11rem, 1.3fr) minmax(11rem, 1.1fr) minmax(9rem, 1fr) minmax(8rem, 0.8fr) 5rem 5.5rem 5.5rem minmax(10rem, max-content) 4.5rem max-content max-content;
+  grid-template-columns: minmax(11rem, 1.3fr) minmax(11rem, 1.1fr) minmax(9rem, 1fr) minmax(8rem, 0.8fr) 5rem 5.5rem 5.5rem minmax(10rem, max-content) 9rem max-content max-content;
   gap: 0.4rem;
   align-items: end;
   padding: 0.45rem;
@@ -636,6 +636,14 @@ pre {
 }
 
 .graph-toolbar label {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.graph-degree {
   display: grid;
   gap: 0.2rem;
   min-width: 0;
@@ -657,6 +665,24 @@ pre {
 
 .graph-degree input {
   width: 4.5rem;
+}
+
+.graph-degree-stepper {
+  display: grid;
+  grid-template-columns: 2rem 4.5rem 2rem;
+  gap: 0.2rem;
+  align-items: center;
+}
+
+.graph-degree-stepper input {
+  width: 100%;
+  text-align: center;
+}
+
+.graph-degree-stepper input:disabled,
+.graph-degree-stepper button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .graph-summary {
