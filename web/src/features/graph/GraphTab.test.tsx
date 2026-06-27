@@ -1,5 +1,34 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const forceGraphMock = vi.hoisted(() => ({
+  instances: [] as Array<{
+    backgroundColor: ReturnType<typeof vi.fn>;
+    showNavInfo: ReturnType<typeof vi.fn>;
+    nodeId: ReturnType<typeof vi.fn>;
+    linkSource: ReturnType<typeof vi.fn>;
+    linkTarget: ReturnType<typeof vi.fn>;
+    nodeLabel: ReturnType<typeof vi.fn>;
+    linkLabel: ReturnType<typeof vi.fn>;
+    nodeVal: ReturnType<typeof vi.fn>;
+    nodeColor: ReturnType<typeof vi.fn>;
+    linkColor: ReturnType<typeof vi.fn>;
+    linkWidth: ReturnType<typeof vi.fn>;
+    linkOpacity: ReturnType<typeof vi.fn>;
+    linkDirectionalArrowLength: ReturnType<typeof vi.fn>;
+    linkDirectionalArrowRelPos: ReturnType<typeof vi.fn>;
+    onNodeClick: ReturnType<typeof vi.fn>;
+    onLinkClick: ReturnType<typeof vi.fn>;
+    onNodeHover: ReturnType<typeof vi.fn>;
+    onLinkHover: ReturnType<typeof vi.fn>;
+    onBackgroundClick: ReturnType<typeof vi.fn>;
+    width: ReturnType<typeof vi.fn>;
+    height: ReturnType<typeof vi.fn>;
+    graphData: ReturnType<typeof vi.fn>;
+    zoomToFit: ReturnType<typeof vi.fn>;
+    _destructor: ReturnType<typeof vi.fn>;
+  }>,
+}));
 
 vi.mock("3d-force-graph", () => {
   const createInstance = () => {
@@ -29,6 +58,7 @@ vi.mock("3d-force-graph", () => {
       zoomToFit: vi.fn(() => instance),
       _destructor: vi.fn(),
     };
+    forceGraphMock.instances.push(instance);
     return instance;
   };
   function MockForceGraph3D() {
@@ -49,6 +79,7 @@ import {
   applyGraphConnectionView,
   buildLayeredRenderData,
   buildRenderData,
+  graphRenderTopologySignature,
   GraphTab,
 } from "./GraphTab";
 
@@ -120,6 +151,8 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.restoreAllMocks();
+  vi.useRealTimers();
+  forceGraphMock.instances = [];
 });
 
 describe("GraphTab", () => {
@@ -304,6 +337,32 @@ describe("GraphTab", () => {
 
     expect(await screen.findByText("connecting node-a to node-d, showing 4 / 4")).toBeInTheDocument();
   });
+
+  it("does not refit the 3d graph when only selected node styling changes", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as RenderingContext);
+
+    const { rerender } = render(
+      <GraphTab {...baseProps} status={connectedStatus} graph={connectedGraph} selectedNode={connectedGraph.nodes[0]} />,
+    );
+
+    expect(screen.getByTestId("graph-scene")).toBeInTheDocument();
+    expect(forceGraphMock.instances).toHaveLength(1);
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+    expect(forceGraphMock.instances[0].zoomToFit).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <GraphTab {...baseProps} status={connectedStatus} graph={connectedGraph} selectedNode={connectedGraph.nodes[1]} />,
+    );
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(forceGraphMock.instances[0].graphData).toHaveBeenCalledTimes(2);
+    expect(forceGraphMock.instances[0].zoomToFit).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("applyConnectedGraphIsolation", () => {
@@ -387,6 +446,17 @@ describe("buildRenderData", () => {
     expect(selectedNode?.color).toBe("#ffffff");
     expect(neighborNode?.color).not.toBe("#ffffff");
     expect(selectedNode?.val ?? 0).toBeGreaterThan(neighborNode?.val ?? 0);
+  });
+});
+
+describe("graphRenderTopologySignature", () => {
+  it("ignores styling-only selection changes but changes when topology changes", () => {
+    const unselected = buildRenderData(connectedGraph, null, null);
+    const selected = buildRenderData(connectedGraph, "node-a", null);
+    const isolated = buildRenderData(applyConnectedGraphIsolation(connectedGraph, true, "node-a", 1), "node-a", null);
+
+    expect(graphRenderTopologySignature(selected)).toBe(graphRenderTopologySignature(unselected));
+    expect(graphRenderTopologySignature(isolated)).not.toBe(graphRenderTopologySignature(unselected));
   });
 });
 

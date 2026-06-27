@@ -414,6 +414,8 @@ function GraphScene({
   const onSelectEdgeRef = useRef(onSelectEdge);
   const onClearSelectionRef = useRef(onClearSelection);
   const onHoverLayerRef = useRef(onHoverLayer);
+  const lastFitSignatureRef = useRef<string | null>(null);
+  const topologySignature = useMemo(() => graphRenderTopologySignature(renderData), [renderData]);
 
   useEffect(() => {
     onSelectNodeRef.current = onSelectNode;
@@ -472,12 +474,20 @@ function GraphScene({
     const instance = instanceRef.current;
     if (!instance) return;
     instance.graphData(renderData);
-    if (renderData.nodes.length) {
+    const shouldFit = topologySignature !== lastFitSignatureRef.current;
+    lastFitSignatureRef.current = topologySignature;
+    if (shouldFit && renderData.nodes.length) {
       window.setTimeout(() => instance.zoomToFit(500, 48), 50);
     }
-  }, [renderData]);
+  }, [renderData, topologySignature]);
 
   return <div ref={containerRef} className="graph-scene" data-testid="graph-scene" />;
+}
+
+export function graphRenderTopologySignature(renderData: { nodes: RenderNode[]; links: RenderLink[] }): string {
+  const nodeIds = renderData.nodes.map((node) => node.id).sort().join(",");
+  const linkIds = renderData.links.map((link) => link.id).sort().join(",");
+  return `nodes:${nodeIds}|links:${linkIds}`;
 }
 
 function GraphInspector({
