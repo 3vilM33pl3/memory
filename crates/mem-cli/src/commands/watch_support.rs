@@ -242,6 +242,9 @@ pub(crate) async fn run_watcher_manager(
         service_addr = config.service.bind_addr,
         fallback = WATCH_MANAGER_FALLBACK_SCAN_SECONDS,
     );
+    if matches!(config.profile, Profile::Dev) {
+        eprintln!("{}", platform::dev_mode_status_line(None));
+    }
     if let Some(path) = config.resolved_config_path.as_deref() {
         eprintln!("  config: {}", path.display());
     }

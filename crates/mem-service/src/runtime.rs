@@ -61,6 +61,9 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
                 "disabled"
             },
         );
+        if matches!(config.profile, mem_api::Profile::Dev) {
+            eprintln!("{}", mem_platform::dev_mode_status_line(None));
+        }
         if let Some(path) = config.resolved_config_path.as_deref() {
             eprintln!("  config: {}", path.display());
         }

@@ -387,8 +387,50 @@ pub fn derive_default_writer_id(tool: &str) -> String {
     )
 }
 
+pub fn dev_mode_status_line(start_dir: Option<&Path>) -> String {
+    format!("DEV MODE  commit={}", detect_dev_commit_label(start_dir))
+}
+
+pub fn detect_dev_commit_label(start_dir: Option<&Path>) -> String {
+    let start_dir = start_dir
+        .map(Path::to_path_buf)
+        .or_else(|| env::current_dir().ok());
+    let Some(start_dir) = start_dir else {
+        return "unknown".to_string();
+    };
+    let short_hash = git_stdout_trimmed(&["rev-parse", "--short=12", "HEAD"], &start_dir);
+    let dirty = git_stdout_trimmed(&["status", "--porcelain"], &start_dir)
+        .is_some_and(|output| !output.trim().is_empty());
+    format_dev_commit_label(short_hash.as_deref(), dirty)
+}
+
+pub fn format_dev_commit_label(short_hash: Option<&str>, dirty: bool) -> String {
+    let Some(short_hash) = short_hash.map(str::trim).filter(|value| !value.is_empty()) else {
+        return "unknown".to_string();
+    };
+    if dirty {
+        format!("{short_hash}+dirty")
+    } else {
+        short_hash.to_string()
+    }
+}
+
 fn command_stdout_trimmed(program: &str) -> Option<String> {
     let output = Command::new(program).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn git_stdout_trimmed(args: &[&str], cwd: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -583,7 +625,10 @@ pub fn managed_watch_launch_agent_path(session_id: &str) -> Option<PathBuf> {
 mod tests {
     use std::sync::Mutex;
 
-    use super::{derive_default_writer_id, managed_watch_service_name, watch_service_unit_name};
+    use super::{
+        derive_default_writer_id, dev_mode_status_line, format_dev_commit_label,
+        managed_watch_service_name, watch_service_unit_name,
+    };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -613,6 +658,21 @@ mod tests {
         restore_env_var("MEMORY_LAYER_WRITER_IDENTITY_HOST", old_host);
 
         assert_eq!(writer_id, "memory-olivier-smith-dev-box-local");
+    }
+
+    #[test]
+    fn dev_commit_label_formats_clean_dirty_and_unknown_states() {
+        assert_eq!(
+            format_dev_commit_label(Some("288690845510"), false),
+            "288690845510"
+        );
+        assert_eq!(
+            format_dev_commit_label(Some("288690845510"), true),
+            "288690845510+dirty"
+        );
+        assert_eq!(format_dev_commit_label(None, true), "unknown");
+        assert_eq!(format_dev_commit_label(Some("   "), false), "unknown");
+        assert!(dev_mode_status_line(None).starts_with("DEV MODE  commit="));
     }
 
     #[test]
