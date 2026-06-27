@@ -14,7 +14,7 @@ type RenderLink = CodeGraphEdge & {
   width: number;
 };
 
-const MAX_ISOLATE_DEPTH = 2;
+const MAX_ISOLATE_DEPTH = 8;
 
 interface GraphTabProps {
   project: string;

@@ -13,15 +13,17 @@ test("Graph tab renders a nonblank WebGL scene without layout overlap", async ({
   await expect(scene).toBeVisible();
   const canvas = scene.locator("canvas").first();
   await expect(canvas).toBeVisible();
-  await expect(page.getByText("showing 4 / 2")).toBeVisible();
+  await expect(page.getByText("showing 5 / 3")).toBeVisible();
 
   await page.waitForTimeout(1500);
   await expect(await canvasHasMultipleColors(canvas)).toBeTruthy();
 
   await page.getByRole("checkbox", { name: "Isolate connected graph" }).check();
-  await expect(page.getByText("showing 2 / 1 within 1 degree from 4 / 2")).toBeVisible();
+  await expect(page.getByText("showing 2 / 1 within 1 degree from 5 / 3")).toBeVisible();
   await page.getByRole("button", { name: "Increase graph degrees" }).click();
-  await expect(page.getByText("showing 3 / 2 within 2 degrees from 4 / 2")).toBeVisible();
+  await expect(page.getByText("showing 3 / 2 within 2 degrees from 5 / 3")).toBeVisible();
+  await page.getByRole("button", { name: "Increase graph degrees" }).click();
+  await expect(page.getByText("showing 4 / 3 within 3 degrees from 5 / 3")).toBeVisible();
   await page.waitForTimeout(500);
   await expect(await canvasHasMultipleColors(canvas)).toBeTruthy();
 
@@ -186,13 +188,13 @@ const graphStatusResponse = {
   strategy_version: "code-graph-resolution-v1",
   status: "completed",
   completed_at: "2026-06-23T16:00:00Z",
-  symbol_count: 4,
-  reference_count: 2,
-  resolved_reference_count: 2,
+  symbol_count: 5,
+  reference_count: 3,
+  resolved_reference_count: 3,
   unresolved_reference_count: 0,
   ambiguous_reference_count: 0,
-  graph_node_count: 4,
-  graph_edge_count: 2,
+  graph_node_count: 5,
+  graph_edge_count: 3,
   evidence_count: 5,
 };
 
@@ -201,13 +203,13 @@ const graphResponse = {
   status: graphStatusResponse,
   filters: { run_id: graphStatusResponse.latest_run_id, depth: 1, limit_nodes: 250, limit_edges: 500 },
   stats: {
-    total_nodes: 4,
-    total_edges: 2,
-    total_symbols: 4,
-    total_references: 2,
+    total_nodes: 5,
+    total_edges: 3,
+    total_symbols: 5,
+    total_references: 3,
     unresolved_references: 0,
-    returned_nodes: 4,
-    returned_edges: 2,
+    returned_nodes: 5,
+    returned_edges: 3,
     seed_nodes: 1,
   },
   truncated: false,
@@ -276,6 +278,22 @@ const graphResponse = {
       seed: false,
       group: "rust",
     },
+    {
+      id: "99999999-9999-4999-8999-999999999999",
+      stable_identity: "ts:web/src/GraphDetails.tsx:function:GraphDetails:70-80",
+      label: "GraphDetails",
+      node_kind: "code_symbol",
+      language: "typescript",
+      symbol_kind: "component",
+      file_path: "web/src/GraphDetails.tsx",
+      name: "GraphDetails",
+      qualified_name: "GraphDetails",
+      start_line: 70,
+      end_line: 80,
+      degree: 1,
+      seed: false,
+      group: "typescript",
+    },
   ],
   edges: [
     {
@@ -300,6 +318,18 @@ const graphResponse = {
       file_path: "src/handler.rs",
       start_line: 18,
       end_line: 18,
+      resolution_status: "resolved",
+    },
+    {
+      id: "88888888-8888-4888-8888-888888888888",
+      source: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      target: "99999999-9999-4999-8999-999999999999",
+      edge_kind: "renders",
+      reference_kind: "reference",
+      confidence: 0.88,
+      file_path: "web/src/GraphTab.tsx",
+      start_line: 24,
+      end_line: 24,
       resolution_status: "resolved",
     },
   ],

@@ -158,7 +158,7 @@ describe("GraphTab", () => {
       />,
     );
 
-    expect(await screen.findByRole("button", { name: "Increase graph degrees" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Increase graph degrees" })).not.toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Decrease graph degrees" }));
     expect(onFilterChange).toHaveBeenCalledWith({ isolate_depth: 1 });
   });
@@ -187,6 +187,15 @@ describe("applyConnectedGraphIsolation", () => {
     expect(isolated?.stats.returned_edges).toBe(2);
   });
 
+  it("includes third-hop neighbors when the isolate radius is raised above two", () => {
+    const isolated = applyConnectedGraphIsolation(connectedGraph, true, "node-a", 3);
+
+    expect(isolated?.nodes.map((node) => node.id)).toEqual(["node-a", "node-b", "node-c", "node-f"]);
+    expect(isolated?.edges.map((edge) => edge.id)).toEqual(["edge-ab", "edge-bc", "edge-cf"]);
+    expect(isolated?.stats.returned_nodes).toBe(4);
+    expect(isolated?.stats.returned_edges).toBe(3);
+  });
+
   it("falls back to the seed component when no selected node is available", () => {
     const isolated = applyConnectedGraphIsolation(connectedGraph, true, null, 2);
 
@@ -198,13 +207,13 @@ describe("applyConnectedGraphIsolation", () => {
 const connectedStatus: CodeGraphStatusResponse = {
   project: "memory",
   has_graph: true,
-  symbol_count: 5,
-  reference_count: 3,
-  resolved_reference_count: 3,
+  symbol_count: 6,
+  reference_count: 4,
+  resolved_reference_count: 4,
   unresolved_reference_count: 0,
   ambiguous_reference_count: 0,
-  graph_node_count: 5,
-  graph_edge_count: 3,
+  graph_node_count: 6,
+  graph_edge_count: 4,
   evidence_count: 8,
 };
 
@@ -213,13 +222,13 @@ const connectedGraph: CodeGraphResponse = {
   status: connectedStatus,
   filters: { depth: 1, limit_nodes: 250, limit_edges: 500 },
   stats: {
-    total_nodes: 5,
-    total_edges: 3,
-    total_symbols: 5,
-    total_references: 3,
+    total_nodes: 6,
+    total_edges: 4,
+    total_symbols: 6,
+    total_references: 4,
     unresolved_references: 0,
-    returned_nodes: 5,
-    returned_edges: 3,
+    returned_nodes: 6,
+    returned_edges: 4,
     seed_nodes: 1,
   },
   truncated: false,
@@ -227,10 +236,16 @@ const connectedGraph: CodeGraphResponse = {
     graphNode("node-a", true),
     graphNode("node-b"),
     graphNode("node-c"),
+    graphNode("node-f"),
     graphNode("node-d"),
     graphNode("node-e"),
   ],
-  edges: [graphEdge("edge-ab", "node-a", "node-b"), graphEdge("edge-bc", "node-b", "node-c"), graphEdge("edge-de", "node-d", "node-e")],
+  edges: [
+    graphEdge("edge-ab", "node-a", "node-b"),
+    graphEdge("edge-bc", "node-b", "node-c"),
+    graphEdge("edge-cf", "node-c", "node-f"),
+    graphEdge("edge-de", "node-d", "node-e"),
+  ],
 };
 
 function graphNode(id: string, seed = false): CodeGraphNode {
