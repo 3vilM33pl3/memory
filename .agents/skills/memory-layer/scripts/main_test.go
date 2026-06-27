@@ -283,6 +283,46 @@ func TestResolverPrefersExplicitMemctlBin(t *testing.T) {
 	}
 }
 
+func TestResolverPrefersSourceRepoOverInstalledMemory(t *testing.T) {
+	sourceRoot := t.TempDir()
+	mustWriteFile(t, filepath.Join(sourceRoot, "Cargo.toml"), []byte("[workspace]\n"))
+	mustWriteFile(t, filepath.Join(sourceRoot, "crates", "mem-cli", "Cargo.toml"), []byte("[package]\nname=\"mem-cli\"\n"))
+
+	binDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(binDir, "memory"), []byte("#!/bin/sh\nexit 0\n"))
+	if err := os.Chmod(filepath.Join(binDir, "memory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldEnv := os.Getenv("MEMCTL_BIN")
+	t.Cleanup(func() { _ = os.Setenv("MEMCTL_BIN", oldEnv) })
+	if err := os.Unsetenv("MEMCTL_BIN"); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	t.Cleanup(func() { _ = os.Setenv("PATH", oldPath) })
+	if err := os.Setenv("PATH", binDir); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := &memoryCommandResolver{sourceRoot: sourceRoot}
+	got, err := resolver.Resolve()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{
+		"cargo", "run", "--quiet", "--bin", "memory", "--manifest-path", filepath.Join(sourceRoot, "Cargo.toml"), "--",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected arg count: got %v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("arg %d mismatch: got %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestResolverFallsBackToCargoWhenSourceRepoExists(t *testing.T) {
 	sourceRoot := t.TempDir()
 	mustWriteFile(t, filepath.Join(sourceRoot, "Cargo.toml"), []byte("[workspace]\n"))

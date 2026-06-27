@@ -323,16 +323,16 @@ func (r *memoryCommandResolver) Resolve() ([]string, error) {
 		return fields, nil
 	}
 
-	if _, err := exec.LookPath("memory"); err == nil {
-		return []string{"memory"}, nil
-	}
-
 	manifestPath := filepath.Join(r.sourceRoot, "Cargo.toml")
 	memCliManifestPath := filepath.Join(r.sourceRoot, "crates", "mem-cli", "Cargo.toml")
 	if fileExists(manifestPath) && fileExists(memCliManifestPath) {
 		return []string{
 			"cargo", "run", "--quiet", "--bin", "memory", "--manifest-path", manifestPath, "--",
 		}, nil
+	}
+
+	if _, err := exec.LookPath("memory"); err == nil {
+		return []string{"memory"}, nil
 	}
 
 	return nil, errors.New("Memory Layer CLI not found. Install `memory`, or set MEMCTL_BIN to an explicit command.")
