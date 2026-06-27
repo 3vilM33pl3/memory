@@ -1,6 +1,6 @@
 use std::{
     fs, io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command as ProcessCommand,
     time::{Duration, Instant},
 };
@@ -317,6 +317,42 @@ pub(super) fn detect_tool_versions(profile: Profile) -> ToolVersions {
         watch_manager: version.clone(),
         memory_watch: version,
     }
+}
+
+pub(super) fn detect_dev_commit_label(repo_root: &Path) -> String {
+    let short_hash = git_output(repo_root, &["rev-parse", "--short=12", "HEAD"]);
+    let dirty = git_worktree_dirty(repo_root);
+    format_dev_commit_label(short_hash.as_deref(), dirty)
+}
+
+pub(super) fn format_dev_commit_label(short_hash: Option<&str>, dirty: bool) -> String {
+    let Some(short_hash) = short_hash.map(str::trim).filter(|value| !value.is_empty()) else {
+        return "unknown".to_string();
+    };
+    if dirty {
+        format!("{short_hash}+dirty")
+    } else {
+        short_hash.to_string()
+    }
+}
+
+fn git_worktree_dirty(repo_root: &Path) -> bool {
+    git_output(repo_root, &["status", "--porcelain"])
+        .is_some_and(|output| !output.trim().is_empty())
+}
+
+fn git_output(repo_root: &Path, args: &[&str]) -> Option<String> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(args)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub(super) fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {

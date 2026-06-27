@@ -65,6 +65,9 @@ pub async fn store_capture(
             raw_capture_id: existing.try_get("id")?,
             idempotency_key: computed_key,
             dry_run: false,
+            queued_offline: false,
+            offline_queue_id: None,
+            offline_message: None,
         });
     }
 
@@ -91,6 +94,9 @@ pub async fn store_capture(
         raw_capture_id,
         idempotency_key: computed_key,
         dry_run: false,
+        queued_offline: false,
+        offline_queue_id: None,
+        offline_message: None,
     })
 }
 
@@ -111,6 +117,9 @@ pub async fn preview_capture(
         raw_capture_id: Uuid::nil(),
         idempotency_key: idempotency_key(request),
         dry_run: true,
+        queued_offline: false,
+        offline_queue_id: None,
+        offline_message: None,
     })
 }
 

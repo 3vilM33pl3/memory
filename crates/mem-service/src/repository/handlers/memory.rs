@@ -185,7 +185,7 @@ pub(crate) async fn get_memory(
             proxy_get_json(&state, &format!("/v1/memory/{id}")).await?,
         ));
     }
-    let detail = fetch_memory_entry(state.pool()?, id)
+    let detail = fetch_memory_entry(&state.pool()?, id)
         .await
         .map_err(ApiError::sql)?
         .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
@@ -201,7 +201,7 @@ pub(crate) async fn get_memory_history(
             proxy_get_json(&state, &format!("/v1/memory/{id}/history")).await?,
         ));
     }
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     // Walk back to the canonical_id of the provided version, then pull every
     // sibling version in chronological order. The caller can pass any
     // version's id (including a tombstone) and get the same chain.
@@ -284,7 +284,7 @@ pub(crate) async fn archive(
         .bind(&request.project)
         .bind(request.max_confidence)
         .bind(request.max_importance)
-        .fetch_one(state.pool()?)
+        .fetch_one(&state.pool()?)
         .await
         .map_err(ApiError::sql)?
         .try_get::<i64, _>("count")
@@ -305,7 +305,7 @@ pub(crate) async fn archive(
         .bind(&request.project)
         .bind(request.max_confidence)
         .bind(request.max_importance)
-        .execute(state.pool()?)
+        .execute(&state.pool()?)
         .await
         .map_err(ApiError::sql)?
         .rows_affected()
@@ -374,7 +374,7 @@ pub(crate) async fn archive_memory(
         "#,
     )
     .bind(id)
-    .fetch_optional(state.pool()?)
+    .fetch_optional(&state.pool()?)
     .await
     .map_err(ApiError::sql)?
     .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
@@ -418,7 +418,7 @@ pub(crate) async fn delete_memory(
     // the same canonical_id but empty content and is_tombstone=TRUE. Default
     // searches skip it; history-aware queries can still surface the prior
     // versions so nothing is truly lost.
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let mut tx = pool.begin().await.map_err(ApiError::sql)?;
     let target = sqlx::query(
         r#"
@@ -516,7 +516,7 @@ pub(crate) async fn prune_history(
         ));
     }
 
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let mut tx = pool.begin().await.map_err(ApiError::sql)?;
 
     let project_filter: Option<String> = effective.project.clone();

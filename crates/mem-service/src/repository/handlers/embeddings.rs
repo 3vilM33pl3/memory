@@ -30,7 +30,7 @@ pub(crate) async fn reindex(
     let project = request.project.clone();
     let count = if request.dry_run {
         if request.backend.is_some() {
-            count_missing_embedding_chunks(state.pool()?, &request.project, &selected_keys).await?
+            count_missing_embedding_chunks(&state.pool()?, &request.project, &selected_keys).await?
         } else {
             sqlx::query(
                 r#"
@@ -41,7 +41,7 @@ pub(crate) async fn reindex(
                 "#,
             )
             .bind(&request.project)
-            .fetch_one(state.pool()?)
+            .fetch_one(&state.pool()?)
             .await
             .map_err(ApiError::sql)?
             .try_get::<i64, _>("count")
@@ -49,7 +49,7 @@ pub(crate) async fn reindex(
         }
     } else {
         rebuild_chunks(
-            state.pool()?,
+            &state.pool()?,
             &request.project,
             &embedders,
             request.backend.as_deref(),
@@ -127,10 +127,10 @@ pub(crate) async fn reembed(
             .iter()
             .map(|(_, space_key)| space_key.clone())
             .collect::<Vec<_>>();
-        count_missing_embedding_chunks(state.pool()?, &request.project, &space_keys).await?
+        count_missing_embedding_chunks(&state.pool()?, &request.project, &space_keys).await?
     } else {
         reembed_project_chunks(
-            state.pool()?,
+            &state.pool()?,
             &request.project,
             &embedders,
             request.backend.as_deref(),
@@ -244,13 +244,13 @@ pub(crate) async fn prune_embeddings(
         )
         .bind(&request.project)
         .bind(&keep)
-        .fetch_one(state.pool()?)
+        .fetch_one(&state.pool()?)
         .await
         .map_err(ApiError::sql)?
         .try_get::<i64, _>("count")
         .map_err(ApiError::sql)? as u64
     } else {
-        prune_project_embeddings(state.pool()?, &request.project, &embedders)
+        prune_project_embeddings(&state.pool()?, &request.project, &embedders)
             .await
             .map_err(|error| {
                 ApiError::diagnostic(
@@ -366,7 +366,7 @@ pub(crate) async fn fetch_project_embedding_coverage(
     state: &AppState,
     slug: &str,
 ) -> Result<std::collections::HashMap<String, (i64, i64)>, ApiError> {
-    let Some(pool) = state.pool.as_ref() else {
+    let Ok(pool) = state.pool() else {
         return Ok(std::collections::HashMap::new());
     };
     let rows = sqlx::query(
@@ -385,7 +385,7 @@ pub(crate) async fn fetch_project_embedding_coverage(
         "#,
     )
     .bind(slug)
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await
     .map_err(ApiError::sql)?;
 

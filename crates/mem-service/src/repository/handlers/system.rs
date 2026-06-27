@@ -7,6 +7,31 @@ pub(crate) async fn healthz(
     Ok(Json(health_payload(&state).await.map_err(ApiError::io)?))
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct OfflinePendingQuery {
+    pub(crate) project: Option<String>,
+    pub(crate) limit: Option<usize>,
+}
+
+pub(crate) async fn offline_pending(
+    State(state): State<AppState>,
+    Query(query): Query<OfflinePendingQuery>,
+) -> Result<Json<mem_api::OfflinePendingResponse>, ApiError> {
+    let Some(store) = state.offline_store() else {
+        return Ok(Json(mem_api::OfflinePendingResponse {
+            enabled: false,
+            database_path: None,
+            pending_count: 0,
+            items: Vec::new(),
+        }));
+    };
+    let response = store
+        .pending_response(query.project.as_deref(), query.limit.unwrap_or(50).min(200))
+        .await
+        .map_err(ApiError::io)?;
+    Ok(Json(response))
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct WebAuthTokenResponse {
     pub(crate) api_token: String,
@@ -67,7 +92,7 @@ pub(crate) async fn stats(State(state): State<AppState>) -> Result<Json<StatsRes
     if !state.is_primary() {
         return Ok(Json(proxy_get_json(&state, "/v1/stats").await?));
     }
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let counts = [
         ("projects", "SELECT COUNT(*) AS count FROM projects"),
         ("sessions", "SELECT COUNT(*) AS count FROM sessions"),

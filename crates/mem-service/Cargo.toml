@@ -15,6 +15,7 @@ mem-agenttop = { path = "../mem-agenttop" }
 mem-api = { path = "../mem-api" }
 mem-curate = { path = "../mem-curate" }
 mem-graph = { path = "../mem-graph" }
+mem-ingest = { path = "../mem-ingest" }
 mem-loops = { path = "../mem-loops" }
 mem-mcp = { path = "../mem-mcp" }
 mem-platform = { path = "../mem-platform" }
@@ -22,6 +23,7 @@ mem-search = { path = "../mem-search" }
 mem-skills = { path = "../mem-skills" }
 mem-watch = { path = "../mem-watch" }
 futures-util.workspace = true
+duckdb.workspace = true
 reqwest.workspace = true
 rmcp.workspace = true
 serde.workspace = true

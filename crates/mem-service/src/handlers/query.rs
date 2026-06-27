@@ -11,7 +11,7 @@ pub(crate) async fn query(
             proxy_post_json(&state, "/v1/query", &request, false).await?,
         ));
     }
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let embedders = state.embedders.read().await;
     match query_memory_with_provenance_config(
         pool,

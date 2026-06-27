@@ -13,7 +13,7 @@ pub(crate) async fn verify_provenance(
             proxy_post_json(&state, "/v1/provenance/verify", &request, true).await?,
         ));
     }
-    verify_project_provenance(state.pool()?, &request)
+    verify_project_provenance(&state.pool()?, &request)
         .await
         .map(Json)
         .map_err(ApiError::sql)
@@ -222,7 +222,7 @@ pub(crate) async fn run_provenance_reverify_scheduler(state: AppState) -> Result
 }
 
 pub(crate) async fn reverify_all_projects_once(state: &AppState) -> Result<()> {
-    let Some(pool) = state.pool.clone() else {
+    let Ok(pool) = state.pool() else {
         return Ok(());
     };
     let projects = sqlx::query(

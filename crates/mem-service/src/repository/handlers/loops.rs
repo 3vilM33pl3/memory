@@ -114,7 +114,7 @@ pub(crate) async fn list_loop_definitions(
     if !state.is_primary() {
         return Ok(Json(proxy_get_json(&state, "/v1/loops").await?));
     }
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let definitions = fetch_loop_definitions(pool).await?;
     let _ = query;
     Ok(Json(LoopDefinitionsResponse { definitions }))
@@ -130,7 +130,7 @@ pub(crate) async fn get_loop_definition(
             proxy_get_json(&state, &format!("/v1/loops/{loop_id}")).await?,
         ));
     }
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let definition = fetch_loop_definition(pool, &loop_id).await?;
     let effective_settings = if query.project.is_some() || query.repo_root.is_some() {
         Some(
@@ -160,7 +160,7 @@ pub(crate) async fn get_loop_global_state(
             proxy_get_json(&state, "/v1/loops/global-kill-switch").await?,
         ));
     }
-    Ok(Json(fetch_loop_global_state(state.pool()?).await?))
+    Ok(Json(fetch_loop_global_state(&state.pool()?).await?))
 }
 
 pub(crate) async fn update_loop_global_state(
@@ -175,7 +175,7 @@ pub(crate) async fn update_loop_global_state(
         ));
     }
     Ok(Json(
-        store_loop_global_state(state.pool()?, &request).await?,
+        store_loop_global_state(&state.pool()?, &request).await?,
     ))
 }
 
@@ -188,7 +188,7 @@ pub(crate) async fn enable_loop(
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.enabled = Some(true);
     if request.mode.is_none() {
-        let definition = fetch_loop_definition(state.pool()?, &loop_id).await?;
+        let definition = fetch_loop_definition(&state.pool()?, &loop_id).await?;
         request.mode = Some(definition.default_mode);
     }
     mutate_loop_setting(state, loop_id, request, true).await
@@ -258,7 +258,7 @@ async fn mutate_loop_setting(
         return Ok(Json(proxy_post_json(&state, &path, &request, true).await?));
     }
 
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let definition = fetch_loop_definition(pool, &loop_id).await?;
     let scope = resolve_loop_scope(pool, &request, true).await?;
     if requires_explicit_approval && !request.explicit_user_approval {
@@ -323,7 +323,7 @@ pub(crate) async fn run_loop(
         ));
     }
     Ok(Json(
-        create_control_plane_loop_run(state.pool()?, &loop_id, &request).await?,
+        create_control_plane_loop_run(&state.pool()?, &loop_id, &request).await?,
     ))
 }
 
@@ -340,7 +340,7 @@ pub(crate) async fn route_loop_trigger(
         ));
     }
     Ok(Json(
-        route_loop_trigger_event_inner(state.pool()?, &request).await?,
+        route_loop_trigger_event_inner(&state.pool()?, &request).await?,
     ))
 }
 
@@ -384,7 +384,7 @@ pub(crate) async fn build_loop_context_pack(
     };
     request.validate().map_err(ApiError::validation)?;
     Ok(Json(
-        build_loop_context_pack_response(state.pool()?, &loop_id, &request).await?,
+        build_loop_context_pack_response(&state.pool()?, &loop_id, &request).await?,
     ))
 }
 
@@ -395,7 +395,7 @@ pub(crate) async fn list_loop_runs(
     if !state.is_primary() {
         return Ok(Json(proxy_get_json(&state, "/v1/loops/runs").await?));
     }
-    Ok(Json(fetch_loop_runs(state.pool()?, &query).await?))
+    Ok(Json(fetch_loop_runs(&state.pool()?, &query).await?))
 }
 
 pub(crate) async fn get_loop_run(
@@ -408,7 +408,7 @@ pub(crate) async fn get_loop_run(
         ));
     }
     Ok(Json(LoopRunResponse {
-        run: fetch_loop_run_detail(state.pool()?, run_id).await?,
+        run: fetch_loop_run_detail(&state.pool()?, run_id).await?,
     }))
 }
 
@@ -421,7 +421,7 @@ pub(crate) async fn get_loop_run_context_pack(
             proxy_get_json(&state, &format!("/v1/loops/runs/{run_id}/context-pack")).await?,
         ));
     }
-    let response = fetch_loop_run_context_pack(state.pool()?, run_id)
+    let response = fetch_loop_run_context_pack(&state.pool()?, run_id)
         .await?
         .ok_or_else(|| ApiError::not_found("loop run context pack not found"))?;
     Ok(Json(response))
@@ -446,7 +446,7 @@ pub(crate) async fn cancel_loop_run(
         ));
     }
     Ok(Json(
-        cancel_loop_run_record(state.pool()?, run_id, &request).await?,
+        cancel_loop_run_record(&state.pool()?, run_id, &request).await?,
     ))
 }
 
@@ -470,7 +470,7 @@ pub(crate) async fn submit_loop_feedback(
         ));
     }
     append_loop_trace(
-        state.pool()?,
+        &state.pool()?,
         run_id,
         "feedback",
         "User feedback",
@@ -479,7 +479,7 @@ pub(crate) async fn submit_loop_feedback(
     )
     .await?;
     Ok(Json(LoopRunResponse {
-        run: fetch_loop_run_detail(state.pool()?, run_id).await?,
+        run: fetch_loop_run_detail(&state.pool()?, run_id).await?,
     }))
 }
 
@@ -490,7 +490,7 @@ pub(crate) async fn list_loop_approvals(
     if !state.is_primary() {
         return Ok(Json(proxy_get_json(&state, "/v1/loops/approvals").await?));
     }
-    Ok(Json(fetch_loop_approvals(state.pool()?, &query).await?))
+    Ok(Json(fetch_loop_approvals(&state.pool()?, &query).await?))
 }
 
 pub(crate) async fn approve_loop_approval(
@@ -513,7 +513,7 @@ pub(crate) async fn approve_loop_approval(
     }
     Ok(Json(
         resolve_loop_approval_decision(
-            state.pool()?,
+            &state.pool()?,
             approval_id,
             LoopApprovalStatus::Approved,
             &request,
@@ -542,7 +542,7 @@ pub(crate) async fn reject_loop_approval(
     }
     Ok(Json(
         resolve_loop_approval_decision(
-            state.pool()?,
+            &state.pool()?,
             approval_id,
             LoopApprovalStatus::Rejected,
             &request,
@@ -576,7 +576,7 @@ pub(crate) async fn edit_loop_approval(
     }
     Ok(Json(
         resolve_loop_approval_decision(
-            state.pool()?,
+            &state.pool()?,
             approval_id,
             LoopApprovalStatus::Edited,
             &request,
@@ -595,7 +595,7 @@ pub(crate) async fn list_loop_memory_proposals(
         ));
     }
     Ok(Json(
-        fetch_loop_memory_proposals_for_query(state.pool()?, &query).await?,
+        fetch_loop_memory_proposals_for_query(&state.pool()?, &query).await?,
     ))
 }
 
@@ -612,7 +612,7 @@ pub(crate) async fn create_loop_memory_proposal(
         ));
     }
     Ok(Json(
-        insert_loop_memory_proposal(state.pool()?, &request).await?,
+        insert_loop_memory_proposal(&state.pool()?, &request).await?,
     ))
 }
 
@@ -635,7 +635,7 @@ pub(crate) async fn approve_loop_memory_proposal(
         ));
     }
     Ok(Json(
-        resolve_loop_memory_proposal_decision(state.pool()?, proposal_id, "approved", &request)
+        resolve_loop_memory_proposal_decision(&state.pool()?, proposal_id, "approved", &request)
             .await?,
     ))
 }
@@ -659,7 +659,7 @@ pub(crate) async fn reject_loop_memory_proposal(
         ));
     }
     Ok(Json(
-        resolve_loop_memory_proposal_decision(state.pool()?, proposal_id, "rejected", &request)
+        resolve_loop_memory_proposal_decision(&state.pool()?, proposal_id, "rejected", &request)
             .await?,
     ))
 }
@@ -691,7 +691,7 @@ pub(crate) async fn edit_loop_memory_proposal(
         ));
     }
     Ok(Json(
-        edit_loop_memory_proposal_record(state.pool()?, proposal_id, &request).await?,
+        edit_loop_memory_proposal_record(&state.pool()?, proposal_id, &request).await?,
     ))
 }
 

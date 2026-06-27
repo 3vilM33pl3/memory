@@ -428,7 +428,7 @@ pub(crate) async fn project_bundle_export_preview(
     Json(options): Json<ProjectMemoryExportOptions>,
 ) -> Result<Json<ProjectMemoryBundlePreview>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let memories = load_project_bundle_entries(pool, &slug, &options).await?;
     let (manifest, warnings) = build_bundle_manifest(&slug, &options, &memories)?;
     Ok(Json(build_export_preview(&manifest, warnings)))
@@ -441,7 +441,7 @@ pub(crate) async fn project_bundle_export(
     Json(options): Json<ProjectMemoryExportOptions>,
 ) -> Result<Response, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let memories = load_project_bundle_entries(pool, &slug, &options).await?;
     let (manifest, _) = build_bundle_manifest(&slug, &options, &memories)?;
     let bytes = serialize_bundle_archive(&manifest)?;
@@ -480,7 +480,7 @@ pub(crate) async fn project_bundle_import_preview(
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     let loaded = load_bundle_archive(&body)?;
     let preview =
-        preview_bundle_import(state.pool()?, &slug, &loaded.manifest, loaded.warnings).await?;
+        preview_bundle_import(&state.pool()?, &slug, &loaded.manifest, loaded.warnings).await?;
     Ok(Json(preview))
 }
 
@@ -492,7 +492,7 @@ pub(crate) async fn project_bundle_import(
 ) -> Result<Json<ProjectMemoryImportResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     let loaded = load_bundle_archive(&body)?;
-    let pool = state.pool()?;
+    let pool = &state.pool()?;
     let target_project_id = upsert_project_slug(pool, &slug)
         .await
         .map_err(ApiError::sql)?;

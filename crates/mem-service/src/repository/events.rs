@@ -143,7 +143,7 @@ pub(crate) async fn watcher_restart_local(
 }
 
 pub(crate) fn persist_timeline_event(state: &AppState, event: &ServiceEvent) {
-    let Some(pool) = state.pool.clone() else {
+    let Ok(pool) = state.pool() else {
         return;
     };
     let project = event.project.clone();
@@ -520,11 +520,10 @@ pub(crate) async fn fetch_project_overview_with_watchers(
     slug: &str,
 ) -> Result<ProjectOverviewResponse, sqlx::Error> {
     let pool = state
-        .pool
-        .as_ref()
+        .pool()
         .expect("project overview requires a primary database pool");
     let mut overview = fetch_project_overview(
-        pool,
+        &pool,
         slug,
         &state.config.automation,
         state.config.embeddings.active_backend(),

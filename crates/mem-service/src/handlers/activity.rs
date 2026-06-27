@@ -13,16 +13,24 @@ pub(crate) async fn capture_task(
             proxy_post_json(&state, "/v1/capture/task", &request, true).await?,
         ));
     }
+    if !state.pool_available() {
+        return queue_capture_offline(&state, &request).await.map(Json);
+    }
     let task_title = request.task_title.clone();
     let project = request.project.clone();
     let response = if request.dry_run {
-        preview_capture(state.pool()?, &request)
+        preview_capture(&state.pool()?, &request)
             .await
             .map_err(ApiError::sql)?
     } else {
-        store_capture(state.pool()?, &request)
-            .await
-            .map_err(ApiError::sql)?
+        match store_capture(&state.pool()?, &request).await {
+            Ok(response) => response,
+            Err(error) if state.offline_store().is_some() => {
+                tracing::warn!(error = %error, "postgres capture failed; queueing offline");
+                return queue_capture_offline(&state, &request).await.map(Json);
+            }
+            Err(error) => return Err(ApiError::sql(error)),
+        }
     };
     if request.dry_run {
         return Ok(Json(response));
@@ -43,6 +51,40 @@ pub(crate) async fn capture_task(
         }),
     );
     Ok(Json(response))
+}
+
+async fn queue_capture_offline(
+    state: &AppState,
+    request: &CaptureTaskRequest,
+) -> Result<mem_api::CaptureTaskResponse, ApiError> {
+    if request.dry_run {
+        return Err(ApiError::service_unavailable(
+            "dry-run capture requires PostgreSQL; service is in offline degraded mode",
+        ));
+    }
+    let Some(store) = state.offline_store() else {
+        return Err(ApiError::service_unavailable(
+            "PostgreSQL is unavailable and offline backup is disabled",
+        ));
+    };
+    let response = store.queue_capture(request).await.map_err(ApiError::io)?;
+    let details = ActivityDetails::CaptureTask {
+        session_id: response.session_id,
+        task_id: response.task_id,
+        raw_capture_id: response.raw_capture_id,
+        idempotency_key: response.idempotency_key.clone(),
+        task_title: Some(request.task_title.clone()),
+        writer_id: request.writer_id.clone(),
+    };
+    let _ = queue_activity_offline(
+        state,
+        request.project.clone(),
+        ActivityKind::CaptureTask,
+        format!("Captured task: {}", request.task_title),
+        Some(details),
+    )
+    .await?;
+    Ok(response)
 }
 
 pub(crate) async fn scan_activity(
@@ -69,22 +111,33 @@ pub(crate) async fn scan_activity(
             request.candidate_count
         )
     };
+    let details = ActivityDetails::Scan {
+        dry_run: request.dry_run,
+        candidate_count: request.candidate_count,
+        files_considered: request.files_considered,
+        commits_considered: request.commits_considered,
+        index_reused: request.index_reused,
+        report_path: request.report_path.clone(),
+        capture_id: request.capture_id.clone(),
+        curate_run_id: request.curate_run_id.clone(),
+    };
+    if !state.pool_available() {
+        return offline_activity_response(
+            &state,
+            request.project.clone(),
+            ActivityKind::Scan,
+            summary,
+            Some(details),
+        )
+        .await;
+    }
     notify_project_changed(
         &state,
         request.project.clone(),
         None,
         ActivityKind::Scan,
         summary,
-        Some(ActivityDetails::Scan {
-            dry_run: request.dry_run,
-            candidate_count: request.candidate_count,
-            files_considered: request.files_considered,
-            commits_considered: request.commits_considered,
-            index_reused: request.index_reused,
-            report_path: request.report_path.clone(),
-            capture_id: request.capture_id.clone(),
-            curate_run_id: request.curate_run_id.clone(),
-        }),
+        Some(details),
     );
     Ok(Json(serde_json::json!({ "logged": true })))
 }
@@ -102,13 +155,25 @@ pub(crate) async fn graph_activity(
         ));
     }
 
+    let summary = graph_activity_summary(&request);
+    let details = graph_activity_details(&request);
+    if !state.pool_available() {
+        return offline_activity_response(
+            &state,
+            request.project.clone(),
+            ActivityKind::GraphExtract,
+            summary,
+            Some(details),
+        )
+        .await;
+    }
     notify_project_changed(
         &state,
         request.project.clone(),
         None,
         ActivityKind::GraphExtract,
-        graph_activity_summary(&request),
-        Some(graph_activity_details(&request)),
+        summary,
+        Some(details),
     );
     Ok(Json(serde_json::json!({ "logged": true })))
 }
@@ -167,19 +232,30 @@ pub(crate) async fn checkpoint_activity(
     } else {
         format!("Saved checkpoint for project {}", request.project)
     };
+    let details = ActivityDetails::Checkpoint {
+        repo_root: request.checkpoint.repo_root.clone(),
+        marked_at: request.checkpoint.marked_at,
+        note: request.checkpoint.note.clone(),
+        git_branch: request.checkpoint.git_branch.clone(),
+        git_head: request.checkpoint.git_head.clone(),
+    };
+    if !state.pool_available() {
+        return offline_activity_response(
+            &state,
+            request.project.clone(),
+            ActivityKind::Checkpoint,
+            summary,
+            Some(details),
+        )
+        .await;
+    }
     notify_project_changed(
         &state,
         request.project.clone(),
         None,
         ActivityKind::Checkpoint,
         summary,
-        Some(ActivityDetails::Checkpoint {
-            repo_root: request.checkpoint.repo_root.clone(),
-            marked_at: request.checkpoint.marked_at,
-            note: request.checkpoint.note.clone(),
-            git_branch: request.checkpoint.git_branch.clone(),
-            git_head: request.checkpoint.git_head.clone(),
-        }),
+        Some(details),
     );
     Ok(Json(serde_json::json!({ "logged": true })))
 }
@@ -214,22 +290,71 @@ pub(crate) async fn plan_activity(
             format!("Verified approved plan complete: {}", request.title)
         }
     };
+    let details = ActivityDetails::Plan {
+        action: request.action.clone(),
+        title: request.title.clone(),
+        thread_key: request.thread_key.clone(),
+        total_items: request.total_items,
+        completed_items: request.completed_items,
+        remaining_items: request.remaining_items.clone(),
+        source_path: request.source_path.clone(),
+        verified_complete,
+    };
+    if !state.pool_available() {
+        return offline_activity_response(
+            &state,
+            request.project.clone(),
+            ActivityKind::Plan,
+            summary,
+            Some(details),
+        )
+        .await;
+    }
     notify_project_changed(
         &state,
         request.project.clone(),
         None,
         ActivityKind::Plan,
         summary,
-        Some(ActivityDetails::Plan {
-            action: request.action.clone(),
-            title: request.title.clone(),
-            thread_key: request.thread_key.clone(),
-            total_items: request.total_items,
-            completed_items: request.completed_items,
-            remaining_items: request.remaining_items.clone(),
-            source_path: request.source_path.clone(),
-            verified_complete,
-        }),
+        Some(details),
     );
     Ok(Json(serde_json::json!({ "logged": true })))
+}
+
+async fn offline_activity_response(
+    state: &AppState,
+    project: String,
+    kind: ActivityKind,
+    summary: String,
+    details: Option<ActivityDetails>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let queue_id = queue_activity_offline(state, project, kind, summary, details).await?;
+    Ok(Json(serde_json::json!({
+        "logged": true,
+        "queued_offline": true,
+        "offline_queue_id": queue_id
+    })))
+}
+
+async fn queue_activity_offline(
+    state: &AppState,
+    project: String,
+    kind: ActivityKind,
+    summary: String,
+    details: Option<ActivityDetails>,
+) -> Result<Uuid, ApiError> {
+    let Some(store) = state.offline_store() else {
+        return Err(ApiError::service_unavailable(
+            "PostgreSQL is unavailable and offline backup is disabled",
+        ));
+    };
+    let event = QueuedActivityEvent {
+        event_id: Uuid::new_v4(),
+        project,
+        kind,
+        summary,
+        details,
+        recorded_at: chrono::Utc::now(),
+    };
+    store.queue_activity(&event).await.map_err(ApiError::io)
 }

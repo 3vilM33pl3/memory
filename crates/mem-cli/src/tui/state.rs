@@ -52,6 +52,8 @@ pub(super) struct ServiceState {
     pub(in crate::tui) service_role: Option<String>,
     pub(in crate::tui) service_health_state: Option<String>,
     pub(in crate::tui) service_database_state: Option<String>,
+    pub(in crate::tui) offline_pending_count: Option<u64>,
+    pub(in crate::tui) offline_database_path: Option<String>,
     pub(in crate::tui) manager_status: Option<ManagerFooterStatus>,
     pub(in crate::tui) restart_notice: Option<TuiRestartNotice>,
     pub(in crate::tui) stream_connecting: bool,
@@ -72,6 +74,7 @@ pub(super) struct RuntimeMeta {
     pub(in crate::tui) skill_inventory: SkillInventoryReport,
     pub(in crate::tui) startup_at: DateTime<Utc>,
     pub(in crate::tui) profile: Profile,
+    pub(in crate::tui) dev_commit_label: Option<String>,
 }
 
 pub(super) struct MemoriesTabState {

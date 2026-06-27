@@ -907,6 +907,36 @@ pub struct CaptureTaskResponse {
     pub idempotency_key: String,
     #[serde(default)]
     pub dry_run: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub queued_offline: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offline_queue_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offline_message: Option<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OfflinePendingResponse {
+    pub enabled: bool,
+    pub database_path: Option<String>,
+    pub pending_count: u64,
+    pub items: Vec<OfflinePendingItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OfflinePendingItem {
+    pub queue_id: Uuid,
+    pub item_kind: String,
+    pub project: String,
+    pub summary: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub attempt_count: u64,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3536,6 +3566,8 @@ pub struct AppConfig {
     pub mcp: McpConfig,
     pub database: DatabaseConfig,
     #[serde(default)]
+    pub offline: OfflineConfig,
+    #[serde(default)]
     pub features: FeatureFlags,
     #[serde(default)]
     pub llm: LlmConfig,
@@ -4086,6 +4118,30 @@ pub struct DatabaseConfig {
     pub url: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OfflineConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    #[serde(default = "default_offline_reconnect_interval")]
+    #[serde(with = "humantime_serde")]
+    pub reconnect_interval: Duration,
+    #[serde(default = "default_offline_sync_batch_size")]
+    pub sync_batch_size: usize,
+}
+
+impl Default for OfflineConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: None,
+            reconnect_interval: default_offline_reconnect_interval(),
+            sync_batch_size: default_offline_sync_batch_size(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FeatureFlags {
     #[serde(default)]
@@ -4612,6 +4668,14 @@ fn default_cluster_peer_ttl() -> Duration {
 
 fn default_cluster_priority() -> i32 {
     100
+}
+
+fn default_offline_reconnect_interval() -> Duration {
+    Duration::from_secs(15)
+}
+
+fn default_offline_sync_batch_size() -> usize {
+    50
 }
 
 fn default_api_token() -> String {

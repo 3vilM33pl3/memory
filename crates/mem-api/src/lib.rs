@@ -5,8 +5,8 @@ pub use types::*;
 pub mod config {
     pub use crate::types::{
         AppConfig, AutomationConfig, ClusterConfig, DatabaseConfig, EmbeddingBackendConfig,
-        EmbeddingsConfig, FeatureFlags, LlmAuditConfig, LlmConfig, McpConfig, Profile,
-        RetentionConfig, ServiceConfig, WriterConfig, dev_overlay_path_for_base,
+        EmbeddingsConfig, FeatureFlags, LlmAuditConfig, LlmConfig, McpConfig, OfflineConfig,
+        Profile, RetentionConfig, ServiceConfig, WriterConfig, dev_overlay_path_for_base,
         discover_global_config_path, discover_global_env_path, discover_repo_config_path,
         discover_repo_dev_config_path, discover_repo_env_path, effective_llm_base_url,
         effective_llm_base_url_for, is_ollama_provider, is_supported_llm_provider,

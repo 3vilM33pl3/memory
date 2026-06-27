@@ -15,8 +15,8 @@ use super::{
     edit_loop_memory_proposal, enable_loop, get_loop_definition, get_loop_global_state,
     get_loop_run, get_loop_run_context_pack, get_memory, get_memory_history, graph_activity,
     healthz, list_embedding_backends, list_loop_approvals, list_loop_definitions,
-    list_loop_memory_proposals, list_loop_runs, llm_audit_status, pause_loop, plan_activity,
-    project_activities, project_bundle_export, project_bundle_export_preview,
+    list_loop_memory_proposals, list_loop_runs, llm_audit_status, offline_pending, pause_loop,
+    plan_activity, project_activities, project_bundle_export, project_bundle_export_preview,
     project_bundle_import, project_bundle_import_preview, project_commit_detail, project_commits,
     project_graph, project_graph_status, project_memories, project_memory_graph, project_overview,
     project_replacement_policy, project_replacement_policy_update,
@@ -40,6 +40,7 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
         .route("/v1/web/auth-token", get(web_auth_token))
         .route("/v1/admin/shutdown", post(admin_shutdown))
         .route("/v1/runtime/status", get(runtime_status))
+        .route("/v1/offline/pending", get(offline_pending))
         .route("/v1/skills", get(skills))
         .route("/v1/skills/repair", post(repair_skills))
         .route("/v1/skills/{skill_name}", get(read_skill))
