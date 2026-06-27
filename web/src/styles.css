@@ -626,7 +626,7 @@ pre {
 
 .graph-toolbar {
   display: grid;
-  grid-template-columns: minmax(11rem, 1.3fr) minmax(11rem, 1.1fr) minmax(9rem, 1fr) minmax(8rem, 0.8fr) 5rem 5.5rem 5.5rem minmax(10rem, max-content) 9rem max-content max-content;
+  grid-template-columns: minmax(11rem, 1.3fr) minmax(11rem, 1.1fr) minmax(9rem, 1fr) minmax(8rem, 0.8fr) 5rem 5.5rem 5.5rem minmax(10rem, max-content) 9rem minmax(9rem, max-content) max-content max-content;
   gap: 0.4rem;
   align-items: end;
   padding: 0.45rem;
@@ -683,6 +683,13 @@ pre {
 .graph-degree-stepper button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.graph-history {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(4rem, max-content));
+  gap: 0.25rem;
+  align-items: end;
 }
 
 .graph-summary {

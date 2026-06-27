@@ -31,6 +31,11 @@ interface GraphTabProps {
   onRefresh: () => void;
   onSelectNode: (nodeId: string | null) => void;
   onSelectEdge: (edgeId: string | null) => void;
+  onClearSelection: () => void;
+  canGoBackSelection: boolean;
+  canGoForwardSelection: boolean;
+  onGoBackSelection: () => void;
+  onGoForwardSelection: () => void;
 }
 
 export function GraphTab({
@@ -47,6 +52,11 @@ export function GraphTab({
   onRefresh,
   onSelectNode,
   onSelectEdge,
+  onClearSelection,
+  canGoBackSelection,
+  canGoForwardSelection,
+  onGoBackSelection,
+  onGoForwardSelection,
 }: GraphTabProps) {
   const [webglSupported, setWebglSupported] = useState(true);
   const visibleGraph = useMemo(
@@ -152,6 +162,14 @@ export function GraphTab({
             </button>
           </span>
         </div>
+        <div className="graph-history">
+          <button type="button" onClick={onGoBackSelection} disabled={!canGoBackSelection}>
+            Back
+          </button>
+          <button type="button" onClick={onGoForwardSelection} disabled={!canGoForwardSelection}>
+            Forward
+          </button>
+        </div>
         <button type="submit" disabled={loading}>{loading ? "Loading..." : "Apply"}</button>
         <button type="button" onClick={onRefresh} disabled={loading}>Refresh</button>
       </form>
@@ -189,6 +207,7 @@ export function GraphTab({
             selectedEdge={visibleSelectedEdge}
             onSelectNode={onSelectNode}
             onSelectEdge={onSelectEdge}
+            onClearSelection={onClearSelection}
           />
           <GraphInspector node={visibleSelectedNode as VisibleCodeGraphNode | null} edge={visibleSelectedEdge} graph={visibleGraph} />
         </div>
@@ -228,23 +247,27 @@ function GraphScene({
   selectedEdge,
   onSelectNode,
   onSelectEdge,
+  onClearSelection,
 }: {
   graph: CodeGraphResponse | null;
   selectedNode: CodeGraphNode | null;
   selectedEdge: CodeGraphEdge | null;
   onSelectNode: (nodeId: string | null) => void;
   onSelectEdge: (edgeId: string | null) => void;
+  onClearSelection: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<ForceGraph3DInstance<RenderNode, RenderLink> | null>(null);
   const onSelectNodeRef = useRef(onSelectNode);
   const onSelectEdgeRef = useRef(onSelectEdge);
+  const onClearSelectionRef = useRef(onClearSelection);
   const renderData = useMemo(() => buildRenderData(graph, selectedNode?.id ?? null, selectedEdge?.id ?? null), [graph, selectedEdge?.id, selectedNode?.id]);
 
   useEffect(() => {
     onSelectNodeRef.current = onSelectNode;
     onSelectEdgeRef.current = onSelectEdge;
-  }, [onSelectEdge, onSelectNode]);
+    onClearSelectionRef.current = onClearSelection;
+  }, [onClearSelection, onSelectEdge, onSelectNode]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -271,8 +294,7 @@ function GraphScene({
       .onNodeClick((node) => onSelectNodeRef.current(node.id))
       .onLinkClick((link) => onSelectEdgeRef.current(link.id))
       .onBackgroundClick(() => {
-        onSelectNodeRef.current(null);
-        onSelectEdgeRef.current(null);
+        onClearSelectionRef.current();
       });
     instanceRef.current = instance;
 

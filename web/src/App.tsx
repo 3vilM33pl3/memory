@@ -86,6 +86,11 @@ export default function App() {
     refreshGraph,
     selectGraphNode,
     selectGraphEdge,
+    clearGraphSelection,
+    canGoBackGraphSelection,
+    canGoForwardGraphSelection,
+    goBackGraphSelection,
+    goForwardGraphSelection,
     handleQuerySubmit,
     applyQueryHistory,
     setQueryHistoryCursor,
@@ -330,6 +335,11 @@ export default function App() {
             onRefresh={refreshGraph}
             onSelectNode={selectGraphNode}
             onSelectEdge={selectGraphEdge}
+            onClearSelection={clearGraphSelection}
+            canGoBackSelection={canGoBackGraphSelection}
+            canGoForwardSelection={canGoForwardGraphSelection}
+            onGoBackSelection={goBackGraphSelection}
+            onGoForwardSelection={goForwardGraphSelection}
           />
         </Suspense>
       ) : null}

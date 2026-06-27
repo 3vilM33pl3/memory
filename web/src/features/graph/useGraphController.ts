@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { getCodeGraph, getCodeGraphStatus } from "../../api";
 import type {
@@ -8,6 +8,11 @@ import type {
   CodeGraphStatusResponse,
   CodeGraphViewFilters,
 } from "../../types";
+
+type GraphSelection =
+  | { kind: "node"; id: string }
+  | { kind: "edge"; id: string }
+  | { kind: "none" };
 
 export interface GraphOpenSeed {
   run_id?: string | null;
@@ -63,6 +68,48 @@ export function useGraphController({
   const [graphError, setGraphError] = useState<string | null>(null);
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
   const [selectedGraphEdgeId, setSelectedGraphEdgeId] = useState<string | null>(null);
+  const [graphSelectionHistory, setGraphSelectionHistory] = useState<GraphSelection[]>([]);
+  const [graphSelectionHistoryIndex, setGraphSelectionHistoryIndex] = useState(-1);
+  const selectedGraphNodeIdRef = useRef<string | null>(null);
+  const selectedGraphEdgeIdRef = useRef<string | null>(null);
+  const graphSelectionHistoryRef = useRef<GraphSelection[]>([]);
+  const graphSelectionHistoryIndexRef = useRef(-1);
+
+  useEffect(() => {
+    selectedGraphNodeIdRef.current = selectedGraphNodeId;
+    selectedGraphEdgeIdRef.current = selectedGraphEdgeId;
+  }, [selectedGraphEdgeId, selectedGraphNodeId]);
+
+  useEffect(() => {
+    graphSelectionHistoryRef.current = graphSelectionHistory;
+    graphSelectionHistoryIndexRef.current = graphSelectionHistoryIndex;
+  }, [graphSelectionHistory, graphSelectionHistoryIndex]);
+
+  const applySelection = useCallback((selection: GraphSelection) => {
+    setSelectedGraphNodeId(selection.kind === "node" ? selection.id : null);
+    setSelectedGraphEdgeId(selection.kind === "edge" ? selection.id : null);
+  }, []);
+
+  const pushGraphSelection = useCallback(
+    (selection: GraphSelection) => {
+      applySelection(selection);
+      setGraphSelectionHistory((currentHistory) => {
+        const activeIndex =
+          graphSelectionHistoryIndexRef.current >= 0 ? graphSelectionHistoryIndexRef.current : currentHistory.length - 1;
+        const currentSelection = activeIndex >= 0 ? currentHistory[activeIndex] : null;
+        if (currentSelection && sameGraphSelection(currentSelection, selection)) {
+          return currentHistory;
+        }
+        const nextHistory = currentHistory.slice(0, activeIndex + 1);
+        nextHistory.push(selection);
+        graphSelectionHistoryRef.current = nextHistory;
+        graphSelectionHistoryIndexRef.current = nextHistory.length - 1;
+        setGraphSelectionHistoryIndex(nextHistory.length - 1);
+        return nextHistory;
+      });
+    },
+    [applySelection],
+  );
 
   const loadGraph = useCallback(
     async (nextFilters = graphFilters) => {
@@ -75,12 +122,28 @@ export function useGraphController({
         ]);
         setGraphStatus(status);
         setCodeGraph(graph);
-        setSelectedGraphNodeId((current) =>
-          current && graph.nodes.some((node) => node.id === current) ? current : graph.nodes[0]?.id ?? null,
+        const hasSelectionHistory = graphSelectionHistoryRef.current.length > 0;
+        const prunedHistory = graphSelectionHistoryRef.current.filter((selection) =>
+          selectionExistsInGraph(selection, graph),
         );
-        setSelectedGraphEdgeId((current) =>
-          current && graph.edges.some((edge) => edge.id === current) ? current : null,
-        );
+        const activeSelection = currentGraphSelection(selectedGraphNodeIdRef.current, selectedGraphEdgeIdRef.current);
+        let nextSelection = hasSelectionHistory && selectionExistsInGraph(activeSelection, graph)
+          ? activeSelection
+          : ({ kind: "node", id: graph.nodes[0]?.id ?? "" } as GraphSelection);
+        if (nextSelection.kind === "node" && !nextSelection.id) {
+          nextSelection = { kind: "none" };
+        }
+        applySelection(nextSelection);
+        let nextHistory = prunedHistory;
+        let nextIndex = nextHistory.findIndex((selection) => sameGraphSelection(selection, nextSelection));
+        if (nextIndex < 0) {
+          nextHistory = [...nextHistory, nextSelection];
+          nextIndex = nextHistory.length - 1;
+        }
+        graphSelectionHistoryRef.current = nextHistory;
+        graphSelectionHistoryIndexRef.current = nextIndex;
+        setGraphSelectionHistory(nextHistory);
+        setGraphSelectionHistoryIndex(nextIndex);
         setStatusMessage(
           graph.status.has_graph
             ? `Loaded ${graph.nodes.length} graph nodes and ${graph.edges.length} edges for ${project}.`
@@ -95,7 +158,7 @@ export function useGraphController({
         setGraphLoading(false);
       }
     },
-    [graphFilters, project, recordLocalDiagnostic, setStatusMessage],
+    [applySelection, graphFilters, project, recordLocalDiagnostic, setStatusMessage],
   );
 
   useEffect(() => {
@@ -137,15 +200,43 @@ export function useGraphController({
     [codeGraph?.edges, selectedGraphEdgeId],
   );
 
-  const selectGraphNode = useCallback((nodeId: string | null) => {
-    setSelectedGraphNodeId(nodeId);
-    if (nodeId) setSelectedGraphEdgeId(null);
-  }, []);
+  const selectGraphNode = useCallback(
+    (nodeId: string | null) => {
+      pushGraphSelection(nodeId ? { kind: "node", id: nodeId } : { kind: "none" });
+    },
+    [pushGraphSelection],
+  );
 
-  const selectGraphEdge = useCallback((edgeId: string | null) => {
-    setSelectedGraphEdgeId(edgeId);
-    if (edgeId) setSelectedGraphNodeId(null);
-  }, []);
+  const selectGraphEdge = useCallback(
+    (edgeId: string | null) => {
+      pushGraphSelection(edgeId ? { kind: "edge", id: edgeId } : { kind: "none" });
+    },
+    [pushGraphSelection],
+  );
+
+  const clearGraphSelection = useCallback(() => {
+    pushGraphSelection({ kind: "none" });
+  }, [pushGraphSelection]);
+
+  const goBackGraphSelection = useCallback(() => {
+    setGraphSelectionHistoryIndex((currentIndex) => {
+      if (currentIndex <= 0) return currentIndex;
+      const nextIndex = currentIndex - 1;
+      applySelection(graphSelectionHistory[nextIndex] ?? { kind: "none" });
+      graphSelectionHistoryIndexRef.current = nextIndex;
+      return nextIndex;
+    });
+  }, [applySelection, graphSelectionHistory]);
+
+  const goForwardGraphSelection = useCallback(() => {
+    setGraphSelectionHistoryIndex((currentIndex) => {
+      if (currentIndex >= graphSelectionHistory.length - 1) return currentIndex;
+      const nextIndex = currentIndex + 1;
+      applySelection(graphSelectionHistory[nextIndex] ?? { kind: "none" });
+      graphSelectionHistoryIndexRef.current = nextIndex;
+      return nextIndex;
+    });
+  }, [applySelection, graphSelectionHistory]);
 
   return {
     graphFilters,
@@ -161,7 +252,31 @@ export function useGraphController({
     refreshGraph: () => void loadGraph(graphFilters),
     selectGraphNode,
     selectGraphEdge,
+    clearGraphSelection,
+    canGoBackGraphSelection: graphSelectionHistoryIndex > 0,
+    canGoForwardGraphSelection:
+      graphSelectionHistoryIndex >= 0 && graphSelectionHistoryIndex < graphSelectionHistory.length - 1,
+    goBackGraphSelection,
+    goForwardGraphSelection,
   };
+}
+
+function currentGraphSelection(nodeId: string | null, edgeId: string | null): GraphSelection {
+  if (nodeId) return { kind: "node", id: nodeId };
+  if (edgeId) return { kind: "edge", id: edgeId };
+  return { kind: "none" };
+}
+
+function sameGraphSelection(left: GraphSelection, right: GraphSelection): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "none" || right.kind === "none") return true;
+  return left.id === right.id;
+}
+
+function selectionExistsInGraph(selection: GraphSelection, graph: CodeGraphResponse): boolean {
+  if (selection.kind === "none") return true;
+  if (selection.kind === "node") return graph.nodes.some((node) => node.id === selection.id);
+  return graph.edges.some((edge) => edge.id === selection.id);
 }
 
 function toApiFilters(filters: GraphFilterForm): Partial<CodeGraphViewFilters> {

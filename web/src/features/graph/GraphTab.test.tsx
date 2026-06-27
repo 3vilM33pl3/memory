@@ -59,6 +59,11 @@ const baseProps = {
   onRefresh: vi.fn(),
   onSelectNode: vi.fn(),
   onSelectEdge: vi.fn(),
+  onClearSelection: vi.fn(),
+  canGoBackSelection: false,
+  canGoForwardSelection: false,
+  onGoBackSelection: vi.fn(),
+  onGoForwardSelection: vi.fn(),
 };
 
 afterEach(() => {
@@ -161,6 +166,39 @@ describe("GraphTab", () => {
     expect(await screen.findByRole("button", { name: "Increase graph degrees" })).not.toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Decrease graph degrees" }));
     expect(onFilterChange).toHaveBeenCalledWith({ isolate_depth: 1 });
+  });
+
+  it("renders graph selection history controls with disabled state", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as RenderingContext);
+
+    render(<GraphTab {...baseProps} status={emptyStatus} graph={emptyGraph} />);
+
+    expect(await screen.findByRole("button", { name: "Back" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Forward" })).toBeDisabled();
+  });
+
+  it("calls graph selection history callbacks", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as RenderingContext);
+    const onGoBackSelection = vi.fn();
+    const onGoForwardSelection = vi.fn();
+
+    render(
+      <GraphTab
+        {...baseProps}
+        canGoBackSelection
+        canGoForwardSelection
+        onGoBackSelection={onGoBackSelection}
+        onGoForwardSelection={onGoForwardSelection}
+        status={emptyStatus}
+        graph={emptyGraph}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Forward" }));
+
+    expect(onGoBackSelection).toHaveBeenCalled();
+    expect(onGoForwardSelection).toHaveBeenCalled();
   });
 });
 
