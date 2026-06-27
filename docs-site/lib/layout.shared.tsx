@@ -46,6 +46,11 @@ function DiscordIcon() {
 
 const socialLinks = [
   {
+    label: 'Interactive web UI demo',
+    text: 'Demo',
+    href: '/demo',
+  },
+  {
     label: 'GitHub repository',
     text: 'GitHub',
     href: 'https://github.com/3vilM33pl3/memory',
@@ -75,13 +80,13 @@ export function HeaderSocialLinks() {
         <a
           key={link.href}
           aria-label={link.label}
-          className="memory-social-link inline-flex items-center justify-center rounded-md transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring"
+          className={`memory-social-link${'icon' in link ? '' : ' memory-social-link-wide'} inline-flex items-center justify-center rounded-md transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring`}
           href={link.href}
-          rel="noreferrer noopener"
-          target="_blank"
+          rel={link.href.startsWith('http') ? 'noreferrer noopener' : undefined}
+          target={link.href.startsWith('http') ? '_blank' : undefined}
           title={link.label}
         >
-          {link.icon}
+          {'icon' in link ? link.icon : <span className="memory-social-text">{link.text}</span>}
         </a>
       ))}
     </nav>
@@ -103,8 +108,8 @@ export function baseOptions(): BaseLayoutProps {
       type: 'main',
       text: link.text,
       url: link.href,
-      external: true,
-      icon: link.icon,
+      external: link.href.startsWith('http'),
+      icon: 'icon' in link ? link.icon : undefined,
     })),
   };
 }

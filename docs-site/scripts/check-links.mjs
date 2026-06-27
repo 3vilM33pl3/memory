@@ -4,7 +4,7 @@ import path from 'node:path';
 const root = process.cwd();
 const contentRoot = path.join(root, 'content/docs');
 const publicRoot = path.join(root, 'public');
-const validPrefixes = ['/docs', '/images', '/api/search'];
+const validPrefixes = ['/docs', '/demo', '/images', '/api/search'];
 
 function walk(dir, predicate = () => true) {
   const entries = [];
