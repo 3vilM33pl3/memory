@@ -7,6 +7,7 @@ import type { GraphFilterForm } from "./useGraphController";
 type RenderNode = CodeGraphNode & {
   val: number;
   color: string;
+  isolate_degree?: number;
 };
 
 type RenderLink = CodeGraphEdge & {
@@ -53,7 +54,7 @@ export function GraphTab({
     [filters.isolate_connected, filters.isolate_depth, graph, selectedNode?.id],
   );
   const visibleSelectedNode = useMemo(
-    () => (selectedNode && visibleGraph?.nodes.some((node) => node.id === selectedNode.id) ? selectedNode : null),
+    () => visibleGraph?.nodes.find((node) => selectedNode && node.id === selectedNode.id) ?? null,
     [selectedNode, visibleGraph?.nodes],
   );
   const visibleSelectedEdge = useMemo(
@@ -189,7 +190,7 @@ export function GraphTab({
             onSelectNode={onSelectNode}
             onSelectEdge={onSelectEdge}
           />
-          <GraphInspector node={visibleSelectedNode} edge={visibleSelectedEdge} graph={visibleGraph} />
+          <GraphInspector node={visibleSelectedNode as VisibleCodeGraphNode | null} edge={visibleSelectedEdge} graph={visibleGraph} />
         </div>
       )}
     </section>
@@ -307,7 +308,7 @@ function GraphInspector({
   edge,
   graph,
 }: {
-  node: CodeGraphNode | null;
+  node: VisibleCodeGraphNode | null;
   edge: CodeGraphEdge | null;
   graph: CodeGraphResponse | null;
 }) {
@@ -321,6 +322,7 @@ function GraphInspector({
           <dt>File</dt><dd>{node.file_path ?? "n/a"}</dd>
           <dt>Lines</dt><dd>{lineRange(node.start_line, node.end_line)}</dd>
           <dt>Degree</dt><dd>{node.degree}</dd>
+          {node.isolate_degree !== undefined ? <><dt>Distance</dt><dd>{node.isolate_degree}</dd></> : null}
           <dt>Identity</dt><dd><code>{node.stable_identity}</code></dd>
         </dl>
       </aside>
@@ -384,21 +386,24 @@ export function applyConnectedGraphIsolation(
     adjacency.get(edge.target)?.add(edge.source);
   }
 
-  const visibleNodeIds = new Set<string>();
+  const visibleNodeDepths = new Map<string, number>();
   const pending = [{ nodeId: anchorNodeId, depth: 0 }];
   while (pending.length) {
-    const next = pending.pop();
+    const next = pending.shift();
     const nodeId = next?.nodeId;
-    if (!nodeId || visibleNodeIds.has(nodeId)) continue;
-    visibleNodeIds.add(nodeId);
+    if (!nodeId || visibleNodeDepths.has(nodeId)) continue;
+    const currentDepth = next?.depth ?? 0;
+    visibleNodeDepths.set(nodeId, currentDepth);
     if ((next?.depth ?? 0) >= maxDepth) continue;
     for (const nextNodeId of adjacency.get(nodeId) ?? []) {
-      if (!visibleNodeIds.has(nextNodeId)) pending.push({ nodeId: nextNodeId, depth: (next?.depth ?? 0) + 1 });
+      if (!visibleNodeDepths.has(nextNodeId)) pending.push({ nodeId: nextNodeId, depth: currentDepth + 1 });
     }
   }
 
-  const nodes = graph.nodes.filter((node) => visibleNodeIds.has(node.id));
-  const edges = graph.edges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+  const nodes = graph.nodes
+    .filter((node) => visibleNodeDepths.has(node.id))
+    .map((node) => ({ ...node, isolate_degree: visibleNodeDepths.get(node.id) ?? 0 }));
+  const edges = graph.edges.filter((edge) => visibleNodeDepths.has(edge.source) && visibleNodeDepths.has(edge.target));
   return {
     ...graph,
     stats: {
@@ -426,6 +431,10 @@ function normalizeIsolationDepth(isolateDepth: number): number {
   return Math.max(1, Math.min(MAX_ISOLATE_DEPTH, Math.floor(isolateDepth)));
 }
 
+type VisibleCodeGraphNode = CodeGraphNode & {
+  isolate_degree?: number;
+};
+
 function buildRenderData(
   graph: CodeGraphResponse | null,
   selectedNodeId: string | null,
@@ -434,7 +443,14 @@ function buildRenderData(
   const nodes = (graph?.nodes ?? []).map((node) => ({
     ...node,
     val: Math.max(3, Math.min(14, 3 + node.degree)),
-    color: node.id === selectedNodeId ? "#ffc96b" : node.seed ? "#7be0c5" : colorForGroup(node.group),
+    color:
+      (node as VisibleCodeGraphNode).isolate_degree !== undefined
+        ? colorForIsolationDegree((node as VisibleCodeGraphNode).isolate_degree ?? 0)
+        : node.id === selectedNodeId
+          ? "#ffc96b"
+          : node.seed
+            ? "#7be0c5"
+            : colorForGroup(node.group),
   }));
   const links = (graph?.edges ?? []).map((edge) => ({
     ...edge,
@@ -446,7 +462,8 @@ function buildRenderData(
 
 function nodeLabel(node: RenderNode): string {
   const location = node.file_path ? `${node.file_path}:${node.start_line ?? "?"}` : "no file";
-  return `${node.label}<br/>${node.symbol_kind ?? node.node_kind}<br/>${location}`;
+  const distance = node.isolate_degree !== undefined ? `<br/>distance ${node.isolate_degree}` : "";
+  return `${node.label}<br/>${node.symbol_kind ?? node.node_kind}<br/>${location}${distance}`;
 }
 
 function linkLabel(link: RenderLink): string {
@@ -458,6 +475,11 @@ function colorForGroup(group: string): string {
   let hash = 0;
   for (const char of group) hash = (hash * 31 + char.charCodeAt(0)) % 997;
   return palette[hash % palette.length];
+}
+
+function colorForIsolationDegree(degree: number): string {
+  const palette = ["#ffc96b", "#7be0c5", "#8ab4ff", "#d7a8ff", "#ffb082", "#f48fb1", "#9ad7d1", "#c6df7e", "#c4b5fd"];
+  return palette[Math.max(0, Math.floor(degree)) % palette.length];
 }
 
 function colorForEdge(edgeKind: string): string {

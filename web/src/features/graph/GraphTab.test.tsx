@@ -192,6 +192,7 @@ describe("applyConnectedGraphIsolation", () => {
 
     expect(isolated?.nodes.map((node) => node.id)).toEqual(["node-a", "node-b", "node-c", "node-f"]);
     expect(isolated?.edges.map((edge) => edge.id)).toEqual(["edge-ab", "edge-bc", "edge-cf"]);
+    expect(isolated?.nodes.map((node) => visibleDegree(node))).toEqual([0, 1, 2, 3]);
     expect(isolated?.stats.returned_nodes).toBe(4);
     expect(isolated?.stats.returned_edges).toBe(3);
   });
@@ -280,4 +281,8 @@ function graphEdge(id: string, source: string, target: string): CodeGraphEdge {
     end_line: 1,
     resolution_status: "resolved",
   };
+}
+
+function visibleDegree(node: CodeGraphNode): number | undefined {
+  return (node as CodeGraphNode & { isolate_degree?: number }).isolate_degree;
 }
