@@ -4,7 +4,7 @@ use std::{
     process::{self, Command},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use mem_api::{
     AgentWorkspaceFinishRequest, AgentWorkspaceHeartbeatRequest, AgentWorkspaceListResponse,
     AgentWorkspaceRecord, AgentWorkspaceStartRequest, AgentWorkspaceStatus, Profile,
@@ -32,11 +32,7 @@ pub(crate) async fn handle(
     }
 }
 
-async fn start(
-    args: AgentStartArgs,
-    api: &ApiClient,
-    cli_writer_id: Option<String>,
-) -> Result<()> {
+async fn start(args: AgentStartArgs, api: &ApiClient, cli_writer_id: Option<String>) -> Result<()> {
     let git = GitWorkspace::detect(args.branch.as_deref())?;
     let writer = resolve_writer_identity(&api.config, cli_writer_id.as_deref())?;
     let request = AgentWorkspaceStartRequest {
@@ -255,9 +251,13 @@ fn resolve_agent_session_id(value: Option<String>) -> String {
 }
 
 fn agent_session_id_from_env() -> Option<String> {
-    ["CODEX_SESSION_ID", "MEMORY_LAYER_AGENT_SESSION_ID", "CLAUDE_SESSION_ID"]
-        .iter()
-        .find_map(|key| env::var(key).ok().and_then(normalize_string))
+    [
+        "CODEX_SESSION_ID",
+        "MEMORY_LAYER_AGENT_SESSION_ID",
+        "CLAUDE_SESSION_ID",
+    ]
+    .iter()
+    .find_map(|key| env::var(key).ok().and_then(normalize_string))
 }
 
 fn resolve_hostname() -> Option<String> {

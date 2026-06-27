@@ -199,6 +199,7 @@ fn repo_root_for_tests() -> PathBuf {
 fn root_command_doc_name(command_name: &str) -> Option<&'static str> {
     match command_name {
         "help" => None,
+        "agent" => Some("agents.md"),
         "bundle" => Some("bundles.md"),
         "watcher" => Some("watchers.md"),
         "wizard" => Some("wizard.md"),

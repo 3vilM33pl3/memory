@@ -25,6 +25,7 @@ pub(crate) struct RuntimeStatusResponse {
     pub(crate) generated_at: chrono::DateTime<chrono::Utc>,
     pub(crate) project: String,
     pub(crate) profile: String,
+    pub(crate) agent_workspaces: AgentWorkspaceListResponse,
     pub(crate) web: RuntimeComponentStatus,
     pub(crate) service: RuntimeComponentStatus,
     pub(crate) manager: RuntimeManagerStatus,
@@ -218,6 +219,16 @@ pub(crate) async fn runtime_status(
     } else {
         0
     };
+    let agent_workspaces = if state.is_primary() {
+        match state.pool() {
+            Ok(pool) => fetch_agent_workspaces(&pool, &project, false)
+                .await
+                .unwrap_or_else(|_| empty_agent_workspace_list(&project)),
+            Err(_) => empty_agent_workspace_list(&project),
+        }
+    } else {
+        empty_agent_workspace_list(&project)
+    };
 
     let response = tokio::task::spawn_blocking(move || {
         let watcher_summary = watcher_summary_for_project(&watchers, &project);
@@ -256,6 +267,7 @@ pub(crate) async fn runtime_status(
             generated_at: chrono::Utc::now(),
             project,
             profile: profile_label,
+            agent_workspaces,
             web: RuntimeComponentStatus {
                 version: version.clone(),
                 status: if restart_notice.is_some() {
@@ -325,6 +337,14 @@ pub(crate) async fn skills(
     .await
     .map_err(|error| ApiError::io(anyhow::anyhow!("skill inventory task failed: {error}")))?;
     Ok(Json(report))
+}
+
+fn empty_agent_workspace_list(project: &str) -> AgentWorkspaceListResponse {
+    AgentWorkspaceListResponse {
+        project: project.to_string(),
+        workspaces: Vec::new(),
+        warnings: Vec::new(),
+    }
 }
 
 pub(crate) async fn read_skill(

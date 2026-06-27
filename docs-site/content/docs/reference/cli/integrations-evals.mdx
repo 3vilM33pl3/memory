@@ -10,6 +10,7 @@ These commands connect Memory Layer to humans, agents, built-in loop automations
 | Command | Writes | Purpose |
 |---|---:|---|
 | `memory tui` | Mostly read | Open the terminal UI. |
+| `memory agent` | Yes | Coordinate concurrent agent branches and worktrees. |
 | `memory watcher` | Yes | Manage project watchers and watcher daemons. |
 | `memory loops` | Mixed | Inspect and operate built-in automation loops. |
 | `memory automation` | Yes | Legacy/local automation queue controls. |
@@ -26,6 +27,26 @@ memory tui --project memory
 ```
 
 The TUI gives humans a dense view of memories, query evidence, replacement proposals, agents, watchers, activities, embeddings, errors, and project status.
+
+## `memory agent`
+
+Record which local agents are working on which branches or worktrees.
+
+```bash
+memory agent start --project memory --task "Graph UI follow-up"
+memory agent status --project memory
+memory agent status --project memory --include-finished --json
+memory agent finish --project memory --summary "Pushed graph UI follow-up"
+memory agent finish --project memory --abandoned --summary "Superseded by main"
+```
+
+`start` reads local Git metadata and records the repository root, worktree path,
+branch, optional task label, head/base commits, dirty files, agent CLI, session
+id, writer id, and service endpoint. `status` warns about same-branch work,
+same-worktree work, dirty-file overlap, dirty active workspaces, and stale
+heartbeats. `finish` marks one workspace completed or abandoned and records the
+final head, dirty files, pushed state, optional summary, and optional merge
+commit.
 
 ## `memory watcher`
 

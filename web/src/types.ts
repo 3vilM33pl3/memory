@@ -1155,10 +1155,52 @@ export interface RuntimeRestartNotice {
   marker_path: string;
 }
 
+export type AgentWorkspaceStatus = "active" | "completed" | "abandoned";
+
+export interface AgentWorkspaceWarning {
+  code: string;
+  severity: DiagnosticSeverity;
+  message: string;
+}
+
+export interface AgentWorkspaceRecord {
+  id: string;
+  project: string;
+  repo_root: string;
+  worktree_path: string;
+  branch: string;
+  task?: string | null;
+  base_commit?: string | null;
+  head_commit?: string | null;
+  dirty_files: string[];
+  dirty_count: number;
+  agent_cli: string;
+  agent_session_id?: string | null;
+  hostname?: string | null;
+  writer_id?: string | null;
+  profile?: string | null;
+  service_endpoint?: string | null;
+  started_at: string;
+  last_heartbeat_at: string;
+  finished_at?: string | null;
+  status: AgentWorkspaceStatus;
+  finish_summary?: string | null;
+  pushed_branch?: boolean | null;
+  merged_commit?: string | null;
+  warnings: AgentWorkspaceWarning[];
+}
+
+export interface AgentWorkspaceListResponse {
+  project: string;
+  workspaces: AgentWorkspaceRecord[];
+  warnings: AgentWorkspaceWarning[];
+}
+
 export interface RuntimeStatusResponse {
   generated_at: string;
   project: string;
   profile: string;
+  agent_workspaces: AgentWorkspaceListResponse;
   web: RuntimeComponentStatus;
   service: RuntimeComponentStatus;
   manager: RuntimeManagerStatus;

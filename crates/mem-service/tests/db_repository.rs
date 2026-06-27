@@ -1,4 +1,5 @@
 use mem_api::{
+    AgentWorkspaceFinishRequest, AgentWorkspaceStartRequest, AgentWorkspaceStatus,
     LoopApprovalDecisionRequest, LoopApprovalStatus, LoopMemoryProposalCreateRequest,
     LoopMemoryProposalDecisionRequest, LoopMode, LoopRunRequest, LoopRunStatus,
     LoopTriggerRouteRequest, LoopTrustLevel, MemoryStatus, MemoryType, ProjectMemoryGraphEdgeKind,
@@ -7,6 +8,117 @@ use mem_api::{
 use sqlx::PgPool;
 use std::{fs, path::Path, path::PathBuf, process::Command};
 use uuid::Uuid;
+
+#[tokio::test]
+async fn agent_workspace_repository_records_and_lists_active_work() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let project = mem_test_support::unique_project_slug("service-agent-workspace");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+
+    let first = mem_service::repository::handlers::agents::upsert_agent_workspace_start(
+        &pool,
+        &AgentWorkspaceStartRequest {
+            project: project.clone(),
+            repo_root: "/tmp/memory".to_string(),
+            worktree_path: "/tmp/memory-agent-a".to_string(),
+            branch: "agent/a".to_string(),
+            task: Some("review graph work".to_string()),
+            base_commit: Some("base-a".to_string()),
+            head_commit: Some("head-a".to_string()),
+            dirty_files: vec!["web/src/features/graph/GraphTab.tsx".to_string()],
+            agent_cli: "codex".to_string(),
+            agent_session_id: Some("session-a".to_string()),
+            hostname: Some("host-a".to_string()),
+            writer_id: Some("writer-a".to_string()),
+            profile: Some("dev".to_string()),
+            service_endpoint: Some("http://127.0.0.1:4250".to_string()),
+        },
+    )
+    .await
+    .expect("start first agent workspace");
+    let second = mem_service::repository::handlers::agents::upsert_agent_workspace_start(
+        &pool,
+        &AgentWorkspaceStartRequest {
+            project: project.clone(),
+            repo_root: "/tmp/memory".to_string(),
+            worktree_path: "/tmp/memory-agent-b".to_string(),
+            branch: "agent/b".to_string(),
+            task: Some("review docs".to_string()),
+            base_commit: Some("base-b".to_string()),
+            head_commit: Some("head-b".to_string()),
+            dirty_files: vec![
+                "web/src/features/graph/GraphTab.tsx".to_string(),
+                "docs/user/cli/agents.md".to_string(),
+            ],
+            agent_cli: "opencode".to_string(),
+            agent_session_id: Some("session-b".to_string()),
+            hostname: Some("host-b".to_string()),
+            writer_id: Some("writer-b".to_string()),
+            profile: Some("dev".to_string()),
+            service_endpoint: Some("http://127.0.0.1:4250".to_string()),
+        },
+    )
+    .await
+    .expect("start second agent workspace");
+
+    assert_eq!(first.task.as_deref(), Some("review graph work"));
+    assert_eq!(second.agent_cli, "opencode");
+
+    let active =
+        mem_service::repository::handlers::agents::fetch_agent_workspaces(&pool, &project, false)
+            .await
+            .expect("list active agent workspaces");
+    assert_eq!(active.workspaces.len(), 2);
+    assert!(active.warnings.iter().any(|warning| {
+        warning.code == "dirty_file_overlap"
+            && warning
+                .message
+                .contains("web/src/features/graph/GraphTab.tsx")
+    }));
+
+    mem_service::repository::handlers::agents::finish_agent_workspace_record(
+        &pool,
+        first.id,
+        &AgentWorkspaceFinishRequest {
+            status: Some(AgentWorkspaceStatus::Completed),
+            head_commit: Some("head-a2".to_string()),
+            dirty_files: Vec::new(),
+            finish_summary: Some("pushed agent/a".to_string()),
+            pushed_branch: Some(true),
+            merged_commit: None,
+        },
+    )
+    .await
+    .expect("finish first agent workspace")
+    .expect("finished workspace exists");
+
+    let active_after_finish =
+        mem_service::repository::handlers::agents::fetch_agent_workspaces(&pool, &project, false)
+            .await
+            .expect("list active agent workspaces after finish");
+    assert_eq!(active_after_finish.workspaces.len(), 1);
+    assert_eq!(active_after_finish.workspaces[0].id, second.id);
+
+    let all =
+        mem_service::repository::handlers::agents::fetch_agent_workspaces(&pool, &project, true)
+            .await
+            .expect("list all agent workspaces");
+    assert_eq!(all.workspaces.len(), 2);
+    assert!(all.workspaces.iter().any(|workspace| {
+        workspace.id == first.id
+            && workspace.status == AgentWorkspaceStatus::Completed
+            && workspace.pushed_branch == Some(true)
+    }));
+
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
 
 #[tokio::test]
 async fn repository_handler_write_and_read_paths_roundtrip_memory() {

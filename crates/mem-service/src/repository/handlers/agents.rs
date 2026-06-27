@@ -108,7 +108,7 @@ pub(crate) async fn finish_agent_workspace(
         .map(Json)
 }
 
-pub(crate) async fn fetch_agent_workspaces(
+pub async fn fetch_agent_workspaces(
     pool: &PgPool,
     project: &str,
     include_finished: bool,
@@ -147,11 +147,12 @@ pub(crate) async fn fetch_agent_workspaces(
     })
 }
 
-pub(crate) async fn upsert_agent_workspace_start(
+pub async fn upsert_agent_workspace_start(
     pool: &PgPool,
     request: &AgentWorkspaceStartRequest,
 ) -> Result<AgentWorkspaceRecord, sqlx::Error> {
-    let project_id = crate::repository::handlers::bundle::upsert_project_slug(pool, &request.project).await?;
+    let project_id =
+        crate::repository::handlers::bundle::upsert_project_slug(pool, &request.project).await?;
     let workspace_id = Uuid::new_v4();
     let session_key = agent_session_key(request.agent_session_id.as_deref());
     let row = sqlx::query(
@@ -218,7 +219,7 @@ pub(crate) async fn upsert_agent_workspace_start(
     Ok(workspace)
 }
 
-pub(crate) async fn update_agent_workspace_heartbeat(
+pub async fn update_agent_workspace_heartbeat(
     pool: &PgPool,
     workspace_id: Uuid,
     request: &AgentWorkspaceHeartbeatRequest,
@@ -252,7 +253,7 @@ pub(crate) async fn update_agent_workspace_heartbeat(
     row.map(row_to_agent_workspace).transpose()
 }
 
-pub(crate) async fn finish_agent_workspace_record(
+pub async fn finish_agent_workspace_record(
     pool: &PgPool,
     workspace_id: Uuid,
     request: &AgentWorkspaceFinishRequest,
@@ -332,7 +333,9 @@ fn annotate_workspace_warnings(workspaces: &mut [AgentWorkspaceRecord]) {
     let active_indexes = workspaces
         .iter()
         .enumerate()
-        .filter_map(|(index, workspace)| (workspace.status == AgentWorkspaceStatus::Active).then_some(index))
+        .filter_map(|(index, workspace)| {
+            (workspace.status == AgentWorkspaceStatus::Active).then_some(index)
+        })
         .collect::<Vec<_>>();
 
     for index in &active_indexes {
@@ -412,7 +415,10 @@ fn push_pair_warning(
 }
 
 fn dirty_overlap(left: &AgentWorkspaceRecord, right: &AgentWorkspaceRecord) -> Vec<String> {
-    let right_files = right.dirty_files.iter().collect::<std::collections::BTreeSet<_>>();
+    let right_files = right
+        .dirty_files
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>();
     left.dirty_files
         .iter()
         .filter(|file| right_files.contains(file))
