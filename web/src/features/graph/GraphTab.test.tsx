@@ -88,6 +88,7 @@ import {
   applyGraphConnectionView,
   buildLayeredRenderData,
   buildRenderData,
+  filterMemoryGraphForSelectedCodeNode,
   graphRenderTopologySignature,
   GraphTab,
 } from "./GraphTab";
@@ -301,15 +302,15 @@ describe("GraphTab", () => {
         {...baseProps}
         status={connectedStatus}
         graph={connectedGraph}
-        memoryGraph={memoryGraph}
+        memoryGraph={selectedCodeMemoryGraph}
+        selectedNode={connectedGraph.nodes[0]}
       />,
     );
 
     expect(await screen.findByRole("checkbox", { name: /Code/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Provenance/ })).not.toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Memory relationships/ })).not.toBeChecked();
-    expect(screen.getByText("2 edges")).toBeInTheDocument();
-    expect(screen.getByText("1 edges")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Memory/ })).not.toBeChecked();
+    expect(screen.getAllByText("1 edges")).toHaveLength(2);
   });
 
   it("toggles memory graph layers independently from code filters", async () => {
@@ -320,7 +321,8 @@ describe("GraphTab", () => {
         {...baseProps}
         status={connectedStatus}
         graph={connectedGraph}
-        memoryGraph={memoryGraph}
+        memoryGraph={selectedCodeMemoryGraph}
+        selectedNode={connectedGraph.nodes[0]}
       />,
     );
 
@@ -329,6 +331,29 @@ describe("GraphTab", () => {
 
     expect(provenance).toBeChecked();
     expect(baseProps.onFilterChange).not.toHaveBeenCalled();
+  });
+
+  it("enables the memory depth stepper only when selected memory layer can render", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as RenderingContext);
+
+    render(
+      <GraphTab
+        {...baseProps}
+        status={connectedStatus}
+        graph={connectedGraph}
+        memoryGraph={selectedCodeMemoryGraph}
+        selectedNode={connectedGraph.nodes[0]}
+      />,
+    );
+
+    const memoryDepth = await screen.findByRole("spinbutton", { name: "Memory degrees" });
+    expect(memoryDepth).toHaveValue(1);
+    expect(memoryDepth).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Memory/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Increase memory degrees" }));
+
+    expect(memoryDepth).toHaveValue(2);
   });
 
   it("shows connection summary text when a connection view is active", async () => {
@@ -465,6 +490,44 @@ describe("applyGraphConnectionView", () => {
   });
 });
 
+describe("filterMemoryGraphForSelectedCodeNode", () => {
+  it("keeps only directly attached memories at one degree", () => {
+    const scoped = filterMemoryGraphForSelectedCodeNode(selectedCodeMemoryGraph, connectedGraph.nodes[0], 1);
+
+    expect(scoped?.nodes.map((node) => node.id)).toEqual([
+      "memory:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source:file:src/example.ts::node-a",
+    ]);
+    expect(scoped?.edges.map((edge) => edge.id)).toEqual([
+      "provenance:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:source:file:src/example.ts::node-a",
+    ]);
+    expect(scoped?.returned_memories).toBe(1);
+  });
+
+  it("includes related memories when the memory radius is increased", () => {
+    const scoped = filterMemoryGraphForSelectedCodeNode(selectedCodeMemoryGraph, connectedGraph.nodes[0], 2);
+
+    expect(scoped?.nodes.map((node) => node.id)).toEqual([
+      "memory:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "memory:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "source:file:src/example.ts::node-a",
+    ]);
+    expect(scoped?.edges.map((edge) => edge.id)).toEqual([
+      "provenance:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:source:file:src/example.ts::node-a",
+      "relation:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:supports:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    ]);
+    expect(scoped?.returned_memories).toBe(2);
+  });
+
+  it("returns no memories until a code node is selected", () => {
+    const scoped = filterMemoryGraphForSelectedCodeNode(selectedCodeMemoryGraph, null, 1);
+
+    expect(scoped?.nodes).toEqual([]);
+    expect(scoped?.edges).toEqual([]);
+    expect(scoped?.returned_memories).toBe(0);
+  });
+});
+
 describe("buildRenderData", () => {
   it("makes the selected node high contrast and larger than normal nodes", () => {
     const isolated = applyConnectedGraphIsolation(connectedGraph, true, "node-a", 2);
@@ -522,6 +585,23 @@ describe("buildLayeredRenderData", () => {
     expect(renderData.nodes.some((node) => node.renderKind === "source_node")).toBe(true);
     expect(renderData.links.filter((link) => link.renderKind === "provenance_edge")).toHaveLength(2);
     expect(renderData.nodes.find((node) => node.primaryLayer === "code")?.color).toBe("#2d3744");
+  });
+
+  it("lets the memory layer show directly attached provenance edges", () => {
+    const scoped = filterMemoryGraphForSelectedCodeNode(selectedCodeMemoryGraph, connectedGraph.nodes[0], 1);
+    const renderData = buildLayeredRenderData({
+      codeGraph: connectedGraph,
+      memoryGraph: scoped,
+      visibleLayers: { code: true, provenance: false, memory_relations: true },
+      hoveredLayer: null,
+      selectedNodeId: "node-a",
+      selectedEdgeId: null,
+      memorySelection: null,
+    });
+
+    expect(renderData.nodes.some((node) => node.renderKind === "memory_node")).toBe(true);
+    expect(renderData.links.filter((link) => link.renderKind === "provenance_edge")).toHaveLength(1);
+    expect(renderData.links.find((link) => link.renderKind === "provenance_edge")?.primaryLayer).toBe("memory_relations");
   });
 });
 
@@ -676,6 +756,64 @@ const memoryGraph: ProjectMemoryGraphResponse = {
       id: "relation:11111111-1111-4111-8111-111111111111:supports:22222222-2222-4222-8222-222222222222",
       source: "memory:11111111-1111-4111-8111-111111111111",
       target: "memory:22222222-2222-4222-8222-222222222222",
+      edge_kind: "memory_relation",
+      relation_type: "supports",
+    },
+  ],
+};
+
+const selectedCodeMemoryGraph: ProjectMemoryGraphResponse = {
+  project: "memory",
+  total_memories: 2,
+  returned_memories: 2,
+  nodes: [
+    {
+      id: "memory:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      label: "Node A stores selected memory",
+      node_kind: "memory",
+      memory_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      memory_type: "implementation",
+      confidence: 0.91,
+      importance: 4,
+      tags: ["graph"],
+      summary: "Node A stores selected memory",
+    },
+    {
+      id: "memory:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      label: "Related graph memory",
+      node_kind: "memory",
+      memory_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      memory_type: "architecture",
+      confidence: 0.88,
+      importance: 3,
+      tags: ["graph"],
+      summary: "Related graph memory",
+    },
+    {
+      id: "source:file:src/example.ts::node-a",
+      label: "src/example.ts::node-a",
+      node_kind: "source",
+      source_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      source_kind: "file",
+      tags: [],
+      file_path: "src/example.ts",
+      symbol_name: "node-a",
+      symbol_kind: "function",
+      provenance_status: "verified",
+    },
+  ],
+  edges: [
+    {
+      id: "provenance:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:source:file:src/example.ts::node-a",
+      source: "memory:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      target: "source:file:src/example.ts::node-a",
+      edge_kind: "provenance",
+      source_kind: "file",
+    },
+    {
+      id: "relation:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:supports:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      source: "memory:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      target: "memory:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       edge_kind: "memory_relation",
       relation_type: "supports",
     },

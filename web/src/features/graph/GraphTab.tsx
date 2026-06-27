@@ -46,6 +46,7 @@ type RenderLink = Partial<CodeGraphEdge> & {
 };
 
 const MAX_ISOLATE_DEPTH = 8;
+const MAX_MEMORY_DEPTH = 8;
 
 const DEFAULT_LAYER_VISIBILITY: LayerVisibility = {
   code: true,
@@ -108,6 +109,7 @@ export function GraphTab({
   const [visibleLayers, setVisibleLayers] = useState<LayerVisibility>(DEFAULT_LAYER_VISIBILITY);
   const [hoveredLayer, setHoveredLayer] = useState<GraphLayer | null>(null);
   const [memorySelection, setMemorySelection] = useState<MemoryGraphSelection | null>(null);
+  const [memoryDepth, setMemoryDepth] = useState(1);
   const connectionGraph = useMemo(
     () => applyGraphConnectionView(graph, connectionView),
     [connectionView, graph],
@@ -126,26 +128,29 @@ export function GraphTab({
     () => (selectedEdge && visibleGraph?.edges.some((edge) => edge.id === selectedEdge.id) ? selectedEdge : null),
     [selectedEdge, visibleGraph?.edges],
   );
+  const scopedMemoryGraph = useMemo(
+    () => filterMemoryGraphForSelectedCodeNode(memoryGraph, visibleSelectedNode, memoryDepth),
+    [memoryDepth, memoryGraph, visibleSelectedNode],
+  );
   const renderData = useMemo(
     () =>
       buildLayeredRenderData({
         codeGraph: visibleLayers.code ? visibleGraph : null,
-        memoryGraph,
+        memoryGraph: scopedMemoryGraph,
         visibleLayers,
         hoveredLayer,
         selectedNodeId: visibleSelectedNode?.id ?? null,
         selectedEdgeId: visibleSelectedEdge?.id ?? null,
         memorySelection,
       }),
-    [hoveredLayer, memoryGraph, memorySelection, visibleGraph, visibleLayers, visibleSelectedEdge?.id, visibleSelectedNode?.id],
+    [hoveredLayer, memorySelection, scopedMemoryGraph, visibleGraph, visibleLayers, visibleSelectedEdge?.id, visibleSelectedNode?.id],
   );
-  const memoryGraphCounts = useMemo(() => countMemoryGraphEdges(memoryGraph), [memoryGraph]);
+  const memoryGraphCounts = useMemo(() => countMemoryGraphEdges(scopedMemoryGraph), [scopedMemoryGraph]);
 
   function handleLayerChange(layer: GraphLayer, checked: boolean) {
-    setVisibleLayers((current) => ({ ...current, [layer]: checked }));
-    if (!checked && memorySelection && selectionLayer(memorySelection) === layer) {
-      setMemorySelection(null);
-    }
+    const nextLayers = { ...visibleLayers, [layer]: checked };
+    setVisibleLayers(nextLayers);
+    if (!checked && memorySelection && !isMemorySelectionVisible(memorySelection, nextLayers)) setMemorySelection(null);
   }
 
   function handleSelectRenderNode(node: RenderNode, options: { shiftKey?: boolean } = {}) {
@@ -333,6 +338,9 @@ export function GraphTab({
               codeEdgeCount={visibleGraph?.edges.length ?? 0}
               provenanceEdgeCount={memoryGraphCounts.provenance}
               relationEdgeCount={memoryGraphCounts.memory_relations}
+              memoryDepth={memoryDepth}
+              memoryDepthDisabled={!visibleLayers.memory_relations || !visibleSelectedNode}
+              onMemoryDepthChange={setMemoryDepth}
               onLayerChange={handleLayerChange}
               onHoverLayer={setHoveredLayer}
             />
@@ -627,6 +635,9 @@ function GraphLayerControls({
   codeEdgeCount,
   provenanceEdgeCount,
   relationEdgeCount,
+  memoryDepth,
+  memoryDepthDisabled,
+  onMemoryDepthChange,
   onLayerChange,
   onHoverLayer,
 }: {
@@ -636,9 +647,13 @@ function GraphLayerControls({
   codeEdgeCount: number;
   provenanceEdgeCount: number;
   relationEdgeCount: number;
+  memoryDepth: number;
+  memoryDepthDisabled: boolean;
+  onMemoryDepthChange: (depth: number) => void;
   onLayerChange: (layer: GraphLayer, checked: boolean) => void;
   onHoverLayer: (layer: GraphLayer | null) => void;
 }) {
+  const normalizedMemoryDepth = normalizeMemoryDepth(memoryDepth);
   return (
     <div className="graph-layer-controls" aria-label="Graph layers">
       <LayerToggle
@@ -659,15 +674,49 @@ function GraphLayerControls({
         onChange={onLayerChange}
         onHover={onHoverLayer}
       />
-      <LayerToggle
-        layer="memory_relations"
-        label="Memory relationships"
-        checked={visibleLayers.memory_relations}
-        active={hoveredLayer === "memory_relations"}
-        count={`${relationEdgeCount} edges`}
-        onChange={onLayerChange}
-        onHover={onHoverLayer}
-      />
+      <div
+        className="graph-layer-with-stepper"
+        onMouseEnter={() => onHoverLayer("memory_relations")}
+        onMouseLeave={() => onHoverLayer(null)}
+      >
+        <LayerToggle
+          layer="memory_relations"
+          label="Memory"
+          checked={visibleLayers.memory_relations}
+          active={hoveredLayer === "memory_relations"}
+          count={`${provenanceEdgeCount + relationEdgeCount} edges`}
+          onChange={onLayerChange}
+          onHover={onHoverLayer}
+        />
+        <span className="graph-degree-stepper graph-layer-degree-stepper" aria-label="Memory degrees control">
+          <button
+            type="button"
+            aria-label="Decrease memory degrees"
+            disabled={memoryDepthDisabled || normalizedMemoryDepth <= 1}
+            onClick={() => onMemoryDepthChange(normalizedMemoryDepth - 1)}
+          >
+            -
+          </button>
+          <input
+            aria-label="Memory degrees"
+            min={1}
+            max={MAX_MEMORY_DEPTH}
+            step={1}
+            type="number"
+            value={memoryDepth}
+            disabled={memoryDepthDisabled}
+            onChange={(event) => onMemoryDepthChange(normalizeMemoryDepth(Number(event.target.value)))}
+          />
+          <button
+            type="button"
+            aria-label="Increase memory degrees"
+            disabled={memoryDepthDisabled || normalizedMemoryDepth >= MAX_MEMORY_DEPTH}
+            onClick={() => onMemoryDepthChange(normalizedMemoryDepth + 1)}
+          >
+            +
+          </button>
+        </span>
+      </div>
     </div>
   );
 }
@@ -954,6 +1003,85 @@ function normalizeIsolationDepth(isolateDepth: number): number {
   return Math.max(1, Math.min(MAX_ISOLATE_DEPTH, Math.floor(isolateDepth)));
 }
 
+function normalizeMemoryDepth(memoryDepth: number): number {
+  if (!Number.isFinite(memoryDepth)) return 1;
+  return Math.max(1, Math.min(MAX_MEMORY_DEPTH, Math.floor(memoryDepth)));
+}
+
+export function filterMemoryGraphForSelectedCodeNode(
+  memoryGraph: ProjectMemoryGraphResponse | null,
+  selectedNode: CodeGraphNode | null,
+  memoryDepth: number,
+): ProjectMemoryGraphResponse | null {
+  if (!memoryGraph) return null;
+  if (!selectedNode) return emptyScopedMemoryGraph(memoryGraph);
+
+  const nodeIds = new Set(memoryGraph.nodes.map((node) => node.id));
+  const anchorNodeIds = memoryGraph.nodes
+    .filter((node) => memorySourceMatchesCodeNode(node, selectedNode))
+    .map((node) => node.id);
+  if (!anchorNodeIds.length) return emptyScopedMemoryGraph(memoryGraph);
+
+  const adjacency = new Map<string, Set<string>>();
+  for (const nodeId of nodeIds) adjacency.set(nodeId, new Set());
+  for (const edge of memoryGraph.edges) {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) continue;
+    adjacency.get(edge.source)?.add(edge.target);
+    adjacency.get(edge.target)?.add(edge.source);
+  }
+
+  const maxDepth = normalizeMemoryDepth(memoryDepth);
+  const visibleNodeIds = new Set<string>();
+  const pending = anchorNodeIds.map((nodeId) => ({ nodeId, depth: 0 }));
+  while (pending.length) {
+    const next = pending.shift();
+    if (!next || visibleNodeIds.has(next.nodeId)) continue;
+    visibleNodeIds.add(next.nodeId);
+    if (next.depth >= maxDepth) continue;
+    for (const nextNodeId of adjacency.get(next.nodeId) ?? []) {
+      if (!visibleNodeIds.has(nextNodeId)) pending.push({ nodeId: nextNodeId, depth: next.depth + 1 });
+    }
+  }
+
+  const nodes = memoryGraph.nodes.filter((node) => visibleNodeIds.has(node.id));
+  const edges = memoryGraph.edges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+  return {
+    ...memoryGraph,
+    returned_memories: nodes.filter((node) => node.node_kind === "memory").length,
+    nodes,
+    edges,
+  };
+}
+
+function emptyScopedMemoryGraph(memoryGraph: ProjectMemoryGraphResponse): ProjectMemoryGraphResponse {
+  return { ...memoryGraph, returned_memories: 0, nodes: [], edges: [] };
+}
+
+function memorySourceMatchesCodeNode(sourceNode: ProjectMemoryGraphNode, codeNode: CodeGraphNode): boolean {
+  if (sourceNode.node_kind !== "source") return false;
+  if (!sourceNode.file_path || !codeNode.file_path || sourceNode.file_path !== codeNode.file_path) return false;
+
+  const sourceSymbol = normalizeGraphSymbol(sourceNode.symbol_name);
+  if (!sourceSymbol) return true;
+
+  const codeSymbols = [codeNode.name, codeNode.qualified_name, codeNode.label]
+    .map(normalizeGraphSymbol)
+    .filter((value): value is string => Boolean(value));
+  return codeSymbols.some(
+    (codeSymbol) =>
+      codeSymbol === sourceSymbol ||
+      codeSymbol.endsWith(`.${sourceSymbol}`) ||
+      codeSymbol.endsWith(`::${sourceSymbol}`) ||
+      sourceSymbol.endsWith(`.${codeSymbol}`) ||
+      sourceSymbol.endsWith(`::${codeSymbol}`),
+  );
+}
+
+function normalizeGraphSymbol(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
 type VisibleCodeGraphNode = CodeGraphNode & {
   isolate_degree?: number;
 };
@@ -1015,12 +1143,12 @@ export function buildLayeredRenderData({
   const links = codeRenderData.links.map((link) => applyLayerHighlight(link, hoveredLayer));
 
   const visibleMemoryEdges = (memoryGraph?.edges ?? []).filter((edge) =>
-    edge.edge_kind === "provenance" ? visibleLayers.provenance : visibleLayers.memory_relations,
+    edge.edge_kind === "provenance" ? visibleLayers.provenance || visibleLayers.memory_relations : visibleLayers.memory_relations,
   );
   const visibleMemoryNodeIds = new Set<string>();
   const nodeLayers = new Map<string, Set<GraphLayer>>();
   for (const edge of visibleMemoryEdges) {
-    const layer = edge.edge_kind === "provenance" ? "provenance" : "memory_relations";
+    const layer = layerForMemoryEdge(edge, visibleLayers);
     visibleMemoryNodeIds.add(edge.source);
     visibleMemoryNodeIds.add(edge.target);
     addNodeLayer(nodeLayers, edge.source, layer);
@@ -1051,7 +1179,7 @@ export function buildLayeredRenderData({
   }
 
   for (const edge of visibleMemoryEdges) {
-    const layer: GraphLayer = edge.edge_kind === "provenance" ? "provenance" : "memory_relations";
+    const layer = layerForMemoryEdge(edge, visibleLayers);
     const selected = isMemoryEdgeSelection(memorySelection) && memorySelection.edge.id === edge.id;
     links.push(
       applyLayerHighlight(
@@ -1072,6 +1200,11 @@ export function buildLayeredRenderData({
   }
 
   return { nodes, links };
+}
+
+function layerForMemoryEdge(edge: ProjectMemoryGraphEdge, visibleLayers: LayerVisibility): GraphLayer {
+  if (edge.edge_kind === "memory_relation") return "memory_relations";
+  return visibleLayers.provenance ? "provenance" : "memory_relations";
 }
 
 function addNodeLayer(nodeLayers: Map<string, Set<GraphLayer>>, nodeId: string, layer: GraphLayer) {
@@ -1176,10 +1309,10 @@ function countMemoryGraphEdges(memoryGraph: ProjectMemoryGraphResponse | null): 
   return counts;
 }
 
-function selectionLayer(selection: MemoryGraphSelection): GraphLayer {
-  if (selection.kind === "provenance_edge") return "provenance";
-  if (selection.kind === "memory_relation_edge") return "memory_relations";
-  return selection.node.node_kind === "source" ? "provenance" : "memory_relations";
+function isMemorySelectionVisible(selection: MemoryGraphSelection, visibleLayers: LayerVisibility): boolean {
+  if (selection.kind === "memory_relation_edge") return visibleLayers.memory_relations;
+  if (selection.kind === "provenance_edge") return visibleLayers.provenance || visibleLayers.memory_relations;
+  return visibleLayers.provenance || visibleLayers.memory_relations;
 }
 
 function isMemoryNodeSelection(selection: MemoryGraphSelection | null): selection is Extract<MemoryGraphSelection, { node: ProjectMemoryGraphNode }> {

@@ -766,6 +766,20 @@ pre {
   color: var(--muted);
 }
 
+.graph-layer-with-stepper {
+  display: inline-flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.graph-layer-degree-stepper {
+  grid-template-columns: 1.75rem 3.25rem 1.75rem;
+}
+
+.graph-layer-degree-stepper input {
+  width: 100%;
+}
+
 .graph-inspector,
 .graph-empty {
   border: 1px solid var(--line);
