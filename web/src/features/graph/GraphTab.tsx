@@ -473,11 +473,16 @@ function GraphScene({
   useEffect(() => {
     const instance = instanceRef.current;
     if (!instance) return;
-    instance.graphData(renderData);
     const shouldFit = topologySignature !== lastFitSignatureRef.current;
     lastFitSignatureRef.current = topologySignature;
-    if (shouldFit && renderData.nodes.length) {
-      window.setTimeout(() => instance.zoomToFit(500, 48), 50);
+    if (shouldFit) {
+      instance.graphData(renderData);
+      if (renderData.nodes.length) {
+        window.setTimeout(() => instance.zoomToFit(500, 48), 50);
+      }
+    } else {
+      syncGraphRenderStyles(instance, renderData);
+      instance.refresh();
     }
   }, [renderData, topologySignature]);
 
@@ -488,6 +493,26 @@ export function graphRenderTopologySignature(renderData: { nodes: RenderNode[]; 
   const nodeIds = renderData.nodes.map((node) => node.id).sort().join(",");
   const linkIds = renderData.links.map((link) => link.id).sort().join(",");
   return `nodes:${nodeIds}|links:${linkIds}`;
+}
+
+function syncGraphRenderStyles(
+  instance: ForceGraph3DInstance<RenderNode, RenderLink>,
+  renderData: { nodes: RenderNode[]; links: RenderLink[] },
+) {
+  const currentData = instance.graphData();
+  const nextNodes = new Map(renderData.nodes.map((node) => [node.id, node]));
+  const nextLinks = new Map(renderData.links.map((link) => [link.id, link]));
+
+  for (const node of currentData.nodes) {
+    const nextNode = nextNodes.get(node.id);
+    if (nextNode) Object.assign(node, nextNode);
+  }
+  for (const link of currentData.links) {
+    const nextLink = nextLinks.get(link.id);
+    if (!nextLink) continue;
+    const { source: _source, target: _target, ...nextStyle } = nextLink;
+    Object.assign(link, nextStyle);
+  }
 }
 
 function GraphInspector({

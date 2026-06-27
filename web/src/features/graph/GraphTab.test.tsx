@@ -25,6 +25,7 @@ const forceGraphMock = vi.hoisted(() => ({
     width: ReturnType<typeof vi.fn>;
     height: ReturnType<typeof vi.fn>;
     graphData: ReturnType<typeof vi.fn>;
+    refresh: ReturnType<typeof vi.fn>;
     zoomToFit: ReturnType<typeof vi.fn>;
     _destructor: ReturnType<typeof vi.fn>;
   }>,
@@ -32,6 +33,7 @@ const forceGraphMock = vi.hoisted(() => ({
 
 vi.mock("3d-force-graph", () => {
   const createInstance = () => {
+    let currentGraphData: { nodes: unknown[]; links: unknown[] } = { nodes: [], links: [] };
     const instance = {
       backgroundColor: vi.fn(() => instance),
       showNavInfo: vi.fn(() => instance),
@@ -54,7 +56,14 @@ vi.mock("3d-force-graph", () => {
       onBackgroundClick: vi.fn(() => instance),
       width: vi.fn(() => instance),
       height: vi.fn(() => instance),
-      graphData: vi.fn(() => instance),
+      graphData: vi.fn((data?: { nodes: unknown[]; links: unknown[] }) => {
+        if (data) {
+          currentGraphData = data;
+          return instance;
+        }
+        return currentGraphData;
+      }),
+      refresh: vi.fn(() => instance),
       zoomToFit: vi.fn(() => instance),
       _destructor: vi.fn(),
     };
@@ -362,6 +371,28 @@ describe("GraphTab", () => {
 
     expect(forceGraphMock.instances[0].graphData).toHaveBeenCalledTimes(2);
     expect(forceGraphMock.instances[0].zoomToFit).toHaveBeenCalledTimes(1);
+    expect(forceGraphMock.instances[0].refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not replace graph data when hover highlighting changes", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as RenderingContext);
+
+    render(<GraphTab {...baseProps} status={connectedStatus} graph={connectedGraph} />);
+
+    expect(screen.getByTestId("graph-scene")).toBeInTheDocument();
+    expect(forceGraphMock.instances).toHaveLength(1);
+    const instance = forceGraphMock.instances[0];
+    expect(instance.graphData).toHaveBeenCalledTimes(1);
+
+    const hoverHandler = instance.onNodeHover.mock.calls[0]?.[0];
+    expect(hoverHandler).toBeTypeOf("function");
+    act(() => {
+      hoverHandler({ primaryLayer: "code" });
+    });
+
+    expect(instance.graphData).toHaveBeenCalledTimes(2);
+    expect(instance.refresh).toHaveBeenCalledTimes(1);
+    expect(instance.zoomToFit).not.toHaveBeenCalled();
   });
 });
 
