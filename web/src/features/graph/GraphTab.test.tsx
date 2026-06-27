@@ -356,6 +356,36 @@ describe("GraphTab", () => {
     expect(memoryDepth).toHaveValue(2);
   });
 
+  it("selects memory attachment edges for provenance-backed inspection", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as RenderingContext);
+
+    render(
+      <GraphTab
+        {...baseProps}
+        status={connectedStatus}
+        graph={connectedGraph}
+        memoryGraph={selectedCodeMemoryGraph}
+        selectedNode={connectedGraph.nodes[0]}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Memory/ }));
+    const instance = forceGraphMock.instances[0];
+    const clickHandler = instance.onLinkClick.mock.calls[0]?.[0] as ((link: unknown) => void) | undefined;
+    const graphDataCall = [...instance.graphData.mock.calls].reverse().find((call) => call[0]);
+    const graphData = graphDataCall?.[0] as { links: Array<{ renderKind?: string }> } | undefined;
+    const attachmentLink = graphData?.links.find((link) => link.renderKind === "memory_attachment_edge");
+
+    expect(clickHandler).toBeTypeOf("function");
+    expect(attachmentLink).toBeDefined();
+    act(() => {
+      clickHandler?.(attachmentLink);
+    });
+
+    expect(screen.getByRole("heading", { name: "Memory attachment" })).toBeInTheDocument();
+    expect(baseProps.onSelectEdge).not.toHaveBeenCalled();
+  });
+
   it("shows connection summary text when a connection view is active", async () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
 
@@ -587,7 +617,7 @@ describe("buildLayeredRenderData", () => {
     expect(renderData.nodes.find((node) => node.primaryLayer === "code")?.color).toBe("#2d3744");
   });
 
-  it("lets the memory layer show directly attached provenance edges", () => {
+  it("connects directly attached memories to the selected code node in memory-only mode", () => {
     const scoped = filterMemoryGraphForSelectedCodeNode(selectedCodeMemoryGraph, connectedGraph.nodes[0], 1);
     const renderData = buildLayeredRenderData({
       codeGraph: connectedGraph,
@@ -599,9 +629,50 @@ describe("buildLayeredRenderData", () => {
       memorySelection: null,
     });
 
-    expect(renderData.nodes.some((node) => node.renderKind === "memory_node")).toBe(true);
+    expect(renderData.nodes.filter((node) => node.renderKind === "memory_node")).toHaveLength(1);
+    expect(renderData.nodes.some((node) => node.renderKind === "source_node")).toBe(false);
+    expect(renderData.links.filter((link) => link.renderKind === "provenance_edge")).toHaveLength(0);
+    expect(renderData.links.filter((link) => link.renderKind === "memory_attachment_edge")).toHaveLength(1);
+    expect(renderData.links.find((link) => link.renderKind === "memory_attachment_edge")).toMatchObject({
+      source: "node-a",
+      target: "memory:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      primaryLayer: "memory_relations",
+    });
+  });
+
+  it("keeps memory relationships visible as the memory radius increases", () => {
+    const scoped = filterMemoryGraphForSelectedCodeNode(selectedCodeMemoryGraph, connectedGraph.nodes[0], 2);
+    const renderData = buildLayeredRenderData({
+      codeGraph: connectedGraph,
+      memoryGraph: scoped,
+      visibleLayers: { code: true, provenance: false, memory_relations: true },
+      hoveredLayer: null,
+      selectedNodeId: "node-a",
+      selectedEdgeId: null,
+      memorySelection: null,
+    });
+
+    expect(renderData.nodes.filter((node) => node.renderKind === "memory_node")).toHaveLength(2);
+    expect(renderData.links.filter((link) => link.renderKind === "memory_attachment_edge")).toHaveLength(1);
+    expect(renderData.links.filter((link) => link.renderKind === "memory_relation_edge")).toHaveLength(1);
+  });
+
+  it("keeps raw provenance source nodes available in provenance mode", () => {
+    const scoped = filterMemoryGraphForSelectedCodeNode(selectedCodeMemoryGraph, connectedGraph.nodes[0], 1);
+    const renderData = buildLayeredRenderData({
+      codeGraph: connectedGraph,
+      memoryGraph: scoped,
+      visibleLayers: { code: true, provenance: true, memory_relations: false },
+      hoveredLayer: null,
+      selectedNodeId: "node-a",
+      selectedEdgeId: null,
+      memorySelection: null,
+    });
+
+    expect(renderData.nodes.filter((node) => node.renderKind === "memory_node")).toHaveLength(1);
+    expect(renderData.nodes.filter((node) => node.renderKind === "source_node")).toHaveLength(1);
     expect(renderData.links.filter((link) => link.renderKind === "provenance_edge")).toHaveLength(1);
-    expect(renderData.links.find((link) => link.renderKind === "provenance_edge")?.primaryLayer).toBe("memory_relations");
+    expect(renderData.links.filter((link) => link.renderKind === "memory_attachment_edge")).toHaveLength(0);
   });
 });
 

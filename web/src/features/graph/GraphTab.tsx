@@ -41,7 +41,7 @@ type RenderLink = Partial<CodeGraphEdge> & {
   width: number;
   layers: GraphLayer[];
   primaryLayer: GraphLayer;
-  renderKind: "code_edge" | "provenance_edge" | "memory_relation_edge";
+  renderKind: "code_edge" | "provenance_edge" | "memory_attachment_edge" | "memory_relation_edge";
   memoryEdge?: ProjectMemoryGraphEdge;
 };
 
@@ -58,6 +58,7 @@ type MemoryGraphSelection =
   | { kind: "memory_node"; node: ProjectMemoryGraphNode }
   | { kind: "source_node"; node: ProjectMemoryGraphNode }
   | { kind: "provenance_edge"; edge: ProjectMemoryGraphEdge }
+  | { kind: "memory_attachment_edge"; edge: ProjectMemoryGraphEdge }
   | { kind: "memory_relation_edge"; edge: ProjectMemoryGraphEdge };
 
 interface GraphTabProps {
@@ -177,7 +178,12 @@ export function GraphTab({
     if (!link.memoryEdge) return;
     onClearSelection();
     setMemorySelection({
-      kind: link.renderKind === "provenance_edge" ? "provenance_edge" : "memory_relation_edge",
+      kind:
+        link.renderKind === "provenance_edge"
+          ? "provenance_edge"
+          : link.renderKind === "memory_attachment_edge"
+            ? "memory_attachment_edge"
+            : "memory_relation_edge",
       edge: link.memoryEdge,
     });
   }
@@ -570,13 +576,23 @@ function GraphInspector({
       </aside>
     );
   }
-  if (memorySelection?.kind === "provenance_edge" || memorySelection?.kind === "memory_relation_edge") {
+  if (
+    memorySelection?.kind === "provenance_edge" ||
+    memorySelection?.kind === "memory_attachment_edge" ||
+    memorySelection?.kind === "memory_relation_edge"
+  ) {
     const selectedEdge = memorySelection.edge;
     const source = memoryGraph?.nodes.find((candidate) => candidate.id === selectedEdge.source);
     const target = memoryGraph?.nodes.find((candidate) => candidate.id === selectedEdge.target);
     return (
       <aside className="graph-inspector">
-        <h2>{memorySelection.kind === "provenance_edge" ? "Provenance" : selectedEdge.relation_type}</h2>
+        <h2>
+          {memorySelection.kind === "memory_relation_edge"
+            ? selectedEdge.relation_type
+            : memorySelection.kind === "memory_attachment_edge"
+              ? "Memory attachment"
+              : "Provenance"}
+        </h2>
         <dl>
           <dt>Kind</dt><dd>{selectedEdge.edge_kind}</dd>
           <dt>Source</dt><dd>{source?.label ?? selectedEdge.source}</dd>
@@ -1141,9 +1157,20 @@ export function buildLayeredRenderData({
   const codeRenderData = buildRenderData(codeGraph, selectedNodeId, selectedEdgeId);
   const nodes = codeRenderData.nodes.map((node) => applyLayerHighlight(node, hoveredLayer));
   const links = codeRenderData.links.map((link) => applyLayerHighlight(link, hoveredLayer));
+  const memoryNodesById = new Map((memoryGraph?.nodes ?? []).map((node) => [node.id, node]));
+  const selectedCodeAnchorId =
+    selectedNodeId && codeRenderData.nodes.some((node) => node.id === selectedNodeId) ? selectedNodeId : null;
 
   const visibleMemoryEdges = (memoryGraph?.edges ?? []).filter((edge) =>
-    edge.edge_kind === "provenance" ? visibleLayers.provenance || visibleLayers.memory_relations : visibleLayers.memory_relations,
+    edge.edge_kind === "provenance" ? visibleLayers.provenance : visibleLayers.memory_relations,
+  );
+  const visibleAttachmentEdges = (memoryGraph?.edges ?? []).filter(
+    (edge) =>
+      visibleLayers.memory_relations &&
+      !visibleLayers.provenance &&
+      selectedCodeAnchorId &&
+      edge.edge_kind === "provenance" &&
+      Boolean(memoryEndpointForProvenanceEdge(edge, memoryNodesById)),
   );
   const visibleMemoryNodeIds = new Set<string>();
   const nodeLayers = new Map<string, Set<GraphLayer>>();
@@ -1153,6 +1180,12 @@ export function buildLayeredRenderData({
     visibleMemoryNodeIds.add(edge.target);
     addNodeLayer(nodeLayers, edge.source, layer);
     addNodeLayer(nodeLayers, edge.target, layer);
+  }
+  for (const edge of visibleAttachmentEdges) {
+    const memoryEndpoint = memoryEndpointForProvenanceEdge(edge, memoryNodesById);
+    if (!memoryEndpoint) continue;
+    visibleMemoryNodeIds.add(memoryEndpoint.id);
+    addNodeLayer(nodeLayers, memoryEndpoint.id, "memory_relations");
   }
 
   for (const node of memoryGraph?.nodes ?? []) {
@@ -1198,8 +1231,40 @@ export function buildLayeredRenderData({
       ),
     );
   }
+  for (const edge of visibleAttachmentEdges) {
+    const memoryEndpoint = memoryEndpointForProvenanceEdge(edge, memoryNodesById);
+    if (!memoryEndpoint || !selectedCodeAnchorId) continue;
+    const selected = isMemoryEdgeSelection(memorySelection) && memorySelection.edge.id === edge.id;
+    links.push(
+      applyLayerHighlight(
+        {
+          id: `memory-attachment:${selectedCodeAnchorId}:${edge.id}`,
+          source: selectedCodeAnchorId,
+          target: memoryEndpoint.id,
+          layers: ["memory_relations"],
+          primaryLayer: "memory_relations",
+          renderKind: "memory_attachment_edge",
+          memoryEdge: edge,
+          color: selected ? "#ffffff" : colorForMemoryEdge(edge),
+          width: selected ? 3 : 1.8,
+        },
+        hoveredLayer,
+      ),
+    );
+  }
 
   return { nodes, links };
+}
+
+function memoryEndpointForProvenanceEdge(
+  edge: ProjectMemoryGraphEdge,
+  nodesById: Map<string, ProjectMemoryGraphNode>,
+): ProjectMemoryGraphNode | null {
+  const sourceNode = nodesById.get(edge.source);
+  if (sourceNode?.node_kind === "memory") return sourceNode;
+  const targetNode = nodesById.get(edge.target);
+  if (targetNode?.node_kind === "memory") return targetNode;
+  return null;
 }
 
 function layerForMemoryEdge(edge: ProjectMemoryGraphEdge, visibleLayers: LayerVisibility): GraphLayer {
@@ -1249,6 +1314,9 @@ function nodeLabel(node: RenderNode): string {
 function linkLabel(link: RenderLink): string {
   if (link.renderKind === "provenance_edge") {
     return `provenance<br/>${link.memoryEdge?.source_kind ?? "source"}`;
+  }
+  if (link.renderKind === "memory_attachment_edge") {
+    return `memory attachment<br/>${link.memoryEdge?.source_kind ?? "source"}`;
   }
   if (link.renderKind === "memory_relation_edge") {
     return `memory relation<br/>${link.memoryEdge?.relation_type ?? "related"}`;
@@ -1311,7 +1379,9 @@ function countMemoryGraphEdges(memoryGraph: ProjectMemoryGraphResponse | null): 
 
 function isMemorySelectionVisible(selection: MemoryGraphSelection, visibleLayers: LayerVisibility): boolean {
   if (selection.kind === "memory_relation_edge") return visibleLayers.memory_relations;
-  if (selection.kind === "provenance_edge") return visibleLayers.provenance || visibleLayers.memory_relations;
+  if (selection.kind === "memory_attachment_edge") return visibleLayers.memory_relations;
+  if (selection.kind === "provenance_edge") return visibleLayers.provenance;
+  if (selection.kind === "source_node") return visibleLayers.provenance;
   return visibleLayers.provenance || visibleLayers.memory_relations;
 }
 
@@ -1320,7 +1390,11 @@ function isMemoryNodeSelection(selection: MemoryGraphSelection | null): selectio
 }
 
 function isMemoryEdgeSelection(selection: MemoryGraphSelection | null): selection is Extract<MemoryGraphSelection, { edge: ProjectMemoryGraphEdge }> {
-  return selection?.kind === "provenance_edge" || selection?.kind === "memory_relation_edge";
+  return (
+    selection?.kind === "provenance_edge" ||
+    selection?.kind === "memory_attachment_edge" ||
+    selection?.kind === "memory_relation_edge"
+  );
 }
 
 function formatScore(value?: number | null): string {
