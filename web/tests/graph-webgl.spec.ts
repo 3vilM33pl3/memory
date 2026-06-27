@@ -16,8 +16,17 @@ test("Graph tab renders a nonblank WebGL scene without layout overlap", async ({
   await expect(page.getByText("showing 5 / 3")).toBeVisible();
   await expect(page.getByRole("button", { name: "Back" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Forward" })).toBeDisabled();
+  await expect(page.getByRole("checkbox", { name: /Code/ })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: /Provenance/ })).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: /Memory relationships/ })).not.toBeChecked();
 
   await page.waitForTimeout(1500);
+  await expect(await canvasHasMultipleColors(canvas)).toBeTruthy();
+  await page.getByRole("checkbox", { name: /Provenance/ }).check();
+  await page.getByRole("checkbox", { name: /Memory relationships/ }).check();
+  await expect(page.getByRole("checkbox", { name: /Provenance/ })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: /Memory relationships/ })).toBeChecked();
+  await page.waitForTimeout(500);
   await expect(await canvasHasMultipleColors(canvas)).toBeTruthy();
 
   await page.getByRole("checkbox", { name: "Isolate connected graph" }).check();
@@ -84,6 +93,9 @@ async function mockMemoryApi(page: Page) {
   );
   await page.route("**/v1/projects/memory/graph?**", (route) =>
     route.fulfill({ json: graphResponse }),
+  );
+  await page.route("**/v1/projects/memory/memory-graph?**", (route) =>
+    route.fulfill({ json: memoryGraphResponse }),
   );
 }
 
@@ -333,6 +345,64 @@ const graphResponse = {
       start_line: 24,
       end_line: 24,
       resolution_status: "resolved",
+    },
+  ],
+};
+
+const memoryGraphResponse = {
+  project: "memory",
+  total_memories: 2,
+  returned_memories: 2,
+  nodes: [
+    {
+      id: "memory:11111111-1111-4111-8111-111111111111",
+      label: "Graph endpoint exposes provenance",
+      node_kind: "memory",
+      memory_id: "11111111-1111-4111-8111-111111111111",
+      memory_type: "implementation",
+      confidence: 0.91,
+      importance: 4,
+      tags: ["graph"],
+      summary: "Graph endpoint exposes provenance",
+    },
+    {
+      id: "memory:22222222-2222-4222-8222-222222222222",
+      label: "Graph endpoint exposes relations",
+      node_kind: "memory",
+      memory_id: "22222222-2222-4222-8222-222222222222",
+      memory_type: "architecture",
+      confidence: 0.88,
+      importance: 3,
+      tags: ["graph"],
+      summary: "Graph endpoint exposes relations",
+    },
+    {
+      id: "source:file:src/graph.rs::build_memory_graph",
+      label: "src/graph.rs::build_memory_graph",
+      node_kind: "source",
+      source_id: "33333333-3333-4333-8333-333333333333",
+      source_kind: "file",
+      tags: [],
+      file_path: "src/graph.rs",
+      symbol_name: "build_memory_graph",
+      symbol_kind: "function",
+      provenance_status: "verified",
+    },
+  ],
+  edges: [
+    {
+      id: "provenance:11111111-1111-4111-8111-111111111111:source:file:src/graph.rs::build_memory_graph",
+      source: "memory:11111111-1111-4111-8111-111111111111",
+      target: "source:file:src/graph.rs::build_memory_graph",
+      edge_kind: "provenance",
+      source_kind: "file",
+    },
+    {
+      id: "relation:11111111-1111-4111-8111-111111111111:supports:22222222-2222-4222-8222-222222222222",
+      source: "memory:11111111-1111-4111-8111-111111111111",
+      target: "memory:22222222-2222-4222-8222-222222222222",
+      edge_kind: "memory_relation",
+      relation_type: "supports",
     },
   ],
 };

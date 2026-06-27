@@ -1,28 +1,70 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 
-import type { CodeGraphEdge, CodeGraphNode, CodeGraphResponse, CodeGraphStatusResponse } from "../../types";
+import type {
+  CodeGraphEdge,
+  CodeGraphNode,
+  CodeGraphResponse,
+  CodeGraphStatusResponse,
+  ProjectMemoryGraphEdge,
+  ProjectMemoryGraphNode,
+  ProjectMemoryGraphResponse,
+} from "../../types";
 import type { GraphConnectionView, GraphFilterForm } from "./useGraphController";
 
-type RenderNode = CodeGraphNode & {
+type GraphLayer = "code" | "provenance" | "memory_relations";
+
+interface LayerVisibility {
+  code: boolean;
+  provenance: boolean;
+  memory_relations: boolean;
+}
+
+type RenderNode = Partial<CodeGraphNode> & {
+  id: string;
+  label: string;
   val: number;
   color: string;
   selected: boolean;
+  layers: GraphLayer[];
+  primaryLayer: GraphLayer;
+  renderKind: "code_node" | "memory_node" | "source_node";
+  memoryNode?: ProjectMemoryGraphNode;
   isolate_degree?: number;
 };
 
-type RenderLink = CodeGraphEdge & {
+type RenderLink = Partial<CodeGraphEdge> & {
+  id: string;
+  source: string;
+  target: string;
   color: string;
   width: number;
+  layers: GraphLayer[];
+  primaryLayer: GraphLayer;
+  renderKind: "code_edge" | "provenance_edge" | "memory_relation_edge";
+  memoryEdge?: ProjectMemoryGraphEdge;
 };
 
 const MAX_ISOLATE_DEPTH = 8;
+
+const DEFAULT_LAYER_VISIBILITY: LayerVisibility = {
+  code: true,
+  provenance: false,
+  memory_relations: false,
+};
+
+type MemoryGraphSelection =
+  | { kind: "memory_node"; node: ProjectMemoryGraphNode }
+  | { kind: "source_node"; node: ProjectMemoryGraphNode }
+  | { kind: "provenance_edge"; edge: ProjectMemoryGraphEdge }
+  | { kind: "memory_relation_edge"; edge: ProjectMemoryGraphEdge };
 
 interface GraphTabProps {
   project: string;
   filters: GraphFilterForm;
   status: CodeGraphStatusResponse | null;
   graph: CodeGraphResponse | null;
+  memoryGraph: ProjectMemoryGraphResponse | null;
   loading: boolean;
   error: string | null;
   selectedNode: CodeGraphNode | null;
@@ -45,6 +87,7 @@ export function GraphTab({
   filters,
   status,
   graph,
+  memoryGraph,
   loading,
   error,
   selectedNode,
@@ -62,6 +105,9 @@ export function GraphTab({
   onGoForwardSelection,
 }: GraphTabProps) {
   const [webglSupported, setWebglSupported] = useState(true);
+  const [visibleLayers, setVisibleLayers] = useState<LayerVisibility>(DEFAULT_LAYER_VISIBILITY);
+  const [hoveredLayer, setHoveredLayer] = useState<GraphLayer | null>(null);
+  const [memorySelection, setMemorySelection] = useState<MemoryGraphSelection | null>(null);
   const connectionGraph = useMemo(
     () => applyGraphConnectionView(graph, connectionView),
     [connectionView, graph],
@@ -80,6 +126,61 @@ export function GraphTab({
     () => (selectedEdge && visibleGraph?.edges.some((edge) => edge.id === selectedEdge.id) ? selectedEdge : null),
     [selectedEdge, visibleGraph?.edges],
   );
+  const renderData = useMemo(
+    () =>
+      buildLayeredRenderData({
+        codeGraph: visibleLayers.code ? visibleGraph : null,
+        memoryGraph,
+        visibleLayers,
+        hoveredLayer,
+        selectedNodeId: visibleSelectedNode?.id ?? null,
+        selectedEdgeId: visibleSelectedEdge?.id ?? null,
+        memorySelection,
+      }),
+    [hoveredLayer, memoryGraph, memorySelection, visibleGraph, visibleLayers, visibleSelectedEdge?.id, visibleSelectedNode?.id],
+  );
+  const memoryGraphCounts = useMemo(() => countMemoryGraphEdges(memoryGraph), [memoryGraph]);
+
+  function handleLayerChange(layer: GraphLayer, checked: boolean) {
+    setVisibleLayers((current) => ({ ...current, [layer]: checked }));
+    if (!checked && memorySelection && selectionLayer(memorySelection) === layer) {
+      setMemorySelection(null);
+    }
+  }
+
+  function handleSelectRenderNode(node: RenderNode, options: { shiftKey?: boolean } = {}) {
+    if (node.renderKind === "code_node") {
+      setMemorySelection(null);
+      onSelectNode(node.id, options);
+      return;
+    }
+    if (node.memoryNode?.node_kind === "memory") {
+      onClearSelection();
+      setMemorySelection({ kind: "memory_node", node: node.memoryNode });
+    } else if (node.memoryNode) {
+      onClearSelection();
+      setMemorySelection({ kind: "source_node", node: node.memoryNode });
+    }
+  }
+
+  function handleSelectRenderLink(link: RenderLink) {
+    if (link.renderKind === "code_edge") {
+      setMemorySelection(null);
+      onSelectEdge(link.id);
+      return;
+    }
+    if (!link.memoryEdge) return;
+    onClearSelection();
+    setMemorySelection({
+      kind: link.renderKind === "provenance_edge" ? "provenance_edge" : "memory_relation_edge",
+      edge: link.memoryEdge,
+    });
+  }
+
+  function handleClearGraphSelection() {
+    setMemorySelection(null);
+    onClearSelection();
+  }
 
   useEffect(() => {
     setWebglSupported(hasWebGLSupport());
@@ -195,6 +296,12 @@ export function GraphTab({
             isolateDepth={filters.isolate_depth}
           />
         ) : null}
+        {memoryGraph ? (
+          <span>
+            memory graph {memoryGraph.returned_memories} memories / {memoryGraph.nodes.length} nodes /{" "}
+            {memoryGraph.edges.length} edges
+          </span>
+        ) : null}
         {graph?.truncated ? <span className="warning-inline">{graph.truncation_reason}</span> : null}
         {error ? <span className="warning-inline">{error}</span> : null}
       </div>
@@ -204,22 +311,39 @@ export function GraphTab({
           <h2>WebGL is required</h2>
           <p>This graph explorer needs a browser with WebGL enabled.</p>
         </div>
-      ) : graph && !graph.status.has_graph ? (
+      ) : graph && !graph.status.has_graph && !(memoryGraph?.nodes.length ?? 0) ? (
         <div className="graph-empty">
           <h2>No code graph extracted</h2>
           <p>Run <code>memory graph extract --project {project}</code> and refresh this tab.</p>
         </div>
       ) : (
         <div className="graph-workspace">
-          <GraphScene
+          <div className="graph-scene-panel">
+            <GraphScene
+              renderData={renderData}
+              onSelectNode={handleSelectRenderNode}
+              onSelectEdge={handleSelectRenderLink}
+              onClearSelection={handleClearGraphSelection}
+              onHoverLayer={setHoveredLayer}
+            />
+            <GraphLayerControls
+              visibleLayers={visibleLayers}
+              hoveredLayer={hoveredLayer}
+              codeNodeCount={visibleGraph?.nodes.length ?? 0}
+              codeEdgeCount={visibleGraph?.edges.length ?? 0}
+              provenanceEdgeCount={memoryGraphCounts.provenance}
+              relationEdgeCount={memoryGraphCounts.memory_relations}
+              onLayerChange={handleLayerChange}
+              onHoverLayer={setHoveredLayer}
+            />
+          </div>
+          <GraphInspector
+            node={memorySelection ? null : (visibleSelectedNode as VisibleCodeGraphNode | null)}
+            edge={memorySelection ? null : visibleSelectedEdge}
             graph={visibleGraph}
-            selectedNode={visibleSelectedNode}
-            selectedEdge={visibleSelectedEdge}
-            onSelectNode={onSelectNode}
-            onSelectEdge={onSelectEdge}
-            onClearSelection={onClearSelection}
+            memorySelection={memorySelection}
+            memoryGraph={memoryGraph}
           />
-          <GraphInspector node={visibleSelectedNode as VisibleCodeGraphNode | null} edge={visibleSelectedEdge} graph={visibleGraph} />
         </div>
       )}
     </section>
@@ -272,32 +396,31 @@ function GraphShowingSummary({
 }
 
 function GraphScene({
-  graph,
-  selectedNode,
-  selectedEdge,
+  renderData,
   onSelectNode,
   onSelectEdge,
   onClearSelection,
+  onHoverLayer,
 }: {
-  graph: CodeGraphResponse | null;
-  selectedNode: CodeGraphNode | null;
-  selectedEdge: CodeGraphEdge | null;
-  onSelectNode: (nodeId: string | null, options?: { shiftKey?: boolean }) => void;
-  onSelectEdge: (edgeId: string | null) => void;
+  renderData: { nodes: RenderNode[]; links: RenderLink[] };
+  onSelectNode: (node: RenderNode, options?: { shiftKey?: boolean }) => void;
+  onSelectEdge: (edge: RenderLink) => void;
   onClearSelection: () => void;
+  onHoverLayer: (layer: GraphLayer | null) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<ForceGraph3DInstance<RenderNode, RenderLink> | null>(null);
   const onSelectNodeRef = useRef(onSelectNode);
   const onSelectEdgeRef = useRef(onSelectEdge);
   const onClearSelectionRef = useRef(onClearSelection);
-  const renderData = useMemo(() => buildRenderData(graph, selectedNode?.id ?? null, selectedEdge?.id ?? null), [graph, selectedEdge?.id, selectedNode?.id]);
+  const onHoverLayerRef = useRef(onHoverLayer);
 
   useEffect(() => {
     onSelectNodeRef.current = onSelectNode;
     onSelectEdgeRef.current = onSelectEdge;
     onClearSelectionRef.current = onClearSelection;
-  }, [onClearSelection, onSelectEdge, onSelectNode]);
+    onHoverLayerRef.current = onHoverLayer;
+  }, [onClearSelection, onHoverLayer, onSelectEdge, onSelectNode]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -321,8 +444,10 @@ function GraphScene({
       .linkOpacity(0.45)
       .linkDirectionalArrowLength(3)
       .linkDirectionalArrowRelPos(1)
-      .onNodeClick((node, event) => onSelectNodeRef.current(node.id, { shiftKey: event.shiftKey }))
-      .onLinkClick((link) => onSelectEdgeRef.current(link.id))
+      .onNodeClick((node, event) => onSelectNodeRef.current(node, { shiftKey: event.shiftKey }))
+      .onLinkClick((link) => onSelectEdgeRef.current(link))
+      .onNodeHover((node) => onHoverLayerRef.current(node?.primaryLayer ?? null))
+      .onLinkHover((link) => onHoverLayerRef.current(link?.primaryLayer ?? null))
       .onBackgroundClick(() => {
         onClearSelectionRef.current();
       });
@@ -359,11 +484,66 @@ function GraphInspector({
   node,
   edge,
   graph,
+  memorySelection,
+  memoryGraph,
 }: {
   node: VisibleCodeGraphNode | null;
   edge: CodeGraphEdge | null;
   graph: CodeGraphResponse | null;
+  memorySelection: MemoryGraphSelection | null;
+  memoryGraph: ProjectMemoryGraphResponse | null;
 }) {
+  if (memorySelection?.kind === "memory_node") {
+    const memory = memorySelection.node;
+    return (
+      <aside className="graph-inspector">
+        <h2>{memory.label}</h2>
+        <dl>
+          <dt>Kind</dt><dd>Memory</dd>
+          <dt>Type</dt><dd>{memory.memory_type ?? "n/a"}</dd>
+          <dt>Confidence</dt><dd>{formatScore(memory.confidence)}</dd>
+          <dt>Importance</dt><dd>{memory.importance ?? "n/a"}</dd>
+          <dt>Tags</dt><dd>{memory.tags.length ? memory.tags.join(", ") : "n/a"}</dd>
+          <dt>Identity</dt><dd><code>{memory.memory_id ?? memory.id}</code></dd>
+        </dl>
+      </aside>
+    );
+  }
+  if (memorySelection?.kind === "source_node") {
+    const source = memorySelection.node;
+    return (
+      <aside className="graph-inspector">
+        <h2>{source.label}</h2>
+        <dl>
+          <dt>Kind</dt><dd>Source</dd>
+          <dt>Source type</dt><dd>{source.source_kind ?? "n/a"}</dd>
+          <dt>File</dt><dd>{source.file_path ?? "n/a"}</dd>
+          <dt>Symbol</dt><dd>{source.symbol_name ?? "n/a"}</dd>
+          <dt>Symbol kind</dt><dd>{source.symbol_kind ?? "n/a"}</dd>
+          <dt>Commit</dt><dd>{source.git_commit ?? "n/a"}</dd>
+          <dt>Provenance</dt><dd>{source.provenance_status ?? "not checked"}</dd>
+          <dt>Identity</dt><dd><code>{source.source_id ?? source.id}</code></dd>
+        </dl>
+      </aside>
+    );
+  }
+  if (memorySelection?.kind === "provenance_edge" || memorySelection?.kind === "memory_relation_edge") {
+    const selectedEdge = memorySelection.edge;
+    const source = memoryGraph?.nodes.find((candidate) => candidate.id === selectedEdge.source);
+    const target = memoryGraph?.nodes.find((candidate) => candidate.id === selectedEdge.target);
+    return (
+      <aside className="graph-inspector">
+        <h2>{memorySelection.kind === "provenance_edge" ? "Provenance" : selectedEdge.relation_type}</h2>
+        <dl>
+          <dt>Kind</dt><dd>{selectedEdge.edge_kind}</dd>
+          <dt>Source</dt><dd>{source?.label ?? selectedEdge.source}</dd>
+          <dt>Target</dt><dd>{target?.label ?? selectedEdge.target}</dd>
+          <dt>Relation</dt><dd>{selectedEdge.relation_type ?? "n/a"}</dd>
+          <dt>Source type</dt><dd>{selectedEdge.source_kind ?? "n/a"}</dd>
+        </dl>
+      </aside>
+    );
+  }
   if (node) {
     return (
       <aside className="graph-inspector">
@@ -402,6 +582,88 @@ function GraphInspector({
       <h2>Selection</h2>
       <p className="muted">No node or edge selected.</p>
     </aside>
+  );
+}
+
+function GraphLayerControls({
+  visibleLayers,
+  hoveredLayer,
+  codeNodeCount,
+  codeEdgeCount,
+  provenanceEdgeCount,
+  relationEdgeCount,
+  onLayerChange,
+  onHoverLayer,
+}: {
+  visibleLayers: LayerVisibility;
+  hoveredLayer: GraphLayer | null;
+  codeNodeCount: number;
+  codeEdgeCount: number;
+  provenanceEdgeCount: number;
+  relationEdgeCount: number;
+  onLayerChange: (layer: GraphLayer, checked: boolean) => void;
+  onHoverLayer: (layer: GraphLayer | null) => void;
+}) {
+  return (
+    <div className="graph-layer-controls" aria-label="Graph layers">
+      <LayerToggle
+        layer="code"
+        label="Code"
+        checked={visibleLayers.code}
+        active={hoveredLayer === "code"}
+        count={`${codeNodeCount} nodes / ${codeEdgeCount} edges`}
+        onChange={onLayerChange}
+        onHover={onHoverLayer}
+      />
+      <LayerToggle
+        layer="provenance"
+        label="Provenance"
+        checked={visibleLayers.provenance}
+        active={hoveredLayer === "provenance"}
+        count={`${provenanceEdgeCount} edges`}
+        onChange={onLayerChange}
+        onHover={onHoverLayer}
+      />
+      <LayerToggle
+        layer="memory_relations"
+        label="Memory relationships"
+        checked={visibleLayers.memory_relations}
+        active={hoveredLayer === "memory_relations"}
+        count={`${relationEdgeCount} edges`}
+        onChange={onLayerChange}
+        onHover={onHoverLayer}
+      />
+    </div>
+  );
+}
+
+function LayerToggle({
+  layer,
+  label,
+  checked,
+  active,
+  count,
+  onChange,
+  onHover,
+}: {
+  layer: GraphLayer;
+  label: string;
+  checked: boolean;
+  active: boolean;
+  count: string;
+  onChange: (layer: GraphLayer, checked: boolean) => void;
+  onHover: (layer: GraphLayer | null) => void;
+}) {
+  return (
+    <label
+      className={`graph-layer-toggle${active ? " active" : ""}`}
+      onMouseEnter={() => onHover(layer)}
+      onMouseLeave={() => onHover(null)}
+    >
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(layer, event.target.checked)} />
+      <span>{label}</span>
+      <small>{count}</small>
+    </label>
   );
 }
 
@@ -672,6 +934,9 @@ export function buildRenderData(
     return {
       ...node,
       selected,
+      layers: ["code"] as GraphLayer[],
+      primaryLayer: "code" as GraphLayer,
+      renderKind: "code_node" as const,
       val: selected ? Math.max(18, baseValue * 1.8) : baseValue,
       color: selected
         ? "#ffffff"
@@ -684,20 +949,143 @@ export function buildRenderData(
   });
   const links = (graph?.edges ?? []).map((edge) => ({
     ...edge,
+    layers: ["code"] as GraphLayer[],
+    primaryLayer: "code" as GraphLayer,
+    renderKind: "code_edge" as const,
     color: edge.id === selectedEdgeId ? "#ffc96b" : colorForEdge(edge.edge_kind),
     width: edge.id === selectedEdgeId ? 2.8 : Math.max(0.8, Math.min(2.2, edge.confidence * 2)),
   }));
   return { nodes, links };
 }
 
+export function buildLayeredRenderData({
+  codeGraph,
+  memoryGraph,
+  visibleLayers,
+  hoveredLayer,
+  selectedNodeId,
+  selectedEdgeId,
+  memorySelection,
+}: {
+  codeGraph: CodeGraphResponse | null;
+  memoryGraph: ProjectMemoryGraphResponse | null;
+  visibleLayers: LayerVisibility;
+  hoveredLayer: GraphLayer | null;
+  selectedNodeId: string | null;
+  selectedEdgeId: string | null;
+  memorySelection: MemoryGraphSelection | null;
+}): { nodes: RenderNode[]; links: RenderLink[] } {
+  const codeRenderData = buildRenderData(codeGraph, selectedNodeId, selectedEdgeId);
+  const nodes = codeRenderData.nodes.map((node) => applyLayerHighlight(node, hoveredLayer));
+  const links = codeRenderData.links.map((link) => applyLayerHighlight(link, hoveredLayer));
+
+  const visibleMemoryEdges = (memoryGraph?.edges ?? []).filter((edge) =>
+    edge.edge_kind === "provenance" ? visibleLayers.provenance : visibleLayers.memory_relations,
+  );
+  const visibleMemoryNodeIds = new Set<string>();
+  const nodeLayers = new Map<string, Set<GraphLayer>>();
+  for (const edge of visibleMemoryEdges) {
+    const layer = edge.edge_kind === "provenance" ? "provenance" : "memory_relations";
+    visibleMemoryNodeIds.add(edge.source);
+    visibleMemoryNodeIds.add(edge.target);
+    addNodeLayer(nodeLayers, edge.source, layer);
+    addNodeLayer(nodeLayers, edge.target, layer);
+  }
+
+  for (const node of memoryGraph?.nodes ?? []) {
+    if (!visibleMemoryNodeIds.has(node.id)) continue;
+    const layers = [...(nodeLayers.get(node.id) ?? new Set<GraphLayer>())];
+    const primaryLayer = layers.includes("provenance") ? "provenance" : "memory_relations";
+    const selected = isMemoryNodeSelection(memorySelection) && memorySelection.node.id === node.id;
+    nodes.push(
+      applyLayerHighlight(
+        {
+          id: node.id,
+          label: node.label,
+          selected,
+          layers,
+          primaryLayer,
+          renderKind: node.node_kind === "memory" ? "memory_node" : "source_node",
+          memoryNode: node,
+          val: selected ? 16 : node.node_kind === "memory" ? 9 : 6,
+          color: selected ? "#ffffff" : colorForMemoryNode(node, primaryLayer),
+        },
+        hoveredLayer,
+      ),
+    );
+  }
+
+  for (const edge of visibleMemoryEdges) {
+    const layer: GraphLayer = edge.edge_kind === "provenance" ? "provenance" : "memory_relations";
+    const selected = isMemoryEdgeSelection(memorySelection) && memorySelection.edge.id === edge.id;
+    links.push(
+      applyLayerHighlight(
+        {
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          layers: [layer],
+          primaryLayer: layer,
+          renderKind: edge.edge_kind === "provenance" ? "provenance_edge" : "memory_relation_edge",
+          memoryEdge: edge,
+          color: selected ? "#ffffff" : colorForMemoryEdge(edge),
+          width: selected ? 3 : edge.edge_kind === "provenance" ? 1.4 : 2,
+        },
+        hoveredLayer,
+      ),
+    );
+  }
+
+  return { nodes, links };
+}
+
+function addNodeLayer(nodeLayers: Map<string, Set<GraphLayer>>, nodeId: string, layer: GraphLayer) {
+  const layers = nodeLayers.get(nodeId) ?? new Set<GraphLayer>();
+  layers.add(layer);
+  nodeLayers.set(nodeId, layers);
+}
+
+function applyLayerHighlight<T extends { layers: GraphLayer[]; color: string; width?: number; val?: number }>(
+  item: T,
+  hoveredLayer: GraphLayer | null,
+): T {
+  if (!hoveredLayer) return item;
+  if (item.layers.includes(hoveredLayer)) {
+    return {
+      ...item,
+      color: brightenColor(item.color),
+      width: item.width ? item.width * 1.45 : item.width,
+      val: item.val ? item.val * 1.2 : item.val,
+    };
+  }
+  return {
+    ...item,
+    color: "#2d3744",
+    width: item.width ? Math.max(0.5, item.width * 0.55) : item.width,
+    val: item.val ? Math.max(2, item.val * 0.75) : item.val,
+  };
+}
+
 function nodeLabel(node: RenderNode): string {
+  if (node.renderKind === "memory_node") {
+    return `${node.label}<br/>memory ${node.memoryNode?.memory_type ?? "unknown"}<br/>confidence ${formatScore(node.memoryNode?.confidence)}`;
+  }
+  if (node.renderKind === "source_node") {
+    return `${node.label}<br/>source ${node.memoryNode?.source_kind ?? "unknown"}<br/>${node.memoryNode?.provenance_status ?? "not checked"}`;
+  }
   const location = node.file_path ? `${node.file_path}:${node.start_line ?? "?"}` : "no file";
   const distance = node.isolate_degree !== undefined ? `<br/>distance ${node.isolate_degree}` : "";
   return `${node.label}<br/>${node.symbol_kind ?? node.node_kind}<br/>${location}${distance}`;
 }
 
 function linkLabel(link: RenderLink): string {
-  return `${link.edge_kind}<br/>${link.file_path ?? "no file"}:${link.start_line ?? "?"}`;
+  if (link.renderKind === "provenance_edge") {
+    return `provenance<br/>${link.memoryEdge?.source_kind ?? "source"}`;
+  }
+  if (link.renderKind === "memory_relation_edge") {
+    return `memory relation<br/>${link.memoryEdge?.relation_type ?? "related"}`;
+  }
+  return `${link.edge_kind ?? "edge"}<br/>${link.file_path ?? "no file"}:${link.start_line ?? "?"}`;
 }
 
 function colorForGroup(group: string): string {
@@ -717,6 +1105,58 @@ function colorForEdge(edgeKind: string): string {
   if (edgeKind.includes("test")) return "#ffc96b";
   if (edgeKind.includes("import")) return "#8ab4ff";
   return "#9cb0c6";
+}
+
+function colorForMemoryNode(node: ProjectMemoryGraphNode, layer: GraphLayer): string {
+  if (node.node_kind === "source") return layer === "provenance" ? "#75d2ff" : "#9cb0c6";
+  if (layer === "memory_relations") return "#f2c56b";
+  return "#d7a8ff";
+}
+
+function colorForMemoryEdge(edge: ProjectMemoryGraphEdge): string {
+  if (edge.edge_kind === "provenance") return "#75d2ff";
+  if (edge.relation_type === "supports") return "#8be3a0";
+  if (edge.relation_type === "supersedes") return "#ffc96b";
+  if (edge.relation_type === "duplicates") return "#f48fb1";
+  return "#d7a8ff";
+}
+
+function brightenColor(color: string): string {
+  if (color === "#ffffff") return color;
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const value = match[1];
+  const parts = [value.slice(0, 2), value.slice(2, 4), value.slice(4, 6)].map((part) =>
+    Math.min(255, Math.round(Number.parseInt(part, 16) * 1.25 + 24)),
+  );
+  return `#${parts.map((part) => part.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function countMemoryGraphEdges(memoryGraph: ProjectMemoryGraphResponse | null): { provenance: number; memory_relations: number } {
+  const counts = { provenance: 0, memory_relations: 0 };
+  for (const edge of memoryGraph?.edges ?? []) {
+    if (edge.edge_kind === "provenance") counts.provenance += 1;
+    if (edge.edge_kind === "memory_relation") counts.memory_relations += 1;
+  }
+  return counts;
+}
+
+function selectionLayer(selection: MemoryGraphSelection): GraphLayer {
+  if (selection.kind === "provenance_edge") return "provenance";
+  if (selection.kind === "memory_relation_edge") return "memory_relations";
+  return selection.node.node_kind === "source" ? "provenance" : "memory_relations";
+}
+
+function isMemoryNodeSelection(selection: MemoryGraphSelection | null): selection is Extract<MemoryGraphSelection, { node: ProjectMemoryGraphNode }> {
+  return selection?.kind === "memory_node" || selection?.kind === "source_node";
+}
+
+function isMemoryEdgeSelection(selection: MemoryGraphSelection | null): selection is Extract<MemoryGraphSelection, { edge: ProjectMemoryGraphEdge }> {
+  return selection?.kind === "provenance_edge" || selection?.kind === "memory_relation_edge";
+}
+
+function formatScore(value?: number | null): string {
+  return typeof value === "number" ? value.toFixed(2) : "n/a";
 }
 
 function lineRange(start?: number | null, end?: number | null): string {

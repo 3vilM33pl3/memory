@@ -712,11 +712,58 @@ pre {
   min-height: min(74vh, 760px);
 }
 
+.graph-scene-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: min(74vh, 760px);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
 .graph-scene {
   min-height: min(74vh, 760px);
   height: min(74vh, 760px);
   background: #081019;
   overflow: hidden;
+}
+
+.graph-layer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.45rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.graph-layer-toggle {
+  display: inline-grid;
+  grid-template-columns: auto auto auto;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.graph-layer-toggle.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.graph-layer-toggle input {
+  margin: 0;
+}
+
+.graph-layer-toggle small {
+  color: var(--muted);
 }
 
 .graph-inspector,

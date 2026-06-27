@@ -1,8 +1,56 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { CodeGraphEdge, CodeGraphNode, CodeGraphResponse, CodeGraphStatusResponse } from "../../types";
-import { applyConnectedGraphIsolation, applyGraphConnectionView, buildRenderData, GraphTab } from "./GraphTab";
+vi.mock("3d-force-graph", () => {
+  const createInstance = () => {
+    const instance = {
+      backgroundColor: vi.fn(() => instance),
+      showNavInfo: vi.fn(() => instance),
+      nodeId: vi.fn(() => instance),
+      linkSource: vi.fn(() => instance),
+      linkTarget: vi.fn(() => instance),
+      nodeLabel: vi.fn(() => instance),
+      linkLabel: vi.fn(() => instance),
+      nodeVal: vi.fn(() => instance),
+      nodeColor: vi.fn(() => instance),
+      linkColor: vi.fn(() => instance),
+      linkWidth: vi.fn(() => instance),
+      linkOpacity: vi.fn(() => instance),
+      linkDirectionalArrowLength: vi.fn(() => instance),
+      linkDirectionalArrowRelPos: vi.fn(() => instance),
+      onNodeClick: vi.fn(() => instance),
+      onLinkClick: vi.fn(() => instance),
+      onNodeHover: vi.fn(() => instance),
+      onLinkHover: vi.fn(() => instance),
+      onBackgroundClick: vi.fn(() => instance),
+      width: vi.fn(() => instance),
+      height: vi.fn(() => instance),
+      graphData: vi.fn(() => instance),
+      zoomToFit: vi.fn(() => instance),
+      _destructor: vi.fn(),
+    };
+    return instance;
+  };
+  function MockForceGraph3D() {
+    return createInstance();
+  }
+  return { default: MockForceGraph3D };
+});
+
+import type {
+  CodeGraphEdge,
+  CodeGraphNode,
+  CodeGraphResponse,
+  CodeGraphStatusResponse,
+  ProjectMemoryGraphResponse,
+} from "../../types";
+import {
+  applyConnectedGraphIsolation,
+  applyGraphConnectionView,
+  buildLayeredRenderData,
+  buildRenderData,
+  GraphTab,
+} from "./GraphTab";
 
 const emptyStatus: CodeGraphStatusResponse = {
   project: "memory",
@@ -52,6 +100,7 @@ const baseProps = {
   },
   loading: false,
   error: null,
+  memoryGraph: null,
   selectedNode: null,
   selectedEdge: null,
   connectionView: null,
@@ -202,6 +251,44 @@ describe("GraphTab", () => {
     expect(onGoForwardSelection).toHaveBeenCalled();
   });
 
+  it("renders layer controls below the graph with code enabled by default", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as RenderingContext);
+
+    render(
+      <GraphTab
+        {...baseProps}
+        status={connectedStatus}
+        graph={connectedGraph}
+        memoryGraph={memoryGraph}
+      />,
+    );
+
+    expect(await screen.findByRole("checkbox", { name: /Code/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Provenance/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Memory relationships/ })).not.toBeChecked();
+    expect(screen.getByText("2 edges")).toBeInTheDocument();
+    expect(screen.getByText("1 edges")).toBeInTheDocument();
+  });
+
+  it("toggles memory graph layers independently from code filters", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as RenderingContext);
+
+    render(
+      <GraphTab
+        {...baseProps}
+        status={connectedStatus}
+        graph={connectedGraph}
+        memoryGraph={memoryGraph}
+      />,
+    );
+
+    const provenance = await screen.findByRole("checkbox", { name: /Provenance/ });
+    fireEvent.click(provenance);
+
+    expect(provenance).toBeChecked();
+    expect(baseProps.onFilterChange).not.toHaveBeenCalled();
+  });
+
   it("shows connection summary text when a connection view is active", async () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
 
@@ -303,6 +390,40 @@ describe("buildRenderData", () => {
   });
 });
 
+describe("buildLayeredRenderData", () => {
+  it("keeps memory graph layers hidden until toggled on", () => {
+    const renderData = buildLayeredRenderData({
+      codeGraph: connectedGraph,
+      memoryGraph,
+      visibleLayers: { code: true, provenance: false, memory_relations: false },
+      hoveredLayer: null,
+      selectedNodeId: null,
+      selectedEdgeId: null,
+      memorySelection: null,
+    });
+
+    expect(renderData.nodes.some((node) => node.renderKind === "memory_node")).toBe(false);
+    expect(renderData.links.some((link) => link.renderKind === "provenance_edge")).toBe(false);
+  });
+
+  it("adds provenance nodes and dims other layers when provenance is hovered", () => {
+    const renderData = buildLayeredRenderData({
+      codeGraph: connectedGraph,
+      memoryGraph,
+      visibleLayers: { code: true, provenance: true, memory_relations: false },
+      hoveredLayer: "provenance",
+      selectedNodeId: null,
+      selectedEdgeId: null,
+      memorySelection: null,
+    });
+
+    expect(renderData.nodes.some((node) => node.renderKind === "memory_node")).toBe(true);
+    expect(renderData.nodes.some((node) => node.renderKind === "source_node")).toBe(true);
+    expect(renderData.links.filter((link) => link.renderKind === "provenance_edge")).toHaveLength(2);
+    expect(renderData.nodes.find((node) => node.primaryLayer === "code")?.color).toBe("#2d3744");
+  });
+});
+
 const connectedStatus: CodeGraphStatusResponse = {
   project: "memory",
   has_graph: true,
@@ -392,6 +513,71 @@ const connectionGraph: CodeGraphResponse = {
     graphEdge("edge-be", "node-b", "node-e"),
     graphEdge("edge-eg", "node-e", "node-g"),
     graphEdge("edge-gb", "node-g", "node-b"),
+  ],
+};
+
+const memoryGraph: ProjectMemoryGraphResponse = {
+  project: "memory",
+  total_memories: 2,
+  returned_memories: 2,
+  nodes: [
+    {
+      id: "memory:11111111-1111-4111-8111-111111111111",
+      label: "Graph endpoint exposes provenance",
+      node_kind: "memory",
+      memory_id: "11111111-1111-4111-8111-111111111111",
+      memory_type: "implementation",
+      confidence: 0.91,
+      importance: 4,
+      tags: ["graph"],
+      summary: "Graph endpoint exposes provenance",
+    },
+    {
+      id: "memory:22222222-2222-4222-8222-222222222222",
+      label: "Graph endpoint exposes relations",
+      node_kind: "memory",
+      memory_id: "22222222-2222-4222-8222-222222222222",
+      memory_type: "architecture",
+      confidence: 0.88,
+      importance: 3,
+      tags: ["graph"],
+      summary: "Graph endpoint exposes relations",
+    },
+    {
+      id: "source:file:src/graph.rs::build_memory_graph",
+      label: "src/graph.rs::build_memory_graph",
+      node_kind: "source",
+      source_id: "33333333-3333-4333-8333-333333333333",
+      source_kind: "file",
+      tags: [],
+      file_path: "src/graph.rs",
+      symbol_name: "build_memory_graph",
+      symbol_kind: "function",
+      provenance_status: "verified",
+    },
+  ],
+  edges: [
+    {
+      id: "provenance:11111111-1111-4111-8111-111111111111:source:file:src/graph.rs::build_memory_graph",
+      source: "memory:11111111-1111-4111-8111-111111111111",
+      target: "source:file:src/graph.rs::build_memory_graph",
+      edge_kind: "provenance",
+      source_kind: "file",
+    },
+    {
+      id: "provenance:22222222-2222-4222-8222-222222222222:source:file:src/graph.rs::build_memory_graph",
+      source: "memory:22222222-2222-4222-8222-222222222222",
+      target: "source:file:src/graph.rs::build_memory_graph",
+      edge_kind: "provenance",
+      source_kind: "file",
+    },
+    {
+      id: "relation:11111111-1111-4111-8111-111111111111:supports:22222222-2222-4222-8222-222222222222",
+      source: "memory:11111111-1111-4111-8111-111111111111",
+      target: "memory:22222222-2222-4222-8222-222222222222",
+      edge_kind: "memory_relation",
+      relation_type: "supports",
+    },
   ],
 };
 

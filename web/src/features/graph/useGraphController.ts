@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
-import { getCodeGraph, getCodeGraphStatus } from "../../api";
+import { getCodeGraph, getCodeGraphStatus, getMemoryGraph } from "../../api";
 import type {
   CodeGraphEdge,
   CodeGraphNode,
   CodeGraphResponse,
   CodeGraphStatusResponse,
   CodeGraphViewFilters,
+  ProjectMemoryGraphResponse,
 } from "../../types";
 
 type GraphSelection =
@@ -69,6 +70,7 @@ export function useGraphController({
   const [graphFilters, setGraphFilters] = useState<GraphFilterForm>(DEFAULT_FILTERS);
   const [graphStatus, setGraphStatus] = useState<CodeGraphStatusResponse | null>(null);
   const [codeGraph, setCodeGraph] = useState<CodeGraphResponse | null>(null);
+  const [memoryGraph, setMemoryGraph] = useState<ProjectMemoryGraphResponse | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
@@ -122,12 +124,14 @@ export function useGraphController({
       setGraphLoading(true);
       setGraphError(null);
       try {
-        const [status, graph] = await Promise.all([
+        const [status, graph, memoryGraphResponse] = await Promise.all([
           getCodeGraphStatus(project),
           getCodeGraph(project, toApiFilters(nextFilters)),
+          getMemoryGraph(project),
         ]);
         setGraphStatus(status);
         setCodeGraph(graph);
+        setMemoryGraph(memoryGraphResponse);
         const hasSelectionHistory = graphSelectionHistoryRef.current.length > 0;
         const prunedHistory = graphSelectionHistoryRef.current.filter((selection) =>
           selectionExistsInGraph(selection, graph),
@@ -259,6 +263,7 @@ export function useGraphController({
     graphFilters,
     graphStatus,
     codeGraph,
+    memoryGraph,
     graphConnectionView,
     graphLoading,
     graphError,

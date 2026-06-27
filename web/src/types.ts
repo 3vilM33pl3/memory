@@ -28,6 +28,46 @@ export type SourceKind =
   | "test"
   | "note";
 
+export type MemoryGraphNodeKind = "memory" | "source";
+
+export type MemoryGraphEdgeKind = "provenance" | "memory_relation";
+
+export interface ProjectMemoryGraphNode {
+  id: string;
+  label: string;
+  node_kind: MemoryGraphNodeKind;
+  memory_id?: string | null;
+  source_id?: string | null;
+  memory_type?: MemoryType | null;
+  source_kind?: SourceKind | null;
+  confidence?: number | null;
+  importance?: number | null;
+  tags: string[];
+  file_path?: string | null;
+  git_commit?: string | null;
+  symbol_name?: string | null;
+  symbol_kind?: string | null;
+  provenance_status?: SourceProvenanceStatus | null;
+  summary?: string | null;
+}
+
+export interface ProjectMemoryGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  edge_kind: MemoryGraphEdgeKind;
+  relation_type?: string | null;
+  source_kind?: SourceKind | null;
+}
+
+export interface ProjectMemoryGraphResponse {
+  project: string;
+  total_memories: number;
+  returned_memories: number;
+  nodes: ProjectMemoryGraphNode[];
+  edges: ProjectMemoryGraphEdge[];
+}
+
 export type ReplacementPolicy = "conservative" | "balanced" | "aggressive";
 
 export type LoopMode =

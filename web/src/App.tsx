@@ -76,6 +76,7 @@ export default function App() {
     graphFilters,
     graphStatus,
     codeGraph,
+    memoryGraph,
     graphConnectionView,
     graphLoading,
     graphError,
@@ -327,6 +328,7 @@ export default function App() {
             filters={graphFilters}
             status={graphStatus}
             graph={codeGraph}
+            memoryGraph={memoryGraph}
             loading={graphLoading}
             error={graphError}
             selectedNode={selectedGraphNode}

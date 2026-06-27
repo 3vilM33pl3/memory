@@ -14,6 +14,7 @@ import type {
   ProjectMemoryExportOptions,
   ProjectMemoryImportPreview,
   ProjectMemoryImportResponse,
+  ProjectMemoryGraphResponse,
   ProjectOverviewResponse,
   QueryRequest,
   QueryResponse,
@@ -112,6 +113,11 @@ export async function getCodeGraph(
   const query = params.toString();
   const suffix = query ? `?${query}` : "";
   return parseJson(await apiFetch(`/v1/projects/${encodeURIComponent(project)}/graph${suffix}`));
+}
+
+export async function getMemoryGraph(project: string, limit = 250): Promise<ProjectMemoryGraphResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return parseJson(await apiFetch(`/v1/projects/${encodeURIComponent(project)}/memory-graph?${params.toString()}`));
 }
 
 export async function getMemories(project: string): Promise<ProjectMemoriesResponse> {

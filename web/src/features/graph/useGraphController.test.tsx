@@ -1,22 +1,25 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getCodeGraph, getCodeGraphStatus } from "../../api";
-import type { CodeGraphResponse, CodeGraphStatusResponse } from "../../types";
+import { getCodeGraph, getCodeGraphStatus, getMemoryGraph } from "../../api";
+import type { CodeGraphResponse, CodeGraphStatusResponse, ProjectMemoryGraphResponse } from "../../types";
 import { useGraphController } from "./useGraphController";
 
 vi.mock("../../api", () => ({
   getCodeGraph: vi.fn(),
   getCodeGraphStatus: vi.fn(),
+  getMemoryGraph: vi.fn(),
 }));
 
 const mockedGetCodeGraph = vi.mocked(getCodeGraph);
 const mockedGetCodeGraphStatus = vi.mocked(getCodeGraphStatus);
+const mockedGetMemoryGraph = vi.mocked(getMemoryGraph);
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockedGetCodeGraphStatus.mockResolvedValue(graphStatus);
   mockedGetCodeGraph.mockResolvedValue(graphResponse);
+  mockedGetMemoryGraph.mockResolvedValue(memoryGraphResponse);
 });
 
 describe("useGraphController", () => {
@@ -122,6 +125,14 @@ describe("useGraphController", () => {
 
     await waitFor(() => expect(result.current.graphConnectionView).toBeNull());
   });
+
+  it("loads the memory graph separately from the code graph", async () => {
+    const { result } = renderGraphController();
+
+    await waitFor(() => expect(result.current.memoryGraph?.returned_memories).toBe(1));
+
+    expect(mockedGetMemoryGraph).toHaveBeenCalledWith("memory");
+  });
 });
 
 function renderGraphController() {
@@ -214,4 +225,24 @@ const graphResponse: CodeGraphResponse = {
       resolution_status: "resolved",
     },
   ],
+};
+
+const memoryGraphResponse: ProjectMemoryGraphResponse = {
+  project: "memory",
+  total_memories: 1,
+  returned_memories: 1,
+  nodes: [
+    {
+      id: "memory:11111111-1111-4111-8111-111111111111",
+      label: "Memory graph controller test",
+      node_kind: "memory",
+      memory_id: "11111111-1111-4111-8111-111111111111",
+      memory_type: "implementation",
+      confidence: 0.91,
+      importance: 3,
+      tags: [],
+      summary: "Memory graph controller test",
+    },
+  ],
+  edges: [],
 };
