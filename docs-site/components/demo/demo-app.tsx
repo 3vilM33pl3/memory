@@ -448,76 +448,172 @@ function DemoForceGraph({
   onSelectNode: (nodeId: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const graphRef = useRef<any>(null);
+  const rendererRef = useRef<any>(null);
+  const sceneRef = useRef<any>(null);
+  const cameraRef = useRef<any>(null);
+  const graphGroupRef = useRef<any>(null);
+  const threeRef = useRef<typeof import("three") | null>(null);
+  const frameRef = useRef<number | null>(null);
+  const dragRef = useRef({ active: false, x: 0, y: 0 });
   const onSelectNodeRef = useRef(onSelectNode);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [graphReady, setGraphReady] = useState(0);
+  const [graphError, setGraphError] = useState<string | null>(null);
   onSelectNodeRef.current = onSelectNode;
   const graphData = useMemo(() => visibleGraphData(layers), [layers]);
+  const selectedNode = demoSnapshot.graph.nodes.find((node) => node.id === selectedNodeId);
+  const hoveredNode = hoveredNodeId ? demoSnapshot.graph.nodes.find((node) => node.id === hoveredNodeId) : null;
 
   useEffect(() => {
     let disposed = false;
-    void import("3d-force-graph").then((module) => {
+    void import("three").then((three) => {
       if (disposed || !containerRef.current) return;
-      const ForceGraph3D = module.default as unknown as (
-        element: HTMLElement,
-        options?: Record<string, unknown>,
-      ) => any;
-      const instance = ForceGraph3D(containerRef.current, {
-        controlType: "orbit",
-        rendererConfig: { antialias: true, alpha: false },
-      });
-      graphRef.current = instance;
-      instance
-        .backgroundColor("#081019")
-        .showNavInfo(false)
-        .nodeId("id")
-        .linkSource("source")
-        .linkTarget("target")
-        .nodeLabel((node: DemoGraphNode) => `${node.label}<br/>${node.kind}<br/>${node.detail}`)
-        .linkLabel((link: DemoGraphLink) => `${link.kind}<br/>${link.label}`)
-        .nodeVal((node: DemoGraphNode) => (node.id === selectedNodeId ? 16 : node.kind === "memory" ? 9 : 6))
-        .nodeColor((node: DemoGraphNode) => colorForDemoNode(node, selectedNodeId))
-        .linkColor((link: DemoGraphLink) => colorForDemoLink(link))
-        .linkWidth((link: DemoGraphLink) => (link.kind === "attachment" ? 2.5 : 1.5))
-        .linkOpacity(0.55)
-        .onNodeClick((node: DemoGraphNode) => onSelectNodeRef.current(node.id));
+      threeRef.current = three;
+      const scene = new three.Scene();
+      scene.background = new three.Color("#081019");
+      sceneRef.current = scene;
+
+      const camera = new three.PerspectiveCamera(48, 1, 0.1, 2000);
+      camera.position.set(0, 0, 92);
+      cameraRef.current = camera;
+
+      let renderer: import("three").WebGLRenderer;
+      try {
+        renderer = new three.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+      } catch {
+        setGraphError("WebGL is unavailable in this browser session. Enable hardware acceleration or use a WebGL-capable browser.");
+        return;
+      }
+      setGraphError(null);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      rendererRef.current = renderer;
+      containerRef.current.appendChild(renderer.domElement);
+
+      const graphGroup = new three.Group();
+      graphGroupRef.current = graphGroup;
+      scene.add(graphGroup);
+      scene.add(new three.AmbientLight("#b9d9ff", 1.2));
+      const keyLight = new three.DirectionalLight("#ffffff", 2.1);
+      keyLight.position.set(32, 42, 62);
+      scene.add(keyLight);
+      const fillLight = new three.PointLight("#7be0c5", 1.4, 180);
+      fillLight.position.set(-42, -28, 50);
+      scene.add(fillLight);
+
+      const raycaster = new three.Raycaster();
+      const pointer = new three.Vector2();
+      const pickNode = (event: PointerEvent) => {
+        const element = renderer.domElement;
+        const rect = element.getBoundingClientRect();
+        pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+        const hits = raycaster.intersectObjects(graphGroup.children, true);
+        const hit = hits.find((item) => item.object.userData?.nodeId);
+        return hit?.object.userData?.nodeId as string | undefined;
+      };
+      const onPointerMove = (event: PointerEvent) => {
+        if (dragRef.current.active) {
+          const dx = event.clientX - dragRef.current.x;
+          const dy = event.clientY - dragRef.current.y;
+          dragRef.current = { active: true, x: event.clientX, y: event.clientY };
+          graphGroup.rotation.y += dx * 0.006;
+          graphGroup.rotation.x = Math.max(-0.85, Math.min(0.85, graphGroup.rotation.x + dy * 0.004));
+          return;
+        }
+        const nodeId = pickNode(event) ?? null;
+        setHoveredNodeId(nodeId);
+        renderer.domElement.style.cursor = nodeId ? "pointer" : "grab";
+      };
+      const onPointerDown = (event: PointerEvent) => {
+        dragRef.current = { active: true, x: event.clientX, y: event.clientY };
+        renderer.domElement.style.cursor = "grabbing";
+      };
+      const onPointerUp = (event: PointerEvent) => {
+        const moved = Math.abs(event.clientX - dragRef.current.x) + Math.abs(event.clientY - dragRef.current.y);
+        dragRef.current.active = false;
+        renderer.domElement.style.cursor = "grab";
+        if (moved < 5) {
+          const nodeId = pickNode(event);
+          if (nodeId) onSelectNodeRef.current(nodeId);
+        }
+      };
+      const onPointerLeave = () => {
+        dragRef.current.active = false;
+        setHoveredNodeId(null);
+      };
+      const onWheel = (event: WheelEvent) => {
+        event.preventDefault();
+        camera.position.z = Math.max(42, Math.min(150, camera.position.z + event.deltaY * 0.05));
+      };
+
       const resize = () => {
         const element = containerRef.current;
         if (!element) return;
-        instance.width(element.clientWidth || 900).height(element.clientHeight || 620);
+        const width = element.clientWidth || 900;
+        const height = element.clientHeight || 620;
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+        renderer.setSize(width, height, false);
       };
       resize();
       window.addEventListener("resize", resize);
-      instance.__memoryDemoResize = resize;
-      instance.graphData({
-        nodes: graphData.nodes.map((node) => ({ ...node })),
-        links: graphData.links.map((link) => ({ ...link })),
-      });
-      if (graphData.nodes.length) window.setTimeout(() => instance.zoomToFit(500, 48), 50);
+      renderer.domElement.addEventListener("pointermove", onPointerMove);
+      renderer.domElement.addEventListener("pointerdown", onPointerDown);
+      renderer.domElement.addEventListener("pointerup", onPointerUp);
+      renderer.domElement.addEventListener("pointerleave", onPointerLeave);
+      renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+
+      const animate = () => {
+        if (disposed) return;
+        if (!dragRef.current.active) graphGroup.rotation.y += 0.0012;
+        renderer.render(scene, camera);
+        frameRef.current = window.requestAnimationFrame(animate);
+      };
+      renderDemoGraph(three, graphGroup, graphData, selectedNodeId, null);
+      setGraphReady((current) => current + 1);
+      animate();
+
+      (renderer as any).__memoryDemoCleanup = () => {
+        window.removeEventListener("resize", resize);
+        renderer.domElement.removeEventListener("pointermove", onPointerMove);
+        renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+        renderer.domElement.removeEventListener("pointerup", onPointerUp);
+        renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+        renderer.domElement.removeEventListener("wheel", onWheel);
+      };
     });
     return () => {
       disposed = true;
-      const instance = graphRef.current;
-      if (instance?.__memoryDemoResize) window.removeEventListener("resize", instance.__memoryDemoResize);
-      instance?._destructor?.();
-      graphRef.current = null;
+      if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
+      rendererRef.current?.__memoryDemoCleanup?.();
+      disposeGraphObjects(graphGroupRef.current);
+      rendererRef.current?.dispose?.();
+      rendererRef.current = null;
+      sceneRef.current = null;
+      cameraRef.current = null;
+      graphGroupRef.current = null;
+      threeRef.current = null;
       containerRef.current?.replaceChildren();
     };
   }, []);
 
   useEffect(() => {
-    const instance = graphRef.current;
-    if (!instance) return;
-    instance
-      .nodeVal((node: DemoGraphNode) => (node.id === selectedNodeId ? 16 : node.kind === "memory" ? 9 : 6))
-      .nodeColor((node: DemoGraphNode) => colorForDemoNode(node, selectedNodeId))
-      .graphData({
-        nodes: graphData.nodes.map((node) => ({ ...node })),
-        links: graphData.links.map((link) => ({ ...link })),
-      });
-    if (graphData.nodes.length) window.setTimeout(() => instance.zoomToFit(500, 48), 50);
-  }, [graphData, selectedNodeId]);
+    const three = threeRef.current;
+    const graphGroup = graphGroupRef.current;
+    if (!three || !graphGroup) return;
+    renderDemoGraph(three, graphGroup, graphData, selectedNodeId, hoveredNodeId);
+  }, [graphData, graphReady, hoveredNodeId, selectedNodeId]);
 
-  return <div ref={containerRef} className="demo-force-graph" />;
+  return (
+    <div className="demo-force-graph-wrap">
+      <div ref={containerRef} className="demo-force-graph" />
+      <div className="demo-graph-overlay" aria-live="polite">
+        <strong>{graphError ? "WebGL unavailable" : hoveredNode?.label ?? selectedNode?.label ?? "Memory graph"}</strong>
+        <span>{graphError ?? hoveredNode?.detail ?? selectedNode?.detail ?? "Drag to rotate, scroll to zoom, click a node for details."}</span>
+      </div>
+    </div>
+  );
 }
 
 function visibleGraphData(layers: Record<"code" | "memory" | "provenance", boolean>) {
@@ -535,8 +631,107 @@ function visibleGraphData(layers: Record<"code" | "memory" | "provenance", boole
   return { nodes, links };
 }
 
-function colorForDemoNode(node: DemoGraphNode, selectedNodeId: string): string {
+function renderDemoGraph(
+  three: typeof import("three"),
+  graphGroup: any,
+  graphData: { nodes: DemoGraphNode[]; links: DemoGraphLink[] },
+  selectedNodeId: string,
+  hoveredNodeId: string | null,
+) {
+  disposeGraphObjects(graphGroup);
+  const positions = layoutDemoGraphNodes(three, graphData.nodes);
+  for (const link of graphData.links) {
+    const source = positions.get(link.source);
+    const target = positions.get(link.target);
+    if (!source || !target) continue;
+    const geometry = new three.BufferGeometry().setFromPoints([source, target]);
+    const material = new three.LineBasicMaterial({
+      color: new three.Color(colorForDemoLink(link)),
+      transparent: true,
+      opacity: hoveredNodeId && (link.source === hoveredNodeId || link.target === hoveredNodeId) ? 0.95 : 0.5,
+    });
+    const line = new three.Line(geometry, material);
+    line.userData = { linkId: link.id };
+    graphGroup.add(line);
+  }
+  for (const node of graphData.nodes) {
+    const position = positions.get(node.id);
+    if (!position) continue;
+    const selected = node.id === selectedNodeId;
+    const hovered = node.id === hoveredNodeId;
+    const radius = selected ? 3.9 : hovered ? 3.45 : node.kind === "memory" ? 2.75 : node.kind === "source" ? 2.35 : 2.55;
+    const geometry = new three.SphereGeometry(radius, 32, 18);
+    const material = new three.MeshStandardMaterial({
+      color: new three.Color(colorForDemoNode(node, selectedNodeId, hoveredNodeId)),
+      emissive: new three.Color(node.kind === "memory" ? "#5f3b00" : node.kind === "source" ? "#003750" : "#003d32"),
+      emissiveIntensity: selected || hovered ? 0.72 : 0.32,
+      roughness: 0.36,
+      metalness: 0.12,
+    });
+    const mesh = new three.Mesh(geometry, material);
+    mesh.position.copy(position);
+    mesh.userData = { nodeId: node.id };
+    graphGroup.add(mesh);
+
+    if (selected || hovered) {
+      const ringGeometry = new three.TorusGeometry(radius + 0.72, 0.08, 10, 42);
+      const ringMaterial = new three.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: selected ? 0.9 : 0.62 });
+      const ring = new three.Mesh(ringGeometry, ringMaterial);
+      ring.position.copy(position);
+      ring.lookAt(0, 0, 120);
+      graphGroup.add(ring);
+    }
+  }
+}
+
+function layoutDemoGraphNodes(three: typeof import("three"), nodes: DemoGraphNode[]) {
+  const byGroup = nodes.reduce<Record<string, DemoGraphNode[]>>((groups, node) => {
+    const key = node.kind === "memory" ? "memory" : node.kind === "source" ? "source" : node.group;
+    groups[key] = [...(groups[key] ?? []), node];
+    return groups;
+  }, {});
+  const groups = Object.entries(byGroup);
+  const positions = new Map<string, InstanceType<typeof three.Vector3>>();
+  groups.forEach(([group, groupNodes], groupIndex) => {
+    const groupAngle = (groupIndex / Math.max(groups.length, 1)) * Math.PI * 2;
+    const groupRadius = group === "memory" ? 18 : group === "source" ? 34 : 26;
+    const groupCenter = new three.Vector3(
+      Math.cos(groupAngle) * groupRadius,
+      Math.sin(groupAngle) * groupRadius,
+      (groupIndex % 3 - 1) * 9,
+    );
+    groupNodes.forEach((node, nodeIndex) => {
+      const localAngle = (nodeIndex / Math.max(groupNodes.length, 1)) * Math.PI * 2;
+      const localRadius = 5 + Math.min(groupNodes.length, 8) * 0.95;
+      positions.set(
+        node.id,
+        new three.Vector3(
+          groupCenter.x + Math.cos(localAngle) * localRadius,
+          groupCenter.y + Math.sin(localAngle) * localRadius,
+          groupCenter.z + (nodeIndex % 4 - 1.5) * 4.5,
+        ),
+      );
+    });
+  });
+  return positions;
+}
+
+function disposeGraphObjects(group: any) {
+  if (!group) return;
+  for (const child of [...group.children]) {
+    child.geometry?.dispose?.();
+    if (Array.isArray(child.material)) {
+      child.material.forEach((material: any) => material.dispose?.());
+    } else {
+      child.material?.dispose?.();
+    }
+    group.remove(child);
+  }
+}
+
+function colorForDemoNode(node: DemoGraphNode, selectedNodeId: string, hoveredNodeId: string | null): string {
   if (node.id === selectedNodeId) return "#ffffff";
+  if (node.id === hoveredNodeId) return "#fff2b8";
   if (node.kind === "memory") return "#f2c56b";
   if (node.kind === "source") return "#75d2ff";
   return node.group === "api" ? "#d7a8ff" : "#7be0c5";
