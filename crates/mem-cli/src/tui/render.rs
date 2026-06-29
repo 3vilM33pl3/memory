@@ -2825,21 +2825,25 @@ Show project watchers, heartbeat state, agent ownership, service identity, resta
             r#"# Skills Help
 
 ## Purpose
-Inspect and repair the repo-local Memory Layer skill bundle used by coding agents.
+Inspect Memory Layer, repo-local, home-directory, Codex, and plugin skills used by coding agents.
 
 ## Layout
-- Skill table: Memory-owned skill name, status, local version, template version, and pending repair action.
-- Detail pane: selected skill path, template path, version detail, and SKILL.md content.
-- Status line: current inventory summary or repair result.
+- Filter bar: active skill source filter and matching row count.
+- Skill table: skill name, source, status, installed version, and pending repair action.
+- Detail pane: selected skill source, path, template path, version detail, and SKILL.md content.
+- Status line: current inventory summary, filter change, or repair result.
 
 ## Controls
 - `j/k` or `Up/Down`: select a skill.
 - `PgUp/PgDn`: scroll selected SKILL.md detail. `Home`: jump to top.
+- `f` / `F`: cycle the visible skill filter forward or backward.
 - `u`: repair repo-local Memory skills using the current template/GitHub fallback path.
 - `r`: refresh project state outside help.
 
 ## Workflows
 - Open this tab when the footer reports stale, missing, or unversioned skills.
+- Keep the default Memory filter for the managed repo-local Memory Layer bundle.
+- Switch to Repo local, Home, Codex, Plugins, Unmanaged, or All when tracing where an agent skill comes from.
 - Review the selected skill's SKILL.md before asking an agent to use it.
 - Use `u`, `memory doctor --fix`, or `memory upgrade` to repair Memory-owned skills.
 
@@ -3778,6 +3782,8 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             TabKind::Skills => vec![
                 accent_span("move "),
                 Span::styled("j/k  ", Style::default().fg(Theme::TEXT)),
+                accent_span("filter "),
+                Span::styled("f/F  ", Style::default().fg(Theme::TEXT)),
                 accent_span("detail "),
                 Span::styled("PgUp/PgDn Home  ", Style::default().fg(Theme::TEXT)),
                 accent_span("repair "),

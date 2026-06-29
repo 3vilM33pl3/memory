@@ -16,13 +16,18 @@ pub(in crate::tui) fn draw_skills_tab(
     area: Rect,
 ) {
     let app = ctx.app;
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(4), Constraint::Min(0)])
+        .split(area);
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-        .split(area);
+        .split(outer[1]);
 
     let inventory = &app.meta.skill_inventory;
-    let selected = inventory.skills.get(app.skills.selected_index);
+    let visible_skills = filtered_skills(app);
+    let selected = visible_skills.get(app.skills.selected_index).copied();
     let message = app
         .skills
         .operation
@@ -30,18 +35,24 @@ pub(in crate::tui) fn draw_skills_tab(
         .map(|operation| format!("{operation}..."))
         .or_else(|| app.skills.message.clone())
         .unwrap_or_else(|| inventory.summary.clone());
+    let filter_summary = format!(
+        "Filter: {} ({}/{})  f next  F previous  u repair Memory skills",
+        app.skills.filter.label(),
+        visible_skills.len(),
+        inventory.skills.len()
+    );
+    let filter_line = Line::from(filter_spans(app.skills.filter));
+    let filter_bar = Paragraph::new(vec![Line::from(filter_summary), filter_line])
+        .block(themed_block("Skill Filters"));
+    frame.render_widget(filter_bar, outer[0]);
 
-    let rows = inventory.skills.iter().map(|skill| {
+    let rows = visible_skills.iter().map(|skill| {
         Row::new(vec![
             skill.name.clone(),
+            skill.source_kind.label().to_string(),
             skill.status.label().to_string(),
             skill
                 .project_version
-                .as_deref()
-                .unwrap_or("n/a")
-                .to_string(),
-            skill
-                .template_version
                 .as_deref()
                 .unwrap_or("n/a")
                 .to_string(),
@@ -52,14 +63,14 @@ pub(in crate::tui) fn draw_skills_tab(
         rows,
         [
             Constraint::Percentage(30),
-            Constraint::Percentage(18),
-            Constraint::Percentage(17),
-            Constraint::Percentage(17),
-            Constraint::Percentage(18),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(15),
+            Constraint::Percentage(15),
         ],
     )
     .header(
-        Row::new(vec!["Skill", "Status", "Local", "Template", "Action"]).style(
+        Row::new(vec!["Skill", "Source", "Status", "Version", "Action"]).style(
             Style::default()
                 .fg(Theme::ACCENT)
                 .add_modifier(Modifier::BOLD),
@@ -90,12 +101,33 @@ pub(in crate::tui) fn draw_skills_tab(
                 ),
             ]),
             Line::from(vec![
+                label_span("Source: "),
+                Span::styled(skill.source_kind.label(), Style::default().fg(Theme::TEXT)),
+                Span::raw("   "),
+                label_span("Repairable: "),
+                Span::styled(
+                    if skill.repairable { "yes" } else { "no" },
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]),
+            Line::from(vec![
                 label_span("Status: "),
                 Span::styled(skill.status.label(), Style::default().fg(Theme::TEXT)),
                 Span::raw("   "),
                 label_span("Action: "),
                 Span::styled(
                     format!("{:?}", skill.action),
+                    Style::default().fg(Theme::TEXT),
+                ),
+            ]),
+            Line::from(vec![
+                label_span("Description: "),
+                Span::styled(
+                    skill
+                        .description
+                        .as_deref()
+                        .unwrap_or("not provided")
+                        .to_string(),
                     Style::default().fg(Theme::TEXT),
                 ),
             ]),
@@ -122,7 +154,7 @@ pub(in crate::tui) fn draw_skills_tab(
                 ),
             ]),
             Line::from(vec![
-                label_span("Project path: "),
+                label_span("Skill path: "),
                 Span::styled(skill.project_path.clone(), Style::default().fg(Theme::TEXT)),
             ]),
             Line::from(vec![
@@ -153,7 +185,10 @@ pub(in crate::tui) fn draw_skills_tab(
         lines.extend(skill_content_lines(&skill.project_path));
         lines
     } else {
-        vec![Line::from("No skills are available for this repo root.")]
+        vec![Line::from(format!(
+            "No skills match the {} filter.",
+            app.skills.filter.label()
+        ))]
     };
 
     let detail = Paragraph::new(detail)
@@ -161,6 +196,34 @@ pub(in crate::tui) fn draw_skills_tab(
         .scroll((app.skills.detail_scroll, 0))
         .block(themed_block("Skill Detail"));
     frame.render_widget(detail, chunks[1]);
+}
+
+pub(in crate::tui) fn filtered_skills(app: &App) -> Vec<&mem_skills::SkillVersionInfo> {
+    app.meta
+        .skill_inventory
+        .skills
+        .iter()
+        .filter(|skill| app.skills.filter.matches(skill))
+        .collect()
+}
+
+fn filter_spans(active: SkillsFilter) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (index, filter) in SkillsFilter::ALL.iter().copied().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        let style = if filter == active {
+            Style::default()
+                .fg(Theme::SELECTION_FG)
+                .bg(Theme::SELECTION_BG)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Theme::MUTED)
+        };
+        spans.push(Span::styled(format!(" {} ", filter.label()), style));
+    }
+    spans
 }
 
 pub(in crate::tui) fn update(

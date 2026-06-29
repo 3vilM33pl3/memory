@@ -323,7 +323,7 @@ async fn load_project_refresh(
         memories: memories.map_err(|error| error.to_string()),
         proposals: proposals.map_err(|error| error.to_string()),
         automations,
-        skill_inventory: mem_skills::project_skill_inventory(&repo_root, false),
+        skill_inventory: mem_skills::visible_skill_inventory(&repo_root, false),
     }
 }
 
@@ -520,6 +520,7 @@ impl App {
             },
             watchers: WatchersTabState { watcher_scroll: 0 },
             skills: SkillsTabState {
+                filter: SkillsFilter::Memory,
                 selected_index: 0,
                 table_state: skills_table_state,
                 detail_scroll: 0,
@@ -573,7 +574,7 @@ impl App {
             meta: RuntimeMeta {
                 overview: empty_overview(project),
                 versions,
-                skill_inventory: mem_skills::project_skill_inventory(&repo_root, false),
+                skill_inventory: mem_skills::visible_skill_inventory(&repo_root, false),
                 startup_at: Utc::now(),
                 profile,
                 dev_commit_label: (profile == Profile::Dev)
@@ -1332,11 +1333,12 @@ impl App {
                 self.skills.operation = None;
                 match result {
                     Ok(report) => {
-                        self.meta.skill_inventory = report.inventory;
+                        self.meta.skill_inventory =
+                            mem_skills::visible_skill_inventory(&self.repo_root, false);
                         self.clamp_skill_selection();
                         self.skills.message = Some(format!(
                             "Repair complete: {}{}",
-                            self.meta.skill_inventory.summary,
+                            report.inventory.summary,
                             report
                                 .backup_root
                                 .as_deref()
@@ -1900,6 +1902,12 @@ impl App {
             }
             KeyCode::Home if self.active_tab == TabKind::Skills => {
                 self.skills.detail_scroll = 0;
+            }
+            KeyCode::Char('f') if self.active_tab == TabKind::Skills => {
+                self.cycle_skill_filter(1);
+            }
+            KeyCode::Char('F') if self.active_tab == TabKind::Skills => {
+                self.cycle_skill_filter(-1);
             }
             KeyCode::Char('u') if self.active_tab == TabKind::Skills => {
                 self.repair_skills();
@@ -2995,7 +3003,7 @@ impl App {
     }
 
     fn select_skill(&mut self, delta: isize) {
-        let len = self.meta.skill_inventory.skills.len();
+        let len = self.filtered_skill_count();
         if len == 0 {
             self.skills.selected_index = 0;
             self.skills.table_state.select(None);
@@ -3011,7 +3019,7 @@ impl App {
     }
 
     fn clamp_skill_selection(&mut self) {
-        let len = self.meta.skill_inventory.skills.len();
+        let len = self.filtered_skill_count();
         if len == 0 {
             self.skills.selected_index = 0;
             self.skills.table_state.select(None);
@@ -3021,6 +3029,31 @@ impl App {
         self.skills
             .table_state
             .select(Some(self.skills.selected_index));
+    }
+
+    fn filtered_skill_count(&self) -> usize {
+        self.meta
+            .skill_inventory
+            .skills
+            .iter()
+            .filter(|skill| self.skills.filter.matches(skill))
+            .count()
+    }
+
+    fn cycle_skill_filter(&mut self, delta: isize) {
+        let filters = SkillsFilter::ALL;
+        let current = filters
+            .iter()
+            .position(|filter| *filter == self.skills.filter)
+            .unwrap_or(0) as isize;
+        let len = filters.len() as isize;
+        let next = ((current + delta) % len + len) % len;
+        self.skills.filter = filters[next as usize];
+        self.skills.selected_index = 0;
+        self.skills.detail_scroll = 0;
+        self.skills.message = Some(format!("Filter: {}", self.skills.filter.label()));
+        self.clamp_skill_selection();
+        self.chrome.status_message = format!("Skills filter: {}", self.skills.filter.label());
     }
 
     fn scroll_automation_detail(&mut self, delta: i16) {

@@ -20,6 +20,7 @@ use super::{
     tui_status_detail, tui_status_label, watcher_bar_status_label,
 };
 use crate::commands::service_support::TuiRestartNotice;
+use crate::tui::state::SkillsFilter;
 use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
 use mem_api::{
     ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
@@ -29,7 +30,10 @@ use mem_api::{
     QueryResult, QueryResultDebug, ReplacementProposalListResponse, StreamResponse, TokenUsage,
     WatcherPresenceSummary,
 };
-use mem_skills::{SkillBundleStatus, project_skill_inventory};
+use mem_skills::{
+    SkillBundleStatus, SkillInventoryReport, SkillSourceKind, SkillUpgradeAction, SkillVersionInfo,
+    SkillVersionStatus, project_skill_inventory,
+};
 use ratatui::{Terminal, backend::TestBackend, style::Color};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -147,6 +151,44 @@ fn h_is_no_longer_previous_tab_alias() {
 
     assert_eq!(app.active_tab, TabKind::Query);
     assert_eq!(app.chrome.help.help_tab, TabKind::Query);
+}
+
+#[test]
+fn skills_tab_defaults_to_memory_filter() {
+    let mut app = new_test_app();
+    app.meta.skill_inventory = test_skill_inventory();
+    app.clamp_skill_selection();
+
+    assert_eq!(app.skills.filter, SkillsFilter::Memory);
+    assert_eq!(app.filtered_skill_count(), 2);
+    assert_eq!(app.skills.table_state.selected(), Some(0));
+}
+
+#[test]
+fn skills_filter_cycle_resets_and_clamps_selection() {
+    let mut app = new_test_app();
+    app.meta.skill_inventory = test_skill_inventory();
+    app.skills.selected_index = 1;
+    app.skills.table_state.select(Some(1));
+
+    app.cycle_skill_filter(1);
+
+    assert_eq!(app.skills.filter, SkillsFilter::RepoLocal);
+    assert_eq!(app.filtered_skill_count(), 3);
+    assert_eq!(app.skills.selected_index, 0);
+    assert_eq!(app.skills.table_state.selected(), Some(0));
+    assert_eq!(app.skills.detail_scroll, 0);
+}
+
+#[test]
+fn skills_needs_repair_filter_only_counts_repairable_actions() {
+    let mut app = new_test_app();
+    app.meta.skill_inventory = test_skill_inventory();
+    app.skills.filter = SkillsFilter::NeedsRepair;
+    app.clamp_skill_selection();
+
+    assert_eq!(app.filtered_skill_count(), 1);
+    assert_eq!(app.skills.table_state.selected(), Some(0));
 }
 
 #[test]
@@ -1861,6 +1903,71 @@ fn new_test_app() -> App {
         Profile::Prod,
         tx,
     )
+}
+
+fn test_skill_inventory() -> SkillInventoryReport {
+    SkillInventoryReport {
+        project_root: "/tmp/memory".to_string(),
+        project_skill_root: "/tmp/memory/.agents/skills".to_string(),
+        template_root: Some("/tmp/template".to_string()),
+        bundle_version: "0.9.9".to_string(),
+        status: SkillBundleStatus::Warn,
+        summary: "test skills".to_string(),
+        filter: "visible".to_string(),
+        skills: vec![
+            test_skill(
+                "memory-layer",
+                SkillSourceKind::RepoMemory,
+                true,
+                SkillUpgradeAction::Skip,
+            ),
+            test_skill(
+                "memory-remember",
+                SkillSourceKind::RepoMemory,
+                true,
+                SkillUpgradeAction::Replace,
+            ),
+            test_skill(
+                "repo-custom",
+                SkillSourceKind::RepoLocal,
+                false,
+                SkillUpgradeAction::Skip,
+            ),
+            test_skill(
+                "home-custom",
+                SkillSourceKind::HomeLocal,
+                false,
+                SkillUpgradeAction::Skip,
+            ),
+        ],
+    }
+}
+
+fn test_skill(
+    name: &str,
+    source_kind: SkillSourceKind,
+    repairable: bool,
+    action: SkillUpgradeAction,
+) -> SkillVersionInfo {
+    SkillVersionInfo {
+        name: name.to_string(),
+        project_path: format!("/tmp/{name}"),
+        template_path: None,
+        source_kind,
+        repairable,
+        description: Some("test skill".to_string()),
+        project_version: Some("1.0.0".to_string()),
+        template_version: None,
+        status: if repairable && action != SkillUpgradeAction::Skip {
+            SkillVersionStatus::Outdated
+        } else if repairable {
+            SkillVersionStatus::UpToDate
+        } else {
+            SkillVersionStatus::Unmanaged
+        },
+        action,
+        detail: None,
+    }
 }
 
 fn tab_key(code: KeyCode) -> Event {

@@ -55,6 +55,11 @@ use super::{
     WatcherManagerArgs, WatcherManagerCommand, ensure_shared_service_api_token, shared_env_lookup,
 };
 use mem_api::{AppConfig, Profile};
+use mem_skills::{
+    SkillSourceKind as SharedSkillSourceKind, SkillUpgradeAction as SharedSkillUpgradeAction,
+    SkillVersionStatus as SharedSkillVersionStatus,
+    visible_skill_inventory_with_template as visible_shared_skill_inventory_with_template,
+};
 use zip::{ZipWriter, write::SimpleFileOptions};
 
 #[cfg(target_os = "macos")]
@@ -2452,6 +2457,91 @@ fn skill_inventory_marks_outdated_and_missing_skills() {
     assert!(inventory.summary.contains("project skill(s) need upgrade"));
 
     let _ = fs::remove_dir_all(repo);
+}
+
+#[test]
+fn visible_skill_inventory_classifies_repo_home_codex_and_plugin_skills() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let repo = unique_temp_dir("mem-visible-skill-inventory");
+    let home = unique_temp_dir("mem-visible-skill-home");
+    let codex_home = unique_temp_dir("mem-visible-skill-codex");
+    let old_home = std::env::var("HOME").ok();
+    let old_codex_home = std::env::var("CODEX_HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", &home);
+        std::env::set_var("CODEX_HOME", &codex_home);
+    }
+
+    let project_root = repo.join("project");
+    let template_root = repo.join("memory-layer/skill-template");
+    for name in MEMORY_SKILL_NAMES {
+        write_test_skill(&template_root.join(name), "0.2.0");
+    }
+    write_test_skill(
+        &project_root
+            .join(".agents/skills")
+            .join(MEMORY_SKILL_NAMES[0]),
+        "0.2.0",
+    );
+    write_test_skill(&project_root.join(".agents/skills/repo-custom"), "1.0.0");
+    write_test_skill(
+        &home.join(".agents/skills").join(MEMORY_SKILL_NAMES[1]),
+        "0.2.0",
+    );
+    write_test_skill(&home.join(".agents/skills/home-custom"), "1.0.0");
+    write_test_skill(&codex_home.join("skills/codex-user"), "1.0.0");
+    write_test_skill(&codex_home.join("skills/.system/openai-docs"), "1.0.0");
+    write_test_skill(
+        &codex_home.join("plugins/cache/github/version/skills/gh-fix-ci"),
+        "1.0.0",
+    );
+
+    let inventory =
+        visible_shared_skill_inventory_with_template(&project_root, Some(template_root), false);
+
+    let repo_memory = inventory
+        .skills
+        .iter()
+        .find(|skill| {
+            skill.name == MEMORY_SKILL_NAMES[0]
+                && skill.source_kind == SharedSkillSourceKind::RepoMemory
+        })
+        .expect("repo memory skill");
+    assert!(repo_memory.repairable);
+    assert_eq!(repo_memory.status, SharedSkillVersionStatus::UpToDate);
+
+    let repo_custom = inventory
+        .skills
+        .iter()
+        .find(|skill| skill.name == "repo-custom")
+        .expect("repo custom skill");
+    assert_eq!(repo_custom.source_kind, SharedSkillSourceKind::RepoLocal);
+    assert_eq!(repo_custom.status, SharedSkillVersionStatus::Unmanaged);
+    assert_eq!(repo_custom.action, SharedSkillUpgradeAction::Skip);
+    assert!(!repo_custom.repairable);
+
+    assert!(inventory.skills.iter().any(|skill| {
+        skill.name == MEMORY_SKILL_NAMES[1]
+            && skill.source_kind == SharedSkillSourceKind::HomeMemory
+    }));
+    assert!(inventory.skills.iter().any(|skill| {
+        skill.name == "home-custom" && skill.source_kind == SharedSkillSourceKind::HomeLocal
+    }));
+    assert!(inventory.skills.iter().any(|skill| {
+        skill.name == "codex-user" && skill.source_kind == SharedSkillSourceKind::CodexUser
+    }));
+    assert!(inventory.skills.iter().any(|skill| {
+        skill.name == "openai-docs" && skill.source_kind == SharedSkillSourceKind::CodexSystem
+    }));
+    assert!(inventory.skills.iter().any(|skill| {
+        skill.name == "gh-fix-ci" && skill.source_kind == SharedSkillSourceKind::Plugin
+    }));
+
+    restore_env_var("HOME", old_home);
+    restore_env_var("CODEX_HOME", old_codex_home);
+    let _ = fs::remove_dir_all(repo);
+    let _ = fs::remove_dir_all(home);
+    let _ = fs::remove_dir_all(codex_home);
 }
 
 #[test]

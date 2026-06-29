@@ -19,7 +19,7 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 
 use crate::commands::service_support::TuiRestartNotice;
-use mem_skills::SkillInventoryReport;
+use mem_skills::{SkillInventoryReport, SkillSourceKind, SkillUpgradeAction, SkillVersionInfo};
 
 use super::app::StreamSession;
 
@@ -161,11 +161,66 @@ pub(super) struct WatchersTabState {
 }
 
 pub(super) struct SkillsTabState {
+    pub(in crate::tui) filter: SkillsFilter,
     pub(in crate::tui) selected_index: usize,
     pub(in crate::tui) table_state: TableState,
     pub(in crate::tui) detail_scroll: u16,
     pub(in crate::tui) operation: Option<String>,
     pub(in crate::tui) message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SkillsFilter {
+    Memory,
+    RepoLocal,
+    Home,
+    Codex,
+    Plugins,
+    NeedsRepair,
+    Unmanaged,
+    All,
+}
+
+impl SkillsFilter {
+    pub(super) const ALL: [Self; 8] = [
+        Self::Memory,
+        Self::RepoLocal,
+        Self::Home,
+        Self::Codex,
+        Self::Plugins,
+        Self::NeedsRepair,
+        Self::Unmanaged,
+        Self::All,
+    ];
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Memory => "Memory",
+            Self::RepoLocal => "Repo local",
+            Self::Home => "Home",
+            Self::Codex => "Codex",
+            Self::Plugins => "Plugins",
+            Self::NeedsRepair => "Needs repair",
+            Self::Unmanaged => "Unmanaged",
+            Self::All => "All",
+        }
+    }
+
+    pub(super) fn matches(self, skill: &SkillVersionInfo) -> bool {
+        match self {
+            Self::Memory => skill.source_kind == SkillSourceKind::RepoMemory,
+            Self::RepoLocal => matches!(
+                skill.source_kind,
+                SkillSourceKind::RepoMemory | SkillSourceKind::RepoLocal
+            ),
+            Self::Home => skill.source_kind.is_home(),
+            Self::Codex => skill.source_kind.is_codex(),
+            Self::Plugins => skill.source_kind == SkillSourceKind::Plugin,
+            Self::NeedsRepair => skill.repairable && skill.action != SkillUpgradeAction::Skip,
+            Self::Unmanaged => !skill.repairable,
+            Self::All => true,
+        }
+    }
 }
 
 pub(super) struct AutomationsTabState {

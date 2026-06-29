@@ -1,6 +1,7 @@
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::{
+    collections::BTreeSet,
     env, fs,
     io::{self, Cursor},
     path::{Path, PathBuf},
@@ -38,6 +39,7 @@ pub enum SkillVersionStatus {
     Unversioned,
     InvalidVersion,
     TemplateMissing,
+    Unmanaged,
 }
 
 impl SkillVersionStatus {
@@ -50,6 +52,7 @@ impl SkillVersionStatus {
             Self::Unversioned => "unversioned",
             Self::InvalidVersion => "invalid-version",
             Self::TemplateMissing => "template-missing",
+            Self::Unmanaged => "unmanaged",
         }
     }
 
@@ -77,6 +80,44 @@ impl SkillBundleStatus {
             Self::Error => "error",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillSourceKind {
+    RepoMemory,
+    RepoLocal,
+    HomeMemory,
+    HomeLocal,
+    CodexUser,
+    CodexSystem,
+    Plugin,
+}
+
+impl SkillSourceKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::RepoMemory => "memory",
+            Self::RepoLocal => "repo local",
+            Self::HomeMemory => "home memory",
+            Self::HomeLocal => "home local",
+            Self::CodexUser => "codex",
+            Self::CodexSystem => "codex system",
+            Self::Plugin => "plugin",
+        }
+    }
+
+    pub fn is_home(self) -> bool {
+        matches!(self, Self::HomeMemory | Self::HomeLocal)
+    }
+
+    pub fn is_codex(self) -> bool {
+        matches!(self, Self::CodexUser | Self::CodexSystem)
+    }
+}
+
+fn default_skill_source_kind() -> SkillSourceKind {
+    SkillSourceKind::RepoMemory
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -123,6 +164,12 @@ pub struct SkillVersionInfo {
     pub name: String,
     pub project_path: String,
     pub template_path: Option<String>,
+    #[serde(default = "default_skill_source_kind")]
+    pub source_kind: SkillSourceKind,
+    #[serde(default)]
+    pub repairable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -169,6 +216,89 @@ pub fn missing_memory_skill_dirs<'a>(skill_root: &'a Path) -> impl Iterator<Item
 
 pub fn project_skill_inventory(repo_root: &Path, force: bool) -> SkillInventoryReport {
     project_skill_inventory_filtered(repo_root, force, SkillInventoryFilter::All)
+}
+
+pub fn visible_skill_inventory(repo_root: &Path, force: bool) -> SkillInventoryReport {
+    visible_skill_inventory_with_template(repo_root, discover_skill_template_dir(), force)
+}
+
+pub fn visible_skill_inventory_with_template(
+    repo_root: &Path,
+    template_root: Option<PathBuf>,
+    force: bool,
+) -> SkillInventoryReport {
+    let mut report = project_skill_inventory_with_template(
+        repo_root,
+        template_root.clone(),
+        force,
+        SkillInventoryFilter::All,
+    );
+    let mut seen = BTreeSet::new();
+    for skill in &report.skills {
+        seen.insert(normalized_skill_path(&skill.project_path));
+    }
+
+    let repo_skill_root = repo_root.join(".agents").join("skills");
+    add_skill_dirs(
+        &mut report.skills,
+        &mut seen,
+        &repo_skill_root,
+        |name| {
+            if is_memory_skill_name(name) {
+                SkillSourceKind::RepoMemory
+            } else {
+                SkillSourceKind::RepoLocal
+            }
+        },
+        template_root.as_deref(),
+    );
+
+    if let Ok(home) = env::var("HOME") {
+        let home_skill_root = PathBuf::from(&home).join(".agents").join("skills");
+        add_skill_dirs(
+            &mut report.skills,
+            &mut seen,
+            &home_skill_root,
+            |name| {
+                if is_memory_skill_name(name) {
+                    SkillSourceKind::HomeMemory
+                } else {
+                    SkillSourceKind::HomeLocal
+                }
+            },
+            template_root.as_deref(),
+        );
+    }
+
+    let codex_home = codex_home_dir();
+    let codex_skill_root = codex_home.join("skills");
+    add_skill_dirs(
+        &mut report.skills,
+        &mut seen,
+        &codex_skill_root,
+        |_| SkillSourceKind::CodexUser,
+        None,
+    );
+    add_skill_dirs(
+        &mut report.skills,
+        &mut seen,
+        &codex_skill_root.join(".system"),
+        |_| SkillSourceKind::CodexSystem,
+        None,
+    );
+
+    for skill_dir in plugin_skill_dirs(&codex_home.join("plugins").join("cache"), 8) {
+        add_external_skill(
+            &mut report.skills,
+            &mut seen,
+            &skill_dir,
+            SkillSourceKind::Plugin,
+            None,
+        );
+    }
+
+    report.filter = "visible".to_string();
+    report
 }
 
 pub fn project_skill_inventory_filtered(
@@ -289,12 +419,149 @@ pub fn skill_version_info(
         name: name.to_string(),
         project_path: project_path.display().to_string(),
         template_path: template_path.map(|path| path.display().to_string()),
+        source_kind: SkillSourceKind::RepoMemory,
+        repairable: true,
+        description: read_skill_description(project_path).ok().flatten(),
         project_version,
         template_version,
         status,
         action,
         detail,
     }
+}
+
+fn add_skill_dirs(
+    skills: &mut Vec<SkillVersionInfo>,
+    seen: &mut BTreeSet<String>,
+    root: &Path,
+    source_kind: impl Fn(&str) -> SkillSourceKind,
+    template_root: Option<&Path>,
+) {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    let mut dirs = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.join("SKILL.md").is_file())
+        .collect::<Vec<_>>();
+    dirs.sort();
+    for dir in dirs {
+        let Some(name) = dir.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let kind = source_kind(name);
+        add_external_skill(skills, seen, &dir, kind, template_root);
+    }
+}
+
+fn add_external_skill(
+    skills: &mut Vec<SkillVersionInfo>,
+    seen: &mut BTreeSet<String>,
+    skill_dir: &Path,
+    source_kind: SkillSourceKind,
+    template_root: Option<&Path>,
+) {
+    let path_key = normalized_path(skill_dir);
+    if !seen.insert(path_key) {
+        return;
+    }
+    let Some(name) = skill_dir.file_name().and_then(|value| value.to_str()) else {
+        return;
+    };
+    let template_path = if matches!(
+        source_kind,
+        SkillSourceKind::RepoMemory | SkillSourceKind::HomeMemory
+    ) {
+        template_root.map(|root| root.join(name))
+    } else {
+        None
+    };
+    let project_version = read_skill_version(skill_dir).ok().flatten();
+    let template_version = template_path
+        .as_deref()
+        .and_then(|path| read_skill_version(path).ok().flatten());
+    let detail = if source_kind == SkillSourceKind::RepoMemory {
+        Some("Repo-local Memory skill is managed by Memory Layer repair.".to_string())
+    } else {
+        Some("Skill is visible here but is not mutated by Memory Layer repair.".to_string())
+    };
+
+    skills.push(SkillVersionInfo {
+        name: name.to_string(),
+        project_path: skill_dir.display().to_string(),
+        template_path: template_path.map(|path| path.display().to_string()),
+        source_kind,
+        repairable: false,
+        description: read_skill_description(skill_dir).ok().flatten(),
+        project_version,
+        template_version,
+        status: SkillVersionStatus::Unmanaged,
+        action: SkillUpgradeAction::Skip,
+        detail,
+    });
+}
+
+fn normalized_skill_path(path: &str) -> String {
+    normalized_path(Path::new(path))
+}
+
+fn normalized_path(path: &Path) -> String {
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
+}
+
+fn is_memory_skill_name(name: &str) -> bool {
+    MEMORY_SKILL_NAMES.contains(&name)
+}
+
+fn codex_home_dir() -> PathBuf {
+    env::var("CODEX_HOME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var("HOME")
+                .ok()
+                .map(|home| PathBuf::from(home).join(".codex"))
+        })
+        .unwrap_or_else(|| PathBuf::from(".codex"))
+}
+
+fn plugin_skill_dirs(root: &Path, max_depth: usize) -> Vec<PathBuf> {
+    fn visit(path: &Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
+        if depth > max_depth {
+            return;
+        }
+        let entries = match fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(_) => return,
+        };
+        for entry in entries.filter_map(|entry| entry.ok()) {
+            let child = entry.path();
+            if child.join("SKILL.md").is_file()
+                && child
+                    .parent()
+                    .and_then(Path::file_name)
+                    .and_then(|value| value.to_str())
+                    == Some("skills")
+            {
+                out.push(child);
+                continue;
+            }
+            if child.is_dir() {
+                visit(&child, depth + 1, max_depth, out);
+            }
+        }
+    }
+
+    let mut dirs = Vec::new();
+    visit(root, 0, max_depth, &mut dirs);
+    dirs.sort();
+    dirs
 }
 
 pub fn skill_upgrade_action(
@@ -328,7 +595,15 @@ pub fn read_skill_version(skill_dir: &Path) -> Result<Option<String>> {
     read_simple_yaml_version(&skill_dir.join("agents").join("openai.yaml"))
 }
 
+pub fn read_skill_description(skill_dir: &Path) -> Result<Option<String>> {
+    read_skill_md_frontmatter_value(&skill_dir.join("SKILL.md"), "description")
+}
+
 pub fn read_skill_md_frontmatter_version(path: &Path) -> Result<Option<String>> {
+    read_skill_md_frontmatter_value(path, "version")
+}
+
+pub fn read_skill_md_frontmatter_value(path: &Path, key: &str) -> Result<Option<String>> {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -341,7 +616,7 @@ pub fn read_skill_md_frontmatter_version(path: &Path) -> Result<Option<String>> 
     let mut frontmatter = Vec::new();
     for line in lines {
         if line.trim() == "---" {
-            return Ok(simple_yaml_value(&frontmatter, "version"));
+            return Ok(simple_yaml_value(&frontmatter, key));
         }
         frontmatter.push(line);
     }
