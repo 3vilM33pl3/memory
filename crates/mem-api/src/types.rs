@@ -514,6 +514,56 @@ impl QueryRequest {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalQueryRequest {
+    pub query: String,
+    #[serde(default)]
+    pub filters: QueryFilters,
+    #[serde(default = "default_top_k")]
+    pub top_k: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_confidence: Option<f32>,
+    #[serde(default)]
+    pub include_stale: bool,
+    #[serde(default)]
+    pub history: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retrieval_mode: Option<QueryRetrievalMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_mode: Option<QueryAnswerMode>,
+}
+
+impl GlobalQueryRequest {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.query.trim().is_empty() {
+            return Err(ValidationError::new("query must be non-empty"));
+        }
+        if !(1..=50).contains(&self.top_k) {
+            return Err(ValidationError::new("top_k must be in 1..=50"));
+        }
+        if let Some(value) = self.min_confidence
+            && !(0.0..=1.0).contains(&value)
+        {
+            return Err(ValidationError::new("min_confidence must be in 0.0..=1.0"));
+        }
+        Ok(())
+    }
+
+    pub fn to_prompt_query_request(&self) -> QueryRequest {
+        QueryRequest {
+            project: "all-projects".to_string(),
+            query: self.query.clone(),
+            filters: self.filters.clone(),
+            top_k: self.top_k,
+            min_confidence: self.min_confidence,
+            include_stale: self.include_stale,
+            history: self.history,
+            retrieval_mode: self.retrieval_mode,
+            answer_mode: self.answer_mode,
+        }
+    }
+}
+
 fn default_top_k() -> i64 {
     8
 }
@@ -546,6 +596,12 @@ pub struct QuerySource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResult {
     pub memory_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
     pub summary: String,
     pub memory_type: MemoryType,
     pub score: f64,
@@ -1019,6 +1075,12 @@ pub struct TokenUsage {
 pub struct QueryAnswerCitation {
     pub result_number: usize,
     pub memory_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_root: Option<String>,
     pub memory_type: MemoryType,
     pub summary: String,
     pub snippet: String,
@@ -5356,11 +5418,33 @@ mod tests {
     }
 
     #[test]
+    fn global_query_request_rejects_empty_query_without_project() {
+        let request = GlobalQueryRequest {
+            query: String::new(),
+            filters: QueryFilters::default(),
+            top_k: 8,
+            min_confidence: None,
+            include_stale: false,
+            history: false,
+            retrieval_mode: None,
+            answer_mode: None,
+        };
+
+        assert!(request.validate().is_err());
+    }
+
+    #[test]
     fn query_response_defaults_answer_metadata_for_older_json() {
         let payload = serde_json::json!({
             "answer": "Stored answer",
             "confidence": 0.7,
-            "results": [],
+            "results": [{
+                "memory_id": "11111111-1111-1111-1111-111111111111",
+                "summary": "Old result",
+                "memory_type": "implementation",
+                "score": 1.0,
+                "snippet": "Older clients did not send project metadata."
+            }],
             "insufficient_evidence": false
         });
 
@@ -5372,6 +5456,10 @@ mod tests {
             response.answer_generation.method,
             QueryAnswerMethod::Deterministic
         );
+        assert_eq!(response.results.len(), 1);
+        assert!(response.results[0].project.is_none());
+        assert!(response.results[0].project_name.is_none());
+        assert!(response.results[0].repo_root.is_none());
         assert!(response.answer_generation.cited_result_numbers.is_empty());
         assert!(response.answer_citations.is_empty());
     }

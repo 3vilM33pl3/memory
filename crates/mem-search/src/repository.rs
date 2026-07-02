@@ -3,7 +3,7 @@ use sqlx::Row;
 
 pub(super) async fn fetch_lexical_candidates(
     pool: &PgPool,
-    request: &QueryRequest,
+    request: &QueryExecution<'_>,
     normalized: &QueryIntent,
     candidate_limit: i64,
 ) -> Result<Vec<CandidateRecord>, sqlx::Error> {
@@ -36,6 +36,9 @@ pub(super) async fn fetch_lexical_candidates(
         )
         SELECT
             m.id,
+            p.slug AS project,
+            p.name AS project_name,
+            p.root_path AS repo_root,
             m.summary,
             m.memory_type,
             m.canonical_text,
@@ -69,7 +72,7 @@ pub(super) async fn fetch_lexical_candidates(
             ORDER BY chunk_fts DESC, mc.id
             LIMIT 1
         ) best_chunk ON true
-        WHERE p.slug = $1
+        WHERE ($1::text IS NULL OR p.slug = $1)
           AND m.status = 'active'
           AND (
                 $9::boolean
@@ -130,7 +133,7 @@ pub(super) async fn fetch_lexical_candidates(
         LIMIT $8
         "#,
     )
-    .bind(&request.project)
+    .bind(request.project)
     .bind(&request.query)
     .bind(if memory_type_filters.is_empty() {
         None::<Vec<String>>
@@ -152,6 +155,9 @@ pub(super) async fn fetch_lexical_candidates(
 fn candidate_from_lexical_row(row: sqlx::postgres::PgRow) -> Result<CandidateRecord, sqlx::Error> {
     Ok(CandidateRecord {
         memory_id: row.try_get("id")?,
+        project: row.try_get("project")?,
+        project_name: row.try_get("project_name")?,
+        repo_root: row.try_get("repo_root")?,
         summary: row.try_get("summary")?,
         memory_type: parse_memory_type(&row.try_get::<String, _>("memory_type")?),
         canonical_text: row.try_get("canonical_text")?,
@@ -173,7 +179,7 @@ fn candidate_from_lexical_row(row: sqlx::postgres::PgRow) -> Result<CandidateRec
 
 pub(super) async fn fetch_semantic_candidates(
     pool: &PgPool,
-    request: &QueryRequest,
+    request: &QueryExecution<'_>,
     embedding_space: &EmbeddingSpace,
     embedding_dimension: i32,
     query_embedding: &Vector,
@@ -190,6 +196,9 @@ pub(super) async fn fetch_semantic_candidates(
         r#"
         SELECT
             m.id,
+            p.slug AS project,
+            p.name AS project_name,
+            p.root_path AS repo_root,
             m.summary,
             m.memory_type,
             m.canonical_text,
@@ -213,7 +222,7 @@ pub(super) async fn fetch_semantic_candidates(
         JOIN memory_chunk_embeddings mce ON mce.chunk_id = mc.id
         JOIN memory_entries m ON m.id = mc.memory_entry_id
         JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
+        WHERE ($1::text IS NULL OR p.slug = $1)
           AND m.status = 'active'
           AND (
                 $8::boolean
@@ -242,7 +251,7 @@ pub(super) async fn fetch_semantic_candidates(
         LIMIT $7
         "#,
     )
-    .bind(&request.project)
+    .bind(request.project)
     .bind(if memory_type_filters.is_empty() {
         None::<Vec<String>>
     } else {
@@ -270,6 +279,9 @@ pub(super) async fn fetch_semantic_candidates(
             .entry(memory_id)
             .or_insert_with(|| CandidateRecord {
                 memory_id,
+                project: row.try_get("project").ok(),
+                project_name: row.try_get("project_name").ok(),
+                repo_root: row.try_get("repo_root").ok(),
                 summary: row.try_get("summary").unwrap_or_default(),
                 memory_type: parse_memory_type(
                     &row.try_get::<String, _>("memory_type")
@@ -631,9 +643,9 @@ async fn upsert_chunk_embedding(
     Ok(())
 }
 
-pub(super) async fn project_has_active_embedding_space(
+pub(super) async fn scope_has_active_embedding_space(
     pool: &PgPool,
-    project: &str,
+    project: Option<&str>,
     embedding_space: &str,
     embedding_dimension: i32,
 ) -> Result<bool> {
@@ -645,7 +657,7 @@ pub(super) async fn project_has_active_embedding_space(
             JOIN memory_chunks mc ON mc.id = mce.chunk_id
             JOIN memory_entries m ON m.id = mc.memory_entry_id
             JOIN projects p ON p.id = m.project_id
-            WHERE p.slug = $1
+            WHERE ($1::text IS NULL OR p.slug = $1)
               AND m.status = 'active'
               AND m.is_tombstone = FALSE
               AND mce.embedding_space = $2
@@ -669,7 +681,7 @@ pub(super) struct GraphCandidateOutcome {
 
 pub(super) async fn fetch_graph_candidates(
     pool: &PgPool,
-    request: &QueryRequest,
+    request: &QueryExecution<'_>,
     intent: &QueryIntent,
     candidate_limit: i64,
 ) -> Result<GraphCandidateOutcome, sqlx::Error> {
@@ -686,26 +698,26 @@ pub(super) async fn fetch_graph_candidates(
         });
     }
 
-    let run_row = sqlx::query(
+    let graph_present_row = sqlx::query(
         r#"
-        SELECT ger.id
-        FROM graph_extraction_runs ger
-        JOIN projects p ON p.id = ger.project_id
-        WHERE p.slug = $1 AND ger.status = 'completed'
-        ORDER BY ger.completed_at DESC NULLS LAST, ger.started_at DESC
-        LIMIT 1
+        SELECT EXISTS(
+            SELECT 1
+            FROM graph_extraction_runs ger
+            JOIN projects p ON p.id = ger.project_id
+            WHERE ($1::text IS NULL OR p.slug = $1)
+              AND ger.status = 'completed'
+        ) AS present
         "#,
     )
-    .bind(&request.project)
-    .fetch_optional(pool)
+    .bind(request.project)
+    .fetch_one(pool)
     .await?;
-    let Some(run_row) = run_row else {
+    if !graph_present_row.try_get::<bool, _>("present")? {
         return Ok(GraphCandidateOutcome {
             status: "no_graph".to_string(),
             candidates: Vec::new(),
         });
-    };
-    let run_id: Uuid = run_row.try_get("id")?;
+    }
 
     let memory_type_filters = request
         .filters
@@ -716,8 +728,19 @@ pub(super) async fn fetch_graph_candidates(
 
     let rows = sqlx::query(
         r#"
-        WITH direct_symbol_hits AS (
+        WITH latest_runs AS (
+            SELECT DISTINCT ON (ger.project_id)
+                ger.id,
+                ger.project_id
+            FROM graph_extraction_runs ger
+            JOIN projects p ON p.id = ger.project_id
+            WHERE ($1::text IS NULL OR p.slug = $1)
+              AND ger.status = 'completed'
+            ORDER BY ger.project_id, ger.completed_at DESC NULLS LAST, ger.started_at DESC
+        ),
+        direct_symbol_hits AS (
             SELECT
+                cs.extraction_run_id,
                 cs.graph_node_id,
                 cs.file_path,
                 cs.display_name AS symbol,
@@ -725,21 +748,23 @@ pub(super) async fn fetch_graph_candidates(
                 NULL::text AS edge_kind,
                 NULL::text AS neighbor_symbol,
                 'direct'::text AS direction,
-                $8::float8 AS boost,
+                $7::float8 AS boost,
                 'code symbol match'::text AS reason,
                 FALSE AS edge_hit
             FROM code_symbols cs
-            WHERE cs.extraction_run_id = $2
-              AND (
-                    ($3::text[] IS NOT NULL AND (
-                        cs.name ILIKE ANY($3)
-                        OR COALESCE(cs.qualified_name, '') ILIKE ANY($3)
+            JOIN latest_runs lr ON lr.id = cs.extraction_run_id
+            WHERE
+              (
+                    ($2::text[] IS NOT NULL AND (
+                        cs.name ILIKE ANY($2)
+                        OR COALESCE(cs.qualified_name, '') ILIKE ANY($2)
                     ))
-                    OR (cardinality($4::text[]) > 0 AND cs.file_path ILIKE ANY($4))
+                    OR (cardinality($3::text[]) > 0 AND cs.file_path ILIKE ANY($3))
               )
         ),
         direct_reference_hits AS (
             SELECT
+                cr.extraction_run_id,
                 cs.graph_node_id,
                 cr.file_path,
                 COALESCE(cs.display_name, cr.target_text) AS symbol,
@@ -747,29 +772,30 @@ pub(super) async fn fetch_graph_candidates(
                 cr.reference_kind AS edge_kind,
                 NULL::text AS neighbor_symbol,
                 'direct'::text AS direction,
-                $9::float8 AS boost,
+                $8::float8 AS boost,
                 'code reference match'::text AS reason,
                 FALSE AS edge_hit
             FROM code_references cr
+            JOIN latest_runs lr ON lr.id = cr.extraction_run_id
             LEFT JOIN code_symbols cs
               ON cs.extraction_run_id = cr.extraction_run_id
              AND cs.stable_identity = cr.target_symbol_identity
-            WHERE cr.extraction_run_id = $2
-              AND (
-                    ($3::text[] IS NOT NULL AND (
-                        cr.target_text ILIKE ANY($3)
-                        OR COALESCE(cr.source_text, '') ILIKE ANY($3)
+            WHERE (
+                    ($2::text[] IS NOT NULL AND (
+                        cr.target_text ILIKE ANY($2)
+                        OR COALESCE(cr.source_text, '') ILIKE ANY($2)
                     ))
-                    OR (cardinality($4::text[]) > 0 AND cr.file_path ILIKE ANY($4))
+                    OR (cardinality($3::text[]) > 0 AND cr.file_path ILIKE ANY($3))
               )
         ),
         direct_node_hits AS (
-            SELECT graph_node_id FROM direct_symbol_hits WHERE graph_node_id IS NOT NULL
+            SELECT extraction_run_id, graph_node_id FROM direct_symbol_hits WHERE graph_node_id IS NOT NULL
             UNION
-            SELECT graph_node_id FROM direct_reference_hits WHERE graph_node_id IS NOT NULL
+            SELECT extraction_run_id, graph_node_id FROM direct_reference_hits WHERE graph_node_id IS NOT NULL
         ),
         neighbor_hits AS (
             SELECT
+                neighbor.extraction_run_id,
                 neighbor.graph_node_id,
                 neighbor.file_path,
                 neighbor.display_name AS symbol,
@@ -780,12 +806,12 @@ pub(super) async fn fetch_graph_candidates(
                     WHEN ge.source_node_id = direct_node_hits.graph_node_id THEN 'outgoing'
                     ELSE 'incoming'
                 END AS direction,
-                $10::float8 AS boost,
+                $9::float8 AS boost,
                 'one-hop graph neighbor'::text AS reason,
                 TRUE AS edge_hit
             FROM direct_node_hits
             JOIN graph_edges ge
-              ON ge.extraction_run_id = $2
+              ON ge.extraction_run_id = direct_node_hits.extraction_run_id
              AND (ge.source_node_id = direct_node_hits.graph_node_id OR ge.target_node_id = direct_node_hits.graph_node_id)
             JOIN code_symbols neighbor
               ON neighbor.extraction_run_id = ge.extraction_run_id
@@ -806,6 +832,9 @@ pub(super) async fn fetch_graph_candidates(
         )
         SELECT
             m.id,
+            p.slug AS project,
+            p.name AS project_name,
+            p.root_path AS repo_root,
             m.summary,
             m.memory_type,
             m.canonical_text,
@@ -842,10 +871,10 @@ pub(super) async fn fetch_graph_candidates(
              )
         JOIN memory_entries m ON m.id = ms.memory_entry_id
         JOIN projects p ON p.id = m.project_id
-        WHERE p.slug = $1
+        WHERE ($1::text IS NULL OR p.slug = $1)
           AND m.status = 'active'
           AND (
-                $7::boolean
+                $6::boolean
                 OR (
                     m.is_tombstone = FALSE
                     AND m.version_no = (
@@ -855,22 +884,21 @@ pub(super) async fn fetch_graph_candidates(
                     )
                 )
           )
-          AND ($5::text[] IS NULL OR m.memory_type = ANY($5))
+          AND ($4::text[] IS NULL OR m.memory_type = ANY($4))
           AND (
-                cardinality($6::text[]) = 0
+                cardinality($5::text[]) = 0
                 OR EXISTS (
                     SELECT 1
                     FROM memory_tags mt
                     WHERE mt.memory_entry_id = m.id
-                      AND mt.tag = ANY($6)
+                      AND mt.tag = ANY($5)
                 )
           )
         ORDER BY gh.boost DESC, m.updated_at DESC, m.id
-        LIMIT $11
+        LIMIT $10
         "#,
     )
-    .bind(&request.project)
-    .bind(run_id)
+    .bind(request.project)
     .bind(if graph_like_terms.is_empty() {
         None::<Vec<String>>
     } else {
@@ -910,6 +938,9 @@ pub(super) async fn fetch_graph_candidates(
             .entry(memory_id)
             .or_insert_with(|| CandidateRecord {
                 memory_id,
+                project: row.try_get("project").ok(),
+                project_name: row.try_get("project_name").ok(),
+                repo_root: row.try_get("repo_root").ok(),
                 summary: row.try_get("summary").unwrap_or_default(),
                 memory_type: parse_memory_type(
                     &row.try_get::<String, _>("memory_type")

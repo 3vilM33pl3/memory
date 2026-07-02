@@ -203,6 +203,9 @@ fn test_query_response_with_timings() -> QueryResponse {
         confidence: 0.82,
         results: vec![QueryResult {
             memory_id: Uuid::new_v4(),
+            project: None,
+            project_name: None,
+            repo_root: None,
             summary: "Cached implementation memory".to_string(),
             memory_type: MemoryType::Implementation,
             score: 12.5,
@@ -244,6 +247,9 @@ fn test_query_response_with_two_results() -> QueryResponse {
     let mut response = test_query_response_with_timings();
     response.results.push(QueryResult {
         memory_id: Uuid::new_v4(),
+        project: None,
+        project_name: None,
+        repo_root: None,
         summary: "Second implementation memory".to_string(),
         memory_type: MemoryType::Implementation,
         score: 8.5,

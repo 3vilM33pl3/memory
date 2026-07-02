@@ -16,10 +16,24 @@ The HTTP mount validates `Origin` when present and requires either `Authorizatio
 The v1 MCP surface exposes:
 
 - tools for query, resume, up-to-speed, overview, memory list/detail/history, activities, and pending replacement proposals
+- `memory_search_all` for cross-project retrieval with result-level project slug, project name, and repository root metadata
 - resource templates for project overview, memories, activities, memory detail, and memory history
-- prompts for getting up to speed and answering project questions with Memory context
+- prompts for getting up to speed, answering project questions with Memory context, and routing cross-project tasks before follow-up actions
 
 Write-capable Memory operations remain absent from MCP v1 by design.
+
+## Cross-Project Search
+
+`memory_search_all` is the agent routing tool. It calls `POST /v1/query/global` on the service and receives the same `QueryResponse` shape as project query, with optional `project`, `project_name`, and `repo_root` fields populated on results and answer citations.
+
+The search crate owns the scoped/global distinction through a shared query execution model:
+
+- project query binds a project slug and keeps the old `/v1/query` behavior
+- global query leaves the project scope unset, so lexical, semantic, graph, provenance, and reranking logic run across all active projects
+
+Global query is still read-only. It should not infer write targets by cwd. Agents that need follow-up action must choose the repository from returned `repo_root` metadata, then use project-scoped tools or local repository actions.
+
+The `memory_route_cross_project_task` prompt documents this sequence for clients that support MCP prompts.
 
 ## Project Resolution
 
@@ -29,7 +43,7 @@ Stdio can safely use local process context:
 2. `memory mcp run --project`
 3. current initialized repo slug
 
-HTTP cannot trust cwd, so HTTP tool calls must pass `project` explicitly.
+HTTP cannot trust cwd, so HTTP tool calls must pass `project` explicitly. `memory_search_all` has no `project` argument because it deliberately searches every project and returns routing metadata instead.
 
 ## Extension Points
 

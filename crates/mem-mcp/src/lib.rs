@@ -3,15 +3,15 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
-    ActivityListResponse, AppConfig, LoopApprovalDecisionRequest, LoopApprovalDecisionResponse,
-    LoopApprovalStatus, LoopApprovalsResponse, LoopCancelRequest, LoopDefinitionResponse,
-    LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
+    ActivityListResponse, AppConfig, GlobalQueryRequest, LoopApprovalDecisionRequest,
+    LoopApprovalDecisionResponse, LoopApprovalStatus, LoopApprovalsResponse, LoopCancelRequest,
+    LoopDefinitionResponse, LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
     LoopGlobalStateUpdateRequest, LoopMode, LoopRunRequest, LoopRunResponse, LoopRunStatus,
     LoopRunsResponse, LoopScopeType, LoopSettingResponse, LoopSettingsUpdateRequest,
-    MemoryEntryResponse, MemoryHistoryResponse, ProjectMemoriesResponse, ProjectOverviewResponse,
-    QueryAnswerMode, QueryFilters, QueryRequest, QueryResponse, ReplacementProposalListResponse,
-    ResumeCheckpoint, ResumeRequest, ResumeResponse, UpToSpeedRequest, UpToSpeedResponse,
-    read_repo_project_slug,
+    MemoryEntryResponse, MemoryHistoryResponse, MemoryType, ProjectMemoriesResponse,
+    ProjectOverviewResponse, QueryAnswerMode, QueryFilters, QueryRequest, QueryResponse,
+    ReplacementProposalListResponse, ResumeCheckpoint, ResumeRequest, ResumeResponse,
+    UpToSpeedRequest, UpToSpeedResponse, read_repo_project_slug,
 };
 use reqwest::Client;
 use rmcp::{
@@ -32,6 +32,7 @@ use serde_json::{Map, Value, json};
 pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 
 const TOOL_MEMORY_QUERY: &str = "memory_query";
+const TOOL_MEMORY_SEARCH_ALL: &str = "memory_search_all";
 const TOOL_MEMORY_RESUME: &str = "memory_resume";
 const TOOL_MEMORY_UP_TO_SPEED: &str = "memory_up_to_speed";
 const TOOL_MEMORY_OVERVIEW: &str = "memory_overview";
@@ -60,6 +61,7 @@ const TOOL_MEMORY_LOOP_SET_GLOBAL_KILL_SWITCH: &str = "memory_loop_set_global_ki
 
 const PROMPT_GET_UP_TO_SPEED: &str = "memory_get_up_to_speed";
 const PROMPT_ANSWER_WITH_CONTEXT: &str = "memory_answer_with_context";
+const PROMPT_ROUTE_CROSS_PROJECT_TASK: &str = "memory_route_cross_project_task";
 
 #[derive(Debug, Clone)]
 pub struct MemoryMcpServer {
@@ -158,6 +160,7 @@ impl ServerHandler for MemoryMcpServer {
         let arguments = request.arguments.unwrap_or_default();
         match request.name.as_ref() {
             TOOL_MEMORY_QUERY => self.tool_query(arguments).await,
+            TOOL_MEMORY_SEARCH_ALL => self.tool_search_all(arguments).await,
             TOOL_MEMORY_RESUME => self.tool_resume(arguments).await,
             TOOL_MEMORY_UP_TO_SPEED => self.tool_up_to_speed(arguments).await,
             TOOL_MEMORY_OVERVIEW => self.tool_overview(arguments).await,
@@ -298,6 +301,15 @@ impl ServerHandler for MemoryMcpServer {
                     "Answer this project-memory question using Memory Layer context. Call `{TOOL_MEMORY_QUERY}` with project `{project}` and question `{question}`, then answer from the returned answer text, citations, summaries, match kinds, and diagnostics. Say when evidence is insufficient."
                 )
             }
+            PROMPT_ROUTE_CROSS_PROJECT_TASK => {
+                let task = args
+                    .get("task")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid_params("prompt argument `task` is required"))?;
+                format!(
+                    "Route this cross-project task using Memory Layer: {task}\n\nCall `{TOOL_MEMORY_SEARCH_ALL}` with the task as the question. Compare returned citations and result summaries, then choose the repository from the strongest result's project and repo_root metadata. Do not take repository-specific follow-up actions until the selected result clearly identifies a repo_root; if evidence is ambiguous, ask the user to choose."
+                )
+            }
             other => {
                 return Err(McpError::new(
                     rmcp::model::ErrorCode::METHOD_NOT_FOUND,
@@ -330,6 +342,34 @@ impl MemoryMcpServer {
         };
         request.validate().map_err(validation)?;
         let response = self.client.query(&request).await.map_err(api_error)?;
+        let text = format_query_text(&response);
+        structured_with_text(text, json!({ "response": response }))
+    }
+
+    async fn tool_search_all(
+        &self,
+        arguments: Map<String, Value>,
+    ) -> Result<CallToolResult, McpError> {
+        let args: MemorySearchAllArgs = from_args(arguments)?;
+        let request = GlobalQueryRequest {
+            query: args.question,
+            filters: QueryFilters {
+                types: args.types.unwrap_or_default(),
+                tags: args.tags.unwrap_or_default(),
+            },
+            top_k: args.top_k.unwrap_or(12),
+            min_confidence: args.min_confidence,
+            include_stale: args.include_stale.unwrap_or(false),
+            history: args.history.unwrap_or(false),
+            retrieval_mode: None,
+            answer_mode: args.answer_mode,
+        };
+        request.validate().map_err(validation)?;
+        let response = self
+            .client
+            .query_global(&request)
+            .await
+            .map_err(api_error)?;
         let text = format_query_text(&response);
         structured_with_text(text, json!({ "response": response }))
     }
@@ -938,6 +978,10 @@ impl MemoryApiClient {
         self.post("/v1/query", request).await
     }
 
+    pub async fn query_global(&self, request: &GlobalQueryRequest) -> Result<QueryResponse> {
+        self.post("/v1/query/global", request).await
+    }
+
     pub async fn resume(&self, project: &str, request: &ResumeRequest) -> Result<ResumeResponse> {
         self.post(&format!("/v1/projects/{project}/resume"), request)
             .await
@@ -1310,6 +1354,18 @@ struct MemoryQueryArgs {
 }
 
 #[derive(Debug, Deserialize)]
+struct MemorySearchAllArgs {
+    question: String,
+    top_k: Option<i64>,
+    min_confidence: Option<f32>,
+    include_stale: Option<bool>,
+    history: Option<bool>,
+    answer_mode: Option<QueryAnswerMode>,
+    types: Option<Vec<MemoryType>>,
+    tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
 struct MemoryResumeArgs {
     project: Option<String>,
     repo_root: Option<String>,
@@ -1531,8 +1587,15 @@ fn format_query_text(response: &QueryResponse) -> String {
         lines.push("Citations:".to_string());
         for citation in &response.answer_citations {
             lines.push(format!(
-                "- [{}] {} ({})",
-                citation.result_number, citation.summary, citation.memory_id
+                "- [{}]{} {} ({})",
+                citation.result_number,
+                route_suffix(
+                    citation.project.as_deref(),
+                    citation.project_name.as_deref(),
+                    citation.repo_root.as_deref(),
+                ),
+                citation.summary,
+                citation.memory_id
             ));
         }
     }
@@ -1541,8 +1604,13 @@ fn format_query_text(response: &QueryResponse) -> String {
         lines.push("Result summaries:".to_string());
         for (idx, result) in response.results.iter().enumerate() {
             lines.push(format!(
-                "- [{}] {} [{}] {}",
+                "- [{}]{} {} [{}] {}",
                 idx + 1,
+                route_suffix(
+                    result.project.as_deref(),
+                    result.project_name.as_deref(),
+                    result.repo_root.as_deref(),
+                ),
                 result.summary,
                 result.match_kind,
                 result.memory_id
@@ -1550,6 +1618,24 @@ fn format_query_text(response: &QueryResponse) -> String {
         }
     }
     lines.join("\n")
+}
+
+fn route_suffix(
+    project: Option<&str>,
+    project_name: Option<&str>,
+    repo_root: Option<&str>,
+) -> String {
+    let Some(project) = project else {
+        return String::new();
+    };
+    let mut parts = vec![format!("project={project}")];
+    if let Some(name) = project_name.filter(|value| !value.trim().is_empty()) {
+        parts.push(format!("name={name}"));
+    }
+    if let Some(repo_root) = repo_root.filter(|value| !value.trim().is_empty()) {
+        parts.push(format!("repo_root={repo_root}"));
+    }
+    format!(" [{}]", parts.join(" | "))
 }
 
 fn format_loop_setting_text(action: &str, response: &LoopSettingResponse) -> String {
@@ -1601,6 +1687,26 @@ fn tool_definitions() -> Vec<Tool> {
                 ),
                 optional_boolean("history", "Search historical memory versions."),
                 optional_enum("answer_mode", &["auto", "deterministic", "llm"]),
+            ]),
+        ),
+        tool(
+            TOOL_MEMORY_SEARCH_ALL,
+            "Search across all Memory Layer projects and return project/repo routing metadata for follow-up actions.",
+            object_schema(&[
+                required_string("question", "Question to answer from all project memory."),
+                optional_integer("top_k", "Maximum number of memories to retrieve."),
+                optional_number("min_confidence", "Minimum memory confidence, 0.0 to 1.0."),
+                optional_boolean(
+                    "include_stale",
+                    "Bypass provenance-based stale-source de-ranking.",
+                ),
+                optional_boolean("history", "Search historical memory versions."),
+                optional_enum("answer_mode", &["auto", "deterministic", "llm"]),
+                optional_string_array(
+                    "types",
+                    "Memory type filters, for example implementation or refactor.",
+                ),
+                optional_string_array("tags", "Memory tag filters."),
             ]),
         ),
         tool(
@@ -1895,6 +2001,11 @@ fn prompt_definitions() -> Vec<Prompt> {
                 PromptArgument::new("question").with_required(true),
             ]),
         ),
+        Prompt::new(
+            PROMPT_ROUTE_CROSS_PROJECT_TASK,
+            Some("Route a task to the right repository using all-project memory search."),
+            Some(vec![PromptArgument::new("task").with_required(true)]),
+        ),
     ]
 }
 
@@ -1973,6 +2084,18 @@ fn optional_number(name: &'static str, description: &'static str) -> SchemaField
 
 fn optional_boolean(name: &'static str, description: &'static str) -> SchemaField {
     field(name, "boolean", description, false)
+}
+
+fn optional_string_array(name: &'static str, description: &'static str) -> SchemaField {
+    SchemaField {
+        name,
+        schema: json!({
+            "type": "array",
+            "items": { "type": "string" },
+            "description": description
+        }),
+        required: false,
+    }
 }
 
 fn optional_object(name: &'static str, description: &'static str) -> SchemaField {
@@ -2146,6 +2269,7 @@ mod tests {
             .map(|tool| tool.name.into_owned())
             .collect::<Vec<_>>();
         assert!(names.contains(&TOOL_MEMORY_QUERY.to_string()));
+        assert!(names.contains(&TOOL_MEMORY_SEARCH_ALL.to_string()));
         assert!(names.contains(&TOOL_MEMORY_LIST_REPLACEMENT_PROPOSALS.to_string()));
         assert!(names.contains(&TOOL_MEMORY_LOOP_LIST.to_string()));
         assert!(names.contains(&TOOL_MEMORY_LOOP_ENABLE.to_string()));
@@ -2165,6 +2289,37 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert_eq!(required, json!(["question"]));
+    }
+
+    #[test]
+    fn search_all_schema_requires_question_not_project() {
+        let query = tool_definitions()
+            .into_iter()
+            .find(|tool| tool.name == TOOL_MEMORY_SEARCH_ALL)
+            .expect("search all tool exists");
+        let required = query
+            .schema_as_json_value()
+            .get("required")
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(required, json!(["question"]));
+        assert_eq!(
+            query
+                .schema_as_json_value()
+                .pointer("/properties/types/type")
+                .cloned(),
+            Some(json!("array"))
+        );
+    }
+
+    #[test]
+    fn prompts_include_cross_project_routing_prompt() {
+        let names = prompt_definitions()
+            .into_iter()
+            .map(|prompt| prompt.name)
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&PROMPT_ROUTE_CROSS_PROJECT_TASK.to_string()));
     }
 
     #[test]
@@ -2285,6 +2440,85 @@ mod tests {
                 .and_then(|value| value.pointer("/response/answer"))
                 .and_then(Value::as_str),
             Some("Use the MCP adapter.")
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_search_all_tool_returns_project_routing_metadata() {
+        let app = Router::new().route(
+            "/v1/query/global",
+            post(|| async {
+                Json(json!({
+                    "answer": "Use memories from the correct repository.",
+                    "confidence": 0.9,
+                    "results": [{
+                        "memory_id": "11111111-1111-1111-1111-111111111111",
+                        "project": "memory",
+                        "project_name": "Memory Layer",
+                        "repo_root": "/home/olivier/Projects/memory",
+                        "summary": "MCP global search",
+                        "memory_type": "implementation",
+                        "score": 1.0,
+                        "snippet": "Global search includes project routing metadata.",
+                        "match_kind": "lexical",
+                        "tags": [],
+                        "sources": []
+                    }],
+                    "insufficient_evidence": false,
+                    "answer_generation": {
+                        "method": "deterministic",
+                        "cited_result_numbers": [1],
+                        "evidence_count": 1,
+                        "duration_ms": 1
+                    },
+                    "answer_citations": [{
+                        "result_number": 1,
+                        "memory_id": "11111111-1111-1111-1111-111111111111",
+                        "project": "memory",
+                        "project_name": "Memory Layer",
+                        "repo_root": "/home/olivier/Projects/memory",
+                        "memory_type": "implementation",
+                        "summary": "MCP global search",
+                        "snippet": "Global search includes project routing metadata."
+                    }],
+                    "diagnostics": {}
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let server = MemoryMcpServer::new(
+            MemoryApiClient::from_parts(format!("http://{addr}"), "token"),
+            ProjectResolutionMode::Http,
+        );
+        let mut args = Map::new();
+        args.insert("question".to_string(), json!("Where is global MCP search?"));
+        args.insert("types".to_string(), json!(["implementation"]));
+
+        let result = server.tool_search_all(args).await.unwrap();
+
+        handle.abort();
+        assert_eq!(result.is_error, Some(false));
+        assert!(
+            result
+                .content
+                .iter()
+                .filter_map(|content| content.as_text())
+                .any(|content| content.text.contains("project=memory")
+                    && content
+                        .text
+                        .contains("repo_root=/home/olivier/Projects/memory"))
+        );
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/response/results/0/project"))
+                .and_then(Value::as_str),
+            Some("memory")
         );
     }
 }

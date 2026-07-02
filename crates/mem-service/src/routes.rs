@@ -23,7 +23,7 @@ use super::{
     project_replacement_policy, project_replacement_policy_update,
     project_replacement_proposal_approve, project_replacement_proposal_reject,
     project_replacement_proposals, project_resume, project_up_to_speed, prune_embeddings,
-    prune_history, query, read_skill, reembed, reindex, reject_loop_approval,
+    prune_history, query, query_global, read_skill, reembed, reindex, reject_loop_approval,
     reject_loop_memory_proposal, repair_skills, route_loop_trigger, run_loop, runtime_status,
     scan_activity, set_embedding_creation_enabled, set_llm_audit_enabled, skills, snooze_loop,
     start_agent_workspace, stats, submit_loop_feedback, sync_commits, update_loop_global_state,
@@ -46,6 +46,7 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
         .route("/v1/skills/repair", post(repair_skills))
         .route("/v1/skills/{skill_name}", get(read_skill))
         .route("/v1/query", post(query))
+        .route("/v1/query/global", post(query_global))
         .route("/v1/checkpoint/activity", post(checkpoint_activity))
         .route("/v1/plan/activity", post(plan_activity))
         .route("/v1/scan/activity", post(scan_activity))

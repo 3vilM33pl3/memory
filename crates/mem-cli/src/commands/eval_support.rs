@@ -877,6 +877,9 @@ pub(crate) fn external_retriever_response_to_query_response(
             .collect::<Vec<_>>();
         let query_result = QueryResult {
             memory_id,
+            project: None,
+            project_name: None,
+            repo_root: None,
             summary: result.text.chars().take(120).collect(),
             memory_type: MemoryType::Reference,
             score: result.score,
@@ -892,6 +895,9 @@ pub(crate) fn external_retriever_response_to_query_response(
         answer_citations.push(QueryAnswerCitation {
             result_number,
             memory_id,
+            project: None,
+            project_name: None,
+            repo_root: None,
             memory_type: MemoryType::Reference,
             summary: query_result.summary.clone(),
             snippet: query_result.snippet.clone(),

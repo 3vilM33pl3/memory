@@ -1743,6 +1743,9 @@ mod tests {
             confidence: 1.0,
             results: vec![mem_api::QueryResult {
                 memory_id: Uuid::new_v4(),
+                project: None,
+                project_name: None,
+                repo_root: None,
                 summary: "Graph retrieval".to_string(),
                 memory_type: mem_api::MemoryType::Reference,
                 score: 1.0,

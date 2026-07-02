@@ -29,6 +29,7 @@ The MCP surface is read-first and focused on project context.
 | Tool | Purpose |
 |---|---|
 | `memory_query` | Ask a project question and return answers with citations. |
+| `memory_search_all` | Search all projects and return project/repository routing metadata for each result. |
 | `memory_resume` | Generate a continuation briefing. |
 | `memory_up_to_speed` | Generate a new-agent briefing. |
 | `memory_overview` | Inspect counts and project state. |
@@ -38,6 +39,14 @@ The MCP surface is read-first and focused on project context.
 | `memory_list_activities` | Inspect activity events. |
 | `memory_list_replacement_proposals` | Review pending proposals without approving them. |
 
+Use `memory_search_all` when an agent can work across several repositories. The result JSON includes `project`, `project_name`, and `repo_root` fields when the service can identify them. After choosing a result, switch to that repository and continue with project-scoped tools or normal code actions.
+
+```text
+When a task may belong to any repository, call memory_search_all first. Use the
+project and repo_root metadata from the strongest cited result to choose where
+follow-up actions should happen.
+```
+
 ## Security
 
 - Prefer stdio for local desktop or CLI clients.
@@ -46,7 +55,7 @@ The MCP surface is read-first and focused on project context.
 - Scope tools to explicit projects.
 - Do not expose MCP HTTP to the public internet.
 
-<Mermaid chart="sequenceDiagram\n    participant Client as MCP client\n    participant Server as Memory MCP server\n    participant API as Memory service API\n    Client->>Server: memory_query(project, question)\n    Server->>API: POST /v1/query\n    API-->>Server: answer, citations, diagnostics\n    Server-->>Client: structured MCP result" />
+<Mermaid chart="sequenceDiagram\n    participant Client as MCP client\n    participant Server as Memory MCP server\n    participant API as Memory service API\n    Client->>Server: memory_search_all(question)\n    Server->>API: POST /v1/query/global\n    API-->>Server: answer, citations, project and repo metadata\n    Server-->>Client: structured MCP result" />
 
 ## Next
 

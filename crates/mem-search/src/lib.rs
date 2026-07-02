@@ -8,10 +8,10 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_api::{
     DiagnosticInfo, DiagnosticSeverity, EmbeddingBackendConfig, EmbeddingsConfig,
-    MemoryRelationType, MemoryType, ProvenanceConfig, QueryAnswerCitation, QueryAnswerGeneration,
-    QueryAnswerMethod, QueryDiagnostics, QueryGraphConnection, QueryMatchKind, QueryRequest,
-    QueryResponse, QueryResult, QueryResultDebug, QueryRetrievalMode, QuerySource, SourceKind,
-    SourceProvenanceRecord, SourceProvenanceStatus,
+    GlobalQueryRequest, MemoryRelationType, MemoryType, ProvenanceConfig, QueryAnswerCitation,
+    QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics, QueryFilters, QueryGraphConnection,
+    QueryMatchKind, QueryRequest, QueryResponse, QueryResult, QueryResultDebug, QueryRetrievalMode,
+    QuerySource, SourceKind, SourceProvenanceRecord, SourceProvenanceStatus,
 };
 use pgvector::Vector;
 use sqlx::PgPool;
@@ -31,6 +31,45 @@ const GRAPH_BOOST_CAP: f64 = 2.5;
 const MAX_GRAPH_CONNECTIONS_PER_MEMORY: usize = 5;
 const CHUNK_TARGET_SIZE: usize = 320;
 const CHUNK_OVERLAP: usize = 80;
+
+pub(crate) struct QueryExecution<'a> {
+    project: Option<&'a str>,
+    query: &'a str,
+    filters: &'a QueryFilters,
+    top_k: i64,
+    min_confidence: Option<f32>,
+    include_stale: bool,
+    history: bool,
+    retrieval_mode: Option<QueryRetrievalMode>,
+}
+
+impl<'a> QueryExecution<'a> {
+    fn from_project_request(request: &'a QueryRequest) -> Self {
+        Self {
+            project: Some(request.project.as_str()),
+            query: request.query.as_str(),
+            filters: &request.filters,
+            top_k: request.top_k,
+            min_confidence: request.min_confidence,
+            include_stale: request.include_stale,
+            history: request.history,
+            retrieval_mode: request.retrieval_mode,
+        }
+    }
+
+    fn from_global_request(request: &'a GlobalQueryRequest) -> Self {
+        Self {
+            project: None,
+            query: request.query.as_str(),
+            filters: &request.filters,
+            top_k: request.top_k,
+            min_confidence: request.min_confidence,
+            include_stale: request.include_stale,
+            history: request.history,
+            retrieval_mode: request.retrieval_mode,
+        }
+    }
+}
 
 /// Wrapper around a single embedding backend. The trait lives in
 /// `embedding_backend`; this struct exists so the rest of the crate keeps a
@@ -250,8 +289,42 @@ pub async fn query_memory_with_provenance_config(
     embedder: Option<&EmbeddingService>,
     provenance_config: &ProvenanceConfig,
 ) -> Result<QueryResponse> {
+    let execution = QueryExecution::from_project_request(request);
+    query_memory_execution(pool, &execution, embedder, provenance_config).await
+}
+
+pub async fn query_memory_global(
+    pool: &PgPool,
+    request: &GlobalQueryRequest,
+    embedder: Option<&EmbeddingService>,
+) -> Result<QueryResponse> {
+    query_memory_global_with_provenance_config(
+        pool,
+        request,
+        embedder,
+        &ProvenanceConfig::default(),
+    )
+    .await
+}
+
+pub async fn query_memory_global_with_provenance_config(
+    pool: &PgPool,
+    request: &GlobalQueryRequest,
+    embedder: Option<&EmbeddingService>,
+    provenance_config: &ProvenanceConfig,
+) -> Result<QueryResponse> {
+    let execution = QueryExecution::from_global_request(request);
+    query_memory_execution(pool, &execution, embedder, provenance_config).await
+}
+
+async fn query_memory_execution(
+    pool: &PgPool,
+    request: &QueryExecution<'_>,
+    embedder: Option<&EmbeddingService>,
+    provenance_config: &ProvenanceConfig,
+) -> Result<QueryResponse> {
     let total_started = Instant::now();
-    let normalized = QueryIntent::from_query(&request.query);
+    let normalized = QueryIntent::from_query(request.query);
     let candidate_limit = (request.top_k * 8).clamp(request.top_k, MAX_CANDIDATES);
     let retrieval_mode = request.retrieval_mode.unwrap_or_default();
     let lexical_enabled = matches!(
@@ -282,11 +355,9 @@ pub async fn query_memory_with_provenance_config(
     let (semantic_candidates, semantic_status) = if !semantic_enabled {
         (Vec::new(), "disabled_by_mode".to_string())
     } else if let Some(embedder) = embedder {
+        let query_text = request.query.to_string();
         match embedder
-            .embed_texts(
-                std::slice::from_ref(&request.query),
-                EmbeddingPurpose::Query,
-            )
+            .embed_texts(std::slice::from_ref(&query_text), EmbeddingPurpose::Query)
             .await
         {
             Ok(embedding_batch) => {
@@ -302,9 +373,9 @@ pub async fn query_memory_with_provenance_config(
                     .await
                     .context("fetch semantic candidates")?;
                     let semantic_status = if candidates.is_empty()
-                        && !repository::project_has_active_embedding_space(
+                        && !repository::scope_has_active_embedding_space(
                             pool,
-                            &request.project,
+                            request.project,
                             &embedding_batch.space.space_key,
                             embedding_batch.dimension,
                         )
@@ -410,6 +481,9 @@ pub async fn query_memory_with_provenance_config(
             .context("fetch query result sources")?;
         results.push(QueryResult {
             memory_id: candidate.memory_id,
+            project: candidate.project,
+            project_name: candidate.project_name,
+            repo_root: candidate.repo_root,
             summary: candidate.summary,
             memory_type: candidate.memory_type,
             score: candidate.final_score,
@@ -695,6 +769,9 @@ impl QueryIntent {
 #[derive(Debug, Clone)]
 struct CandidateRecord {
     memory_id: Uuid,
+    project: Option<String>,
+    project_name: Option<String>,
+    repo_root: Option<String>,
     summary: String,
     memory_type: MemoryType,
     canonical_text: String,
@@ -716,6 +793,9 @@ struct CandidateRecord {
 #[derive(Debug)]
 struct RankedCandidate {
     memory_id: Uuid,
+    project: Option<String>,
+    project_name: Option<String>,
+    repo_root: Option<String>,
     summary: String,
     memory_type: MemoryType,
     confidence: f32,
@@ -990,6 +1070,9 @@ fn rank_candidate(
 
     RankedCandidate {
         memory_id: candidate.memory_id,
+        project: candidate.project,
+        project_name: candidate.project_name,
+        repo_root: candidate.repo_root,
         summary: candidate.summary,
         memory_type: candidate.memory_type,
         confidence: candidate.confidence,
@@ -1092,6 +1175,9 @@ fn synthesize_answer(results: &[QueryResult]) -> QueryAnswerSynthesis {
             citations.push(QueryAnswerCitation {
                 result_number: index + 1,
                 memory_id: result.memory_id,
+                project: result.project.clone(),
+                project_name: result.project_name.clone(),
+                repo_root: result.repo_root.clone(),
                 memory_type: result.memory_type.clone(),
                 summary: result.summary.clone(),
                 snippet: result.snippet.clone(),
@@ -1469,10 +1555,32 @@ mod tests {
     }
 
     #[test]
+    fn global_query_execution_has_no_project_scope() {
+        let request = GlobalQueryRequest {
+            query: "find memory docs".to_string(),
+            filters: QueryFilters::default(),
+            top_k: 8,
+            min_confidence: None,
+            include_stale: false,
+            history: false,
+            retrieval_mode: None,
+            answer_mode: None,
+        };
+
+        let execution = QueryExecution::from_global_request(&request);
+
+        assert_eq!(execution.project, None);
+        assert_eq!(execution.query, "find memory docs");
+    }
+
+    #[test]
     fn provenance_warnings_include_stale_source_statuses() {
         let memory_id = Uuid::new_v4();
         let results = vec![QueryResult {
             memory_id,
+            project: None,
+            project_name: None,
+            repo_root: None,
             summary: "Moved helper".to_string(),
             memory_type: MemoryType::Refactor,
             score: 2.0,
@@ -1560,6 +1668,9 @@ mod tests {
         let results = vec![
             QueryResult {
                 memory_id: Uuid::new_v4(),
+                project: None,
+                project_name: None,
+                repo_root: None,
                 summary: "Primary summary".to_string(),
                 memory_type: MemoryType::Architecture,
                 score: 7.0,
@@ -1576,6 +1687,9 @@ mod tests {
             },
             QueryResult {
                 memory_id: Uuid::new_v4(),
+                project: None,
+                project_name: None,
+                repo_root: None,
                 summary: "Secondary summary".to_string(),
                 memory_type: MemoryType::Convention,
                 score: 5.5,
@@ -1610,6 +1724,9 @@ mod tests {
         let memory_id = Uuid::new_v4();
         let candidate = CandidateRecord {
             memory_id,
+            project: None,
+            project_name: None,
+            repo_root: None,
             summary: "Unrelated summary".to_string(),
             memory_type: MemoryType::Implementation,
             canonical_text: "Durable implementation detail.".to_string(),

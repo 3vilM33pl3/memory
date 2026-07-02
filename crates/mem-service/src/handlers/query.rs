@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use crate::*;
+use mem_api::GlobalQueryRequest;
 
 pub(crate) async fn query(
     State(state): State<AppState>,
@@ -77,6 +78,33 @@ pub(crate) async fn query(
             ))
         }
     }
+}
+
+pub(crate) async fn query_global(
+    State(state): State<AppState>,
+    Json(request): Json<GlobalQueryRequest>,
+) -> Result<Json<mem_api::QueryResponse>, ApiError> {
+    request.validate().map_err(ApiError::validation)?;
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_post_json(&state, "/v1/query/global", &request, false).await?,
+        ));
+    }
+    let pool = &state.pool()?;
+    let embedders = state.embedders.read().await;
+    mem_search::query_memory_global_with_provenance_config(
+        pool,
+        &request,
+        embedders.active(),
+        &state.config.provenance,
+    )
+    .await
+    .map(Json)
+    .map_err(|error| {
+        let diagnostic =
+            classify_anyhow_diagnostic(&error, "search", "query_global", DiagnosticSeverity::Error);
+        ApiError::diagnostic(StatusCode::INTERNAL_SERVER_ERROR, diagnostic)
+    })
 }
 
 pub(crate) fn should_enrich_query_answer_with_llm(request: &QueryRequest) -> bool {
@@ -336,11 +364,18 @@ pub(crate) fn build_query_answer_prompt(
         "Returned memories:".to_string(),
     ];
     for (index, result) in response.results.iter().enumerate() {
+        let route = match (&result.project, &result.repo_root) {
+            (Some(project), Some(repo_root)) => format!(" project={project} repo_root={repo_root}"),
+            (Some(project), None) => format!(" project={project}"),
+            (None, Some(repo_root)) => format!(" repo_root={repo_root}"),
+            (None, None) => String::new(),
+        };
         lines.push(format!(
-            "[{}] type={} score={:.2} summary={}",
+            "[{}] type={} score={:.2}{} summary={}",
             index + 1,
             result.memory_type,
             result.score,
+            route,
             result.summary
         ));
         lines.push(format!("snippet: {}", result.snippet));
@@ -516,6 +551,9 @@ pub(crate) fn citations_from_result_numbers(
             Some(QueryAnswerCitation {
                 result_number: *number,
                 memory_id: result.memory_id,
+                project: result.project.clone(),
+                project_name: result.project_name.clone(),
+                repo_root: result.repo_root.clone(),
                 memory_type: result.memory_type.clone(),
                 summary: result.summary.clone(),
                 snippet: result.snippet.clone(),

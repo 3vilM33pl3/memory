@@ -312,6 +312,9 @@ fn test_query_response() -> QueryResponse {
         confidence: 0.5,
         results: vec![mem_api::QueryResult {
             memory_id: uuid::Uuid::new_v4(),
+            project: None,
+            project_name: None,
+            repo_root: None,
             summary: "Primary memory".to_string(),
             memory_type: mem_api::MemoryType::Architecture,
             score: 12.0,
