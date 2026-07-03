@@ -17,6 +17,7 @@ packaged install/upgrade checks also pass.
 | Check | Result | Notes |
 |---|---|---|
 | Plan checkpoint | Partial | Checkpoint saved, but plan curation timed out on `/v1/curate`. |
+| Plan finish workflow | Failed | `checkpoint finish-execution` timed out while curating the updated plan before finish verification. |
 | `cargo fmt --check` | Pass | Completed locally. |
 | `npm --prefix web test` | Pass | 17 files, 61 tests. |
 | `npm --prefix web run build` | Pass | Existing large `GraphTab` chunk warning. |
@@ -33,7 +34,8 @@ packaged install/upgrade checks also pass.
 
 ## Blockers before final v1.0.0
 
-- Fix or diagnose `/v1/curate` timeout so plan-memory completion can close.
+- Fix or diagnose `/v1/curate` timeout so plan-memory start and finish
+  workflows can curate and close normally.
 - Push current `main`, create `release/v1.0.0-rc.1`, and run GitHub CI.
 - Run release database smoke against PostgreSQL with pgvector.
 - Run eval gate from a fresh comparison artifact.
