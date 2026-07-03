@@ -916,6 +916,7 @@ mod tests {
             database: mem_api::DatabaseConfig {
                 url: "postgresql://memory:test@localhost:5432/memory".to_string(),
             },
+            offline: mem_api::OfflineConfig::default(),
             features: mem_api::FeatureFlags::default(),
             llm: mem_api::LlmConfig::default(),
             llm_audit: mem_api::LlmAuditConfig::default(),

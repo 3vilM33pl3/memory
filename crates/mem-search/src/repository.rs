@@ -134,7 +134,7 @@ pub(super) async fn fetch_lexical_candidates(
         "#,
     )
     .bind(request.project)
-    .bind(&request.query)
+    .bind(request.query)
     .bind(if memory_type_filters.is_empty() {
         None::<Vec<String>>
     } else {

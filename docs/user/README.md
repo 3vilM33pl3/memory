@@ -21,7 +21,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - **Ask useful questions:** [Query Command](cli/query.md), [Source Provenance Verification](cli/verify-provenance.md), [Code Graph Extraction](cli/graph.md), [Embedding Operations](cli/embeddings.md)
 - **Operate agents:** [Agent Workspace Coordination](cli/agents.md), [Agents Tab](tui/agents.md), [Watcher Health](cli/watchers.md), [Activity Tab](tui/activity.md), [Get Up To Speed](cli/up-to-speed.md), [MCP Server](cli/mcp.md), [Loop Automations](cli/loops.md)
 - **Measure impact:** [Beginner Guide To Evaluations](evaluation-guide.md), [Automated Evaluation](cli/eval.md)
-- **Troubleshoot:** [Status](cli/status.md), [Doctor Diagnostics](cli/doctor.md), [Health](cli/health.md), [Stats](cli/stats.md), [Errors Tab](tui/errors.md)
+- **Troubleshoot:** [Status](cli/status.md), [Doctor Diagnostics](cli/doctor.md), [Health](cli/health.md), [Stats](cli/stats.md), [Errors Tab](tui/errors.md), [Release Compatibility](release-compatibility.md)
 
 ## Reference
 
@@ -72,6 +72,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Archive Command](cli/archive.md)
 - [Automation Commands](cli/automation.md)
 - [Loop Automations](cli/loops.md)
+- [Release Compatibility And Known Limitations](release-compatibility.md)
 
 ## Related Docs
 

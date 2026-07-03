@@ -38,6 +38,7 @@ For the full isolation contract, default ports, override flags, and troubleshoot
 - [Automated Evaluation](evaluation.md)
 - [Memory Improvement Benchmark](evaluation-memory-improvement.md)
 - [GitHub Actions](github-actions.md)
+- [v1.0 Release Readiness](release-readiness.md)
 
 ## Implementation Material
 

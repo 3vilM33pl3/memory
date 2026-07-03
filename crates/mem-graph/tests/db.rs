@@ -261,24 +261,28 @@ async fn insert_graph_fixture(pool: &PgPool, slug: &str) -> Uuid {
         pool,
         project_id,
         run_id,
-        calls_edge,
-        handler_node,
-        repo_node,
-        "calls",
-        "src/handler.rs",
-        15,
+        GraphEdgeFixture {
+            edge_id: calls_edge,
+            source: handler_node,
+            target: repo_node,
+            edge_kind: "calls",
+            file_path: "src/handler.rs",
+            line: 15,
+        },
     )
     .await;
     insert_edge(
         pool,
         project_id,
         run_id,
-        renders_edge,
-        handler_node,
-        ui_node,
-        "references",
-        "src/handler.rs",
-        18,
+        GraphEdgeFixture {
+            edge_id: renders_edge,
+            source: handler_node,
+            target: ui_node,
+            edge_kind: "references",
+            file_path: "src/handler.rs",
+            line: 18,
+        },
     )
     .await;
     insert_reference(pool, project_id, run_id, Some(calls_edge), "resolved").await;
@@ -345,17 +349,16 @@ async fn insert_symbol(
     .expect("insert code symbol");
 }
 
-async fn insert_edge(
-    pool: &PgPool,
-    project_id: Uuid,
-    run_id: Uuid,
+struct GraphEdgeFixture<'a> {
     edge_id: Uuid,
     source: Uuid,
     target: Uuid,
-    edge_kind: &str,
-    file_path: &str,
+    edge_kind: &'a str,
+    file_path: &'a str,
     line: i64,
-) {
+}
+
+async fn insert_edge(pool: &PgPool, project_id: Uuid, run_id: Uuid, edge: GraphEdgeFixture<'_>) {
     sqlx::query(
         r#"
         INSERT INTO graph_edges
@@ -365,12 +368,12 @@ async fn insert_edge(
                 jsonb_build_object('reference_kind', 'call'), now())
         "#,
     )
-    .bind(edge_id)
+    .bind(edge.edge_id)
     .bind(project_id)
     .bind(run_id)
-    .bind(source)
-    .bind(target)
-    .bind(edge_kind)
+    .bind(edge.source)
+    .bind(edge.target)
+    .bind(edge.edge_kind)
     .execute(pool)
     .await
     .expect("insert graph edge");
@@ -386,9 +389,9 @@ async fn insert_edge(
     .bind(Uuid::new_v4())
     .bind(project_id)
     .bind(run_id)
-    .bind(edge_id)
-    .bind(file_path)
-    .bind(line)
+    .bind(edge.edge_id)
+    .bind(edge.file_path)
+    .bind(edge.line)
     .execute(pool)
     .await
     .expect("insert graph evidence");
