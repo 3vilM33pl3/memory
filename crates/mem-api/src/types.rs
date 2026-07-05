@@ -3910,6 +3910,8 @@ pub struct AppConfig {
     pub provenance: ProvenanceConfig,
     #[serde(default)]
     pub reinforcement: ReinforcementConfig,
+    #[serde(default)]
+    pub curation: CurationConfig,
     #[serde(skip, default = "default_profile")]
     pub profile: Profile,
     /// Path of the resolved config file (base file in dev mode). Useful when
@@ -4842,6 +4844,32 @@ pub struct AutomationConfig {
     pub audit_log_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_file_path: Option<String>,
+}
+
+/// Service-side curation knobs. Distinct from the per-repo
+/// `curation.replacement_policy` agent setting: these control the
+/// embedding-based dedup pass that runs after chunk embeddings are built.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurationConfig {
+    #[serde(default = "default_true")]
+    pub semantic_dedup_enabled: bool,
+    /// Minimum max-chunk cosine similarity for two memories to be linked as
+    /// semantic duplicates and queued for merge review.
+    #[serde(default = "default_semantic_duplicate_threshold")]
+    pub semantic_duplicate_threshold: f64,
+}
+
+impl Default for CurationConfig {
+    fn default() -> Self {
+        Self {
+            semantic_dedup_enabled: true,
+            semantic_duplicate_threshold: default_semantic_duplicate_threshold(),
+        }
+    }
+}
+
+fn default_semantic_duplicate_threshold() -> f64 {
+    0.90
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

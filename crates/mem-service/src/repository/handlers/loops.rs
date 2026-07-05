@@ -1980,6 +1980,99 @@ pub async fn create_memory_proposal_record(
         .map_err(|error| anyhow::anyhow!(error.message))
 }
 
+/// Queue human-gated proposals for semantic-dedup pairs found after embedding
+/// maintenance. Non-conflict pairs become `merge` proposals (duplicates);
+/// conflict pairs become `link` proposals flagged as likely contradictions.
+/// Pairs already covered by a pending semantic_dedup proposal are skipped.
+pub async fn queue_semantic_dedup_proposals(
+    pool: &PgPool,
+    project: &str,
+    duplicates: &[mem_curate::SemanticDuplicate],
+) -> Result<usize> {
+    let mut queued = 0usize;
+    for duplicate in duplicates {
+        let already_pending = sqlx::query_scalar::<_, bool>(
+            r#"
+            SELECT EXISTS (
+                SELECT 1
+                FROM memory_proposals mp
+                JOIN projects p ON p.id = mp.project_id
+                WHERE p.slug = $1
+                  AND mp.loop_id = 'semantic_dedup'
+                  AND mp.status = 'pending'
+                  AND (
+                      (mp.target_memory_id = $2 AND mp.candidate_json->>'related_memory_id' = $3)
+                      OR (mp.target_memory_id = $4 AND mp.candidate_json->>'related_memory_id' = $5)
+                  )
+            )
+            "#,
+        )
+        .bind(project)
+        .bind(duplicate.memory_id)
+        .bind(duplicate.other_memory_id.to_string())
+        .bind(duplicate.other_memory_id)
+        .bind(duplicate.memory_id.to_string())
+        .fetch_one(pool)
+        .await?;
+        if already_pending {
+            continue;
+        }
+
+        let (proposal_type, relation_type, confidence, risk_notes) = if duplicate.conflict {
+            (
+                "link",
+                "related_to",
+                0.60f32,
+                "High embedding similarity with low lexical overlap and supersede/negation \
+                 cues: likely a contradiction between an old and a new fact, not a duplicate. \
+                 Review which memory is current before acting.",
+            )
+        } else {
+            (
+                "merge",
+                "duplicates",
+                0.74f32,
+                "Detected by chunk-embedding similarity; verify both memories describe the \
+                 same fact before approving the merge relation.",
+            )
+        };
+        let request = LoopMemoryProposalCreateRequest {
+            project: project.to_string(),
+            loop_id: "semantic_dedup".to_string(),
+            proposal_type: proposal_type.to_string(),
+            run_id: None,
+            target_memory_id: Some(duplicate.memory_id),
+            candidate: serde_json::json!({
+                "related_memory_id": duplicate.other_memory_id,
+                "relation_type": relation_type,
+                "summary": format!(
+                    "{} semantically similar memory {}",
+                    if duplicate.conflict { "Review conflicting" } else { "Merge duplicate" },
+                    duplicate.other_memory_id
+                ),
+                "evidence_summary": format!(
+                    "Target `{}` and related `{}`.",
+                    duplicate.summary, duplicate.other_summary
+                )
+            }),
+            evidence: serde_json::json!([{
+                "source_kind": "note",
+                "excerpt": format!(
+                    "Max chunk cosine similarity {:.3}, lexical overlap {:.2}. Target: {} `{}`. Related: {} `{}`.",
+                    duplicate.similarity, duplicate.lexical_overlap,
+                    duplicate.memory_id, duplicate.summary,
+                    duplicate.other_memory_id, duplicate.other_summary
+                )
+            }]),
+            confidence,
+            risk_notes: Some(risk_notes.to_string()),
+        };
+        create_memory_proposal_record(pool, &request).await?;
+        queued += 1;
+    }
+    Ok(queued)
+}
+
 pub async fn record_loop_memory_proposal_decision(
     pool: &PgPool,
     proposal_id: Uuid,

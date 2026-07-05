@@ -50,15 +50,55 @@ pub(crate) async fn curate_memory(
             )
             .await
         };
-        if let Err(error) = rebuild_result {
-            let diagnostic = classify_anyhow_diagnostic(
-                &error,
-                "embeddings",
-                "automatic_embedding_creation",
-                DiagnosticSeverity::Warning,
-            );
-            notify_project_diagnostic(&state, request.project.clone(), diagnostic.clone());
-            response.warnings.push(diagnostic);
+        match rebuild_result {
+            Err(error) => {
+                let diagnostic = classify_anyhow_diagnostic(
+                    &error,
+                    "embeddings",
+                    "automatic_embedding_creation",
+                    DiagnosticSeverity::Warning,
+                );
+                notify_project_diagnostic(&state, request.project.clone(), diagnostic.clone());
+                response.warnings.push(diagnostic);
+            }
+            Ok(_) => {
+                // Embeddings for the new memories exist now, so the semantic
+                // dedup pass can catch paraphrased duplicates the lexical
+                // curation pass missed. Advisory — never fails curation.
+                let curation_config = &state.config.curation;
+                if curation_config.semantic_dedup_enabled && !response.memory_ids.is_empty() {
+                    match mem_curate::refresh_semantic_relations(
+                        &state.pool()?,
+                        &request.project,
+                        &response.memory_ids,
+                        curation_config.semantic_duplicate_threshold,
+                    )
+                    .await
+                    {
+                        Ok(duplicates) if !duplicates.is_empty() => {
+                            match crate::repository::handlers::loops::queue_semantic_dedup_proposals(
+                                &state.pool()?,
+                                &request.project,
+                                &duplicates,
+                            )
+                            .await
+                            {
+                                Ok(queued) if queued > 0 => {
+                                    response.proposal_count += queued as i64;
+                                }
+                                Ok(_) => {}
+                                Err(error) => {
+                                    tracing::warn!(error = %error, "semantic dedup proposal queueing failed");
+                                }
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            tracing::warn!(error = %error, "semantic dedup pass failed");
+                        }
+                    }
+                }
+            }
         }
     }
     // Curator-side threshold check: report memories due for validation and

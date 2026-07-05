@@ -98,6 +98,18 @@ auto_apply_rewording = false   # wording fixes stay human-gated by default
 
 The full knob set (boosts, half-life, propagation depth, volatility, rank weights, retention) is documented on the [concept page](/docs/how-it-works/reinforcement#configuration).
 
+## Curation section
+
+The `[curation]` section controls the semantic dedup pass that runs after chunk embeddings are built. When a newly curated memory is a near-duplicate of an existing one by embedding similarity, the pair is linked and a human-gated merge proposal is queued (`memory proposals`). Pairs that look like contradictions rather than paraphrases are flagged for review instead of merge.
+
+```toml
+[curation]
+semantic_dedup_enabled = true        # embedding-based duplicate detection
+semantic_duplicate_threshold = 0.90  # min max-chunk cosine similarity
+```
+
+This is separate from the per-repo `curation.replacement_policy` agent setting, which governs lexical replacement decisions at capture time.
+
 ## Precedence and diagnostics
 
 For prod/profile-installed commands, config is loaded from the explicit `--config` path if supplied, otherwise from the discovered global config and the current repo's user-local project config when available. Environment variables with the `MEMORY_LAYER__...` shape override TOML values.
