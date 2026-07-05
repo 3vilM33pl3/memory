@@ -2156,6 +2156,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mem-reinforce"
+version = "1.0.0-rc.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "mem-api",
+ "mem-test-support",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "mem-search"
 version = "1.0.0-rc.1"
 dependencies = [
