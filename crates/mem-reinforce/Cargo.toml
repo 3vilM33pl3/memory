@@ -7,13 +7,19 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+async-trait = "0.1"
 chrono.workspace = true
 mem-api = { path = "../mem-api" }
+mem-curate = { path = "../mem-curate" }
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 uuid.workspace = true
+
+[features]
+test-support = []
 
 [dev-dependencies]
 mem-test-support = { path = "../mem-test-support" }

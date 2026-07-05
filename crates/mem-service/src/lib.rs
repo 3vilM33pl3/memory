@@ -1,6 +1,7 @@
 mod auth;
 mod error;
 mod handlers;
+mod llm;
 mod mcp_http;
 mod offline;
 mod prelude;

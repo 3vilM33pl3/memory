@@ -2160,13 +2160,16 @@ name = "mem-reinforce"
 version = "1.0.0-rc.1"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "mem-api",
+ "mem-curate",
  "mem-test-support",
  "serde",
  "serde_json",
  "sqlx",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2196,6 +2199,7 @@ name = "mem-service"
 version = "1.0.0-rc.1"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "capnp",
  "chrono",

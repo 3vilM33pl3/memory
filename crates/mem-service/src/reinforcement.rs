@@ -128,3 +128,149 @@ fn send_batch(runtime: &ReinforcementRuntime, batch: AccessBatch) {
         tracing::debug!("reinforcement access channel full; dropping batch");
     }
 }
+
+/// LLM-backed verdict provider: builds a structured prompt from the
+/// gathered context and parses the strict-JSON verdict. All calls flow
+/// through the shared LLM helper and its audit trail.
+pub(crate) struct ServiceVerdictProvider {
+    pub(crate) state: AppState,
+}
+
+const VALIDATION_SYSTEM_PROMPT: &str = "You are auditing one stored project memory against the evidence supplied by the user. Decide whether the memory is still accurate. Return strict JSON with keys: verdict (one of valid, partially_valid, outdated, ambiguous, unsupported), confidence (0..1), reasons (array of short strings), evidence (array of {kind, ref, stance, excerpt} where kind is one of file, code_symbol, doc, commit, test, issue, memory, search_hit and stance is supports, contradicts or neutral), clarity_ok (boolean, false when the memory is correct but its wording could be clearer or easier to retrieve), proposed_summary (string, optional), proposed_text (string, optional). Rules: cite ONLY references that literally appear in the supplied evidence lists; never invent files, commits or ids. Propose new wording only when it preserves the memory's meaning. If the memory is outdated, propose a corrected text when the evidence clearly supports one. If evidence is weak, missing, or contradictory, use verdict ambiguous or unsupported with low confidence rather than guessing.";
+
+#[async_trait::async_trait]
+impl mem_reinforce::VerdictProvider for ServiceVerdictProvider {
+    async fn assess(
+        &self,
+        context: &mem_reinforce::ValidationContext,
+    ) -> anyhow::Result<mem_reinforce::RawVerdict> {
+        let subject = format!(
+            "Validate memory: {}",
+            context.memory.summary.chars().take(120).collect::<String>()
+        );
+        let outcome = crate::llm::call_llm_strict_json(
+            &self.state,
+            &crate::llm::LlmStrictJsonRequest {
+                project: &context.memory.project_slug,
+                purpose: "memory_validation",
+                subject: subject.clone(),
+                system_prompt: VALIDATION_SYSTEM_PROMPT,
+                user_prompt: build_validation_prompt(context),
+                max_output_tokens_cap: 1200,
+            },
+        )
+        .await?;
+        match mem_reinforce::validate::parse_verdict_content(&outcome.content) {
+            Ok(raw) => Ok(raw),
+            Err(error) => {
+                crate::repository::events::emit_llm_audit_activity(
+                    &self.state,
+                    &context.memory.project_slug,
+                    "memory_validation",
+                    subject,
+                    &outcome.request_body,
+                    "error",
+                    Some(&error.to_string()),
+                    Some(outcome.started.elapsed().as_millis() as u64),
+                    outcome.token_usage,
+                );
+                Err(error)
+            }
+        }
+    }
+
+    fn model_name(&self) -> Option<String> {
+        Some(self.state.config.llm.model.clone())
+    }
+}
+
+/// Renders the deterministic evidence bundle for the verdict prompt.
+pub(crate) fn build_validation_prompt(context: &mem_reinforce::ValidationContext) -> String {
+    let memory = &context.memory;
+    let mut lines = vec![
+        format!("Project: {}", memory.project_slug),
+        format!(
+            "Memory under validation (id {}, type {}, importance {}, stored confidence {:.2}):",
+            memory.memory_id, memory.memory_type, memory.importance, memory.confidence
+        ),
+        format!("Summary: {}", memory.summary),
+        format!("Text: {}", memory.canonical_text),
+        format!(
+            "Created {}, last updated {}.",
+            memory.created_at.format("%Y-%m-%d"),
+            memory.updated_at.format("%Y-%m-%d")
+        ),
+    ];
+    if !context.tags.is_empty() {
+        lines.push(format!("Tags: {}", context.tags.join(", ")));
+    }
+    lines.push(String::new());
+    if context.sources.is_empty() {
+        lines.push("Recorded sources: none.".to_string());
+    } else {
+        lines.push("Recorded sources (citable refs):".to_string());
+        for source in &context.sources {
+            let mut parts = Vec::new();
+            if let Some(path) = &source.file_path {
+                match &source.symbol_name {
+                    Some(symbol) => parts.push(format!("{path}#{symbol}")),
+                    None => parts.push(path.clone()),
+                }
+            }
+            parts.push(format!("kind={}", source.source_kind));
+            if let Some(status) = &source.provenance_status {
+                parts.push(format!("provenance={status}"));
+            }
+            if let Some(commit) = &source.git_commit {
+                parts.push(format!("commit={commit}"));
+            }
+            lines.push(format!("- {}", parts.join(" ")));
+            if let Some(excerpt) = &source.excerpt {
+                lines.push(format!(
+                    "  excerpt: {}",
+                    excerpt.chars().take(300).collect::<String>()
+                ));
+            }
+        }
+    }
+    if !context.related.is_empty() {
+        lines.push(String::new());
+        lines.push("Related memories (citable by id):".to_string());
+        for related in &context.related {
+            lines.push(format!(
+                "- {} [{}] {}",
+                related.memory_id, related.relation_type, related.summary
+            ));
+        }
+    }
+    if !context.git_log.is_empty() {
+        lines.push(String::new());
+        lines.push(
+            "Commits touching the source paths since last validation (citable by short sha):"
+                .to_string(),
+        );
+        for line in &context.git_log {
+            lines.push(format!("- {line}"));
+        }
+    }
+    if !context.prior_runs.is_empty() {
+        lines.push(String::new());
+        lines.push("Previous validation runs:".to_string());
+        for run in &context.prior_runs {
+            lines.push(format!(
+                "- verdict={} confidence={} action={} at {}",
+                run.verdict.as_deref().unwrap_or("?"),
+                run.confidence
+                    .map(|value| format!("{value:.2}"))
+                    .unwrap_or_else(|| "?".to_string()),
+                run.action.as_deref().unwrap_or("?"),
+                run.finished_at
+                    .map(|at| at.format("%Y-%m-%d").to_string())
+                    .unwrap_or_else(|| "?".to_string()),
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push("Assess the memory now. Return JSON only.".to_string());
+    lines.join("\n")
+}

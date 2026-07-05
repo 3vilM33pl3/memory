@@ -239,95 +239,19 @@ pub(crate) async fn synthesize_query_answer_with_llm(
     if response.results.is_empty() {
         anyhow::bail!("no query memories available for llm answer synthesis");
     }
-    if !is_supported_llm_provider(&state.config.llm.provider)
-        || state.config.llm.model.trim().is_empty()
-    {
-        anyhow::bail!("llm query answer is not configured");
-    }
-    let api_key = resolve_llm_api_key(&state.config.llm);
-    if llm_requires_api_key(&state.config.llm) && api_key.is_none() {
-        anyhow::bail!(
-            "read llm api key {} for query answer",
-            state.config.llm.api_key_env
-        );
-    }
-    let url = format!(
-        "{}/chat/completions",
-        effective_llm_base_url(&state.config.llm)
-    );
-    let mut request_body = serde_json::json!({
-        "model": state.config.llm.model,
-        "temperature": 0.0,
-        "messages": [
-            {
-                "role": "system",
-                "content": "Answer project-memory questions using only the numbered memories supplied by the user. Return strict JSON with keys: answer (string), citations (array of result numbers), confidence (0..1), insufficient_evidence (boolean). Cite only memories that directly support the answer. If evidence is weak, say so and set insufficient_evidence true."
-            },
-            {
-                "role": "user",
-                "content": build_query_answer_prompt(request, response)
-            }
-        ]
-    });
-    request_body[llm_max_output_tokens_field(&state.config.llm.provider)] =
-        serde_json::json!(state.config.llm.max_output_tokens.min(800));
-    let started = std::time::Instant::now();
-    let mut builder = state.http_client.post(url);
-    if let Some(api_key) = api_key {
-        builder = builder.bearer_auth(api_key);
-    }
-    let http_response = match builder.json(&request_body).send().await {
-        Ok(response) => response,
-        Err(error) => {
-            emit_llm_audit_activity(
-                state,
-                &request.project,
-                "query_answer",
-                format!("Question: {}", summarize_query(&request.query)),
-                &request_body,
-                "error",
-                Some(&format!("send llm query answer request: {error}")),
-                Some(started.elapsed().as_millis() as u64),
-                None,
-            );
-            return Err(error).context("send llm query answer request");
-        }
-    };
-    let status = http_response.status();
-    let body = match http_response.text().await {
-        Ok(body) => body,
-        Err(error) => {
-            emit_llm_audit_activity(
-                state,
-                &request.project,
-                "query_answer",
-                format!("Question: {}", summarize_query(&request.query)),
-                &request_body,
-                "error",
-                Some(&format!("read llm query answer body: {error}")),
-                Some(started.elapsed().as_millis() as u64),
-                None,
-            );
-            return Err(error).context("read llm query answer body");
-        }
-    };
-    let token_usage = token_usage_from_chat_body(&body);
-    if !status.is_success() {
-        let error = format!("llm query answer failed: {status} {body}");
-        emit_llm_audit_activity(
-            state,
-            &request.project,
-            "query_answer",
-            format!("Question: {}", summarize_query(&request.query)),
-            &request_body,
-            "error",
-            Some(&error),
-            Some(started.elapsed().as_millis() as u64),
-            token_usage,
-        );
-        anyhow::bail!("llm query answer failed: {status} {body}");
-    }
-    let mut answer = match parse_llm_query_answer_body(&body, response) {
+    let outcome = crate::llm::call_llm_strict_json(
+        state,
+        &crate::llm::LlmStrictJsonRequest {
+            project: &request.project,
+            purpose: "query_answer",
+            subject: format!("Question: {}", summarize_query(&request.query)),
+            system_prompt: "Answer project-memory questions using only the numbered memories supplied by the user. Return strict JSON with keys: answer (string), citations (array of result numbers), confidence (0..1), insufficient_evidence (boolean). Cite only memories that directly support the answer. If evidence is weak, say so and set insufficient_evidence true.",
+            user_prompt: build_query_answer_prompt(request, response),
+            max_output_tokens_cap: 800,
+        },
+    )
+    .await?;
+    let mut answer = match parse_llm_query_answer_content(&outcome.content, response) {
         Ok(answer) => answer,
         Err(error) => {
             emit_llm_audit_activity(
@@ -335,27 +259,16 @@ pub(crate) async fn synthesize_query_answer_with_llm(
                 &request.project,
                 "query_answer",
                 format!("Question: {}", summarize_query(&request.query)),
-                &request_body,
+                &outcome.request_body,
                 "error",
                 Some(&error.to_string()),
-                Some(started.elapsed().as_millis() as u64),
-                token_usage,
+                Some(outcome.started.elapsed().as_millis() as u64),
+                outcome.token_usage.clone(),
             );
             return Err(error);
         }
     };
-    answer.token_usage = token_usage;
-    emit_llm_audit_activity(
-        state,
-        &request.project,
-        "query_answer",
-        format!("Question: {}", summarize_query(&request.query)),
-        &request_body,
-        "success",
-        None,
-        Some(started.elapsed().as_millis() as u64),
-        answer.token_usage.clone(),
-    );
+    answer.token_usage = outcome.token_usage;
     Ok(answer)
 }
 
@@ -434,24 +347,6 @@ pub(crate) fn build_query_answer_prompt(
             .to_string(),
     );
     lines.join("\n")
-}
-
-pub(crate) fn parse_llm_query_answer_body(
-    body: &str,
-    response: &QueryResponse,
-) -> Result<LlmQueryAnswer> {
-    let payload: serde_json::Value =
-        serde_json::from_str(body).context("parse llm query answer response")?;
-    let content = payload
-        .get("choices")
-        .and_then(|choices| choices.get(0))
-        .and_then(|choice| choice.get("message"))
-        .and_then(|message| message.get("content"))
-        .and_then(|content| content.as_str())
-        .map(str::trim)
-        .filter(|content| !content.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("llm query answer missing content"))?;
-    parse_llm_query_answer_content(content, response)
 }
 
 pub(crate) fn parse_llm_query_answer_content(

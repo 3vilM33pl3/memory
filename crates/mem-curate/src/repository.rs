@@ -599,6 +599,74 @@ fn replacement_target_types(candidate: &CandidateAssertion) -> Vec<String> {
     vec![candidate.memory_type.to_string()]
 }
 
+/// Appends a new immutable version of an existing memory with revised
+/// wording, copying tags and sources from the previous version. Used by the
+/// reinforcement validation pipeline for auto-applied rewording and
+/// human-approved corrections. Chunk embeddings for the new version are
+/// rebuilt by the service's automatic embedding maintenance, not here.
+pub async fn apply_validation_revision(
+    pool: &sqlx::PgPool,
+    previous_memory_id: Uuid,
+    new_summary: &str,
+    new_canonical_text: &str,
+) -> Result<Uuid, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let new_memory_id = Uuid::new_v4();
+    let inserted = sqlx::query(
+        r#"
+        INSERT INTO memory_entries
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
+             summary, memory_type, scope, importance, confidence, status,
+             created_at, updated_at, archived_at, search_document)
+        SELECT $2, m.project_id, m.canonical_id,
+               (SELECT MAX(version_no) + 1 FROM memory_entries WHERE canonical_id = m.canonical_id),
+               FALSE, $3, $4, m.memory_type, m.scope, m.importance, m.confidence,
+               'active', now(), now(), NULL,
+               to_tsvector('english', $3 || ' ' || $4)
+        FROM memory_entries m
+        WHERE m.id = $1 AND COALESCE(m.is_tombstone, false) = false
+        "#,
+    )
+    .bind(previous_memory_id)
+    .bind(new_memory_id)
+    .bind(new_canonical_text)
+    .bind(new_summary)
+    .execute(&mut *tx)
+    .await?;
+    if inserted.rows_affected() == 0 {
+        return Err(sqlx::Error::RowNotFound);
+    }
+    sqlx::query(
+        r#"
+        INSERT INTO memory_tags (memory_entry_id, tag)
+        SELECT $2, tag FROM memory_tags WHERE memory_entry_id = $1
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(previous_memory_id)
+    .bind(new_memory_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO memory_sources
+            (id, memory_entry_id, task_id, file_path, git_commit, symbol_name,
+             symbol_kind, source_kind, excerpt, created_at)
+        SELECT gen_random_uuid(), $2, task_id, file_path, git_commit, symbol_name,
+               symbol_kind, source_kind, excerpt, now()
+        FROM memory_sources
+        WHERE memory_entry_id = $1
+        "#,
+    )
+    .bind(previous_memory_id)
+    .bind(new_memory_id)
+    .execute(&mut *tx)
+    .await?;
+    rebuild_memory_chunks(&mut tx, new_memory_id).await?;
+    tx.commit().await?;
+    Ok(new_memory_id)
+}
+
 async fn insert_candidate_memory(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_id: Uuid,

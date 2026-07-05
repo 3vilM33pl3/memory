@@ -135,27 +135,33 @@ pub(crate) async fn reinforcement_sweep_once(state: &AppState) -> Result<()> {
     Ok(())
 }
 
-/// Runs the validation pipeline for one due candidate. Detection-only until
-/// the validation pipeline lands: records intent in the score audit so
-/// enabling validation before that has a visible, harmless effect.
+/// Runs the validation pipeline for one due candidate with the LLM-backed
+/// verdict provider.
 async fn validate_candidate(
-    _state: &AppState,
+    state: &AppState,
     pool: &PgPool,
     candidate: &ValidationCandidate,
 ) -> Result<()> {
-    insert_score_audit(
+    let policy = mem_reinforce::ValidationPolicy::from(&state.config.reinforcement);
+    let provider = crate::reinforcement::ServiceVerdictProvider {
+        state: state.clone(),
+    };
+    let outcome = mem_reinforce::run_validation(
         pool,
-        candidate.canonical_id,
-        candidate.project_id,
-        "validation_pending",
-        Some(candidate.activation),
-        Some(candidate.activation),
-        serde_json::json!({
-            "detail": "validation pipeline not yet wired; candidate detected",
-            "volatility": candidate.volatility,
-        }),
+        candidate,
+        &provider,
+        &policy,
+        mem_reinforce::ValidationTrigger::Scheduled,
     )
     .await?;
+    tracing::info!(
+        canonical_id = %candidate.canonical_id,
+        run_id = %outcome.run_id,
+        verdict = outcome.verdict.as_str(),
+        action = outcome.action.as_str(outcome.dry_run),
+        dry_run = outcome.dry_run,
+        "memory validation completed"
+    );
     Ok(())
 }
 

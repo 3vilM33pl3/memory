@@ -13,6 +13,7 @@ chrono.workspace = true
 config.workspace = true
 mem-agenttop = { path = "../mem-agenttop" }
 mem-api = { path = "../mem-api" }
+async-trait = "0.1"
 mem-curate = { path = "../mem-curate" }
 mem-reinforce = { path = "../mem-reinforce" }
 mem-graph = { path = "../mem-graph" }

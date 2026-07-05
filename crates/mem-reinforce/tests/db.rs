@@ -483,3 +483,397 @@ async fn access_event_pruning_respects_cutoff() {
 
     cleanup(&pool, &slug, project_id).await;
 }
+
+mod validation {
+    use super::{cleanup, insert_memory, insert_project};
+    use mem_reinforce::selection::ValidationCandidate;
+    use mem_reinforce::validate::verdict::{EvidenceKind, EvidenceStance, RawEvidence, Verdict};
+    use mem_reinforce::{
+        RawVerdict, ValidationAction, ValidationPolicy, ValidationTrigger, VerdictProvider,
+        run_validation,
+    };
+    use sqlx::{PgPool, Row};
+    use uuid::Uuid;
+
+    struct FakeProvider {
+        verdict: RawVerdict,
+    }
+
+    #[async_trait::async_trait]
+    impl VerdictProvider for FakeProvider {
+        async fn assess(
+            &self,
+            _context: &mem_reinforce::ValidationContext,
+        ) -> anyhow::Result<RawVerdict> {
+            Ok(self.verdict.clone())
+        }
+
+        fn model_name(&self) -> Option<String> {
+            Some("fake-model".to_string())
+        }
+    }
+
+    fn raw_verdict(verdict: Verdict, confidence: f32) -> RawVerdict {
+        RawVerdict {
+            verdict,
+            confidence,
+            reasons: vec!["test reason".to_string()],
+            evidence: Vec::new(),
+            proposed_summary: None,
+            proposed_text: None,
+            clarity_ok: true,
+        }
+    }
+
+    fn policy(dry_run: bool, auto_apply: bool) -> ValidationPolicy {
+        ValidationPolicy {
+            dry_run,
+            auto_apply_rewording: auto_apply,
+            auto_apply_min_confidence: 0.85,
+            needs_review_min_confidence: 0.5,
+            cooldown: chrono::Duration::days(7),
+        }
+    }
+
+    async fn seed(pool: &PgPool, prefix: &str) -> (String, Uuid, Uuid) {
+        let slug = mem_test_support::unique_project_slug(prefix);
+        let project_id = Uuid::new_v4();
+        let memory_id = Uuid::new_v4();
+        insert_project(pool, &slug, project_id).await;
+        insert_memory(pool, project_id, memory_id, "Validation subject memory").await;
+        sqlx::query(
+            "INSERT INTO memory_scores (canonical_id, project_id, activation) VALUES ($1, $2, 9.0)",
+        )
+        .bind(memory_id)
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .expect("seed score row");
+        (slug, project_id, memory_id)
+    }
+
+    fn candidate(memory_id: Uuid, project_id: Uuid) -> ValidationCandidate {
+        ValidationCandidate {
+            canonical_id: memory_id,
+            memory_id,
+            project_id,
+            activation: 9.0,
+            volatility: 0.0,
+            validated_at: None,
+            needs_review: false,
+            cooldown_until: None,
+        }
+    }
+
+    async fn score_row(pool: &PgPool, canonical_id: Uuid) -> mem_reinforce::repository::ScoreRow {
+        mem_reinforce::repository::fetch_scores(pool, &[canonical_id])
+            .await
+            .expect("fetch score")
+            .into_iter()
+            .next()
+            .expect("score row present")
+    }
+
+    #[tokio::test]
+    async fn valid_verdict_revalidates_and_sets_cooldown() {
+        let Some(pool) = mem_test_support::migrated_pool().await else {
+            return;
+        };
+        let (slug, project_id, memory_id) = seed(&pool, "validate-valid").await;
+        let provider = FakeProvider {
+            verdict: raw_verdict(Verdict::Valid, 0.92),
+        };
+        let outcome = run_validation(
+            &pool,
+            &candidate(memory_id, project_id),
+            &provider,
+            &policy(false, false),
+            ValidationTrigger::Manual,
+        )
+        .await
+        .expect("run validation");
+        assert_eq!(outcome.action, ValidationAction::Revalidated);
+
+        let score = score_row(&pool, memory_id).await;
+        assert!(score.validated_at.is_some());
+        assert_eq!(score.validation_confidence, Some(0.92));
+        assert!(score.validation_cooldown_until.is_some());
+        assert!(!score.needs_review);
+
+        let row = sqlx::query(
+            "SELECT status, verdict, action, model, dry_run FROM memory_validation_runs WHERE id = $1",
+        )
+        .bind(outcome.run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch run row");
+        assert_eq!(row.get::<String, _>("status"), "completed");
+        assert_eq!(
+            row.get::<Option<String>, _>("verdict").as_deref(),
+            Some("valid")
+        );
+        assert_eq!(
+            row.get::<Option<String>, _>("action").as_deref(),
+            Some("revalidated")
+        );
+        assert_eq!(
+            row.get::<Option<String>, _>("model").as_deref(),
+            Some("fake-model")
+        );
+
+        cleanup(&pool, &slug, project_id).await;
+    }
+
+    #[tokio::test]
+    async fn unclear_wording_auto_applies_new_version_with_evidence() {
+        let Some(pool) = mem_test_support::migrated_pool().await else {
+            return;
+        };
+        let (slug, project_id, memory_id) = seed(&pool, "validate-reword").await;
+        let mut verdict = raw_verdict(Verdict::Valid, 0.95);
+        verdict.clarity_ok = false;
+        verdict.proposed_summary = Some("Clearer validated summary".to_string());
+        verdict.proposed_text = Some("Clearer validated canonical text.".to_string());
+        verdict.evidence.push(RawEvidence {
+            kind: EvidenceKind::Memory,
+            evidence_ref: memory_id.to_string(),
+            stance: EvidenceStance::Supports,
+            excerpt: Some("matches current behaviour".to_string()),
+        });
+        let provider = FakeProvider { verdict };
+        let outcome = run_validation(
+            &pool,
+            &candidate(memory_id, project_id),
+            &provider,
+            &policy(false, true),
+            ValidationTrigger::Scheduled,
+        )
+        .await
+        .expect("run validation");
+        assert_eq!(outcome.action, ValidationAction::Reworded);
+        let new_id = outcome.new_memory_id.expect("new version id");
+
+        let row = sqlx::query(
+            "SELECT summary, canonical_text, version_no, canonical_id FROM memory_entries WHERE id = $1",
+        )
+        .bind(new_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch new version");
+        assert_eq!(row.get::<String, _>("summary"), "Clearer validated summary");
+        assert_eq!(row.get::<i32, _>("version_no"), 2);
+        assert_eq!(row.get::<Uuid, _>("canonical_id"), memory_id);
+
+        let evidence: Vec<(String, String)> = sqlx::query_as(
+            "SELECT kind, stance FROM memory_validation_evidence WHERE validation_run_id = $1",
+        )
+        .bind(outcome.run_id)
+        .fetch_all(&pool)
+        .await
+        .expect("fetch evidence rows");
+        assert_eq!(
+            evidence,
+            vec![("memory".to_string(), "supports".to_string())]
+        );
+
+        cleanup(&pool, &slug, project_id).await;
+    }
+
+    #[tokio::test]
+    async fn outdated_verdict_queues_correction_without_touching_content() {
+        let Some(pool) = mem_test_support::migrated_pool().await else {
+            return;
+        };
+        let (slug, project_id, memory_id) = seed(&pool, "validate-correct").await;
+        let mut verdict = raw_verdict(Verdict::Outdated, 0.9);
+        verdict.proposed_text = Some("Corrected canonical text.".to_string());
+        let provider = FakeProvider { verdict };
+        let outcome = run_validation(
+            &pool,
+            &candidate(memory_id, project_id),
+            &provider,
+            &policy(false, true),
+            ValidationTrigger::Threshold,
+        )
+        .await
+        .expect("run validation");
+        assert_eq!(outcome.action, ValidationAction::CorrectionPending);
+        assert!(outcome.new_memory_id.is_none());
+
+        let (version_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM memory_entries WHERE canonical_id = $1")
+                .bind(memory_id)
+                .fetch_one(&pool)
+                .await
+                .expect("count versions");
+        assert_eq!(version_count, 1, "correction must not modify content");
+
+        let row = sqlx::query(
+            "SELECT review_status, proposed_candidate_json FROM memory_validation_runs WHERE id = $1",
+        )
+        .bind(outcome.run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch run row");
+        assert_eq!(
+            row.get::<Option<String>, _>("review_status").as_deref(),
+            Some("pending")
+        );
+        assert!(
+            row.get::<Option<serde_json::Value>, _>("proposed_candidate_json")
+                .is_some()
+        );
+
+        let score = score_row(&pool, memory_id).await;
+        assert!(score.last_invalidated_at.is_some());
+        assert!(score.validated_at.is_none());
+
+        cleanup(&pool, &slug, project_id).await;
+    }
+
+    #[tokio::test]
+    async fn weak_evidence_flags_needs_review_and_never_edits() {
+        let Some(pool) = mem_test_support::migrated_pool().await else {
+            return;
+        };
+        let (slug, project_id, memory_id) = seed(&pool, "validate-flag").await;
+        let mut verdict = raw_verdict(Verdict::Unsupported, 0.9);
+        verdict.proposed_text = Some("Should never be applied.".to_string());
+        let provider = FakeProvider { verdict };
+        let outcome = run_validation(
+            &pool,
+            &candidate(memory_id, project_id),
+            &provider,
+            &policy(false, true),
+            ValidationTrigger::Scheduled,
+        )
+        .await
+        .expect("run validation");
+        assert_eq!(outcome.action, ValidationAction::FlaggedNeedsReview);
+
+        let score = score_row(&pool, memory_id).await;
+        assert!(score.needs_review);
+        assert!(score.needs_review_reason.is_some());
+        let (version_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM memory_entries WHERE canonical_id = $1")
+                .bind(memory_id)
+                .fetch_one(&pool)
+                .await
+                .expect("count versions");
+        assert_eq!(version_count, 1);
+
+        // Flagged memories drop out of the due scan.
+        let params = mem_reinforce::repository::SelectionParams {
+            threshold: 1.0,
+            half_life_secs: 30.0 * 86400.0,
+            min_revalidation_secs: 14.0 * 86400.0,
+            volatility_factor: 4.0,
+        };
+        let due =
+            mem_reinforce::repository::fetch_due_candidates(&pool, Some(project_id), &params, 10)
+                .await
+                .expect("scan after flag");
+        assert!(due.iter().all(|c| c.canonical_id != memory_id));
+
+        cleanup(&pool, &slug, project_id).await;
+    }
+
+    #[tokio::test]
+    async fn dry_run_records_intent_and_changes_nothing_but_cooldown() {
+        let Some(pool) = mem_test_support::migrated_pool().await else {
+            return;
+        };
+        let (slug, project_id, memory_id) = seed(&pool, "validate-dry").await;
+        let mut verdict = raw_verdict(Verdict::Outdated, 0.9);
+        verdict.proposed_text = Some("Dry-run correction.".to_string());
+        let provider = FakeProvider { verdict };
+        let outcome = run_validation(
+            &pool,
+            &candidate(memory_id, project_id),
+            &provider,
+            &policy(true, true),
+            ValidationTrigger::Manual,
+        )
+        .await
+        .expect("run validation");
+        assert!(outcome.dry_run);
+        assert_eq!(outcome.action, ValidationAction::CorrectionPending);
+
+        let row = sqlx::query(
+            "SELECT action, dry_run, review_status FROM memory_validation_runs WHERE id = $1",
+        )
+        .bind(outcome.run_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch run row");
+        assert_eq!(
+            row.get::<Option<String>, _>("action").as_deref(),
+            Some("would_queue_correction")
+        );
+        assert!(row.get::<bool, _>("dry_run"));
+        assert!(row.get::<Option<String>, _>("review_status").is_none());
+
+        let score = score_row(&pool, memory_id).await;
+        assert!(score.validated_at.is_none());
+        assert!(score.last_invalidated_at.is_none());
+        assert!(!score.needs_review);
+        assert!(
+            score.validation_cooldown_until.is_some(),
+            "dry runs still cool down so the scheduler does not loop"
+        );
+        let (version_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM memory_entries WHERE canonical_id = $1")
+                .bind(memory_id)
+                .fetch_one(&pool)
+                .await
+                .expect("count versions");
+        assert_eq!(version_count, 1);
+
+        cleanup(&pool, &slug, project_id).await;
+    }
+
+    #[tokio::test]
+    async fn hallucinated_evidence_fails_the_run_with_short_cooldown() {
+        let Some(pool) = mem_test_support::migrated_pool().await else {
+            return;
+        };
+        let (slug, project_id, memory_id) = seed(&pool, "validate-halluc").await;
+        let mut verdict = raw_verdict(Verdict::Valid, 0.9);
+        verdict.evidence.push(RawEvidence {
+            kind: EvidenceKind::File,
+            evidence_ref: "src/never_shown_to_provider.rs".to_string(),
+            stance: EvidenceStance::Supports,
+            excerpt: None,
+        });
+        let provider = FakeProvider { verdict };
+        let error = run_validation(
+            &pool,
+            &candidate(memory_id, project_id),
+            &provider,
+            &policy(false, false),
+            ValidationTrigger::Scheduled,
+        )
+        .await
+        .expect_err("hallucinated evidence must fail");
+        assert!(error.to_string().contains("verdict failed validation"));
+
+        let row =
+            sqlx::query("SELECT status, error FROM memory_validation_runs WHERE canonical_id = $1")
+                .bind(memory_id)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch failed run");
+        assert_eq!(row.get::<String, _>("status"), "failed");
+        assert!(
+            row.get::<Option<String>, _>("error")
+                .unwrap_or_default()
+                .contains("not present in gathered context")
+        );
+
+        let score = score_row(&pool, memory_id).await;
+        assert!(score.validation_cooldown_until.is_some());
+        assert!(score.validated_at.is_none());
+
+        cleanup(&pool, &slug, project_id).await;
+    }
+}

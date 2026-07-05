@@ -553,6 +553,363 @@ pub async fn fold_volatility(
         .collect())
 }
 
+/// Full snapshot of the memory version being validated.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MemorySnapshot {
+    pub memory_id: Uuid,
+    pub canonical_id: Uuid,
+    pub project_id: Uuid,
+    pub project_slug: String,
+    pub repo_root: String,
+    pub summary: String,
+    pub canonical_text: String,
+    pub memory_type: String,
+    pub importance: i32,
+    pub confidence: f32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+pub async fn fetch_memory_snapshot(
+    pool: &PgPool,
+    memory_id: Uuid,
+) -> Result<Option<MemorySnapshot>> {
+    sqlx::query_as::<_, MemorySnapshot>(
+        r#"
+        SELECT m.id AS memory_id, m.canonical_id, m.project_id,
+               p.slug AS project_slug, COALESCE(p.root_path, '') AS repo_root,
+               m.summary, m.canonical_text, m.memory_type, m.importance,
+               m.confidence, m.created_at, m.updated_at
+        FROM memory_entries m
+        JOIN projects p ON p.id = m.project_id
+        WHERE m.id = $1 AND COALESCE(m.is_tombstone, false) = false
+        "#,
+    )
+    .bind(memory_id)
+    .fetch_optional(pool)
+    .await
+    .context("fetch memory snapshot for validation")
+}
+
+pub async fn fetch_memory_tags(pool: &PgPool, memory_id: Uuid) -> Result<Vec<String>> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT tag FROM memory_tags WHERE memory_entry_id = $1 ORDER BY tag")
+            .bind(memory_id)
+            .fetch_all(pool)
+            .await
+            .context("fetch memory tags for validation")?;
+    Ok(rows.into_iter().map(|(tag,)| tag).collect())
+}
+
+/// A memory source plus its latest provenance verification, if any.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SourceEvidence {
+    pub file_path: Option<String>,
+    pub symbol_name: Option<String>,
+    pub symbol_kind: Option<String>,
+    pub source_kind: String,
+    pub excerpt: Option<String>,
+    pub git_commit: Option<String>,
+    pub provenance_status: Option<String>,
+    pub provenance_checked_at: Option<DateTime<Utc>>,
+}
+
+pub async fn fetch_source_evidence(pool: &PgPool, memory_id: Uuid) -> Result<Vec<SourceEvidence>> {
+    sqlx::query_as::<_, SourceEvidence>(
+        r#"
+        SELECT ms.file_path, ms.symbol_name, ms.symbol_kind, ms.source_kind,
+               ms.excerpt, ms.git_commit,
+               v.status AS provenance_status, v.checked_at AS provenance_checked_at
+        FROM memory_sources ms
+        LEFT JOIN memory_source_verifications v ON v.source_id = ms.id
+        WHERE ms.memory_entry_id = $1
+        ORDER BY ms.created_at
+        "#,
+    )
+    .bind(memory_id)
+    .fetch_all(pool)
+    .await
+    .context("fetch source evidence for validation")
+}
+
+/// A memory related to the one under validation (1 hop, any direction).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RelatedMemorySnapshot {
+    pub memory_id: Uuid,
+    pub relation_type: String,
+    pub summary: String,
+}
+
+pub async fn fetch_related_snapshots(
+    pool: &PgPool,
+    memory_id: Uuid,
+) -> Result<Vec<RelatedMemorySnapshot>> {
+    sqlx::query_as::<_, RelatedMemorySnapshot>(
+        r#"
+        SELECT other.id AS memory_id, r.relation_type, other.summary
+        FROM memory_relations r
+        JOIN memory_entries other ON other.id = CASE
+            WHEN r.src_memory_id = $1 THEN r.dst_memory_id
+            ELSE r.src_memory_id
+        END
+        WHERE (r.src_memory_id = $1 OR r.dst_memory_id = $1)
+        ORDER BY r.relation_type, other.summary
+        LIMIT 20
+        "#,
+    )
+    .bind(memory_id)
+    .fetch_all(pool)
+    .await
+    .context("fetch related memories for validation")
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PriorValidationRun {
+    pub verdict: Option<String>,
+    pub confidence: Option<f32>,
+    pub action: Option<String>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+pub async fn fetch_prior_validation_runs(
+    pool: &PgPool,
+    canonical_id: Uuid,
+    limit: i64,
+) -> Result<Vec<PriorValidationRun>> {
+    sqlx::query_as::<_, PriorValidationRun>(
+        r#"
+        SELECT verdict, confidence, action, finished_at
+        FROM memory_validation_runs
+        WHERE canonical_id = $1 AND status = 'completed'
+        ORDER BY started_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(canonical_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .context("fetch prior validation runs")
+}
+
+/// Inserts a validation run in `running` state and returns its id.
+pub async fn insert_validation_run(
+    pool: &PgPool,
+    canonical_id: Uuid,
+    memory_id: Uuid,
+    project_id: Uuid,
+    trigger: &str,
+    dry_run: bool,
+) -> Result<Uuid> {
+    let run_id = Uuid::new_v4();
+    sqlx::query(
+        r#"
+        INSERT INTO memory_validation_runs
+            (id, canonical_id, memory_id, project_id, trigger_kind, status, dry_run)
+        VALUES ($1, $2, $3, $4, $5, 'running', $6)
+        "#,
+    )
+    .bind(run_id)
+    .bind(canonical_id)
+    .bind(memory_id)
+    .bind(project_id)
+    .bind(trigger)
+    .bind(dry_run)
+    .execute(pool)
+    .await
+    .context("insert validation run")?;
+    Ok(run_id)
+}
+
+/// Terminal update for a completed run.
+#[derive(Debug, Clone)]
+pub struct ValidationRunCompletion {
+    pub verdict: &'static str,
+    pub confidence: f32,
+    pub action: String,
+    pub reasons: serde_json::Value,
+    pub proposed_candidate_json: Option<serde_json::Value>,
+    pub review_status: Option<&'static str>,
+    pub model: Option<String>,
+    pub details: serde_json::Value,
+}
+
+pub async fn complete_validation_run(
+    pool: &PgPool,
+    run_id: Uuid,
+    completion: &ValidationRunCompletion,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE memory_validation_runs SET
+            status = 'completed', verdict = $2, confidence = $3, action = $4,
+            reasons_json = $5, proposed_candidate_json = $6, review_status = $7,
+            model = $8, details_json = $9, finished_at = now()
+        WHERE id = $1
+        "#,
+    )
+    .bind(run_id)
+    .bind(completion.verdict)
+    .bind(completion.confidence)
+    .bind(&completion.action)
+    .bind(&completion.reasons)
+    .bind(&completion.proposed_candidate_json)
+    .bind(completion.review_status)
+    .bind(&completion.model)
+    .bind(&completion.details)
+    .execute(pool)
+    .await
+    .context("complete validation run")?;
+    Ok(())
+}
+
+pub async fn fail_validation_run(pool: &PgPool, run_id: Uuid, error: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE memory_validation_runs SET status = 'failed', error = $2, finished_at = now() WHERE id = $1",
+    )
+    .bind(run_id)
+    .bind(error)
+    .execute(pool)
+    .await
+    .context("mark validation run failed")?;
+    Ok(())
+}
+
+/// One stance-annotated evidence row for a validation run.
+#[derive(Debug, Clone)]
+pub struct EvidenceRow {
+    pub kind: String,
+    pub evidence_ref: String,
+    pub stance: String,
+    pub excerpt: Option<String>,
+}
+
+pub async fn insert_validation_evidence(
+    pool: &PgPool,
+    run_id: Uuid,
+    rows: &[EvidenceRow],
+) -> Result<()> {
+    for row in rows {
+        sqlx::query(
+            r#"
+            INSERT INTO memory_validation_evidence
+                (id, validation_run_id, kind, evidence_ref, stance, excerpt)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(run_id)
+        .bind(&row.kind)
+        .bind(&row.evidence_ref)
+        .bind(&row.stance)
+        .bind(&row.excerpt)
+        .execute(pool)
+        .await
+        .context("insert validation evidence row")?;
+    }
+    Ok(())
+}
+
+/// Marks a memory revalidated: fresh validation metadata plus cooldown.
+pub async fn mark_validated(
+    pool: &PgPool,
+    canonical_id: Uuid,
+    confidence: f32,
+    run_id: Uuid,
+    cooldown_until: DateTime<Utc>,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE memory_scores SET
+            validated_at = now(), validation_confidence = $2,
+            last_validation_id = $3, validation_cooldown_until = $4,
+            needs_review = FALSE, needs_review_reason = NULL, updated_at = now()
+        WHERE canonical_id = $1
+        "#,
+    )
+    .bind(canonical_id)
+    .bind(confidence)
+    .bind(run_id)
+    .bind(cooldown_until)
+    .execute(pool)
+    .await
+    .context("mark memory validated")?;
+    Ok(())
+}
+
+/// Flags a memory for human review; content is never touched.
+pub async fn mark_needs_review(
+    pool: &PgPool,
+    canonical_id: Uuid,
+    reason: &str,
+    run_id: Uuid,
+    cooldown_until: DateTime<Utc>,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE memory_scores SET
+            needs_review = TRUE, needs_review_reason = $2,
+            last_validation_id = $3, validation_cooldown_until = $4,
+            updated_at = now()
+        WHERE canonical_id = $1
+        "#,
+    )
+    .bind(canonical_id)
+    .bind(reason)
+    .bind(run_id)
+    .bind(cooldown_until)
+    .execute(pool)
+    .await
+    .context("mark memory needs_review")?;
+    Ok(())
+}
+
+/// Records that a correction is pending review; optionally stamps
+/// `last_invalidated_at` when the verdict found the content no longer
+/// accurate.
+pub async fn mark_correction_pending(
+    pool: &PgPool,
+    canonical_id: Uuid,
+    run_id: Uuid,
+    cooldown_until: DateTime<Utc>,
+    invalidated: bool,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE memory_scores SET
+            last_validation_id = $2, validation_cooldown_until = $3,
+            last_invalidated_at = CASE WHEN $4 THEN now() ELSE last_invalidated_at END,
+            updated_at = now()
+        WHERE canonical_id = $1
+        "#,
+    )
+    .bind(canonical_id)
+    .bind(run_id)
+    .bind(cooldown_until)
+    .bind(invalidated)
+    .execute(pool)
+    .await
+    .context("mark memory correction pending")?;
+    Ok(())
+}
+
+/// Failure-path cooldown so a broken provider cannot retry-loop a memory.
+pub async fn set_validation_cooldown(
+    pool: &PgPool,
+    canonical_id: Uuid,
+    cooldown_until: DateTime<Utc>,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE memory_scores SET validation_cooldown_until = $2, updated_at = now() WHERE canonical_id = $1",
+    )
+    .bind(canonical_id)
+    .bind(cooldown_until)
+    .execute(pool)
+    .await
+    .context("set validation cooldown")?;
+    Ok(())
+}
+
 /// Reads current score state for a set of canonicals (test/inspection
 /// helper and status surface).
 #[derive(Debug, Clone, sqlx::FromRow)]
