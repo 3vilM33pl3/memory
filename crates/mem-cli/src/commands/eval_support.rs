@@ -890,6 +890,7 @@ pub(crate) fn external_retriever_response_to_query_response(
             tags: result.tags,
             sources,
             graph_connections: Vec::new(),
+            needs_review: false,
         };
         let result_number = results.len() + 1;
         answer_citations.push(QueryAnswerCitation {

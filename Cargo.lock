@@ -2178,6 +2178,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "mem-api",
+ "mem-reinforce",
  "mem-test-support",
  "pgvector",
  "reqwest",

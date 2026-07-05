@@ -14,11 +14,12 @@ pub(crate) async fn query(
     }
     let pool = &state.pool()?;
     let embedders = state.embedders.read().await;
-    match query_memory_with_provenance_config(
+    match mem_search::query_memory_with_configs(
         pool,
         &request,
         embedders.active(),
         &state.config.provenance,
+        &mem_search::ReinforcementRankParams::from(&state.config.reinforcement),
     )
     .await
     {
@@ -93,11 +94,12 @@ pub(crate) async fn query_global(
     }
     let pool = &state.pool()?;
     let embedders = state.embedders.read().await;
-    mem_search::query_memory_global_with_provenance_config(
+    mem_search::query_memory_global_with_configs(
         pool,
         &request,
         embedders.active(),
         &state.config.provenance,
+        &mem_search::ReinforcementRankParams::from(&state.config.reinforcement),
     )
     .await
     .map(|response| {

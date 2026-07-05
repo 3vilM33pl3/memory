@@ -391,3 +391,118 @@ async fn insert_rank_memory(
     .await
     .expect("insert source verification");
 }
+
+#[tokio::test]
+async fn activation_boost_reorders_equal_candidates_and_flags_needs_review() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+
+    let slug = mem_test_support::unique_project_slug("reinforce-rank");
+    let project_id = Uuid::new_v4();
+    let cold_id = Uuid::new_v4();
+    let hot_id = Uuid::new_v4();
+
+    sqlx::query("INSERT INTO projects (id, slug, name, root_path, created_at) VALUES ($1, $2, $2, '/repo', now())")
+        .bind(project_id)
+        .bind(&slug)
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    for memory_id in [cold_id, hot_id] {
+        sqlx::query(
+            r#"
+            INSERT INTO memory_entries
+                (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
+                 summary, memory_type, scope, importance, confidence, status,
+                 created_at, updated_at, archived_at, search_document)
+            VALUES ($1, $2, $1, 1, FALSE, 'Reinforcement ranking twin memory.',
+                    'Reinforcement ranking twin', 'implementation', 'project', 3, 0.9,
+                    'active', now(), now(), NULL,
+                    to_tsvector('english', 'Reinforcement ranking twin memory.'))
+            "#,
+        )
+        .bind(memory_id)
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("insert memory entry");
+    }
+    sqlx::query(
+        "INSERT INTO memory_scores (canonical_id, project_id, activation) VALUES ($1, $2, 10.0)",
+    )
+    .bind(hot_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert score row");
+
+    let request = QueryRequest {
+        project: slug.clone(),
+        query: "reinforcement ranking twin".to_string(),
+        filters: Default::default(),
+        top_k: 5,
+        min_confidence: None,
+        include_stale: false,
+        history: false,
+        retrieval_mode: None,
+        answer_mode: None,
+    };
+    let params = mem_search::ReinforcementRankParams::default();
+    let response =
+        mem_search::query_memory_with_configs(&pool, &request, None, &Default::default(), &params)
+            .await
+            .expect("query with activation");
+    assert_eq!(response.results.len(), 2);
+    assert_eq!(
+        response.results[0].memory_id, hot_id,
+        "activation must outrank the identical cold twin"
+    );
+    assert!(
+        response.results[0]
+            .score_explanation
+            .iter()
+            .any(|item| item.starts_with("activation")),
+        "explanation must show the activation boost"
+    );
+
+    // Flag the hot memory for review: the penalty must drop it below the twin.
+    sqlx::query(
+        "UPDATE memory_scores SET needs_review = TRUE, activation = 0 WHERE canonical_id = $1",
+    )
+    .bind(hot_id)
+    .execute(&pool)
+    .await
+    .expect("flag needs_review");
+    let response =
+        mem_search::query_memory_with_configs(&pool, &request, None, &Default::default(), &params)
+            .await
+            .expect("query with needs_review");
+    assert_eq!(response.results[0].memory_id, cold_id);
+    assert!(response.results[1].needs_review);
+
+    // Weight 0 restores parity with the unscored baseline ordering rules.
+    let disabled = mem_search::ReinforcementRankParams {
+        weight: 0.0,
+        ..params
+    };
+    let response = mem_search::query_memory_with_configs(
+        &pool,
+        &request,
+        None,
+        &Default::default(),
+        &disabled,
+    )
+    .await
+    .expect("query with disabled weight");
+    assert!(response.results.iter().all(|result| {
+        result
+            .score_explanation
+            .iter()
+            .all(|item| !item.starts_with("activation") && !item.starts_with("needs review"))
+    }));
+
+    mem_test_support::cleanup_project(&pool, &slug)
+        .await
+        .expect("cleanup project");
+}

@@ -216,6 +216,7 @@ fn test_query_response_with_timings() -> QueryResponse {
             tags: vec!["implementation".to_string()],
             sources: Vec::new(),
             graph_connections: Vec::new(),
+            needs_review: false,
         }],
         insufficient_evidence: false,
         answer_generation: QueryAnswerGeneration {
@@ -260,6 +261,7 @@ fn test_query_response_with_two_results() -> QueryResponse {
         tags: vec!["implementation".to_string()],
         sources: Vec::new(),
         graph_connections: Vec::new(),
+        needs_review: false,
     });
     response
 }

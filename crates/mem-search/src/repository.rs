@@ -1056,6 +1056,48 @@ pub(super) async fn fetch_provenance_rank_map(
     Ok(map)
 }
 
+pub(super) async fn fetch_reinforcement_rank_map(
+    pool: &PgPool,
+    candidate_ids: &[Uuid],
+    half_life_secs: f64,
+) -> Result<HashMap<Uuid, ReinforcementRankSignal>, sqlx::Error> {
+    if candidate_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = sqlx::query(
+        r#"
+        SELECT me.id AS memory_id,
+               (s.activation * power(
+                   0.5,
+                   GREATEST(EXTRACT(EPOCH FROM (now() - s.last_decay_at)), 0) / $2
+               ))::float8 AS activation,
+               s.needs_review
+        FROM memory_entries me
+        JOIN memory_scores s ON s.canonical_id = me.canonical_id
+        WHERE me.id = ANY($1)
+        "#,
+    )
+    .bind(candidate_ids)
+    .bind(half_life_secs.max(1.0))
+    .fetch_all(pool)
+    .await?;
+
+    let mut map = HashMap::new();
+    for row in rows {
+        let memory_id: Uuid = row.try_get("memory_id")?;
+        let activation: f64 = row.try_get("activation")?;
+        let needs_review: bool = row.try_get("needs_review")?;
+        map.insert(
+            memory_id,
+            ReinforcementRankSignal {
+                activation,
+                needs_review,
+            },
+        );
+    }
+    Ok(map)
+}
+
 fn provenance_status_rank(status: &SourceProvenanceStatus) -> u8 {
     match status {
         SourceProvenanceStatus::MissingFile => 4,

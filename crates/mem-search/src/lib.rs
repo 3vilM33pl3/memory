@@ -289,8 +289,25 @@ pub async fn query_memory_with_provenance_config(
     embedder: Option<&EmbeddingService>,
     provenance_config: &ProvenanceConfig,
 ) -> Result<QueryResponse> {
+    query_memory_with_configs(
+        pool,
+        request,
+        embedder,
+        provenance_config,
+        &ReinforcementRankParams::default(),
+    )
+    .await
+}
+
+pub async fn query_memory_with_configs(
+    pool: &PgPool,
+    request: &QueryRequest,
+    embedder: Option<&EmbeddingService>,
+    provenance_config: &ProvenanceConfig,
+    reinforcement: &ReinforcementRankParams,
+) -> Result<QueryResponse> {
     let execution = QueryExecution::from_project_request(request);
-    query_memory_execution(pool, &execution, embedder, provenance_config).await
+    query_memory_execution(pool, &execution, embedder, provenance_config, reinforcement).await
 }
 
 pub async fn query_memory_global(
@@ -313,8 +330,25 @@ pub async fn query_memory_global_with_provenance_config(
     embedder: Option<&EmbeddingService>,
     provenance_config: &ProvenanceConfig,
 ) -> Result<QueryResponse> {
+    query_memory_global_with_configs(
+        pool,
+        request,
+        embedder,
+        provenance_config,
+        &ReinforcementRankParams::default(),
+    )
+    .await
+}
+
+pub async fn query_memory_global_with_configs(
+    pool: &PgPool,
+    request: &GlobalQueryRequest,
+    embedder: Option<&EmbeddingService>,
+    provenance_config: &ProvenanceConfig,
+    reinforcement: &ReinforcementRankParams,
+) -> Result<QueryResponse> {
     let execution = QueryExecution::from_global_request(request);
-    query_memory_execution(pool, &execution, embedder, provenance_config).await
+    query_memory_execution(pool, &execution, embedder, provenance_config, reinforcement).await
 }
 
 async fn query_memory_execution(
@@ -322,6 +356,7 @@ async fn query_memory_execution(
     request: &QueryExecution<'_>,
     embedder: Option<&EmbeddingService>,
     provenance_config: &ProvenanceConfig,
+    reinforcement: &ReinforcementRankParams,
 ) -> Result<QueryResponse> {
     let total_started = Instant::now();
     let normalized = QueryIntent::from_query(request.query);
@@ -442,11 +477,23 @@ async fn query_memory_execution(
         .values()
         .filter(|signal| signal.unverified_count > 0)
         .count();
+    let reinforcement_map = if reinforcement.active() {
+        repository::fetch_reinforcement_rank_map(
+            pool,
+            &candidates.keys().copied().collect::<Vec<_>>(),
+            reinforcement.half_life_secs,
+        )
+        .await
+        .context("fetch reinforcement rank map")?
+    } else {
+        HashMap::new()
+    };
 
     let mut ranked = candidates
         .drain()
         .map(|(_, candidate)| {
             let provenance = provenance_map.get(&candidate.memory_id);
+            let reinforcement_signal = reinforcement_map.get(&candidate.memory_id);
             rank_candidate(
                 candidate,
                 &normalized,
@@ -454,6 +501,8 @@ async fn query_memory_execution(
                 provenance,
                 provenance_config,
                 request.include_stale,
+                reinforcement_signal,
+                reinforcement,
             )
         })
         .collect::<Vec<_>>();
@@ -494,6 +543,7 @@ async fn query_memory_execution(
             tags: candidate.tags,
             sources,
             graph_connections: candidate.graph_connections,
+            needs_review: candidate.needs_review,
         });
     }
     let returned_results = results.len();
@@ -807,12 +857,55 @@ struct RankedCandidate {
     debug: QueryResultDebug,
     score_explanation: Vec<String>,
     graph_connections: Vec<QueryGraphConnection>,
+    needs_review: bool,
 }
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ProvenanceRankSignal {
     pub(crate) decay_status: Option<SourceProvenanceStatus>,
     pub(crate) unverified_count: usize,
+}
+
+/// Decay-corrected activation state joined from memory_scores at query time.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ReinforcementRankSignal {
+    pub(crate) activation: f64,
+    pub(crate) needs_review: bool,
+}
+
+/// Ranking-side view of the reinforcement config: how strongly activation
+/// boosts results and how hard flagged memories are penalized.
+#[derive(Debug, Clone)]
+pub struct ReinforcementRankParams {
+    pub enabled: bool,
+    pub weight: f64,
+    pub cap: f64,
+    pub needs_review_penalty: f64,
+    pub half_life_secs: f64,
+}
+
+impl Default for ReinforcementRankParams {
+    fn default() -> Self {
+        Self::from(&mem_api::ReinforcementConfig::default())
+    }
+}
+
+impl From<&mem_api::ReinforcementConfig> for ReinforcementRankParams {
+    fn from(config: &mem_api::ReinforcementConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            weight: config.activation_rank_weight,
+            cap: config.activation_rank_cap,
+            needs_review_penalty: config.needs_review_rank_penalty,
+            half_life_secs: config.half_life.as_secs_f64().max(1.0),
+        }
+    }
+}
+
+impl ReinforcementRankParams {
+    fn active(&self) -> bool {
+        self.enabled && self.weight > 0.0
+    }
 }
 
 fn vector_dimension(vector: &Vector) -> i32 {
@@ -900,6 +993,7 @@ fn merge_candidates(
     merged
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rank_candidate(
     candidate: CandidateRecord,
     intent: &QueryIntent,
@@ -907,6 +1001,8 @@ fn rank_candidate(
     provenance: Option<&ProvenanceRankSignal>,
     provenance_config: &ProvenanceConfig,
     include_stale: bool,
+    reinforcement_signal: Option<&ReinforcementRankSignal>,
+    reinforcement: &ReinforcementRankParams,
 ) -> RankedCandidate {
     let query_lower = intent.normalized_query.to_lowercase();
     let summary_lower = candidate.summary.to_lowercase();
@@ -970,6 +1066,13 @@ fn rank_candidate(
     let importance_boost = candidate.importance as f64 * 0.35;
     let confidence_boost = candidate.confidence as f64 * 1.8;
     let recency_score = recency_boost * 0.6;
+    let activation = reinforcement_signal.map_or(0.0, |signal| signal.activation);
+    let activation_boost = if reinforcement.active() {
+        mem_reinforce::activation_rank_boost(activation, reinforcement.weight, reinforcement.cap)
+    } else {
+        0.0
+    };
+    let needs_review = reinforcement_signal.is_some_and(|signal| signal.needs_review);
 
     let mut final_score = chunk_score
         + entry_score
@@ -982,7 +1085,8 @@ fn rank_candidate(
         + importance_boost
         + confidence_boost
         + recency_score
-        + relation_boost;
+        + relation_boost
+        + activation_boost;
 
     if exact_phrase_matches == 0
         && term_overlap < 0.15
@@ -992,6 +1096,9 @@ fn rank_candidate(
         && graph_boost == 0.0
     {
         final_score *= 0.65;
+    }
+    if needs_review && reinforcement.active() {
+        final_score *= reinforcement.needs_review_penalty.clamp(0.0, 1.0);
     }
 
     let snippet = summarize_snippet(
@@ -1050,6 +1157,18 @@ fn rank_candidate(
             ));
         }
     }
+    if activation_boost > 0.0 {
+        score_explanation.push(format!(
+            "activation {:.2} boost {:.2}",
+            activation, activation_boost
+        ));
+    }
+    if needs_review && reinforcement.active() {
+        score_explanation.push(format!(
+            "needs review x{:.2}",
+            reinforcement.needs_review_penalty.clamp(0.0, 1.0)
+        ));
+    }
     score_explanation.push(format!("term overlap {:.0}%", term_overlap * 100.0));
     score_explanation.push(format!("importance {}", candidate.importance));
     score_explanation.push(format!("memory confidence {:.2}", candidate.confidence));
@@ -1099,6 +1218,7 @@ fn rank_candidate(
         },
         score_explanation,
         graph_connections: candidate.graph_connections,
+        needs_review,
     }
 }
 
@@ -1604,6 +1724,7 @@ mod tests {
                 }),
             }],
             graph_connections: vec![],
+            needs_review: false,
         }];
 
         let warnings = provenance_warnings_for_results(&results);
@@ -1684,6 +1805,7 @@ mod tests {
                 tags: vec![],
                 sources: vec![],
                 graph_connections: vec![],
+                needs_review: false,
             },
             QueryResult {
                 memory_id: Uuid::new_v4(),
@@ -1703,6 +1825,7 @@ mod tests {
                 tags: vec![],
                 sources: vec![],
                 graph_connections: vec![],
+                needs_review: false,
             },
         ];
 
@@ -1761,6 +1884,8 @@ mod tests {
             None,
             &ProvenanceConfig::default(),
             false,
+            None,
+            &ReinforcementRankParams::default(),
         );
 
         assert_eq!(ranked.memory_id, memory_id);
@@ -1774,5 +1899,106 @@ mod tests {
                 .any(|item| item == "graph match x3 boost 2.50")
         );
         assert_eq!(ranked.graph_connections.len(), 1);
+    }
+
+    #[test]
+    fn rank_candidate_applies_activation_boost_and_needs_review_penalty() {
+        let make_candidate = || CandidateRecord {
+            memory_id: Uuid::new_v4(),
+            project: None,
+            project_name: None,
+            repo_root: None,
+            summary: "Activation ranking sample".to_string(),
+            memory_type: MemoryType::Implementation,
+            canonical_text: "Activation ranking sample detail.".to_string(),
+            importance: 2,
+            confidence: 0.8,
+            updated_at: Utc::now(),
+            entry_fts: 0.4,
+            chunk_fts: 0.4,
+            semantic_similarity: 0.0,
+            best_chunk_text: "Activation ranking sample detail.".to_string(),
+            tags: Vec::new(),
+            source_paths: Vec::new(),
+            graph_boost: 0.0,
+            graph_match_count: 0,
+            graph_edge_count: 0,
+            graph_connections: Vec::new(),
+        };
+        let intent = QueryIntent::from_query("activation ranking sample");
+        let params = ReinforcementRankParams::default();
+
+        let baseline = rank_candidate(
+            make_candidate(),
+            &intent,
+            &HashMap::new(),
+            None,
+            &ProvenanceConfig::default(),
+            false,
+            None,
+            &params,
+        );
+        let boosted = rank_candidate(
+            make_candidate(),
+            &intent,
+            &HashMap::new(),
+            None,
+            &ProvenanceConfig::default(),
+            false,
+            Some(&ReinforcementRankSignal {
+                activation: 6.0,
+                needs_review: false,
+            }),
+            &params,
+        );
+        assert!(boosted.final_score > baseline.final_score);
+        assert!(!boosted.needs_review);
+        assert!(
+            boosted
+                .score_explanation
+                .iter()
+                .any(|item| item.starts_with("activation 6.00"))
+        );
+
+        let flagged = rank_candidate(
+            make_candidate(),
+            &intent,
+            &HashMap::new(),
+            None,
+            &ProvenanceConfig::default(),
+            false,
+            Some(&ReinforcementRankSignal {
+                activation: 0.0,
+                needs_review: true,
+            }),
+            &params,
+        );
+        assert!(flagged.needs_review);
+        assert!(
+            (flagged.final_score - baseline.final_score * params.needs_review_penalty).abs() < 1e-9,
+            "penalty must scale the baseline score"
+        );
+
+        let disabled = ReinforcementRankParams {
+            weight: 0.0,
+            ..params.clone()
+        };
+        let unboosted = rank_candidate(
+            make_candidate(),
+            &intent,
+            &HashMap::new(),
+            None,
+            &ProvenanceConfig::default(),
+            false,
+            Some(&ReinforcementRankSignal {
+                activation: 6.0,
+                needs_review: true,
+            }),
+            &disabled,
+        );
+        assert!(
+            (unboosted.final_score - baseline.final_score).abs() < 1e-9,
+            "weight 0 must leave ranking byte-identical"
+        );
     }
 }

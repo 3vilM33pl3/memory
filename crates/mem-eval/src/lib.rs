@@ -1764,6 +1764,7 @@ mod tests {
                     provenance: None,
                 }],
                 graph_connections: Vec::new(),
+                needs_review: false,
             }],
             insufficient_evidence: false,
             answer_generation: mem_api::QueryAnswerGeneration::default(),

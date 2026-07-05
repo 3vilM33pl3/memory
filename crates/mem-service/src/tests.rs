@@ -359,6 +359,7 @@ fn test_query_response() -> QueryResponse {
             tags: Vec::new(),
             sources: Vec::new(),
             graph_connections: Vec::new(),
+            needs_review: false,
         }],
         insufficient_evidence: false,
         answer_generation: QueryAnswerGeneration::default(),

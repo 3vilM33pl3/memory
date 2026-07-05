@@ -618,6 +618,11 @@ pub struct QueryResult {
     pub sources: Vec<QuerySource>,
     #[serde(default)]
     pub graph_connections: Vec<QueryGraphConnection>,
+    /// Set when the reinforcement validation pipeline flagged this memory
+    /// for human review (weak or contradictory evidence). Ranked with a
+    /// penalty rather than excluded; consumers should caveat it.
+    #[serde(default)]
+    pub needs_review: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

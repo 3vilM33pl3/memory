@@ -9,6 +9,7 @@ authors.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 mem-api = { path = "../mem-api" }
+mem-reinforce = { path = "../mem-reinforce" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
