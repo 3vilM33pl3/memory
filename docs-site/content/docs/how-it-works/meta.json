@@ -4,6 +4,7 @@
     "index",
     "memory-types",
     "retrieval-search",
+    "reinforcement",
     "runtime-topology"
   ]
 }

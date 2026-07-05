@@ -2,6 +2,7 @@
   "title": "Install",
   "pages": [
     "index",
+    "agent-setup",
     "requirements",
     "linux-debian",
     "macos-homebrew",

@@ -5,7 +5,7 @@ Edit website text in `docs/**/*.mdx`.
 The route is the file path under `docs/`:
 
 - `docs/index.mdx` -> `/docs`
-- `docs/quickstart.mdx` -> `/docs/quickstart`
+- `docs/automations.mdx` -> `/docs/automations`
 - `docs/install/linux-debian.mdx` -> `/docs/install/linux-debian`
 
 Sidebar order comes from each folder's `meta.json`.

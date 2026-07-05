@@ -6,6 +6,7 @@
     "service-health",
     "query-briefings",
     "capture-curation",
+    "reinforcement",
     "repository-evidence",
     "integrations-evals"
   ]

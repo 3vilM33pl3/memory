@@ -94,7 +94,7 @@ flowchart LR
 
 ## Trust and staleness
 
-Memories are durable claims, not permanent truths. Code changes, dependencies move, and decisions are revisited. Memory Layer manages this with confidence scores, source evidence, memory history, provenance verification, replacement proposals, and explicit refactor memories that can invalidate or update affected knowledge.
+Memories are durable claims, not permanent truths. Code changes, dependencies move, and decisions are revisited. Memory Layer manages this with confidence scores, source evidence, memory history, provenance verification, replacement proposals, and explicit refactor memories that can invalidate or update affected knowledge. On top of that, [reinforcement](/docs/how-it-works/reinforcement) tracks which memories are actually used and re-validates the hot ones against your repository.
 
 ## Deep dives
 
@@ -104,6 +104,9 @@ Memories are durable claims, not permanent truths. Code changes, dependencies mo
   </Card>
   <Card title="Retrieval and search" href="/docs/how-it-works/retrieval-search">
     How lexical, semantic, graph, embedding, and ranking paths work together.
+  </Card>
+  <Card title="Self-maintaining memory" href="/docs/how-it-works/reinforcement">
+    How activation scoring and evidence-backed validation keep hot memories accurate.
   </Card>
   <Card title="Runtime topology" href="/docs/how-it-works/runtime-topology">
     How CLI, service, TUI, web UI, watchers, MCP, config, and PostgreSQL fit together.

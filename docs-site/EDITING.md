@@ -11,9 +11,9 @@ Each MDX file maps to a page route:
 | File | Route |
 | --- | --- |
 | `content/docs/index.mdx` | `/docs` |
-| `content/docs/quickstart.mdx` | `/docs/quickstart` |
+| `content/docs/automations.mdx` | `/docs/automations` |
 | `content/docs/install/linux-debian.mdx` | `/docs/install/linux-debian` |
-| `content/docs/agents/codex-cli.mdx` | `/docs/agents/codex-cli` |
+| `content/docs/how-it-works/reinforcement.mdx` | `/docs/how-it-works/reinforcement` |
 
 The first page in a folder is normally `index.mdx`.
 
@@ -25,14 +25,13 @@ Sidebar labels and ordering are controlled by nearby `meta.json` files:
 | --- | --- |
 | `content/docs/meta.json` | top-level docs navigation |
 | `content/docs/install/meta.json` | install section |
-| `content/docs/concepts/meta.json` | concepts section |
-| `content/docs/agents/meta.json` | agents section |
-| `content/docs/watchers/meta.json` | watchers section |
-| `content/docs/mcp/meta.json` | MCP section |
-| `content/docs/evals/meta.json` | evaluations section |
-| `content/docs/operations/meta.json` | operations section |
+| `content/docs/how-it-works/meta.json` | how-it-works section |
+| `content/docs/tui/meta.json` | TUI section |
 | `content/docs/reference/meta.json` | reference section |
+| `content/docs/reference/cli/meta.json` | CLI reference section |
 | `content/docs/help/meta.json` | help section |
+
+Single-page topics (`agents.mdx`, `watchers.mdx`, `mcp.mdx`, `evals.mdx`, `operations.mdx`, `automations.mdx`, `web-ui.mdx`) live directly under `content/docs/` and are ordered by the top-level `meta.json`.
 
 When you add a page, add the new file slug to the matching `pages` list.
 

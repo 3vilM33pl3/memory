@@ -43,6 +43,7 @@ Most commands follow one of three shapes:
 | [Service and health](/docs/reference/cli/service-health) | `service`, `status`, `doctor`, `health`, `stats`, `automation` | Starting the backend, diagnosing config, checking API health, and inspecting automation queues. |
 | [Query and briefings](/docs/reference/cli/query-briefings) | `query`, `resume`, `up-to-speed`, `activities`, `history`, `verify-provenance` | Asking project questions, resuming work, inspecting activity, and proving memory sources still exist. |
 | [Capture and curation](/docs/reference/cli/capture-curation) | `remember`, `capture`, `scan`, `curate`, `proposals`, `archive`, `prune-history`, `checkpoint` | Writing project memory, reviewing replacements, pruning history, and tracking plan execution. |
+| [Reinforcement and validation](/docs/reference/cli/reinforcement) | `scores`, `validate`, `review` | Inspecting activation scores, validating hot memories against evidence, and reviewing proposed corrections. |
 | [Repository, evidence, and search](/docs/reference/cli/repository-evidence) | `commits`, `repo`, `graph`, `embeddings`, `bundle` | Importing code/history evidence, maintaining search indexes, and exporting project memory. |
 | [Integrations, automations, and evals](/docs/reference/cli/integrations-evals) | `tui`, `watcher`, `loops`, `automation`, `mcp`, `eval` | Opening UIs, attaching agents, operating built-in loops, serving MCP, and measuring memory quality. |
 
@@ -64,6 +65,7 @@ Agents should follow a repeatable command pattern:
 | Service | `status`, `doctor`, `health`, `stats` | `service enable`, `service disable`, `service restart-all`, automation flushes |
 | Query | `query`, `resume`, `up-to-speed`, `activities`, `history`, `verify-provenance` | Query/activity logging may write audit events when the service is running. |
 | Memory | `proposals list`, `scan --dry-run` | `remember`, `capture`, `curate`, `scan`, proposal approval/rejection, `archive`, `prune-history` |
+| Reinforcement | `scores`, `review list` | `validate`, `review apply`, `review reject` |
 | Evidence | `repo status`, `graph status`, `embeddings list` | commit sync, repo indexing, graph extraction, embedding reindex/reembed/prune, bundle import |
 | Integrations | `mcp status`, watcher status, `loops list`, eval compare | watcher start/stop, loop settings/runs/approvals, MCP HTTP service config, eval run artifacts |
 

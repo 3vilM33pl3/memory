@@ -82,6 +82,22 @@ Put the key in the adjacent env file:
 OPENAI_API_KEY=sk-proj-...
 ```
 
+## Reinforcement section
+
+The `[reinforcement]` section controls [self-maintaining memory](/docs/how-it-works/reinforcement). Defaults are safe for normal use: activation scoring is on (deterministic, no LLM cost) and validation is opt-in, starting in dry-run.
+
+```toml
+[reinforcement]
+enabled = true                 # activation scoring, decay, ranking boost
+validation_enabled = false     # background LLM validation (opt-in)
+validation_dry_run = true      # report-only until you trust the verdicts
+validation_threshold = 8.0     # activation at which a memory becomes due
+daily_validation_cap = 20      # hard ceiling on LLM validation runs per day
+auto_apply_rewording = false   # wording fixes stay human-gated by default
+```
+
+The full knob set (boosts, half-life, propagation depth, volatility, rank weights, retention) is documented on the [concept page](/docs/how-it-works/reinforcement#configuration).
+
 ## Precedence and diagnostics
 
 For prod/profile-installed commands, config is loaded from the explicit `--config` path if supplied, otherwise from the discovered global config and the current repo's user-local project config when available. Environment variables with the `MEMORY_LAYER__...` shape override TOML values.

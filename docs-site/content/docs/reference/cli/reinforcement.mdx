@@ -1,0 +1,55 @@
+---
+title: "CLI: reinforcement and validation"
+description: "Inspect activation scores, trigger evidence-backed validation, and review proposed corrections."
+---
+
+# CLI: reinforcement and validation
+
+These commands operate the [self-maintaining memory](/docs/how-it-works/reinforcement) system: activation scores earned through real usage, and the validation pipeline that re-checks hot memories against project evidence.
+
+| Command | Writes | Purpose |
+|---|---:|---|
+| `memory scores` | No | Show activation scores, volatility, and review flags for a project. |
+| `memory validate` | Yes | Run evidence-backed validation for one memory (LLM call). |
+| `memory review` | Yes | List, apply, or reject corrections proposed by validation. |
+
+## `memory scores`
+
+Read-only view of how strongly each memory has been used recently, with time decay applied.
+
+```bash
+memory scores --project memory
+memory scores --project memory --needs-review
+memory scores --project memory --limit 50 --json
+```
+
+Columns worth knowing: `ACTIVATION` is the decay-corrected score (crossing the configured threshold makes the memory due for validation), `VOLAT` is the observed change rate of the memory's source files, and memories flagged by validation show `[NEEDS REVIEW]` and rank lower in query results until resolved.
+
+## `memory validate`
+
+Triggers the validation pipeline for one memory: gather evidence (sources, provenance, related memories, recent git history), get an LLM verdict, apply the configured policy. Manual runs bypass the activation threshold but respect the global daily budget.
+
+```bash
+memory validate <memory-id>            # uses the configured dry-run default
+memory validate <memory-id> --dry-run  # report only, never changes anything
+memory validate <memory-id> --execute  # allow policy actions to apply
+```
+
+Outcomes: `revalidated` (accurate and clear), `reworded` (wording improved as a new version — only with auto-apply enabled), `correction_pending` (proposal queued for review), or `flagged_needs_review` (weak or contradictory evidence; content never modified). Dry runs report the same outcomes as `would_*` actions.
+
+Memories captured with `--file-changed` provenance validate best: the pipeline can check their source files and git history. Memories without file sources usually come back `unsupported` — that is the system refusing to guess, not a failure.
+
+## `memory review`
+
+Corrections proposed by validation wait here for a human decision.
+
+```bash
+memory review list --project memory          # pending corrections
+memory review list --project memory --all    # every validation run
+memory review apply <run-id>                 # write the proposal as a new memory version
+memory review reject <run-id>                # record the rejection
+```
+
+Both resolutions clear a standing needs-review flag. Applying creates a new immutable version under the same canonical memory, so `memory history` shows the full chain and any change can be reverted.
+
+Not to be confused with [`memory proposals`](/docs/reference/cli/capture-curation#memory-proposals), which reviews *curation replacement proposals* (new captures that overlap existing memories). `memory review` handles *validation corrections* (existing memories found outdated or unclear).

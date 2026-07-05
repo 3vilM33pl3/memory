@@ -5,6 +5,8 @@ description: "Approve or reject curation proposals before older knowledge is sup
 
 # Review tab
 
+> This tab reviews **curation replacement proposals** (new captures that overlap existing memories), the same queue as `memory proposals`. Corrections proposed by [memory validation](/docs/how-it-works/reinforcement) are a separate queue, handled with `memory review` — see the [reinforcement CLI reference](/docs/reference/cli/reinforcement).
+
 The Review tab is where you manage the human review loop. When new evidence contradicts or improves an existing memory, Memory Layer creates a replacement proposal instead of silently overwriting it. This tab queues those proposals for your approval.
 
 ![Review tab](/images/tui/review-tab.png)

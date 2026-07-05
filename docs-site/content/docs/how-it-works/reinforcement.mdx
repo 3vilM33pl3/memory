@@ -1,0 +1,81 @@
+---
+title: "Self-maintaining memory"
+description: "How activation scoring, volatility tracking, and evidence-backed validation keep frequently used memories accurate."
+---
+
+# Self-maintaining memory
+
+Stored knowledge rots: code changes, decisions get revisited, and the memories agents rely on most are exactly the ones that drift out of date first. Memory Layer counters this with a reinforcement system that watches how memories are *used* and re-checks the important ones against your project.
+
+It has two halves:
+
+1. **Activation scoring** — always on, deterministic, no LLM cost. Every memory earns an activation score from real usage.
+2. **Evidence-backed validation** — opt-in. When a memory's activation crosses a threshold, Memory Layer gathers evidence from your repository and asks an LLM whether the memory is still true, improving or flagging it under strict rules.
+
+## Activation scoring
+
+Every time a memory is returned by a query it gets a boost; being **cited in a synthesized answer** counts more than merely appearing in results, and direct reads count a little. Between accesses the score decays exponentially (30-day half-life by default), so old popularity fades.
+
+The model follows ACT-R activation from cognitive science:
+
+- **Spreading activation** — a boost also flows to memories linked through relations, halving per hop and split across a hub's links, so tightly related knowledge warms up together without hub memories inflating everything they touch. Superseded-version links never propagate.
+- **Saturation** — the ranking boost is logarithmic and capped, so popular memories can break ties in search results but can never drown out actual relevance.
+
+Inspect scores any time:
+
+```bash
+memory scores --project <slug>
+memory scores --project <slug> --needs-review
+```
+
+## Volatility
+
+Each scored memory tracks how often its source files change (an exponentially weighted rate fed by provenance verification). Volatile memories — those grounded in fast-moving code — become due for re-validation sooner than stable architectural facts.
+
+## Validation
+
+When activation crosses the configured threshold (or you run `memory validate <memory-id>` manually), the pipeline runs three stages:
+
+1. **Evidence gathering** (deterministic, read-only): the memory's sources and their provenance status, related memories, previous validation runs, and recent git history touching its source paths.
+2. **Verdict**: the configured LLM judges the memory — `valid`, `partially_valid`, `outdated`, `ambiguous`, or `unsupported` — citing only evidence it was actually shown. A verdict that cites anything outside the gathered evidence is rejected outright.
+3. **Apply policy**:
+
+| Verdict | What happens |
+|---|---|
+| Valid, clearly worded | Validation metadata refreshed |
+| Valid, unclear wording | Rewording applied as a new memory version — only with `auto_apply_rewording` on and high confidence; otherwise queued for review |
+| Outdated, with a proposed correction | Correction queued for human review; the memory is never edited automatically |
+| Ambiguous, unsupported, or low confidence | Memory flagged **needs review** and rank-penalized; content untouched |
+
+The cardinal rule: **weak or contradictory evidence never modifies memory content**. Every change is a new immutable version, so anything applied can be reverted through memory history.
+
+Review queued corrections with:
+
+```bash
+memory review list --project <slug>
+memory review apply <run-id>
+memory review reject <run-id>
+```
+
+## Configuration
+
+Everything lives under `[reinforcement]` in the global config. Defaults are safe for normal use: scoring is on (no LLM cost), validation is **off**, and when first enabled it starts in **dry-run** (report only).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Scoring, decay, propagation, ranking boost |
+| `validation_enabled` | `false` | Background LLM validation |
+| `validation_dry_run` | `true` | Report what would change without changing it |
+| `validation_threshold` | `8.0` | Activation at which a memory becomes due |
+| `half_life` | `30d` | Activation decay |
+| `daily_validation_cap` | `20` | Hard ceiling on LLM validation runs per day |
+| `auto_apply_rewording` | `false` | Allow automatic wording improvements |
+
+With the defaults, a memory that is retrieved *and cited* three or four times within a month becomes due for validation. Lower the threshold to cover more of the long tail; raise it to focus the LLM budget on the hottest memories. See the [global config reference](/docs/reference/config-global) and the [reinforcement CLI reference](/docs/reference/cli/reinforcement) for the full surface.
+
+## Rollout advice
+
+1. Leave scoring on and watch `memory scores` for a while — no cost, useful signal.
+2. Enable `validation_enabled` with dry-run on; check `memory review list --all` to see what validation *would* do.
+3. Turn off dry-run once the verdicts look right.
+4. Enable `auto_apply_rewording` only when you trust the verdicts — corrections always stay human-gated regardless.
