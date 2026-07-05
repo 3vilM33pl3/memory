@@ -138,13 +138,14 @@ async fn verify_project_provenance_marks_missing_symbols() {
     )
     .await;
 
-    let verified = verify_project_provenance(
+    let verified = verify_project_provenance_with_volatility(
         &pool,
         &ProvenanceVerificationRequest {
             project: slug.clone(),
             repo_root: Some(root.display().to_string()),
             dry_run: false,
         },
+        0.3,
     )
     .await
     .expect("verify provenance");
@@ -156,13 +157,14 @@ async fn verify_project_provenance_marks_missing_symbols() {
         .execute(&pool)
         .await
         .expect("update source symbol");
-    let missing = verify_project_provenance(
+    let missing = verify_project_provenance_with_volatility(
         &pool,
         &ProvenanceVerificationRequest {
             project: slug.clone(),
             repo_root: Some(root.display().to_string()),
             dry_run: true,
         },
+        0.3,
     )
     .await
     .expect("verify missing symbol");

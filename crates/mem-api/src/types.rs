@@ -1173,6 +1173,23 @@ pub struct CurateResponse {
     pub dry_run: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<DiagnosticInfo>,
+    /// Memories whose reinforcement activation makes them due for
+    /// validation, reported when the reinforcement system is enabled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validation_due: Vec<ValidationDueInfo>,
+}
+
+/// A memory due for reinforcement validation (activation over threshold,
+/// past cooldown, revalidation interval elapsed).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationDueInfo {
+    pub canonical_id: Uuid,
+    pub memory_id: Uuid,
+    pub summary: String,
+    pub activation: f64,
+    pub volatility: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

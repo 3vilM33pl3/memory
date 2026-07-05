@@ -57,6 +57,19 @@ pub(crate) struct ProvenanceRuntimeState {
     pub(crate) error: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub(crate) struct ReinforcementRuntimeState {
+    pub(crate) status: String,
+    pub(crate) last_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub(crate) last_finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub(crate) pruned_access_events: u64,
+    pub(crate) compacted_rows: u64,
+    pub(crate) due_candidates: usize,
+    pub(crate) validations_run: usize,
+    pub(crate) daily_budget_remaining: Option<i64>,
+    pub(crate) error: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum ServiceRole {
     Primary,

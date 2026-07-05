@@ -61,6 +61,27 @@ pub(crate) async fn curate_memory(
             response.warnings.push(diagnostic);
         }
     }
+    // Curator-side threshold check: report memories due for validation and
+    // nudge the background scheduler so they validate promptly. Advisory —
+    // never fails curation.
+    match crate::repository::handlers::reinforcement::due_validation_infos(
+        &state,
+        response.project_id,
+    )
+    .await
+    {
+        Ok(due) => {
+            if !due.is_empty()
+                && let Some(runtime) = &state.reinforcement
+            {
+                runtime.notify.notify_one();
+            }
+            response.validation_due = due;
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "reinforcement due-validation check failed");
+        }
+    }
     notify_project_changed(
         &state,
         project,

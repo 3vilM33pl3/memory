@@ -14,11 +14,17 @@ use mem_reinforce::{AccessBatch, AccessKind, ScoreParams};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::state::AppState;
+use std::sync::{Arc, Mutex};
+
+use crate::state::{AppState, ReinforcementRuntimeState};
 
 #[derive(Clone)]
 pub(crate) struct ReinforcementRuntime {
     pub(crate) tx: mpsc::Sender<AccessBatch>,
+    /// Wakes the background scheduler early (e.g. right after curation
+    /// reports due candidates) instead of waiting for the next tick.
+    pub(crate) notify: Arc<tokio::sync::Notify>,
+    pub(crate) status: Arc<Mutex<ReinforcementRuntimeState>>,
 }
 
 /// Builds the channel pair when reinforcement is enabled. The receiver is
@@ -30,7 +36,17 @@ pub(crate) fn build_runtime(
         return None;
     }
     let (tx, rx) = mpsc::channel(config.access_channel_capacity.max(1));
-    Some((ReinforcementRuntime { tx }, rx))
+    Some((
+        ReinforcementRuntime {
+            tx,
+            notify: Arc::new(tokio::sync::Notify::new()),
+            status: Arc::new(Mutex::new(ReinforcementRuntimeState {
+                status: "idle".to_string(),
+                ..ReinforcementRuntimeState::default()
+            })),
+        },
+        rx,
+    ))
 }
 
 pub(crate) fn spawn_access_worker(state: AppState, mut rx: mpsc::Receiver<AccessBatch>) {

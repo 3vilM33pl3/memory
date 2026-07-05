@@ -6,4 +6,5 @@ pub mod loops;
 pub mod memory;
 pub(crate) mod project;
 pub(crate) mod provenance;
+pub(crate) mod reinforcement;
 pub(crate) mod system;

@@ -253,3 +253,233 @@ async fn unknown_memory_ids_are_skipped() {
         .expect("record batch with unknown id");
     assert!(crossings.is_empty());
 }
+
+#[tokio::test]
+async fn due_candidate_scan_respects_threshold_cooldown_review_and_volatility() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+    let slug = mem_test_support::unique_project_slug("reinforce-due");
+    let project_id = Uuid::new_v4();
+    let (hot, cold, flagged, cooling, validated, volatile) = (
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+    );
+    insert_project(&pool, &slug, project_id).await;
+    for (id, text) in [
+        (hot, "Hot candidate"),
+        (cold, "Cold candidate"),
+        (flagged, "Flagged candidate"),
+        (cooling, "Cooling candidate"),
+        (validated, "Recently validated"),
+        (volatile, "Volatile validated"),
+    ] {
+        insert_memory(&pool, project_id, id, text).await;
+    }
+    for (id, activation, extra_column, extra_value) in [
+        (hot, 10.0, "", ""),
+        (cold, 2.0, "", ""),
+        (flagged, 10.0, ", needs_review", ", TRUE"),
+        (
+            cooling,
+            10.0,
+            ", validation_cooldown_until",
+            ", now() + interval '1 day'",
+        ),
+        (
+            validated,
+            10.0,
+            ", validated_at",
+            ", now() - interval '7 days'",
+        ),
+    ] {
+        sqlx::query(&format!(
+            "INSERT INTO memory_scores (canonical_id, project_id, activation{extra_column}) VALUES ($1, $2, $3{extra_value})",
+        ))
+        .bind(id)
+        .bind(project_id)
+        .bind(activation)
+        .execute(&pool)
+        .await
+        .expect("seed score row");
+    }
+    // volatility 1.0 with factor 4.0 shortens the 14d interval to 2.8d,
+    // so a 7-day-old validation is due again.
+    sqlx::query(
+        "INSERT INTO memory_scores (canonical_id, project_id, activation, validated_at, volatility) VALUES ($1, $2, 10.0, now() - interval '7 days', 1.0)",
+    )
+    .bind(volatile)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("seed volatile score row");
+
+    let params = mem_reinforce::repository::SelectionParams {
+        threshold: 8.0,
+        half_life_secs: 30.0 * 86400.0,
+        min_revalidation_secs: 14.0 * 86400.0,
+        volatility_factor: 4.0,
+    };
+    let due = mem_reinforce::repository::fetch_due_candidates(&pool, Some(project_id), &params, 10)
+        .await
+        .expect("scan due candidates");
+    let due_ids: Vec<Uuid> = due.iter().map(|c| c.canonical_id).collect();
+    assert!(due_ids.contains(&hot), "over threshold, never validated");
+    assert!(
+        due_ids.contains(&volatile),
+        "volatility must shorten the revalidation interval"
+    );
+    assert!(!due_ids.contains(&cold), "below threshold");
+    assert!(!due_ids.contains(&flagged), "needs_review excluded");
+    assert!(!due_ids.contains(&cooling), "cooldown excluded");
+    assert!(
+        !due_ids.contains(&validated),
+        "validated 7d ago with 14d interval and no volatility"
+    );
+
+    cleanup(&pool, &slug, project_id).await;
+}
+
+#[tokio::test]
+async fn compaction_removes_cold_and_orphaned_rows_with_audit() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+    let slug = mem_test_support::unique_project_slug("reinforce-compact");
+    let project_id = Uuid::new_v4();
+    let live = Uuid::new_v4();
+    let cold = Uuid::new_v4();
+    let orphan = Uuid::new_v4();
+    insert_project(&pool, &slug, project_id).await;
+    insert_memory(&pool, project_id, live, "Live scored memory").await;
+    insert_memory(&pool, project_id, cold, "Cold scored memory").await;
+    // live: healthy activation. cold: negligible activation, stale. orphan:
+    // score row without any memory_entries backing.
+    sqlx::query(
+        "INSERT INTO memory_scores (canonical_id, project_id, activation) VALUES ($1, $2, 5.0)",
+    )
+    .bind(live)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("seed live");
+    sqlx::query(
+        "INSERT INTO memory_scores (canonical_id, project_id, activation, last_access_at, created_at) VALUES ($1, $2, 0.001, now() - interval '120 days', now() - interval '120 days')",
+    )
+    .bind(cold)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("seed cold");
+    sqlx::query(
+        "INSERT INTO memory_scores (canonical_id, project_id, activation) VALUES ($1, $2, 5.0)",
+    )
+    .bind(orphan)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("seed orphan");
+
+    let summary = mem_reinforce::repository::compact_scores(&pool, 30.0 * 86400.0)
+        .await
+        .expect("compact");
+    assert!(summary.cold_rows_deleted >= 1);
+    assert!(summary.orphan_rows_deleted >= 1);
+
+    let remaining = mem_reinforce::repository::fetch_scores(&pool, &[live, cold, orphan])
+        .await
+        .expect("fetch remaining");
+    let remaining_ids: Vec<Uuid> = remaining.iter().map(|s| s.canonical_id).collect();
+    assert!(remaining_ids.contains(&live));
+    assert!(!remaining_ids.contains(&cold));
+    assert!(!remaining_ids.contains(&orphan));
+
+    let (audit_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM memory_score_audit WHERE reason = 'decay_compaction'")
+            .fetch_one(&pool)
+            .await
+            .expect("count compaction audit");
+    assert!(audit_count >= 1);
+
+    cleanup(&pool, &slug, project_id).await;
+}
+
+#[tokio::test]
+async fn volatility_fold_updates_ewma_for_scored_memories() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+    let slug = mem_test_support::unique_project_slug("reinforce-volatility");
+    let project_id = Uuid::new_v4();
+    let memory_id = Uuid::new_v4();
+    insert_project(&pool, &slug, project_id).await;
+    insert_memory(&pool, project_id, memory_id, "Volatile memory").await;
+    // volatility_updated_at 2 days ago -> 4 changes over 2 days = 2/day.
+    sqlx::query(
+        "INSERT INTO memory_scores (canonical_id, project_id, activation, volatility, volatility_updated_at) VALUES ($1, $2, 5.0, 0.0, now() - interval '2 days')",
+    )
+    .bind(memory_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("seed score row");
+
+    let mut changes = std::collections::HashMap::new();
+    changes.insert(memory_id, 4_u32);
+    let shifts = mem_reinforce::repository::fold_volatility(&pool, &changes, 0.5)
+        .await
+        .expect("fold volatility");
+    assert_eq!(shifts.len(), 1);
+    assert_eq!(shifts[0].old_volatility, 0.0);
+    assert!(
+        (f64::from(shifts[0].new_volatility) - 1.0).abs() < 0.05,
+        "0.5 * 2/day = ~1.0, got {}",
+        shifts[0].new_volatility
+    );
+
+    cleanup(&pool, &slug, project_id).await;
+}
+
+#[tokio::test]
+async fn access_event_pruning_respects_cutoff() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+    let slug = mem_test_support::unique_project_slug("reinforce-prune");
+    let project_id = Uuid::new_v4();
+    let memory_id = Uuid::new_v4();
+    insert_project(&pool, &slug, project_id).await;
+    insert_memory(&pool, project_id, memory_id, "Pruned memory").await;
+    sqlx::query(
+        "INSERT INTO memory_access_events (canonical_id, project_id, accessed_at, kind, boost) VALUES ($1, $2, now() - interval '40 days', 'retrieval', 1.0), ($1, $2, now(), 'retrieval', 1.0)",
+    )
+    .bind(memory_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("seed access events");
+
+    let pruned = mem_reinforce::repository::prune_access_events(
+        &pool,
+        chrono::Utc::now() - chrono::Duration::days(30),
+    )
+    .await
+    .expect("prune");
+    assert!(pruned >= 1);
+    let (remaining,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM memory_access_events WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_all(&pool)
+            .await
+            .expect("count remaining")
+            .into_iter()
+            .next()
+            .unwrap();
+    assert_eq!(remaining, 1);
+
+    cleanup(&pool, &slug, project_id).await;
+}

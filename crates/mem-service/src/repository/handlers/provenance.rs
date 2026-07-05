@@ -13,15 +13,20 @@ pub(crate) async fn verify_provenance(
             proxy_post_json(&state, "/v1/provenance/verify", &request, true).await?,
         ));
     }
-    verify_project_provenance(&state.pool()?, &request)
-        .await
-        .map(Json)
-        .map_err(ApiError::sql)
+    verify_project_provenance_with_volatility(
+        &state.pool()?,
+        &request,
+        state.config.reinforcement.volatility_ewma_alpha,
+    )
+    .await
+    .map(Json)
+    .map_err(ApiError::sql)
 }
 
-pub(crate) async fn verify_project_provenance(
+pub(crate) async fn verify_project_provenance_with_volatility(
     pool: &PgPool,
     request: &ProvenanceVerificationRequest,
+    volatility_alpha: f64,
 ) -> Result<ProvenanceVerificationResponse, sqlx::Error> {
     let project_row = sqlx::query("SELECT id, root_path FROM projects WHERE slug = $1")
         .bind(&request.project)
@@ -105,6 +110,13 @@ pub(crate) async fn verify_project_provenance(
 
     let mut stored_count = 0;
     if !request.dry_run {
+        // Provenance status transitions feed the volatility EWMA. Advisory:
+        // a failure here must never fail verification itself.
+        if let Err(error) =
+            super::reinforcement::fold_provenance_volatility(pool, &items, volatility_alpha).await
+        {
+            tracing::warn!(error = %error, "fold provenance volatility");
+        }
         for item in &items {
             sqlx::query(
                 r#"
@@ -267,13 +279,14 @@ pub(crate) async fn reverify_all_projects_once(state: &AppState) -> Result<()> {
                 .expect("provenance runtime mutex poisoned");
             runtime.last_project = Some(project.clone());
         }
-        let response = verify_project_provenance(
+        let response = verify_project_provenance_with_volatility(
             &pool,
             &ProvenanceVerificationRequest {
                 project: project.clone(),
                 repo_root: Some(repo_root),
                 dry_run: false,
             },
+            state.config.reinforcement.volatility_ewma_alpha,
         )
         .await
         .with_context(|| format!("verify provenance for project {project}"))?;

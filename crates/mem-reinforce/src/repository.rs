@@ -289,6 +289,270 @@ pub async fn prune_access_events(pool: &PgPool, older_than: DateTime<Utc>) -> Re
     Ok(result.rows_affected())
 }
 
+/// Parameters for the due-for-validation scan, mirrored from
+/// `ReinforcementConfig`.
+#[derive(Debug, Clone)]
+pub struct SelectionParams {
+    pub threshold: f64,
+    pub half_life_secs: f64,
+    pub min_revalidation_secs: f64,
+    pub volatility_factor: f64,
+}
+
+impl From<&mem_api::ReinforcementConfig> for SelectionParams {
+    fn from(config: &mem_api::ReinforcementConfig) -> Self {
+        Self {
+            threshold: config.validation_threshold,
+            half_life_secs: config.half_life.as_secs_f64().max(1.0),
+            min_revalidation_secs: config.min_revalidation_interval.as_secs_f64(),
+            volatility_factor: config.volatility_revalidation_factor.max(0.0),
+        }
+    }
+}
+
+/// Row shape returned by the due-for-validation scan.
+type DueCandidateRow = (
+    Uuid,
+    Uuid,
+    Uuid,
+    f64,
+    f32,
+    Option<DateTime<Utc>>,
+    Option<DateTime<Utc>>,
+);
+
+/// Scan-based selection of memories due for validation: decay-corrected
+/// activation over threshold, not flagged for review, past cooldown, and
+/// (never validated OR past the volatility-shortened revalidation
+/// interval). Ordered by activation so the hottest memories validate first.
+pub async fn fetch_due_candidates(
+    pool: &PgPool,
+    project_id: Option<Uuid>,
+    params: &SelectionParams,
+    limit: i64,
+) -> Result<Vec<crate::selection::ValidationCandidate>> {
+    let rows: Vec<DueCandidateRow> = sqlx::query_as(
+        r#"
+            SELECT s.canonical_id, m.id, s.project_id,
+                   (s.activation * power(
+                       0.5,
+                       GREATEST(EXTRACT(EPOCH FROM (now() - s.last_decay_at)), 0) / $2
+                   ))::float8 AS activation,
+                   s.volatility, s.validated_at, s.validation_cooldown_until
+            FROM memory_scores s
+            JOIN LATERAL (
+                SELECT id FROM memory_entries
+                WHERE canonical_id = s.canonical_id
+                  AND COALESCE(is_tombstone, false) = false
+                  AND status = 'active'
+                ORDER BY version_no DESC
+                LIMIT 1
+            ) m ON true
+            WHERE ($1::uuid IS NULL OR s.project_id = $1)
+              AND NOT s.needs_review
+              AND (s.validation_cooldown_until IS NULL OR s.validation_cooldown_until < now())
+              AND (s.activation * power(
+                       0.5,
+                       GREATEST(EXTRACT(EPOCH FROM (now() - s.last_decay_at)), 0) / $2
+                   )) >= $3
+              AND (s.validated_at IS NULL
+                   OR s.validated_at < now() - ($4 / (1.0 + GREATEST(s.volatility, 0) * $5))
+                       * interval '1 second')
+            ORDER BY s.activation DESC
+            LIMIT $6
+            "#,
+    )
+    .bind(project_id)
+    .bind(params.half_life_secs)
+    .bind(params.threshold)
+    .bind(params.min_revalidation_secs)
+    .bind(params.volatility_factor)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .context("scan memories due for validation")?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                canonical_id,
+                memory_id,
+                project_id,
+                activation,
+                volatility,
+                validated_at,
+                cooldown_until,
+            )| {
+                crate::selection::ValidationCandidate {
+                    canonical_id,
+                    memory_id,
+                    project_id,
+                    activation,
+                    volatility,
+                    validated_at,
+                    needs_review: false,
+                    cooldown_until,
+                }
+            },
+        )
+        .collect())
+}
+
+/// Counts non-dry-run validation runs started since `since` (daily budget).
+pub async fn count_validation_runs_since(pool: &PgPool, since: DateTime<Utc>) -> Result<i64> {
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM memory_validation_runs WHERE started_at > $1 AND NOT dry_run",
+    )
+    .bind(since)
+    .fetch_one(pool)
+    .await
+    .context("count recent validation runs")?;
+    Ok(count)
+}
+
+/// Timestamp of the last compaction sweep, from its audit trail.
+pub async fn last_compaction_at(pool: &PgPool) -> Result<Option<DateTime<Utc>>> {
+    let (at,): (Option<DateTime<Utc>>,) = sqlx::query_as(
+        "SELECT MAX(created_at) FROM memory_score_audit WHERE reason = 'decay_compaction'",
+    )
+    .fetch_one(pool)
+    .await
+    .context("read last compaction timestamp")?;
+    Ok(at)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompactionSummary {
+    pub cold_rows_deleted: u64,
+    pub orphan_rows_deleted: u64,
+}
+
+/// Removes score rows that decayed to noise (activation < 0.01 after decay
+/// and no access in 90 days) and rows whose canonical memory no longer
+/// exists. Writes one `decay_compaction` audit row when anything was
+/// removed (canonical_id is nil for sweep-level entries).
+pub async fn compact_scores(pool: &PgPool, half_life_secs: f64) -> Result<CompactionSummary> {
+    let cold = sqlx::query(
+        r#"
+        DELETE FROM memory_scores
+        WHERE (activation * power(
+                  0.5,
+                  GREATEST(EXTRACT(EPOCH FROM (now() - last_decay_at)), 0) / $1
+              )) < 0.01
+          AND (last_access_at IS NULL OR last_access_at < now() - interval '90 days')
+          AND created_at < now() - interval '90 days'
+        "#,
+    )
+    .bind(half_life_secs.max(1.0))
+    .execute(pool)
+    .await
+    .context("compact cold score rows")?;
+    let orphans = sqlx::query(
+        r#"
+        DELETE FROM memory_scores s
+        WHERE NOT EXISTS (
+            SELECT 1 FROM memory_entries m WHERE m.canonical_id = s.canonical_id
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .context("compact orphaned score rows")?;
+    let summary = CompactionSummary {
+        cold_rows_deleted: cold.rows_affected(),
+        orphan_rows_deleted: orphans.rows_affected(),
+    };
+    if summary.cold_rows_deleted > 0 || summary.orphan_rows_deleted > 0 {
+        sqlx::query(
+            r#"
+            INSERT INTO memory_score_audit
+                (id, canonical_id, project_id, reason, details_json)
+            VALUES ($1, $2, $2, 'decay_compaction', $3)
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(Uuid::nil())
+        .bind(serde_json::json!({
+            "cold_rows_deleted": summary.cold_rows_deleted,
+            "orphan_rows_deleted": summary.orphan_rows_deleted,
+        }))
+        .execute(pool)
+        .await
+        .context("insert compaction audit row")?;
+    }
+    Ok(summary)
+}
+
+/// A volatility change produced by [`fold_volatility`].
+#[derive(Debug, Clone, Copy)]
+pub struct VolatilityShift {
+    pub canonical_id: Uuid,
+    pub project_id: Uuid,
+    pub old_volatility: f32,
+    pub new_volatility: f32,
+}
+
+/// Folds observed provenance change events into the per-memory volatility
+/// EWMA (events per day, elapsed measured from the previous fold). Only
+/// memories that already have a score row are updated: volatility exists to
+/// steer revalidation, which only applies to scored memories.
+pub async fn fold_volatility(
+    pool: &PgPool,
+    change_counts: &HashMap<Uuid, u32>,
+    alpha: f64,
+) -> Result<Vec<VolatilityShift>> {
+    if change_counts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let canonical_ids: Vec<Uuid> = change_counts.keys().copied().collect();
+    let counts: Vec<i32> = canonical_ids
+        .iter()
+        .map(|id| change_counts[id] as i32)
+        .collect();
+    let rows: Vec<(Uuid, Uuid, f32, f32)> = sqlx::query_as(
+        r#"
+        WITH previous AS (
+            SELECT canonical_id, volatility
+            FROM memory_scores
+            WHERE canonical_id = ANY($1)
+        ), updated AS (
+            UPDATE memory_scores s SET
+                volatility = (
+                    $3 * (c.changes::float8 / GREATEST(
+                        EXTRACT(EPOCH FROM (now() - COALESCE(s.volatility_updated_at, s.created_at))) / 86400.0,
+                        0.04))
+                    + (1.0 - $3) * s.volatility
+                )::real,
+                volatility_updated_at = now(),
+                updated_at = now()
+            FROM (SELECT UNNEST($1::uuid[]) AS canonical_id, UNNEST($2::int[]) AS changes) c
+            WHERE s.canonical_id = c.canonical_id
+            RETURNING s.canonical_id, s.project_id, s.volatility
+        )
+        SELECT u.canonical_id, u.project_id, p.volatility, u.volatility
+        FROM updated u
+        JOIN previous p ON p.canonical_id = u.canonical_id
+        "#,
+    )
+    .bind(&canonical_ids)
+    .bind(&counts)
+    .bind(alpha.clamp(0.0, 1.0))
+    .fetch_all(pool)
+    .await
+    .context("fold volatility EWMA")?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(canonical_id, project_id, old_volatility, new_volatility)| VolatilityShift {
+                canonical_id,
+                project_id,
+                old_volatility,
+                new_volatility,
+            },
+        )
+        .collect())
+}
+
 /// Reads current score state for a set of canonicals (test/inspection
 /// helper and status surface).
 #[derive(Debug, Clone, sqlx::FromRow)]

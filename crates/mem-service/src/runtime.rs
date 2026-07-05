@@ -445,6 +445,13 @@ pub(crate) async fn start_cluster_tasks(state: AppState) -> Result<Vec<JoinHandl
                 state.clone(),
             )));
         }
+        if state.reinforcement.is_some() {
+            tasks.push(tokio::spawn(
+                crate::repository::handlers::reinforcement::run_reinforcement_scheduler(
+                    state.clone(),
+                ),
+            ));
+        }
     }
     if !state.config.cluster.enabled {
         return Ok(tasks);
