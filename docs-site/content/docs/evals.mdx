@@ -105,6 +105,12 @@ When publishing a claim, include:
 - success, retrieval, token, and latency deltas
 - known shortcomings
 
+## The memory-quality canary
+
+Beyond the improvement benchmark, `evals/suites/memory-quality-v1` guards recall quality itself: retrieval items check the right memory surfaces, grounded items check answers state the right facts, and **adversarial-stale** items seed superseded facts, vague rumors, and unanswerable questions, asserting the pipeline refuses or prefers the fresh fact. Its gate (`evals/gates/memory-quality-v1.toml`) enforces absolute floors — at least 90% overall success and zero adversarial failures — independent of baseline deltas.
+
+The adversarial group currently fails (synthesis echoes superseded facts and does not refuse on weak evidence); the gate intentionally stays red on that group until those fixes land. See [Memory quality](/docs/how-it-works/memory-quality) for the full map of quality mechanisms.
+
 ## Common mistakes
 
 | Mistake | Why it weakens the result |

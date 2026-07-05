@@ -5,6 +5,7 @@
     "memory-types",
     "retrieval-search",
     "reinforcement",
+    "memory-quality",
     "runtime-topology"
   ]
 }
