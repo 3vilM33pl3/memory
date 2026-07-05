@@ -1,10 +1,9 @@
 # Changelog
 
-## 1.0.0-rc.1 - Unreleased
+## 1.0.0 - 2026-07-05
 
-This release candidate is the v1.0 stabilization line. It should not accept broad
-new features after the branch is cut; only bug fixes, docs, packaging,
-migration, validation, and release-blocking polish should land.
+First stable release, cut locally on monolith from the v1.0 stabilization
+line plus the memory reinforcement & validation system.
 
 ### Added
 
@@ -29,7 +28,7 @@ migration, validation, and release-blocking polish should land.
   documented as advanced surfaces where behavior is still intentionally
   conservative.
 
-### Release blockers to clear before final v1.0.0
+### Known issues carried into 1.0.0
 
 - Fix the local `/v1/curate` timeout that can prevent plan-memory closure.
 - Close or intentionally document stale active plan memories.
