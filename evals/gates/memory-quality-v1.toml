@@ -1,0 +1,16 @@
+# Release gate for the memory-quality-v1 canary suite.
+# Compare a full-memory candidate run against a no-memory baseline; the
+# absolute floors are the actual guard — deltas are informational.
+min_paired_items = 20
+min_success_rate_delta = 0.0
+max_mcnemar_p_value = 1.0
+
+# The candidate run must succeed on at least 90% of items overall and on
+# every adversarial-stale item (zero tolerated stale-answer failures).
+min_candidate_success_rate = 0.9
+
+[min_metric_delta]
+recall_at_k = 0.0
+
+[min_group_candidate_success_rate]
+"eval_type:adversarial_stale" = 1.0

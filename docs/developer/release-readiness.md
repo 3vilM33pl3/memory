@@ -51,6 +51,17 @@ Before tagging `v1.0.0-rc.1`:
    memory eval gate --comparison target/memory-evals/comparison.json --policy evals/gates/research-v1.toml --text
    ```
 
+   Then run the memory-quality canary (seed with
+   `evals/suites/memory-quality-v1/scripts/seed-memory.sh`, run the suite under
+   `no-memory` and `full-memory` conditions, compare, and gate). Its gate
+   enforces absolute floors — at least 90% overall candidate success and zero
+   failed `adversarial_stale` items:
+
+   ```bash
+   memory eval doctor --suite evals/suites/memory-quality-v1 --text
+   memory eval gate --comparison target/memory-evals/quality-comparison.json --policy evals/gates/memory-quality-v1.toml --text
+   ```
+
 7. Smoke test fresh install and upgrade paths for Debian, Homebrew, and source
    dev mode.
 8. Verify core workflows manually: service, status, doctor, TUI, web UI,

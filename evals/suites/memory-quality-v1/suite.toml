@@ -1,0 +1,9 @@
+name = "memory quality v1"
+description = "Canary suite guarding retrieval grounding, citation quality, and stale-answer refusal. Deterministic answer mode only; gate requires zero adversarial-stale failures."
+project = "memory-quality-eval"
+items = "items.jsonl"
+suite_version = "1"
+label_status = "draft"
+default_profile = "offline"
+default_repeats = 1
+min_items = 20
