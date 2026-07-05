@@ -515,6 +515,34 @@ pub(crate) async fn run_eval_suite(
                     mem_eval::score_grounded_answer(item, condition, &response)
                 }
             }
+            mem_eval::EvalItem::AdversarialStale(item) => {
+                if condition == mem_eval::EvalCondition::NoMemory {
+                    // Without seeded memories the refusal is vacuous and the
+                    // prefer-fresh contract cannot be exercised.
+                    mem_eval::skipped_result(
+                        &mem_eval::EvalItem::AdversarialStale(item.clone()),
+                        condition,
+                        "adversarial_stale requires seeded memories; skipped under no-memory",
+                    )
+                } else {
+                    // Deterministic answer mode: the item tests the synthesis
+                    // refusal threshold, not LLM answer style.
+                    let response = api
+                        .query(&QueryRequest {
+                            project: project.to_string(),
+                            query: item.question.clone(),
+                            filters: QueryFilters::default(),
+                            top_k: item.top_k,
+                            min_confidence: None,
+                            include_stale: false,
+                            history: false,
+                            retrieval_mode: Some(eval_condition_retrieval_mode(condition)),
+                            answer_mode: Some(mem_api::QueryAnswerMode::Deterministic),
+                        })
+                        .await?;
+                    mem_eval::score_adversarial_stale(item, condition, &response)
+                }
+            }
             mem_eval::EvalItem::ResumeQuality(item) => {
                 if condition == mem_eval::EvalCondition::NoMemory {
                     if context.profile == mem_eval::EvalProfile::Offline {

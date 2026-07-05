@@ -85,6 +85,7 @@ pub struct EvalSuite {
 pub enum EvalItem {
     RetrievalQa(RetrievalQaItem),
     GroundedAnswer(GroundedAnswerItem),
+    AdversarialStale(AdversarialStaleItem),
     ResumeQuality(ResumeQualityItem),
     CommandTask(CommandTaskItem),
     AgentBuildTask(AgentBuildTaskItem),
@@ -96,6 +97,7 @@ impl EvalItem {
         match self {
             Self::RetrievalQa(item) => &item.id,
             Self::GroundedAnswer(item) => &item.id,
+            Self::AdversarialStale(item) => &item.id,
             Self::ResumeQuality(item) => &item.id,
             Self::CommandTask(item) => &item.id,
             Self::AgentBuildTask(item) => &item.id,
@@ -107,6 +109,7 @@ impl EvalItem {
         match self {
             Self::RetrievalQa(item) => item.project.as_deref().unwrap_or(default_project),
             Self::GroundedAnswer(item) => item.project.as_deref().unwrap_or(default_project),
+            Self::AdversarialStale(item) => item.project.as_deref().unwrap_or(default_project),
             Self::ResumeQuality(item) => item.project.as_deref().unwrap_or(default_project),
             Self::CommandTask(item) => item.project.as_deref().unwrap_or(default_project),
             Self::AgentBuildTask(item) => item.project.as_deref().unwrap_or(default_project),
@@ -118,6 +121,7 @@ impl EvalItem {
         match self {
             Self::RetrievalQa(item) => &item.metadata,
             Self::GroundedAnswer(item) => &item.metadata,
+            Self::AdversarialStale(item) => &item.metadata,
             Self::ResumeQuality(item) => &item.metadata,
             Self::CommandTask(item) => &item.metadata,
             Self::AgentBuildTask(item) => &item.metadata,
@@ -127,7 +131,10 @@ impl EvalItem {
 
     pub fn requires_shell(&self) -> bool {
         match self {
-            Self::RetrievalQa(_) | Self::GroundedAnswer(_) | Self::ResumeQuality(_) => false,
+            Self::RetrievalQa(_)
+            | Self::GroundedAnswer(_)
+            | Self::AdversarialStale(_)
+            | Self::ResumeQuality(_) => false,
             Self::CommandTask(item) => !item.command.trim().is_empty(),
             Self::AgentBuildTask(item) => {
                 !item.agent_command.trim().is_empty()
@@ -198,6 +205,44 @@ pub struct GroundedAnswerItem {
     pub required_assertions: Vec<String>,
     #[serde(default)]
     pub forbidden_assertions: Vec<String>,
+}
+
+/// Seeds are provided by the suite fixture: a stale memory (tagged with one of
+/// `stale_tags`) and optionally a fresher contradicting one (`fresh_tags`).
+/// The item asserts the query pipeline either refuses outright or answers from
+/// the fresh memory without repeating the stale fact.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdversarialStaleItem {
+    pub id: String,
+    #[serde(flatten, default, skip_serializing_if = "skip_metadata")]
+    pub metadata: EvalItemMetadata,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    pub question: String,
+    #[serde(default = "default_top_k")]
+    pub top_k: i64,
+    pub expect: AdversarialExpectation,
+    #[serde(default)]
+    pub stale_tags: Vec<String>,
+    #[serde(default)]
+    pub fresh_tags: Vec<String>,
+    /// Stale facts that must NOT appear in the answer (substring match).
+    #[serde(default)]
+    pub stale_assertions: Vec<String>,
+    /// Fresh facts that must all appear when `expect` is `prefer_fresh`.
+    #[serde(default)]
+    pub fresh_assertions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AdversarialExpectation {
+    /// The pipeline must refuse (`insufficient_evidence`) rather than answer
+    /// from stale memory alone.
+    Refuse,
+    /// The pipeline must answer, citing only fresh memory and never stating
+    /// the stale fact.
+    PreferFresh,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -498,6 +543,14 @@ pub struct EvalGatePolicy {
     pub max_token_delta: Option<i64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub min_metric_delta: BTreeMap<String, f64>,
+    /// Absolute floor on the candidate run's overall success rate, independent
+    /// of the baseline delta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_candidate_success_rate: Option<f64>,
+    /// Absolute floors per comparison group (e.g. `"eval_type:adversarial_stale" = 1.0`
+    /// for zero tolerated adversarial failures). Missing groups fail the gate.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub min_group_candidate_success_rate: BTreeMap<String, f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -695,6 +748,72 @@ pub fn score_plain_llm_grounded_answer(
         token_usage,
         answer: Some(answer),
         notes,
+        sub_results: Vec::new(),
+    }
+}
+
+pub fn score_adversarial_stale(
+    item: &AdversarialStaleItem,
+    condition: EvalCondition,
+    response: &QueryResponse,
+) -> EvalItemResult {
+    let cited_ids: HashSet<Uuid> = response
+        .answer_citations
+        .iter()
+        .map(|citation| citation.memory_id)
+        .collect();
+    let tagged_cited = |tags: &[String]| -> usize {
+        let wanted: HashSet<String> = tags.iter().map(|tag| normalize_expected_value(tag)).collect();
+        response
+            .results
+            .iter()
+            .filter(|result| cited_ids.contains(&result.memory_id))
+            .filter(|result| {
+                result
+                    .tags
+                    .iter()
+                    .any(|tag| wanted.contains(&normalize_expected_value(tag)))
+            })
+            .count()
+    };
+    let stale_citations = tagged_cited(&item.stale_tags);
+    let fresh_citations = tagged_cited(&item.fresh_tags);
+    let stale_hits = assertion_scores(&response.answer, &[], &item.stale_assertions).forbidden_hits;
+    let fresh_recall = assertion_scores(&response.answer, &item.fresh_assertions, &[]).assertion_recall;
+
+    let success = match item.expect {
+        AdversarialExpectation::Refuse => response.insufficient_evidence && stale_hits == 0,
+        AdversarialExpectation::PreferFresh => {
+            !response.insufficient_evidence
+                && stale_citations == 0
+                && stale_hits == 0
+                && fresh_recall >= 1.0
+                && (item.fresh_tags.is_empty() || fresh_citations > 0)
+        }
+    };
+
+    let mut scores = BTreeMap::new();
+    scores.insert(
+        "insufficient_evidence".to_string(),
+        if response.insufficient_evidence { 1.0 } else { 0.0 },
+    );
+    scores.insert("stale_citations".to_string(), stale_citations as f64);
+    scores.insert("fresh_citations".to_string(), fresh_citations as f64);
+    scores.insert("stale_assertion_hits".to_string(), stale_hits as f64);
+    scores.insert("fresh_assertion_recall".to_string(), fresh_recall);
+    scores.insert("confidence".to_string(), response.confidence as f64);
+    EvalItemResult {
+        item_id: item.id.clone(),
+        eval_type: "adversarial_stale".to_string(),
+        condition,
+        metadata: item.metadata.clone(),
+        success,
+        skipped: false,
+        scores,
+        duration_ms: Some(response.diagnostics.total_duration_ms),
+        token_usage: response.answer_generation.token_usage.clone(),
+        answer: Some(response.answer.clone()),
+        notes: Vec::new(),
         sub_results: Vec::new(),
     }
 }
@@ -1032,6 +1151,7 @@ pub fn skipped_result(
         eval_type: match item {
             EvalItem::RetrievalQa(_) => "retrieval_qa",
             EvalItem::GroundedAnswer(_) => "grounded_answer",
+            EvalItem::AdversarialStale(_) => "adversarial_stale",
             EvalItem::ResumeQuality(_) => "resume_quality",
             EvalItem::CommandTask(_) => "command_task",
             EvalItem::AgentBuildTask(_) => "agent_build_task",
@@ -1464,6 +1584,26 @@ pub fn evaluate_gate(comparison: &EvalComparison, policy: &EvalGatePolicy) -> Ev
             ));
         }
     }
+    if let Some(min_rate) = policy.min_candidate_success_rate
+        && comparison.candidate_success_rate < min_rate
+    {
+        reasons.push(format!(
+            "candidate_success_rate {:.4} is below required {:.4}",
+            comparison.candidate_success_rate, min_rate
+        ));
+    }
+    for (group, required) in &policy.min_group_candidate_success_rate {
+        match comparison.groups.get(group) {
+            Some(summary) if summary.candidate_success_rate >= *required => {}
+            Some(summary) => reasons.push(format!(
+                "group {group} candidate_success_rate {:.4} is below required {:.4}",
+                summary.candidate_success_rate, required
+            )),
+            None => reasons.push(format!(
+                "group {group} has no paired observations but a success-rate floor is set"
+            )),
+        }
+    }
     EvalGateResult {
         passed: reasons.is_empty(),
         reasons,
@@ -1779,6 +1919,128 @@ mod tests {
         assert_eq!(result.scores["file_recall_at_k"], 1.0);
     }
 
+    fn tagged_result(memory_id: Uuid, tag: &str) -> mem_api::QueryResult {
+        mem_api::QueryResult {
+            memory_id,
+            project: None,
+            project_name: None,
+            repo_root: None,
+            summary: format!("{tag} memory"),
+            memory_type: mem_api::MemoryType::Reference,
+            score: 1.0,
+            snippet: String::new(),
+            match_kind: mem_api::QueryMatchKind::Lexical,
+            score_explanation: Vec::new(),
+            debug: mem_api::QueryResultDebug::default(),
+            tags: vec![tag.to_string()],
+            sources: Vec::new(),
+            graph_connections: Vec::new(),
+            needs_review: false,
+        }
+    }
+
+    fn citation(memory_id: Uuid) -> mem_api::QueryAnswerCitation {
+        mem_api::QueryAnswerCitation {
+            result_number: 1,
+            memory_id,
+            project: None,
+            project_name: None,
+            repo_root: None,
+            memory_type: mem_api::MemoryType::Reference,
+            summary: String::new(),
+            snippet: String::new(),
+        }
+    }
+
+    fn adversarial_item(expect: AdversarialExpectation) -> AdversarialStaleItem {
+        AdversarialStaleItem {
+            id: "adv".to_string(),
+            metadata: EvalItemMetadata::default(),
+            project: None,
+            question: "Which port does the service use?".to_string(),
+            top_k: 8,
+            expect,
+            stale_tags: vec!["mq-stale".to_string()],
+            fresh_tags: vec!["mq-fresh".to_string()],
+            stale_assertions: vec!["port 4040".to_string()],
+            fresh_assertions: vec!["port 4250".to_string()],
+        }
+    }
+
+    fn adversarial_response(
+        insufficient_evidence: bool,
+        answer: &str,
+        stale_id: Uuid,
+        fresh_id: Uuid,
+        cited: &[Uuid],
+    ) -> QueryResponse {
+        QueryResponse {
+            answer: answer.to_string(),
+            confidence: 0.8,
+            results: vec![
+                tagged_result(stale_id, "mq-stale"),
+                tagged_result(fresh_id, "mq-fresh"),
+            ],
+            insufficient_evidence,
+            answer_generation: mem_api::QueryAnswerGeneration::default(),
+            answer_citations: cited.iter().copied().map(citation).collect(),
+            diagnostics: mem_api::QueryDiagnostics::default(),
+        }
+    }
+
+    #[test]
+    fn adversarial_stale_refuse_requires_insufficient_evidence() {
+        let item = adversarial_item(AdversarialExpectation::Refuse);
+        let stale = Uuid::new_v4();
+        let fresh = Uuid::new_v4();
+
+        let refused = adversarial_response(true, "", stale, fresh, &[]);
+        assert!(score_adversarial_stale(&item, EvalCondition::FullMemory, &refused).success);
+
+        let answered_stale =
+            adversarial_response(false, "The service uses port 4040.", stale, fresh, &[stale]);
+        let result = score_adversarial_stale(&item, EvalCondition::FullMemory, &answered_stale);
+        assert!(!result.success);
+        assert_eq!(result.scores["stale_assertion_hits"], 1.0);
+        assert_eq!(result.scores["stale_citations"], 1.0);
+    }
+
+    #[test]
+    fn adversarial_stale_prefer_fresh_rejects_stale_citations() {
+        let item = adversarial_item(AdversarialExpectation::PreferFresh);
+        let stale = Uuid::new_v4();
+        let fresh = Uuid::new_v4();
+
+        let good =
+            adversarial_response(false, "The service uses port 4250.", stale, fresh, &[fresh]);
+        assert!(score_adversarial_stale(&item, EvalCondition::FullMemory, &good).success);
+
+        let cites_both = adversarial_response(
+            false,
+            "The service uses port 4250.",
+            stale,
+            fresh,
+            &[stale, fresh],
+        );
+        assert!(!score_adversarial_stale(&item, EvalCondition::FullMemory, &cites_both).success);
+
+        let refused = adversarial_response(true, "", stale, fresh, &[]);
+        assert!(!score_adversarial_stale(&item, EvalCondition::FullMemory, &refused).success);
+    }
+
+    #[test]
+    fn adversarial_stale_item_parses_from_jsonl() {
+        let line = r#"{"eval_type":"adversarial_stale","id":"adv-1","expect":"refuse","question":"q","stale_tags":["mq-stale"],"stale_assertions":["port 4040"]}"#;
+        let item: EvalItem = serde_json::from_str(line).expect("parse adversarial item");
+        match item {
+            EvalItem::AdversarialStale(item) => {
+                assert_eq!(item.expect, AdversarialExpectation::Refuse);
+                assert_eq!(item.top_k, 8);
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
     #[test]
     fn comparison_groups_sequence_steps_by_reasoning_mode() {
         let baseline = EvalRun {
@@ -1857,11 +2119,84 @@ mod tests {
                 max_mcnemar_p_value: Some(0.05),
                 max_token_delta: Some(5),
                 min_metric_delta: BTreeMap::from([("recall_at_k".to_string(), 0.1)]),
+                min_candidate_success_rate: None,
+                min_group_candidate_success_rate: BTreeMap::new(),
             },
         );
 
         assert!(!gate.passed);
         assert_eq!(gate.reasons.len(), 5);
+    }
+
+    #[test]
+    fn gate_enforces_absolute_success_rate_floors() {
+        let comparison = EvalComparison {
+            baseline_condition: EvalCondition::NoMemory,
+            candidate_condition: EvalCondition::FullMemory,
+            paired_items: 4,
+            baseline_profile: EvalProfile::Llm,
+            candidate_profile: EvalProfile::Llm,
+            baseline_success_rate: 0.5,
+            candidate_success_rate: 0.75,
+            success_rate_delta: 0.25,
+            mcnemar_b: 1,
+            mcnemar_c: 0,
+            mcnemar_p_value: 1.0,
+            baseline_total_tokens: 0,
+            candidate_total_tokens: 0,
+            token_delta: 0,
+            baseline_mean_duration_ms: 0.0,
+            candidate_mean_duration_ms: 0.0,
+            duration_delta_ms: 0.0,
+            cost_adjusted_success_delta_per_1k_tokens: 0.0,
+            metric_deltas: BTreeMap::new(),
+            groups: BTreeMap::from([(
+                "eval_type:adversarial_stale".to_string(),
+                EvalComparisonGroup {
+                    paired_items: 2,
+                    baseline_success_rate: 0.5,
+                    candidate_success_rate: 0.5,
+                    success_rate_delta: 0.0,
+                    mcnemar_b: 0,
+                    mcnemar_c: 0,
+                    mcnemar_p_value: 1.0,
+                    baseline_total_tokens: 0,
+                    candidate_total_tokens: 0,
+                    token_delta: 0,
+                    baseline_mean_duration_ms: 0.0,
+                    candidate_mean_duration_ms: 0.0,
+                    duration_delta_ms: 0.0,
+                    cost_adjusted_success_delta_per_1k_tokens: 0.0,
+                    metric_deltas: BTreeMap::new(),
+                },
+            )]),
+        };
+
+        let policy = EvalGatePolicy {
+            min_paired_items: 1,
+            min_success_rate_delta: 0.0,
+            max_mcnemar_p_value: None,
+            max_token_delta: None,
+            min_metric_delta: BTreeMap::new(),
+            min_candidate_success_rate: Some(0.9),
+            min_group_candidate_success_rate: BTreeMap::from([
+                ("eval_type:adversarial_stale".to_string(), 1.0),
+                ("eval_type:missing_group".to_string(), 1.0),
+            ]),
+        };
+        let gate = evaluate_gate(&comparison, &policy);
+        assert!(!gate.passed);
+        assert_eq!(gate.reasons.len(), 3);
+
+        let relaxed = EvalGatePolicy {
+            min_candidate_success_rate: Some(0.7),
+            min_group_candidate_success_rate: BTreeMap::from([(
+                "eval_type:adversarial_stale".to_string(),
+                0.5,
+            )]),
+            ..policy
+        };
+        assert!(evaluate_gate(&comparison, &relaxed).passed);
     }
 
     #[test]
