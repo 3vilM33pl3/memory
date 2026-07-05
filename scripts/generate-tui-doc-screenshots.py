@@ -24,6 +24,7 @@ WATCH_CMD = os.environ.get(
 WIDTH = 204
 HEIGHT = 48
 OUTPUT_DIR = ROOT / "docs" / "img" / "tui"
+SITE_OUTPUT_DIR = ROOT / "docs-site" / "public" / "images" / "tui"
 DEFAULT_FG = (230, 236, 245)
 DEFAULT_BG = (22, 31, 46)
 FONT_NAME = os.environ.get("MEMORY_LAYER_SCREENSHOT_FONT", "DejaVuSansMono.ttf")
@@ -310,6 +311,8 @@ def main() -> int:
         screenshots["project-tab.png"] = go_to_tab(tui_session, "Project")
         screenshots["review-tab.png"] = go_to_tab(tui_session, "Review")
         screenshots["watchers-tab.png"] = go_to_tab(tui_session, "Watchers")
+        screenshots["skills-tab.png"] = go_to_tab(tui_session, "Skills")
+        screenshots["automations-tab.png"] = go_to_tab(tui_session, "Automations")
         screenshots["embeddings-tab.png"] = go_to_tab(tui_session, "Embeddings")
         screenshots["resume-tab.png"] = go_to_tab(tui_session, "Resume")
 
@@ -320,10 +323,16 @@ def main() -> int:
     for name, payload in screenshots.items():
         render_screen(payload, OUTPUT_DIR / name)
         print(f"wrote {OUTPUT_DIR / name}")
+        if name != "overview.png":
+            render_screen(payload, SITE_OUTPUT_DIR / name)
+            print(f"wrote {SITE_OUTPUT_DIR / name}")
     if "overview.png" in screenshots:
         legacy_overview = ROOT / "docs" / "img" / "tui-overview.png"
         render_screen(screenshots["overview.png"], legacy_overview)
         print(f"wrote {legacy_overview}")
+        site_frontpage = ROOT / "docs-site" / "public" / "images" / "tui-frontpage.png"
+        render_screen(screenshots["overview.png"], site_frontpage)
+        print(f"wrote {site_frontpage}")
 
     return 0
 

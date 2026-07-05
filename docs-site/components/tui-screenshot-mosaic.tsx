@@ -8,6 +8,8 @@ const tuiScreenshots = [
   ['Review', 'review-tab.png'],
   ['Agents', 'agents-tab.png'],
   ['Watchers', 'watchers-tab.png'],
+  ['Skills', 'skills-tab.png'],
+  ['Automations', 'automations-tab.png'],
   ['Activity', 'activity-tab.png'],
   ['Resume', 'resume-tab.png'],
   ['Embeddings', 'embeddings-tab.png'],

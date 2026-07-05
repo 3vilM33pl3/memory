@@ -1,5 +1,7 @@
 # Automations Tab
 
+![Automations tab](../../img/tui/automations-tab.png)
+
 Use the `Automations` tab to inspect loop-engineering automation state from the
 terminal.
 

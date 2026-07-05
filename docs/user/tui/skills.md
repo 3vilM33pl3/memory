@@ -1,5 +1,7 @@
 # Skills Tab
 
+![Skills tab](../../img/tui/skills-tab.png)
+
 Use the `Skills` tab to inspect agent skills from inside the TUI. It defaults to
 repo-local Memory Layer skills and can also show repo-local custom skills, home
 directory skills, Codex skills, plugin skills, unmanaged skills, and skills that

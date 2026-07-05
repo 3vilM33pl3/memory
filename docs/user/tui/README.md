@@ -85,5 +85,7 @@ Shared navigation:
 | Project | ![Project tab](../../img/tui/project-tab.png) |
 | Review | ![Review tab](../../img/tui/review-tab.png) |
 | Watchers | ![Watchers tab](../../img/tui/watchers-tab.png) |
+| Skills | ![Skills tab](../../img/tui/skills-tab.png) |
+| Automations | ![Automations tab](../../img/tui/automations-tab.png) |
 | Embeddings | ![Embeddings tab](../../img/tui/embeddings-tab.png) |
 | Resume | ![Resume tab](../../img/tui/resume-tab.png) |
