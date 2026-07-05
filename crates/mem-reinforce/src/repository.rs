@@ -910,6 +910,157 @@ pub async fn set_validation_cooldown(
     Ok(())
 }
 
+/// Score row joined with its latest memory version for API listings.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ScoreListing {
+    pub canonical_id: Uuid,
+    pub memory_id: Uuid,
+    pub summary: String,
+    pub activation: f64,
+    pub access_count: i64,
+    pub citation_count: i64,
+    pub propagated_count: i64,
+    pub volatility: f32,
+    pub last_access_at: Option<DateTime<Utc>>,
+    pub validated_at: Option<DateTime<Utc>>,
+    pub validation_confidence: Option<f32>,
+    pub needs_review: bool,
+    pub needs_review_reason: Option<String>,
+    pub last_invalidated_at: Option<DateTime<Utc>>,
+}
+
+pub async fn list_memory_scores(
+    pool: &PgPool,
+    project_id: Uuid,
+    needs_review_only: bool,
+    half_life_secs: f64,
+    limit: i64,
+) -> Result<Vec<ScoreListing>> {
+    sqlx::query_as::<_, ScoreListing>(
+        r#"
+        SELECT s.canonical_id, m.id AS memory_id, m.summary,
+               (s.activation * power(
+                   0.5,
+                   GREATEST(EXTRACT(EPOCH FROM (now() - s.last_decay_at)), 0) / $3
+               ))::float8 AS activation,
+               s.access_count, s.citation_count, s.propagated_count,
+               s.volatility, s.last_access_at, s.validated_at,
+               s.validation_confidence, s.needs_review, s.needs_review_reason,
+               s.last_invalidated_at
+        FROM memory_scores s
+        JOIN LATERAL (
+            SELECT id, summary FROM memory_entries
+            WHERE canonical_id = s.canonical_id
+              AND COALESCE(is_tombstone, false) = false
+            ORDER BY version_no DESC
+            LIMIT 1
+        ) m ON true
+        WHERE s.project_id = $1 AND ($2 = false OR s.needs_review)
+        ORDER BY s.activation DESC
+        LIMIT $4
+        "#,
+    )
+    .bind(project_id)
+    .bind(needs_review_only)
+    .bind(half_life_secs.max(1.0))
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .context("list memory scores")
+}
+
+/// Validation run row as read back for listings and review.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ValidationRunRow {
+    pub id: Uuid,
+    pub canonical_id: Uuid,
+    pub memory_id: Uuid,
+    pub project_id: Uuid,
+    pub trigger_kind: String,
+    pub status: String,
+    pub verdict: Option<String>,
+    pub confidence: Option<f32>,
+    pub dry_run: bool,
+    pub action: Option<String>,
+    pub review_status: Option<String>,
+    pub reasons_json: serde_json::Value,
+    pub proposed_candidate_json: Option<serde_json::Value>,
+    pub model: Option<String>,
+    pub error: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub summary: String,
+}
+
+const VALIDATION_RUN_COLUMNS: &str = r#"
+    r.id, r.canonical_id, r.memory_id, r.project_id, r.trigger_kind, r.status,
+    r.verdict, r.confidence, r.dry_run, r.action, r.review_status,
+    r.reasons_json, r.proposed_candidate_json, r.model, r.error,
+    r.started_at, r.finished_at,
+    COALESCE((SELECT summary FROM memory_entries WHERE id = r.memory_id), '') AS summary
+"#;
+
+pub async fn list_validation_runs(
+    pool: &PgPool,
+    project_id: Uuid,
+    pending_review_only: bool,
+    limit: i64,
+) -> Result<Vec<ValidationRunRow>> {
+    let sql = format!(
+        r#"
+        SELECT {VALIDATION_RUN_COLUMNS}
+        FROM memory_validation_runs r
+        WHERE r.project_id = $1
+          AND ($2 = false OR r.review_status = 'pending')
+        ORDER BY r.started_at DESC
+        LIMIT $3
+        "#
+    );
+    sqlx::query_as::<_, ValidationRunRow>(&sql)
+        .bind(project_id)
+        .bind(pending_review_only)
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .context("list validation runs")
+}
+
+pub async fn fetch_validation_run(pool: &PgPool, run_id: Uuid) -> Result<Option<ValidationRunRow>> {
+    let sql =
+        format!("SELECT {VALIDATION_RUN_COLUMNS} FROM memory_validation_runs r WHERE r.id = $1");
+    sqlx::query_as::<_, ValidationRunRow>(&sql)
+        .bind(run_id)
+        .fetch_optional(pool)
+        .await
+        .context("fetch validation run")
+}
+
+pub async fn set_review_status(pool: &PgPool, run_id: Uuid, review_status: &str) -> Result<()> {
+    sqlx::query("UPDATE memory_validation_runs SET review_status = $2 WHERE id = $1")
+        .bind(run_id)
+        .bind(review_status)
+        .execute(pool)
+        .await
+        .context("set validation run review status")?;
+    Ok(())
+}
+
+/// Clears a needs_review flag after a human resolved it.
+pub async fn clear_needs_review(pool: &PgPool, canonical_id: Uuid) -> Result<bool> {
+    let result = sqlx::query(
+        r#"
+        UPDATE memory_scores SET
+            needs_review = FALSE, needs_review_reason = NULL, updated_at = now()
+        WHERE canonical_id = $1 AND needs_review
+        "#,
+    )
+    .bind(canonical_id)
+    .execute(pool)
+    .await
+    .context("clear needs_review flag")?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Reads current score state for a set of canonicals (test/inspection
 /// helper and status surface).
 #[derive(Debug, Clone, sqlx::FromRow)]

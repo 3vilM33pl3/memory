@@ -1034,6 +1034,9 @@ pub(crate) fn infer_current_thread(
             ActivityKind::LlmAudit => {
                 "Recent work recorded LLM audit/debug activity for service-side prompts."
             }
+            ActivityKind::MemoryValidation => {
+                "Recent work validated stored memories against project evidence."
+            }
             ActivityKind::Checkpoint => "",
         };
         if !thread.is_empty() {

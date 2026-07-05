@@ -25,7 +25,7 @@ pub(crate) use offline::*;
 pub(crate) use repository::events::*;
 pub(crate) use repository::handlers::{
     agents::*, bundle::*, embeddings::*, graph::*, loops::*, memory::*, project::*, provenance::*,
-    system::*,
+    reinforcement::*, system::*,
 };
 pub(crate) use repository::stream::*;
 pub(crate) use runtime::*;

@@ -90,6 +90,87 @@ impl ApiClient {
         .await
     }
 
+    pub(crate) async fn memory_scores(
+        &self,
+        project: &str,
+        needs_review: bool,
+        limit: i64,
+    ) -> Result<mem_api::MemoryScoresResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!(
+                        "/v1/projects/{project}/memory-scores?needs_review={needs_review}&limit={limit}"
+                    ),
+                ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn validate_memory(
+        &self,
+        memory_id: Uuid,
+        dry_run: Option<bool>,
+    ) -> Result<mem_api::ValidationRunInfo> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/memory/{memory_id}/validate"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(&mem_api::ValidateMemoryRequest { dry_run })
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn validation_runs(
+        &self,
+        project: &str,
+        pending_only: bool,
+        limit: i64,
+    ) -> Result<mem_api::ValidationRunsResponse> {
+        let review = if pending_only { "pending" } else { "" };
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!(
+                        "/v1/projects/{project}/validation-runs?review={review}&limit={limit}"
+                    ),
+                ))
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn review_validation_run(
+        &self,
+        run_id: Uuid,
+        action: &str,
+    ) -> Result<mem_api::ReviewValidationResponse> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/validation-runs/{run_id}/review"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(&mem_api::ReviewValidationRequest {
+                    action: action.to_string(),
+                })
+                .send()
+                .await?,
+        )
+        .await
+    }
+
     pub(crate) async fn approve_replacement_proposal(
         &self,
         project: &str,

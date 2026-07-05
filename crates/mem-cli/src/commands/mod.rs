@@ -26,6 +26,7 @@ pub(crate) mod output;
 mod proposals;
 mod prune_history;
 mod query;
+mod reinforcement;
 mod remember;
 mod repo;
 mod resume;

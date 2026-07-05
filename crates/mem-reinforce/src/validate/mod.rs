@@ -278,6 +278,116 @@ async fn execute_validation(
     })
 }
 
+/// Outcome of resolving a pending correction review.
+#[derive(Debug, Clone)]
+pub struct ReviewResolution {
+    pub run_id: Uuid,
+    pub applied: bool,
+    pub canonical_id: Uuid,
+    pub project_id: Uuid,
+    /// New memory version created when the correction was applied.
+    pub new_memory_id: Option<Uuid>,
+}
+
+/// Applies or rejects a pending validation correction. Applying writes the
+/// proposed content as a new immutable version and marks the memory
+/// validated; either resolution clears a standing needs_review flag (a
+/// human has now looked at the memory).
+pub async fn resolve_review(
+    pool: &PgPool,
+    run_id: Uuid,
+    approve: bool,
+) -> Result<ReviewResolution> {
+    use crate::repository::{
+        clear_needs_review, fetch_memory_snapshot, fetch_validation_run, set_review_status,
+    };
+
+    let run = fetch_validation_run(pool, run_id)
+        .await?
+        .with_context(|| format!("validation run {run_id} not found"))?;
+    if run.review_status.as_deref() != Some("pending") {
+        anyhow::bail!(
+            "validation run {run_id} is not pending review (status: {})",
+            run.review_status.as_deref().unwrap_or("none")
+        );
+    }
+
+    let mut new_memory_id = None;
+    if approve {
+        let proposal = run
+            .proposed_candidate_json
+            .as_ref()
+            .context("pending review has no proposed candidate")?;
+        let previous_memory_id: Uuid = proposal
+            .get("previous_memory_id")
+            .and_then(|value| value.as_str())
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(run.memory_id);
+        let current = fetch_memory_snapshot(pool, previous_memory_id)
+            .await?
+            .with_context(|| format!("memory {previous_memory_id} not found"))?;
+        let summary = proposal
+            .get("proposed_summary")
+            .and_then(|value| value.as_str())
+            .unwrap_or(&current.summary);
+        let text = proposal
+            .get("proposed_text")
+            .and_then(|value| value.as_str())
+            .unwrap_or(&current.canonical_text);
+        let applied =
+            mem_curate::apply_validation_revision(pool, previous_memory_id, summary, text)
+                .await
+                .context("apply reviewed correction")?;
+        new_memory_id = Some(applied);
+        set_review_status(pool, run_id, "applied").await?;
+        mark_validated(
+            pool,
+            run.canonical_id,
+            run.confidence.unwrap_or(1.0),
+            run_id,
+            Utc::now() + chrono::Duration::days(7),
+        )
+        .await?;
+    } else {
+        set_review_status(pool, run_id, "rejected").await?;
+    }
+
+    if clear_needs_review(pool, run.canonical_id).await? {
+        insert_score_audit(
+            pool,
+            run.canonical_id,
+            run.project_id,
+            "needs_review_resolved",
+            None,
+            None,
+            serde_json::json!({ "run_id": run_id, "applied": approve }),
+        )
+        .await?;
+    }
+    insert_score_audit(
+        pool,
+        run.canonical_id,
+        run.project_id,
+        "validation_completed",
+        None,
+        None,
+        serde_json::json!({
+            "run_id": run_id,
+            "review": if approve { "applied" } else { "rejected" },
+            "new_memory_id": new_memory_id,
+        }),
+    )
+    .await?;
+
+    Ok(ReviewResolution {
+        run_id,
+        applied: approve,
+        canonical_id: run.canonical_id,
+        project_id: run.project_id,
+        new_memory_id,
+    })
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
     use super::evidence::ValidationContext;

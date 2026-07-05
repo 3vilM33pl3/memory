@@ -833,6 +833,54 @@ mod validation {
     }
 
     #[tokio::test]
+    async fn pending_correction_can_be_applied_and_rejected_via_review() {
+        let Some(pool) = mem_test_support::migrated_pool().await else {
+            return;
+        };
+        let (slug, project_id, memory_id) = seed(&pool, "validate-review").await;
+        let mut verdict = raw_verdict(Verdict::Outdated, 0.9);
+        verdict.proposed_summary = Some("Reviewed corrected summary".to_string());
+        verdict.proposed_text = Some("Reviewed corrected text.".to_string());
+        let provider = FakeProvider { verdict };
+        let outcome = run_validation(
+            &pool,
+            &candidate(memory_id, project_id),
+            &provider,
+            &policy(false, true),
+            ValidationTrigger::Manual,
+        )
+        .await
+        .expect("run validation");
+
+        let resolution = mem_reinforce::resolve_review(&pool, outcome.run_id, true)
+            .await
+            .expect("apply review");
+        let new_id = resolution.new_memory_id.expect("new version from review");
+        let row = sqlx::query("SELECT summary, version_no FROM memory_entries WHERE id = $1")
+            .bind(new_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch applied version");
+        assert_eq!(
+            row.get::<String, _>("summary"),
+            "Reviewed corrected summary"
+        );
+        assert_eq!(row.get::<i32, _>("version_no"), 2);
+
+        let score = score_row(&pool, memory_id).await;
+        assert!(score.validated_at.is_some(), "applied review revalidates");
+
+        // Second resolution attempt must fail: no longer pending.
+        assert!(
+            mem_reinforce::resolve_review(&pool, outcome.run_id, false)
+                .await
+                .is_err()
+        );
+
+        cleanup(&pool, &slug, project_id).await;
+    }
+
+    #[tokio::test]
     async fn hallucinated_evidence_fails_the_run_with_short_cooldown() {
         let Some(pool) = mem_test_support::migrated_pool().await else {
             return;

@@ -3,6 +3,7 @@
 //! `run_provenance_reverify_scheduler`. Runs only on the primary node.
 
 use crate::prelude::*;
+use crate::*;
 use mem_api::ValidationDueInfo;
 use mem_reinforce::repository::{
     SelectionParams, compact_scores, count_validation_runs_since, fetch_due_candidates,
@@ -278,4 +279,304 @@ pub(crate) async fn audit_volatility_shifts(
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct MemoryScoresQuery {
+    #[serde(default)]
+    pub needs_review: Option<bool>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+pub(crate) async fn memory_scores(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+    Query(params): Query<MemoryScoresQuery>,
+) -> Result<Json<mem_api::MemoryScoresResponse>, ApiError> {
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_get_json(&state, &format!("/v1/projects/{project}/memory-scores")).await?,
+        ));
+    }
+    let pool = state.pool()?;
+    let project_id = resolve_project_id(&pool, &project).await?;
+    let scores = mem_reinforce::repository::list_memory_scores(
+        &pool,
+        project_id,
+        params.needs_review.unwrap_or(false),
+        state.config.reinforcement.half_life.as_secs_f64(),
+        params.limit.unwrap_or(50).clamp(1, 500),
+    )
+    .await
+    .map_err(ApiError::io)?;
+    Ok(Json(mem_api::MemoryScoresResponse {
+        project,
+        scores: scores.into_iter().map(score_listing_to_info).collect(),
+    }))
+}
+
+pub(crate) async fn validate_memory(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(request): Json<mem_api::ValidateMemoryRequest>,
+) -> Result<Json<mem_api::ValidationRunInfo>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if !state.is_primary() {
+        return Err(ApiError::service_unavailable(
+            "memory validation runs only on the primary node",
+        ));
+    }
+    let config = &state.config.reinforcement;
+    if !config.enabled {
+        return Err(ApiError::status_message(
+            StatusCode::BAD_REQUEST,
+            "reinforcement is disabled",
+        ));
+    }
+    let pool = state.pool()?;
+    let snapshot = mem_reinforce::repository::fetch_memory_snapshot(&pool, id)
+        .await
+        .map_err(ApiError::io)?
+        .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
+    let dry_run = request.dry_run.unwrap_or(config.validation_dry_run);
+
+    // Manual triggers bypass the threshold but respect the daily budget.
+    if !dry_run {
+        let day_ago = chrono::Utc::now() - chrono::Duration::days(1);
+        let used = mem_reinforce::repository::count_validation_runs_since(&pool, day_ago)
+            .await
+            .map_err(ApiError::io)?;
+        if used >= i64::from(config.daily_validation_cap) {
+            return Err(ApiError::status_message(
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("daily validation budget exhausted ({used} runs in the last 24h)"),
+            ));
+        }
+    }
+
+    let score = mem_reinforce::repository::fetch_scores(&pool, &[snapshot.canonical_id])
+        .await
+        .map_err(ApiError::io)?
+        .into_iter()
+        .next();
+    let activation = score.as_ref().map_or(0.0, |row| {
+        mem_reinforce::decayed(
+            row.activation,
+            row.last_decay_at,
+            chrono::Utc::now(),
+            chrono::Duration::from_std(config.half_life)
+                .unwrap_or_else(|_| chrono::Duration::days(30)),
+        )
+    });
+    let candidate = mem_reinforce::selection::ValidationCandidate {
+        canonical_id: snapshot.canonical_id,
+        memory_id: snapshot.memory_id,
+        project_id: snapshot.project_id,
+        activation,
+        volatility: score.as_ref().map_or(0.0, |row| row.volatility),
+        validated_at: score.as_ref().and_then(|row| row.validated_at),
+        needs_review: false,
+        cooldown_until: None,
+    };
+    let policy = mem_reinforce::ValidationPolicy {
+        dry_run,
+        ..mem_reinforce::ValidationPolicy::from(config)
+    };
+    let provider = crate::reinforcement::ServiceVerdictProvider {
+        state: state.clone(),
+    };
+    let outcome = mem_reinforce::run_validation(
+        &pool,
+        &candidate,
+        &provider,
+        &policy,
+        mem_reinforce::ValidationTrigger::Manual,
+    )
+    .await
+    .map_err(ApiError::io)?;
+
+    notify_project_changed(
+        &state,
+        snapshot.project_slug.clone(),
+        Some(snapshot.memory_id),
+        ActivityKind::MemoryValidation,
+        format!(
+            "Validated memory \"{}\": {} ({}{})",
+            snapshot.summary.chars().take(80).collect::<String>(),
+            outcome.verdict.as_str(),
+            outcome.action.as_str(outcome.dry_run),
+            if outcome.dry_run { ", dry run" } else { "" },
+        ),
+        None,
+    );
+
+    let run = mem_reinforce::repository::fetch_validation_run(&pool, outcome.run_id)
+        .await
+        .map_err(ApiError::io)?
+        .ok_or_else(|| ApiError::io(anyhow::anyhow!("validation run vanished")))?;
+    Ok(Json(validation_run_to_info(run)))
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct ValidationRunsQuery {
+    #[serde(default)]
+    pub review: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+pub(crate) async fn validation_runs(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+    Query(params): Query<ValidationRunsQuery>,
+) -> Result<Json<mem_api::ValidationRunsResponse>, ApiError> {
+    if !state.is_primary() {
+        return Ok(Json(
+            proxy_get_json(&state, &format!("/v1/projects/{project}/validation-runs")).await?,
+        ));
+    }
+    let pool = state.pool()?;
+    let project_id = resolve_project_id(&pool, &project).await?;
+    let runs = mem_reinforce::repository::list_validation_runs(
+        &pool,
+        project_id,
+        params.review.as_deref() == Some("pending"),
+        params.limit.unwrap_or(50).clamp(1, 500),
+    )
+    .await
+    .map_err(ApiError::io)?;
+    Ok(Json(mem_api::ValidationRunsResponse {
+        project,
+        runs: runs.into_iter().map(validation_run_to_info).collect(),
+    }))
+}
+
+pub(crate) async fn review_validation_run(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(run_id): Path<Uuid>,
+    Json(request): Json<mem_api::ReviewValidationRequest>,
+) -> Result<Json<mem_api::ReviewValidationResponse>, ApiError> {
+    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if !state.is_primary() {
+        return Err(ApiError::service_unavailable(
+            "validation review runs only on the primary node",
+        ));
+    }
+    let approve = match request.action.as_str() {
+        "apply" => true,
+        "reject" => false,
+        other => {
+            return Err(ApiError::status_message(
+                StatusCode::BAD_REQUEST,
+                format!("unknown review action `{other}`; expected `apply` or `reject`"),
+            ));
+        }
+    };
+    let pool = state.pool()?;
+    let resolution = mem_reinforce::resolve_review(&pool, run_id, approve)
+        .await
+        .map_err(ApiError::io)?;
+    if let Some(slug) = project_slug_for_id(&pool, resolution.project_id).await? {
+        notify_project_changed(
+            &state,
+            slug,
+            Some(resolution.new_memory_id.unwrap_or_default()).filter(|id| !id.is_nil()),
+            ActivityKind::MemoryValidation,
+            format!(
+                "Validation correction {}",
+                if approve { "applied" } else { "rejected" }
+            ),
+            None,
+        );
+    }
+    Ok(Json(mem_api::ReviewValidationResponse {
+        run_id,
+        action: request.action,
+        new_memory_id: resolution.new_memory_id,
+    }))
+}
+
+async fn resolve_project_id(pool: &PgPool, slug: &str) -> Result<Uuid, ApiError> {
+    let row: Option<(Uuid,)> = sqlx::query_as("SELECT id FROM projects WHERE slug = $1")
+        .bind(slug)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::sql)?;
+    row.map(|(id,)| id)
+        .ok_or_else(|| ApiError::not_found("project not found"))
+}
+
+async fn project_slug_for_id(pool: &PgPool, project_id: Uuid) -> Result<Option<String>, ApiError> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT slug FROM projects WHERE id = $1")
+        .bind(project_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::sql)?;
+    Ok(row.map(|(slug,)| slug))
+}
+
+fn score_listing_to_info(
+    listing: mem_reinforce::repository::ScoreListing,
+) -> mem_api::MemoryScoreInfo {
+    mem_api::MemoryScoreInfo {
+        canonical_id: listing.canonical_id,
+        memory_id: listing.memory_id,
+        summary: listing.summary,
+        activation: listing.activation,
+        access_count: listing.access_count,
+        citation_count: listing.citation_count,
+        propagated_count: listing.propagated_count,
+        volatility: listing.volatility,
+        last_access_at: listing.last_access_at,
+        validated_at: listing.validated_at,
+        validation_confidence: listing.validation_confidence,
+        needs_review: listing.needs_review,
+        needs_review_reason: listing.needs_review_reason,
+        last_invalidated_at: listing.last_invalidated_at,
+    }
+}
+
+fn validation_run_to_info(
+    run: mem_reinforce::repository::ValidationRunRow,
+) -> mem_api::ValidationRunInfo {
+    let reasons = run
+        .reasons_json
+        .as_array()
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let proposed = run.proposed_candidate_json.as_ref();
+    mem_api::ValidationRunInfo {
+        id: run.id,
+        canonical_id: run.canonical_id,
+        memory_id: run.memory_id,
+        summary: run.summary,
+        trigger: run.trigger_kind,
+        status: run.status,
+        verdict: run.verdict,
+        confidence: run.confidence,
+        dry_run: run.dry_run,
+        action: run.action,
+        review_status: run.review_status,
+        reasons,
+        proposed_summary: proposed
+            .and_then(|value| value.get("proposed_summary"))
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        proposed_text: proposed
+            .and_then(|value| value.get("proposed_text"))
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        model: run.model,
+        error: run.error,
+        started_at: run.started_at,
+        finished_at: run.finished_at,
+    }
 }

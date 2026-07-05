@@ -854,6 +854,46 @@ Examples:
 See also:
   docs/user/cli/curate.md";
 
+const SCORES_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only view of reinforcement activation scores (access-driven memory strength).
+  Memories marked [NEEDS REVIEW] were flagged by validation and rank lower until resolved.
+  Prefer --json when another tool parses the output.
+
+Examples:
+  memory scores --project memory
+  memory scores --project memory --needs-review --json
+
+See also:
+  docs/user/cli/scores.md";
+
+const VALIDATE_AFTER_HELP: &str = "\
+Agent notes:
+  Triggers an evidence-backed validation run for one memory (LLM call; respects the daily budget).
+  Defaults to the configured reinforcement.validation_dry_run; --dry-run and --execute override it.
+  Corrections are never applied directly; review them with memory review.
+
+Examples:
+  memory validate <memory-id> --dry-run
+  memory validate <memory-id> --execute --json
+
+See also:
+  docs/user/cli/validate.md";
+
+const REVIEW_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Review corrections proposed by memory validation. Applying writes a new immutable
+  memory version; rejecting records the decision. Both clear a needs-review flag.
+  Prefer --json when another tool parses the output.
+
+Examples:
+  memory review list --project memory
+  memory review apply <run-id> --json
+  memory review reject <run-id>
+
+See also:
+  docs/user/cli/review.md";
+
 const PROPOSALS_GROUP_AFTER_HELP: &str = "\
 Agent notes:
   Review pending memory replacement proposals produced by curation.
@@ -1143,6 +1183,12 @@ pub(in crate::commands) enum Command {
     Curate(CurateArgs),
     #[command(about = "Review pending memory replacement proposals.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
     Proposals(ProposalsArgs),
+    #[command(about = "Show reinforcement activation scores for a project.", after_help = SCORES_AFTER_HELP)]
+    Scores(ScoresArgs),
+    #[command(about = "Validate one memory against project evidence.", after_help = VALIDATE_AFTER_HELP)]
+    Validate(ValidateMemoryArgs),
+    #[command(about = "Review pending validation corrections.", after_help = REVIEW_GROUP_AFTER_HELP)]
+    Review(ReviewArgs),
     #[command(about = "Inspect and operate loop automations.", after_help = LOOPS_GROUP_AFTER_HELP)]
     Loops(LoopsArgs),
     #[command(about = "Rebuild and maintain embedding spaces.", after_help = EMBEDDINGS_GROUP_AFTER_HELP)]
@@ -2365,6 +2411,78 @@ pub(in crate::commands) struct ProposalsResolveArgs {
 }
 
 #[derive(Debug, Args)]
+pub(in crate::commands) struct ScoresArgs {
+    /// Project slug to inspect.
+    #[arg(long)]
+    pub(crate) project: String,
+    /// Only show memories flagged for review.
+    #[arg(long)]
+    pub(crate) needs_review: bool,
+    /// Maximum number of rows to print.
+    #[arg(long, default_value_t = 25)]
+    pub(crate) limit: i64,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct ValidateMemoryArgs {
+    /// Memory id to validate.
+    pub(crate) id: Uuid,
+    /// Force a dry run (report only), overriding the configured default.
+    #[arg(long, conflicts_with = "execute")]
+    pub(crate) dry_run: bool,
+    /// Force a live run that may apply rewording or queue corrections.
+    #[arg(long, conflicts_with = "dry_run")]
+    pub(crate) execute: bool,
+    /// Emit the validation run as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct ReviewArgs {
+    #[command(subcommand)]
+    pub(crate) command: ReviewCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(in crate::commands) enum ReviewCommand {
+    #[command(about = "List validation runs (optionally only pending corrections).", after_help = REVIEW_GROUP_AFTER_HELP)]
+    List(ReviewListArgs),
+    #[command(about = "Apply a pending validation correction as a new memory version.", after_help = REVIEW_GROUP_AFTER_HELP)]
+    Apply(ReviewResolveArgs),
+    #[command(about = "Reject a pending validation correction.", after_help = REVIEW_GROUP_AFTER_HELP)]
+    Reject(ReviewResolveArgs),
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct ReviewListArgs {
+    /// Project slug to inspect.
+    #[arg(long)]
+    pub(crate) project: String,
+    /// Show all validation runs, not just pending corrections.
+    #[arg(long)]
+    pub(crate) all: bool,
+    /// Maximum number of runs to print.
+    #[arg(long, default_value_t = 25)]
+    pub(crate) limit: i64,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct ReviewResolveArgs {
+    /// Validation run id.
+    pub(crate) id: Uuid,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
 #[command(
     about = "Inspect and operate loop automations.",
     after_help = LOOPS_GROUP_AFTER_HELP
@@ -3052,6 +3170,18 @@ pub(super) async fn run() -> Result<()> {
         Command::Proposals(args) => {
             let api = ApiClient::new(client, config);
             crate::commands::proposals::handle(args, &api).await?;
+        }
+        Command::Scores(args) => {
+            let api = ApiClient::new(client, config);
+            crate::commands::reinforcement::handle_scores(args, &api).await?;
+        }
+        Command::Validate(args) => {
+            let api = ApiClient::new(client, config);
+            crate::commands::reinforcement::handle_validate(args, &api).await?;
+        }
+        Command::Review(args) => {
+            let api = ApiClient::new(client, config);
+            crate::commands::reinforcement::handle_review(args, &api).await?;
         }
         Command::Loops(args) => {
             let api = ApiClient::new(client, config);

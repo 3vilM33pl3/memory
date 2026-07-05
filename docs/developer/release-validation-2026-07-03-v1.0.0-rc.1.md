@@ -6,7 +6,7 @@ packaged install/upgrade checks also pass.
 
 ## Environment
 
-- Repository: `/home/olivier/Projects/memory`
+- Repository: local `memory` checkout (repo root)
 - Baseline branch: `main`
 - Target version: `1.0.0-rc.1`
 - Initial state: `main` was ahead of `origin/main` by 2 commits and had an

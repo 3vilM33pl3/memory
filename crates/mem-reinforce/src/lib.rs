@@ -21,6 +21,6 @@ pub use scoring::{
 };
 pub use selection::{ThresholdInput, ValidationCandidate, validation_due};
 pub use validate::{
-    RawVerdict, ValidationAction, ValidationContext, ValidationOutcome, ValidationPolicy,
-    ValidationTrigger, VerdictProvider, run_validation,
+    RawVerdict, ReviewResolution, ValidationAction, ValidationContext, ValidationOutcome,
+    ValidationPolicy, ValidationTrigger, VerdictProvider, resolve_review, run_validation,
 };

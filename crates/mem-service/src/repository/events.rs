@@ -34,6 +34,7 @@ pub(crate) fn parse_activity_kind(value: &str) -> ActivityKind {
         "briefing" => ActivityKind::Briefing,
         "diagnostic" => ActivityKind::Diagnostic,
         "llm_audit" => ActivityKind::LlmAudit,
+        "memory_validation" => ActivityKind::MemoryValidation,
         _ => ActivityKind::Query,
     }
 }
@@ -512,6 +513,7 @@ pub(crate) fn activity_kind_label(kind: &ActivityKind) -> &'static str {
         ActivityKind::Briefing => "briefing",
         ActivityKind::Diagnostic => "diagnostic",
         ActivityKind::LlmAudit => "llm_audit",
+        ActivityKind::MemoryValidation => "memory_validation",
     }
 }
 

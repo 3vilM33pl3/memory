@@ -1179,6 +1179,95 @@ pub struct CurateResponse {
     pub validation_due: Vec<ValidationDueInfo>,
 }
 
+/// Reinforcement score state for one memory, as exposed by the API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryScoreInfo {
+    pub canonical_id: Uuid,
+    pub memory_id: Uuid,
+    pub summary: String,
+    pub activation: f64,
+    pub access_count: i64,
+    pub citation_count: i64,
+    pub propagated_count: i64,
+    pub volatility: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_access_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validated_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validation_confidence: Option<f32>,
+    pub needs_review: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub needs_review_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_invalidated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryScoresResponse {
+    pub project: String,
+    pub scores: Vec<MemoryScoreInfo>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ValidateMemoryRequest {
+    /// Overrides the configured `reinforcement.validation_dry_run`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationRunInfo {
+    pub id: Uuid,
+    pub canonical_id: Uuid,
+    pub memory_id: Uuid,
+    pub summary: String,
+    pub trigger: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    pub dry_run: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_status: Option<String>,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub started_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationRunsResponse {
+    pub project: String,
+    pub runs: Vec<ValidationRunInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewValidationRequest {
+    /// `apply` or `reject`.
+    pub action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewValidationResponse {
+    pub run_id: Uuid,
+    pub action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_memory_id: Option<Uuid>,
+}
+
 /// A memory due for reinforcement validation (activation over threshold,
 /// past cooldown, revalidation interval elapsed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1794,6 +1883,7 @@ pub enum ActivityKind {
     Briefing,
     Diagnostic,
     LlmAudit,
+    MemoryValidation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

@@ -6,6 +6,17 @@ This release candidate is the v1.0 stabilization line. It should not accept broa
 new features after the branch is cut; only bug fixes, docs, packaging,
 migration, validation, and release-blocking polish should land.
 
+### Added
+
+- Memory reinforcement and validation system (`mem-reinforce`): access-driven
+  activation scoring with spreading activation over memory relations, time
+  decay, and volatility tracking; activation-aware search ranking with
+  needs-review penalties; a threshold-triggered, evidence-backed LLM
+  validation pipeline (opt-in, dry-run first) with human-gated corrections
+  and full audit trails; `memory scores`, `memory validate`, and
+  `memory review` CLI commands plus matching HTTP endpoints. See
+  `docs/developer/architecture/memory-reinforcement.md`.
+
 ### Stabilization focus
 
 - Lock the documented v1 compatibility contract for CLI, config, migrations,

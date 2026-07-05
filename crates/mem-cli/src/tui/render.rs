@@ -3002,6 +3002,7 @@ pub(super) fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
         ActivityKind::WatcherHealth => ("watcher-health", Theme::WARNING),
         ActivityKind::Diagnostic => ("diagnostic", Theme::DANGER),
         ActivityKind::LlmAudit => ("llm-audit", Theme::WARNING),
+        ActivityKind::MemoryValidation => ("validation", Theme::ACCENT),
     };
     Span::styled(
         label,

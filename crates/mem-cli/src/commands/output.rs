@@ -92,6 +92,7 @@ pub(crate) fn activity_kind_text(kind: &mem_api::ActivityKind) -> &'static str {
         mem_api::ActivityKind::Briefing => "briefing",
         mem_api::ActivityKind::Diagnostic => "diagnostic",
         mem_api::ActivityKind::LlmAudit => "llm_audit",
+        mem_api::ActivityKind::MemoryValidation => "memory_validation",
     }
 }
 
