@@ -517,13 +517,11 @@ pub(crate) async fn run_eval_suite(
             }
             mem_eval::EvalItem::AdversarialStale(item) => {
                 if condition == mem_eval::EvalCondition::NoMemory {
-                    // Without seeded memories the refusal is vacuous and the
-                    // prefer-fresh contract cannot be exercised.
-                    mem_eval::skipped_result(
-                        &mem_eval::EvalItem::AdversarialStale(item.clone()),
-                        condition,
-                        "adversarial_stale requires seeded memories; skipped under no-memory",
-                    )
+                    // Baseline without memory: refusal is the only correct
+                    // behavior, so refuse items pass by definition and
+                    // prefer-fresh items cannot succeed. Keeps items paired
+                    // for comparison and group gating.
+                    mem_eval::no_memory_adversarial_stale_result(item, condition)
                 } else {
                     // Deterministic answer mode: the item tests the synthesis
                     // refusal threshold, not LLM answer style.

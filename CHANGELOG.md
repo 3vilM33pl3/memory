@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Memory-quality canary suite (`evals/suites/memory-quality-v1`) with a new
+  `adversarial_stale` eval item type (refuse-or-prefer-fresh contracts) and a
+  release gate (`evals/gates/memory-quality-v1.toml`) enforcing absolute
+  success-rate floors, including zero tolerated adversarial-stale failures.
+  Gate policies gained `min_candidate_success_rate` and per-group floors.
+- Semantic dedup pass: after automatic embedding creation, curation links
+  paraphrased near-duplicates via chunk-embedding cosine similarity and
+  queues human-gated merge proposals (`loop_id` `semantic_dedup` in
+  `memory proposals`); high-similarity pairs with low lexical overlap and
+  supersede/negation cues are flagged as likely contradictions instead.
+  New `[curation]` config section: `semantic_dedup_enabled`,
+  `semantic_duplicate_threshold`.
+- Property tests for the search ranker (penalties never raise scores, total
+  result ordering, finite scores).
+
+### Known issues
+
+- The memory-quality canary's adversarial group currently fails: deterministic
+  answer synthesis echoes superseded facts as "Also relevant" context and does
+  not refuse when only irrelevant or low-confidence memories match. Tracked as
+  the next quality workstream; the gate stays red on that group until fixed.
+
 ## 1.0.0 - 2026-07-05
 
 First stable release, cut locally on monolith from the v1.0 stabilization

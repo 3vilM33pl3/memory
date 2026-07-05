@@ -763,7 +763,10 @@ pub fn score_adversarial_stale(
         .map(|citation| citation.memory_id)
         .collect();
     let tagged_cited = |tags: &[String]| -> usize {
-        let wanted: HashSet<String> = tags.iter().map(|tag| normalize_expected_value(tag)).collect();
+        let wanted: HashSet<String> = tags
+            .iter()
+            .map(|tag| normalize_expected_value(tag))
+            .collect();
         response
             .results
             .iter()
@@ -779,7 +782,8 @@ pub fn score_adversarial_stale(
     let stale_citations = tagged_cited(&item.stale_tags);
     let fresh_citations = tagged_cited(&item.fresh_tags);
     let stale_hits = assertion_scores(&response.answer, &[], &item.stale_assertions).forbidden_hits;
-    let fresh_recall = assertion_scores(&response.answer, &item.fresh_assertions, &[]).assertion_recall;
+    let fresh_recall =
+        assertion_scores(&response.answer, &item.fresh_assertions, &[]).assertion_recall;
 
     let success = match item.expect {
         AdversarialExpectation::Refuse => response.insufficient_evidence && stale_hits == 0,
@@ -795,7 +799,11 @@ pub fn score_adversarial_stale(
     let mut scores = BTreeMap::new();
     scores.insert(
         "insufficient_evidence".to_string(),
-        if response.insufficient_evidence { 1.0 } else { 0.0 },
+        if response.insufficient_evidence {
+            1.0
+        } else {
+            0.0
+        },
     );
     scores.insert("stale_citations".to_string(), stale_citations as f64);
     scores.insert("fresh_citations".to_string(), fresh_citations as f64);
@@ -814,6 +822,35 @@ pub fn score_adversarial_stale(
         token_usage: response.answer_generation.token_usage.clone(),
         answer: Some(response.answer.clone()),
         notes: Vec::new(),
+        sub_results: Vec::new(),
+    }
+}
+
+/// Baseline result for an adversarial item under the no-memory condition: an
+/// empty memory refuses by definition, so `Refuse` items succeed and
+/// `PreferFresh` items fail.
+pub fn no_memory_adversarial_stale_result(
+    item: &AdversarialStaleItem,
+    condition: EvalCondition,
+) -> EvalItemResult {
+    let mut scores = BTreeMap::new();
+    scores.insert("insufficient_evidence".to_string(), 1.0);
+    scores.insert("stale_citations".to_string(), 0.0);
+    scores.insert("fresh_citations".to_string(), 0.0);
+    scores.insert("stale_assertion_hits".to_string(), 0.0);
+    scores.insert("fresh_assertion_recall".to_string(), 0.0);
+    EvalItemResult {
+        item_id: item.id.clone(),
+        eval_type: "adversarial_stale".to_string(),
+        condition,
+        metadata: item.metadata.clone(),
+        success: item.expect == AdversarialExpectation::Refuse,
+        skipped: false,
+        scores,
+        duration_ms: None,
+        token_usage: None,
+        answer: None,
+        notes: vec!["no-memory baseline: empty memory refuses by definition".to_string()],
         sub_results: Vec::new(),
     }
 }

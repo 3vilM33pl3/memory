@@ -148,7 +148,7 @@ cat > "$payload" <<'JSON'
     {
       "canonical_text": "Someone suggested the cache layer might eventually move to a managed key-value store; nothing was decided.",
       "summary": "Undecided suggestion about moving the cache layer to a managed key-value store.",
-      "memory_type": "note",
+      "memory_type": "domain_fact",
       "confidence": 0.3,
       "importance": 1,
       "tags": ["mq-vague-cache"],
@@ -157,7 +157,7 @@ cat > "$payload" <<'JSON'
     {
       "canonical_text": "There was loose talk about maybe renaming the reconciliation job someday; no decision or new name exists.",
       "summary": "Loose talk about renaming the reconciliation job; nothing decided.",
-      "memory_type": "note",
+      "memory_type": "domain_fact",
       "confidence": 0.3,
       "importance": 1,
       "tags": ["mq-vague-rename"],
@@ -166,7 +166,7 @@ cat > "$payload" <<'JSON'
     {
       "canonical_text": "Deploys used to run nightly on the legacy Jenkins pipeline before the platform migration; current CI is undocumented here.",
       "summary": "Legacy note: deploys formerly ran nightly on Jenkins.",
-      "memory_type": "note",
+      "memory_type": "domain_fact",
       "confidence": 0.4,
       "importance": 2,
       "tags": ["mq-stale-deploy"],

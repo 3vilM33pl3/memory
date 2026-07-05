@@ -2396,6 +2396,7 @@ fn test_app_config() -> AppConfig {
         retention: mem_api::RetentionConfig::default(),
         provenance: mem_api::ProvenanceConfig::default(),
         reinforcement: mem_api::ReinforcementConfig::default(),
+        curation: mem_api::CurationConfig::default(),
         profile: mem_api::Profile::Prod,
         resolved_config_path: None,
         resolved_dev_overlay_path: None,

@@ -62,6 +62,12 @@ Before tagging `v1.0.0-rc.1`:
    memory eval gate --comparison target/memory-evals/quality-comparison.json --policy evals/gates/memory-quality-v1.toml --text
    ```
 
+   Status 2026-07-05: retrieval and grounding groups pass (17/24 overall);
+   the `adversarial_stale` group fails because deterministic synthesis echoes
+   superseded facts and never refuses on weak evidence. The gate is expected
+   to stay red on that group until the synthesis fixes land (see CHANGELOG
+   "Known issues").
+
 7. Smoke test fresh install and upgrade paths for Debian, Homebrew, and source
    dev mode.
 8. Verify core workflows manually: service, status, doctor, TUI, web UI,
