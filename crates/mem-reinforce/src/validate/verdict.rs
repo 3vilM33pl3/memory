@@ -145,14 +145,25 @@ pub fn validate_verdict(raw: RawVerdict, context: &ValidationContext) -> Result<
             raw.evidence.len()
         );
     }
-    for item in &raw.evidence {
+    let mut evidence = raw.evidence;
+    for item in &mut evidence {
         let evidence_ref = item.evidence_ref.trim();
         if evidence_ref.is_empty() {
             bail!("verdict evidence reference is empty");
         }
-        if !context.allows_reference(evidence_ref) {
-            bail!("verdict cites evidence not present in gathered context: {evidence_ref}");
+        if context.allows_reference(evidence_ref) {
+            item.evidence_ref = evidence_ref.to_string();
+            continue;
         }
+        // Providers sometimes copy a citable line's trailing annotation
+        // ("<sha> (2026-06-15 subject)"); accept and normalize to the bare
+        // token when that token alone is in the allowlist.
+        let token = evidence_ref.split_whitespace().next().unwrap_or_default();
+        if !token.is_empty() && context.allows_reference(token) {
+            item.evidence_ref = token.to_string();
+            continue;
+        }
+        bail!("verdict cites evidence not present in gathered context: {evidence_ref}");
     }
     if let Some(summary) = &raw.proposed_summary
         && summary.trim().is_empty()
@@ -168,7 +179,7 @@ pub fn validate_verdict(raw: RawVerdict, context: &ValidationContext) -> Result<
         verdict: raw.verdict,
         confidence: raw.confidence,
         reasons: raw.reasons,
-        evidence: raw.evidence,
+        evidence,
         proposed_summary: raw.proposed_summary,
         proposed_text: raw.proposed_text,
         clarity_ok: raw.clarity_ok,
@@ -220,6 +231,20 @@ mod tests {
             excerpt: None,
         });
         assert!(validate_verdict(verdict, &context).is_ok());
+    }
+
+    #[test]
+    fn normalizes_annotated_reference_to_bare_token() {
+        let context = minimal_context(&["abc1234"]);
+        let mut verdict = raw(Verdict::Valid, 0.9);
+        verdict.evidence.push(RawEvidence {
+            kind: EvidenceKind::Commit,
+            evidence_ref: "abc1234 (2026-06-15 subject line)".to_string(),
+            stance: EvidenceStance::Supports,
+            excerpt: None,
+        });
+        let validated = validate_verdict(verdict, &context).expect("token match accepted");
+        assert_eq!(validated.evidence[0].evidence_ref, "abc1234");
     }
 
     #[test]
