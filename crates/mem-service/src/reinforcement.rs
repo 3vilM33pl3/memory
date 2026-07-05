@@ -136,7 +136,7 @@ pub(crate) struct ServiceVerdictProvider {
     pub(crate) state: AppState,
 }
 
-const VALIDATION_SYSTEM_PROMPT: &str = "You are auditing one stored project memory against the evidence supplied by the user. Decide whether the memory is still accurate. Return strict JSON with keys: verdict (one of valid, partially_valid, outdated, ambiguous, unsupported), confidence (0..1), reasons (array of short strings), evidence (array of {kind, ref, stance, excerpt} where kind is one of file, code_symbol, doc, commit, test, issue, memory, search_hit and stance is supports, contradicts or neutral), clarity_ok (boolean, false when the memory is correct but its wording could be clearer or easier to retrieve), proposed_summary (string, optional), proposed_text (string, optional). Rules: cite ONLY references that literally appear in the supplied evidence lists; never invent files, commits or ids. Propose new wording only when it preserves the memory's meaning. If the memory is outdated, propose a corrected text when the evidence clearly supports one. If evidence is weak, missing, or contradictory, use verdict ambiguous or unsupported with low confidence rather than guessing.";
+const VALIDATION_SYSTEM_PROMPT: &str = "You are auditing one stored project memory against the evidence supplied by the user. Decide whether the memory is still accurate. Return strict JSON with keys: verdict (one of valid, partially_valid, outdated, ambiguous, unsupported), confidence (0..1), reasons (array of short strings), evidence (array of {kind, ref, stance, excerpt} where kind is one of file, code_symbol, doc, commit, test, issue, memory, search_hit and stance is supports, contradicts or neutral), clarity_ok (boolean, false when the memory is correct but its wording could be clearer or easier to retrieve), proposed_summary (string, optional), proposed_text (string, optional). Rules: every evidence ref MUST be copied verbatim from a line marked 'citable:' in the supplied context; if nothing citable supports a point, omit the evidence entry and explain in reasons instead. Background sources without a citable ref must not be cited. Never invent files, commits or ids. Propose new wording only when it preserves the memory's meaning. If the memory is outdated, propose a corrected text when the evidence clearly supports one. If evidence is weak, missing, or contradictory, use verdict ambiguous or unsupported with low confidence rather than guessing.";
 
 #[async_trait::async_trait]
 impl mem_reinforce::VerdictProvider for ServiceVerdictProvider {
@@ -205,24 +205,31 @@ pub(crate) fn build_validation_prompt(context: &mem_reinforce::ValidationContext
         lines.push(format!("Tags: {}", context.tags.join(", ")));
     }
     lines.push(String::new());
+    lines.push(format!("citable: {} (this memory's id)", memory.memory_id));
     if context.sources.is_empty() {
         lines.push("Recorded sources: none.".to_string());
     } else {
-        lines.push("Recorded sources (citable refs):".to_string());
+        lines.push("Recorded sources:".to_string());
         for source in &context.sources {
             let mut parts = Vec::new();
-            if let Some(path) = &source.file_path {
-                match &source.symbol_name {
-                    Some(symbol) => parts.push(format!("{path}#{symbol}")),
-                    None => parts.push(path.clone()),
+            match &source.file_path {
+                Some(path) => {
+                    let reference = match &source.symbol_name {
+                        Some(symbol) => format!("{path}#{symbol}"),
+                        None => path.clone(),
+                    };
+                    parts.push(format!("citable: {reference}"));
                 }
+                // Path-less sources (task prompts, notes) are background
+                // only: there is nothing in the allowlist to cite.
+                None => parts.push("background (no citable ref)".to_string()),
             }
             parts.push(format!("kind={}", source.source_kind));
             if let Some(status) = &source.provenance_status {
                 parts.push(format!("provenance={status}"));
             }
             if let Some(commit) = &source.git_commit {
-                parts.push(format!("commit={commit}"));
+                parts.push(format!("citable commit: {commit}"));
             }
             lines.push(format!("- {}", parts.join(" ")));
             if let Some(excerpt) = &source.excerpt {
@@ -235,22 +242,22 @@ pub(crate) fn build_validation_prompt(context: &mem_reinforce::ValidationContext
     }
     if !context.related.is_empty() {
         lines.push(String::new());
-        lines.push("Related memories (citable by id):".to_string());
+        lines.push("Related memories:".to_string());
         for related in &context.related {
             lines.push(format!(
-                "- {} [{}] {}",
+                "- citable: {} [{}] {}",
                 related.memory_id, related.relation_type, related.summary
             ));
         }
     }
     if !context.git_log.is_empty() {
         lines.push(String::new());
-        lines.push(
-            "Commits touching the source paths since last validation (citable by short sha):"
-                .to_string(),
-        );
+        lines.push("Commits touching the source paths since last validation:".to_string());
         for line in &context.git_log {
-            lines.push(format!("- {line}"));
+            match line.split_once(' ') {
+                Some((sha, rest)) => lines.push(format!("- citable: {sha} ({rest})")),
+                None => lines.push(format!("- citable: {line}")),
+            }
         }
     }
     if !context.prior_runs.is_empty() {
