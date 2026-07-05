@@ -41,6 +41,8 @@ TAB_NAMES = [
     "Project",
     "Review",
     "Watchers",
+    "Skills",
+    "Automations",
     "Embeddings",
     "Resume",
 ]
@@ -152,15 +154,27 @@ def parse_ansi_screen(payload: bytes) -> list[list[tuple[str, CellStyle]]]:
 
 
 def active_tab_name(payload: bytes) -> str:
+    # The active tab is highlighted, but the exact attribute (bg, fg, bold)
+    # depends on the theme. Find the tab whose style differs from the
+    # majority style across all tab labels on the same line.
     for line in parse_ansi_screen(payload)[:4]:
         chars = "".join(char for char, _style in line)
+        found: list[tuple[str, CellStyle]] = []
         for tab in TAB_NAMES:
             start = chars.find(tab)
             if start < 0:
                 continue
-            cells = line[start : start + len(tab)]
-            if any(style.bg != DEFAULT_BG for _char, style in cells):
-                return tab
+            styles = [style for _char, style in line[start : start + len(tab)]]
+            found.append((tab, max(set(styles), key=styles.count)))
+        if len(found) < len(TAB_NAMES):
+            continue
+        style_counts: dict[CellStyle, int] = {}
+        for _tab, style in found:
+            style_counts[style] = style_counts.get(style, 0) + 1
+        majority = max(style_counts, key=lambda style: style_counts[style])
+        outliers = [tab for tab, style in found if style != majority]
+        if len(outliers) == 1:
+            return outliers[0]
     raise RuntimeError("could not determine active TUI tab")
 
 
