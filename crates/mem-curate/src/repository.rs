@@ -843,6 +843,141 @@ pub async fn refresh_memory_relations(
     Ok(())
 }
 
+/// A semantically near-duplicate pair discovered by [`refresh_semantic_relations`].
+#[derive(Debug, Clone)]
+pub struct SemanticDuplicate {
+    pub memory_id: Uuid,
+    pub summary: String,
+    pub other_memory_id: Uuid,
+    pub other_summary: String,
+    /// Max cosine similarity across chunk pairs in a shared embedding space.
+    pub similarity: f64,
+    /// Lexical token-overlap ratio between the canonical texts.
+    pub lexical_overlap: f32,
+    /// High cosine + low lexical overlap + supersede/negation cues: the pair
+    /// likely contradicts rather than duplicates, so it must not be merged
+    /// without review.
+    pub conflict: bool,
+}
+
+/// Semantic complement to the lexical pass in [`refresh_relations`]: runs
+/// after chunk embeddings exist (they are built asynchronously, so this cannot
+/// happen inside `curate()`), links paraphrased duplicates the token-overlap
+/// classifier misses, and returns the pairs so the caller can queue
+/// human-gated merge proposals. Conflict pairs get a `RelatedTo` edge instead
+/// of `Duplicates` — a contradiction is not a merge candidate.
+pub async fn refresh_semantic_relations(
+    pool: &PgPool,
+    project: &str,
+    memory_ids: &[Uuid],
+    threshold: f64,
+) -> Result<Vec<SemanticDuplicate>, sqlx::Error> {
+    if memory_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut tx = pool.begin().await?;
+    let Some(project_row) = sqlx::query("SELECT id FROM projects WHERE slug = $1")
+        .bind(project)
+        .fetch_optional(&mut *tx)
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+    let project_id: Uuid = project_row.try_get("id")?;
+
+    let mut duplicates = Vec::new();
+    for &memory_id in memory_ids {
+        let Some(current) = load_memory_profile(&mut tx, memory_id).await? else {
+            continue;
+        };
+        let current_tokens = normalize_text(&current.canonical_text);
+        let neighbors = sqlx::query(
+            r#"
+            SELECT
+                other.id AS other_id,
+                other.summary AS other_summary,
+                other.canonical_text AS other_text,
+                MAX(1 - (ce.embedding <=> oe.embedding)) AS similarity
+            FROM memory_chunks mc
+            JOIN memory_chunk_embeddings ce ON ce.chunk_id = mc.id
+            JOIN memory_chunk_embeddings oe
+                ON oe.embedding_space = ce.embedding_space
+               AND COALESCE(oe.embedding_dimension, 0) = COALESCE(ce.embedding_dimension, 0)
+            JOIN memory_chunks oc ON oc.id = oe.chunk_id
+            JOIN memory_entries me ON me.id = mc.memory_entry_id
+            JOIN memory_entries other ON other.id = oc.memory_entry_id
+            WHERE mc.memory_entry_id = $1
+              AND other.project_id = $2
+              AND other.status = 'active'
+              AND other.canonical_id <> me.canonical_id
+            GROUP BY other.id, other.summary, other.canonical_text
+            HAVING MAX(1 - (ce.embedding <=> oe.embedding)) >= $3
+            ORDER BY similarity DESC
+            LIMIT 8
+            "#,
+        )
+        .bind(memory_id)
+        .bind(project_id)
+        .bind(threshold)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        for row in neighbors {
+            let other_memory_id: Uuid = row.try_get("other_id")?;
+            let other_summary: String = row.try_get("other_summary")?;
+            let other_text: String = row.try_get("other_text")?;
+            let similarity: f64 = row.try_get("similarity")?;
+            let lexical_overlap =
+                token_overlap_ratio(&current_tokens, &normalize_text(&other_text));
+            let conflict =
+                is_semantic_conflict(&current.canonical_text, &other_text, lexical_overlap);
+            let relation = if conflict {
+                MemoryRelationType::RelatedTo
+            } else {
+                MemoryRelationType::Duplicates
+            };
+            insert_relation(&mut tx, memory_id, other_memory_id, relation.clone()).await?;
+            insert_relation(&mut tx, other_memory_id, memory_id, relation).await?;
+            duplicates.push(SemanticDuplicate {
+                memory_id,
+                summary: current.summary.clone(),
+                other_memory_id,
+                other_summary,
+                similarity,
+                lexical_overlap,
+                conflict,
+            });
+        }
+    }
+    tx.commit().await?;
+    Ok(duplicates)
+}
+
+/// Two texts the embedder considers near-identical but that barely share
+/// vocabulary, with supersede/negation cues in either one, are more likely a
+/// contradiction (old vs. new fact) than a paraphrase.
+fn is_semantic_conflict(current_text: &str, other_text: &str, lexical_overlap: f32) -> bool {
+    lexical_overlap < 0.45 && (has_polarity_cue(current_text) || has_polarity_cue(other_text))
+}
+
+fn has_polarity_cue(text: &str) -> bool {
+    if has_supersedes_language(text) {
+        return true;
+    }
+    let lowered = text.to_ascii_lowercase();
+    [
+        "no longer",
+        "instead of",
+        "moved to",
+        "switched to",
+        "renamed",
+        "retired",
+        "removed",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
+}
+
 async fn upsert_project(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project: &str,
@@ -1483,6 +1618,34 @@ pub async fn reject_replacement_proposal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn semantic_conflict_requires_low_overlap_and_polarity_cue() {
+        // Paraphrase: high embedder similarity is assumed by the caller; low
+        // lexical overlap alone is not a conflict without a polarity cue.
+        assert!(!is_semantic_conflict(
+            "The gateway accepts requests on port 7420.",
+            "Requests are served by the gateway at 7420.",
+            0.2,
+        ));
+        // Supersede language + disjoint vocabulary reads as old-vs-new fact.
+        assert!(is_semantic_conflict(
+            "The exporter writes Parquet; CSV output was deprecated.",
+            "Exports are produced as comma separated files.",
+            0.1,
+        ));
+        assert!(is_semantic_conflict(
+            "The cache no longer keeps entries past restart.",
+            "Cached values survive restarts via the disk snapshot.",
+            0.3,
+        ));
+        // High lexical overlap means the pair is a duplicate even with cues.
+        assert!(!is_semantic_conflict(
+            "The retention window was deprecated and replaced with 90 days.",
+            "The retention window was deprecated and replaced with 90 days.",
+            1.0,
+        ));
+    }
 
     fn profile(canonical_text: &str, tags: &[&str], files: &[&str]) -> MemoryProfile {
         profile_with_type("convention", canonical_text, tags, files)
