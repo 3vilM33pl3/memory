@@ -4,6 +4,7 @@ mod handlers;
 mod mcp_http;
 mod offline;
 mod prelude;
+mod reinforcement;
 pub mod repository;
 mod routes;
 mod runtime;

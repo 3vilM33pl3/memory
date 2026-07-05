@@ -926,6 +926,7 @@ mod tests {
             automation: mem_api::AutomationConfig::default(),
             retention: mem_api::RetentionConfig::default(),
             provenance: mem_api::ProvenanceConfig::default(),
+            reinforcement: mem_api::ReinforcementConfig::default(),
             profile: mem_api::Profile::Prod,
             resolved_config_path: None,
             resolved_dev_overlay_path: None,

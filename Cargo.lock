@@ -2210,6 +2210,7 @@ dependencies = [
  "mem-loops",
  "mem-mcp",
  "mem-platform",
+ "mem-reinforce",
  "mem-search",
  "mem-skills",
  "mem-test-support",

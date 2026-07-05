@@ -171,6 +171,7 @@ pub(crate) async fn build_state(
     let automated_embedding_creation_enabled =
         Arc::new(AtomicBool::new(config.embeddings.create_enabled));
     let llm_audit = Arc::new(RwLock::new(config.llm_audit.clone()));
+    let reinforcement = crate::reinforcement::build_runtime(&config.reinforcement);
 
     let state = AppState {
         role,
@@ -192,11 +193,15 @@ pub(crate) async fn build_state(
             status: "idle".to_string(),
             ..ProvenanceRuntimeState::default()
         })),
+        reinforcement: reinforcement.as_ref().map(|(runtime, _)| runtime.clone()),
         cluster: ClusterRuntime {
             peers: Arc::new(Mutex::new(HashMap::new())),
         },
         shutdown,
     };
+    if let Some((_, rx)) = reinforcement {
+        crate::reinforcement::spawn_access_worker(state.clone(), rx);
+    }
     start_offline_sync_task(state.clone());
     Ok(state)
 }

@@ -189,6 +189,7 @@ pub(crate) async fn get_memory(
         .await
         .map_err(ApiError::sql)?
         .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
+    crate::reinforcement::record_direct_read(&state, detail.id);
     Ok(Json(detail))
 }
 

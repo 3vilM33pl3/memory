@@ -306,6 +306,40 @@ async fn insert_symbol_provenance_fixture(
     .expect("insert code symbol");
 }
 
+#[test]
+fn reinforcement_batch_upgrades_citations_and_skips_empty_responses() {
+    let mut response = test_query_response();
+    let retrieved = response.results[0].memory_id;
+    let batch =
+        crate::reinforcement::batch_from_query_response(&response).expect("batch for results");
+    assert_eq!(
+        batch.events,
+        vec![(retrieved, mem_reinforce::AccessKind::Retrieval)]
+    );
+
+    response.answer_citations = vec![mem_api::QueryAnswerCitation {
+        result_number: 1,
+        memory_id: retrieved,
+        project: None,
+        project_name: None,
+        repo_root: None,
+        memory_type: mem_api::MemoryType::Architecture,
+        summary: "Primary memory".to_string(),
+        snippet: "Primary evidence snippet".to_string(),
+    }];
+    let batch =
+        crate::reinforcement::batch_from_query_response(&response).expect("batch for citation");
+    assert_eq!(
+        batch.events,
+        vec![(retrieved, mem_reinforce::AccessKind::Citation)],
+        "a citation subsumes the retrieval of the same memory"
+    );
+
+    response.results.clear();
+    response.answer_citations.clear();
+    assert!(crate::reinforcement::batch_from_query_response(&response).is_none());
+}
+
 fn test_query_response() -> QueryResponse {
     QueryResponse {
         answer: "fallback answer".to_string(),

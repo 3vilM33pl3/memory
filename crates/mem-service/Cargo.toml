@@ -14,6 +14,7 @@ config.workspace = true
 mem-agenttop = { path = "../mem-agenttop" }
 mem-api = { path = "../mem-api" }
 mem-curate = { path = "../mem-curate" }
+mem-reinforce = { path = "../mem-reinforce" }
 mem-graph = { path = "../mem-graph" }
 mem-ingest = { path = "../mem-ingest" }
 mem-loops = { path = "../mem-loops" }

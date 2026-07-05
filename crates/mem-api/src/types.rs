@@ -3796,6 +3796,8 @@ pub struct AppConfig {
     pub retention: RetentionConfig,
     #[serde(default)]
     pub provenance: ProvenanceConfig,
+    #[serde(default)]
+    pub reinforcement: ReinforcementConfig,
     #[serde(skip, default = "default_profile")]
     pub profile: Profile,
     /// Path of the resolved config file (base file in dev mode). Useful when
@@ -4772,6 +4774,148 @@ pub struct RetentionConfig {
     pub superseded_after: Option<Duration>,
 }
 
+/// Access-driven memory reinforcement: activation scoring, spreading
+/// activation over memory relations, volatility tracking, and
+/// threshold-triggered validation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReinforcementConfig {
+    /// Master switch for access scoring, decay, and ranking integration.
+    /// Cheap and deterministic; involves no LLM calls.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Enables the threshold-triggered LLM validation pipeline (scheduler
+    /// and curator trigger). Off by default because it costs LLM calls.
+    #[serde(default)]
+    pub validation_enabled: bool,
+    /// When validation is enabled, only report what would change instead
+    /// of applying rewording or queuing corrections.
+    #[serde(default = "default_true")]
+    pub validation_dry_run: bool,
+    /// Activation boost when a memory is returned in query results.
+    #[serde(default = "default_direct_access_boost")]
+    pub direct_access_boost: f64,
+    /// Activation boost when a memory is cited in a synthesized answer
+    /// (replaces the retrieval boost for that access).
+    #[serde(default = "default_citation_boost")]
+    pub citation_boost: f64,
+    /// Activation boost for a direct single-memory read (get/resume).
+    #[serde(default = "default_direct_read_boost")]
+    pub direct_read_boost: f64,
+    /// Activation halves after this long without access.
+    #[serde(default = "default_reinforcement_half_life")]
+    #[serde(with = "humantime_serde")]
+    pub half_life: Duration,
+    /// Per-hop decay factor for spreading activation to linked memories.
+    #[serde(default = "default_hop_decay")]
+    pub hop_decay: f64,
+    /// Maximum graph distance activation spreads to.
+    #[serde(default = "default_max_hops")]
+    pub max_hops: u8,
+    /// Divide propagated increments by the fan-out of the node they
+    /// spread from, so hub memories do not inflate all their neighbours.
+    #[serde(default = "default_true")]
+    pub fan_normalization: bool,
+    /// Propagated increments below this are dropped.
+    #[serde(default = "default_min_propagated_increment")]
+    pub min_propagated_increment: f64,
+    /// Hard ceiling on activation.
+    #[serde(default = "default_max_activation")]
+    pub max_activation: f64,
+    /// Activation at which a memory becomes due for validation.
+    #[serde(default = "default_validation_threshold")]
+    pub validation_threshold: f64,
+    /// Minimum wait after any validation run before the same memory can
+    /// be validated again (hysteresis).
+    #[serde(default = "default_validation_cooldown")]
+    #[serde(with = "humantime_serde")]
+    pub validation_cooldown: Duration,
+    /// Base revalidation interval for already-validated memories; divided
+    /// by `1 + volatility * volatility_revalidation_factor`.
+    #[serde(default = "default_min_revalidation_interval")]
+    #[serde(with = "humantime_serde")]
+    pub min_revalidation_interval: Duration,
+    /// How strongly volatility shortens the revalidation interval.
+    #[serde(default = "default_volatility_revalidation_factor")]
+    pub volatility_revalidation_factor: f64,
+    /// Smoothing factor for the volatility EWMA (0..1).
+    #[serde(default = "default_volatility_ewma_alpha")]
+    pub volatility_ewma_alpha: f64,
+    /// Background reinforcement scheduler tick interval.
+    #[serde(default = "default_reinforcement_scheduler_interval")]
+    #[serde(with = "humantime_serde")]
+    pub scheduler_interval: Duration,
+    /// Maximum validations started per scheduler cycle per project.
+    #[serde(default = "default_validation_batch_size")]
+    pub validation_batch_size: u32,
+    /// Global cap on non-dry-run validation runs per rolling day.
+    #[serde(default = "default_daily_validation_cap")]
+    pub daily_validation_cap: u32,
+    /// Allow automatic application of high-confidence rewording of
+    /// still-valid memories. Corrections are always human-gated.
+    #[serde(default)]
+    pub auto_apply_rewording: bool,
+    /// Minimum verdict confidence for automatic rewording.
+    #[serde(default = "default_auto_apply_min_confidence")]
+    pub auto_apply_min_confidence: f32,
+    /// Verdict confidence below this flags the memory for review instead
+    /// of acting on the verdict.
+    #[serde(default = "default_needs_review_min_confidence")]
+    pub needs_review_min_confidence: f32,
+    /// Weight of `ln(1 + activation)` in search ranking.
+    #[serde(default = "default_activation_rank_weight")]
+    pub activation_rank_weight: f64,
+    /// Cap on the activation ranking boost.
+    #[serde(default = "default_activation_rank_cap")]
+    pub activation_rank_cap: f64,
+    /// Multiplier applied to the final score of memories flagged for
+    /// review (penalty, not exclusion).
+    #[serde(default = "default_needs_review_rank_penalty")]
+    pub needs_review_rank_penalty: f64,
+    /// How long individual access events are kept before pruning.
+    #[serde(default = "default_access_event_retention")]
+    #[serde(with = "humantime_serde")]
+    pub access_event_retention: Duration,
+    /// Capacity of the bounded access-recording channel; overflow drops
+    /// events (scoring is advisory, load-shedding is deliberate).
+    #[serde(default = "default_access_channel_capacity")]
+    pub access_channel_capacity: usize,
+}
+
+impl Default for ReinforcementConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            validation_enabled: false,
+            validation_dry_run: true,
+            direct_access_boost: default_direct_access_boost(),
+            citation_boost: default_citation_boost(),
+            direct_read_boost: default_direct_read_boost(),
+            half_life: default_reinforcement_half_life(),
+            hop_decay: default_hop_decay(),
+            max_hops: default_max_hops(),
+            fan_normalization: true,
+            min_propagated_increment: default_min_propagated_increment(),
+            max_activation: default_max_activation(),
+            validation_threshold: default_validation_threshold(),
+            validation_cooldown: default_validation_cooldown(),
+            min_revalidation_interval: default_min_revalidation_interval(),
+            volatility_revalidation_factor: default_volatility_revalidation_factor(),
+            volatility_ewma_alpha: default_volatility_ewma_alpha(),
+            scheduler_interval: default_reinforcement_scheduler_interval(),
+            validation_batch_size: default_validation_batch_size(),
+            daily_validation_cap: default_daily_validation_cap(),
+            auto_apply_rewording: false,
+            auto_apply_min_confidence: default_auto_apply_min_confidence(),
+            needs_review_min_confidence: default_needs_review_min_confidence(),
+            activation_rank_weight: default_activation_rank_weight(),
+            activation_rank_cap: default_activation_rank_cap(),
+            needs_review_rank_penalty: default_needs_review_rank_penalty(),
+            access_event_retention: default_access_event_retention(),
+            access_channel_capacity: default_access_channel_capacity(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PruneHistoryRequest {
     /// Limit the prune to a single project. None means every project in
@@ -4875,6 +5019,98 @@ fn default_reverify_interval() -> Duration {
 
 fn default_cluster_peer_ttl() -> Duration {
     Duration::from_secs(15)
+}
+
+fn default_direct_access_boost() -> f64 {
+    1.0
+}
+
+fn default_citation_boost() -> f64 {
+    1.5
+}
+
+fn default_direct_read_boost() -> f64 {
+    0.25
+}
+
+fn default_reinforcement_half_life() -> Duration {
+    Duration::from_secs(30 * 24 * 60 * 60)
+}
+
+fn default_hop_decay() -> f64 {
+    0.5
+}
+
+fn default_max_hops() -> u8 {
+    2
+}
+
+fn default_min_propagated_increment() -> f64 {
+    0.05
+}
+
+fn default_max_activation() -> f64 {
+    20.0
+}
+
+fn default_validation_threshold() -> f64 {
+    8.0
+}
+
+fn default_validation_cooldown() -> Duration {
+    Duration::from_secs(7 * 24 * 60 * 60)
+}
+
+fn default_min_revalidation_interval() -> Duration {
+    Duration::from_secs(14 * 24 * 60 * 60)
+}
+
+fn default_volatility_revalidation_factor() -> f64 {
+    4.0
+}
+
+fn default_volatility_ewma_alpha() -> f64 {
+    0.3
+}
+
+fn default_reinforcement_scheduler_interval() -> Duration {
+    Duration::from_secs(15 * 60)
+}
+
+fn default_validation_batch_size() -> u32 {
+    3
+}
+
+fn default_daily_validation_cap() -> u32 {
+    20
+}
+
+fn default_auto_apply_min_confidence() -> f32 {
+    0.85
+}
+
+fn default_needs_review_min_confidence() -> f32 {
+    0.5
+}
+
+fn default_activation_rank_weight() -> f64 {
+    0.3
+}
+
+fn default_activation_rank_cap() -> f64 {
+    1.2
+}
+
+fn default_needs_review_rank_penalty() -> f64 {
+    0.6
+}
+
+fn default_access_event_retention() -> Duration {
+    Duration::from_secs(30 * 24 * 60 * 60)
+}
+
+fn default_access_channel_capacity() -> usize {
+    1024
 }
 
 fn default_cluster_priority() -> i32 {

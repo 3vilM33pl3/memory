@@ -21,6 +21,7 @@ pub(crate) struct AppState {
     pub(crate) recent_activity: Arc<Mutex<VecDeque<ServiceEvent>>>,
     pub(crate) watchers: Arc<Mutex<HashMap<String, WatcherPresence>>>,
     pub(crate) provenance: Arc<Mutex<ProvenanceRuntimeState>>,
+    pub(crate) reinforcement: Option<crate::reinforcement::ReinforcementRuntime>,
     pub(crate) cluster: ClusterRuntime,
     pub(crate) shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }

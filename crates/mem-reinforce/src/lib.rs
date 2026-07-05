@@ -8,11 +8,13 @@
 //! never talks to an LLM directly.
 
 pub mod propagation;
+pub mod recorder;
 pub mod repository;
 pub mod scoring;
 pub mod selection;
 
 pub use propagation::{CanonicalEdge, PropagatedIncrement, propagation_increments};
+pub use recorder::{AccessBatch, ThresholdCrossing, record_access_batch};
 pub use scoring::{
     AccessKind, ScoreParams, activation_rank_boost, apply_boost, decayed, update_volatility,
 };

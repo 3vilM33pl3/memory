@@ -50,6 +50,22 @@ impl Default for ScoreParams {
     }
 }
 
+impl From<&mem_api::ReinforcementConfig> for ScoreParams {
+    fn from(config: &mem_api::ReinforcementConfig) -> Self {
+        Self {
+            half_life: Duration::from_std(config.half_life).unwrap_or_else(|_| Duration::days(30)),
+            direct_boost: config.direct_access_boost,
+            citation_boost: config.citation_boost,
+            direct_read_boost: config.direct_read_boost,
+            hop_decay: config.hop_decay,
+            max_hops: config.max_hops,
+            fan_normalization: config.fan_normalization,
+            min_propagated_increment: config.min_propagated_increment,
+            max_activation: config.max_activation,
+        }
+    }
+}
+
 /// Kinds of access that feed the score, with their configured boosts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessKind {

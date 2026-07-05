@@ -26,6 +26,7 @@ pub(crate) async fn query(
             if should_enrich_query_answer_with_llm(&request) {
                 enrich_query_answer_with_llm(&state, &request, &mut response).await;
             }
+            crate::reinforcement::record_query_access(&state, &response);
             notify_project_changed_with_metadata(
                 &state,
                 request.project.clone(),
@@ -99,7 +100,10 @@ pub(crate) async fn query_global(
         &state.config.provenance,
     )
     .await
-    .map(Json)
+    .map(|response| {
+        crate::reinforcement::record_query_access(&state, &response);
+        Json(response)
+    })
     .map_err(|error| {
         let diagnostic =
             classify_anyhow_diagnostic(&error, "search", "query_global", DiagnosticSeverity::Error);
