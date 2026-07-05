@@ -21,5 +21,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 mem-test-support = { path = "../mem-test-support" }
+proptest = "1"
 wiremock = "0.6"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

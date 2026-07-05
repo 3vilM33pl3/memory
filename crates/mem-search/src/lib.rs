@@ -507,13 +507,7 @@ async fn query_memory_execution(
         })
         .collect::<Vec<_>>();
 
-    ranked.sort_by(|left, right| {
-        right
-            .final_score
-            .total_cmp(&left.final_score)
-            .then_with(|| right.updated_at.cmp(&left.updated_at))
-            .then_with(|| left.memory_id.cmp(&right.memory_id))
-    });
+    ranked.sort_by(compare_ranked);
     let rerank_duration_ms = rerank_started.elapsed().as_millis() as u64;
 
     let mut results = Vec::new();
@@ -1220,6 +1214,17 @@ fn rank_candidate(
         graph_connections: candidate.graph_connections,
         needs_review,
     }
+}
+
+/// Total ordering for ranked results: score desc, then recency desc, then
+/// memory id as a deterministic final tie-break. `total_cmp` keeps the order
+/// total even if a score ever degenerates to NaN.
+fn compare_ranked(left: &RankedCandidate, right: &RankedCandidate) -> std::cmp::Ordering {
+    right
+        .final_score
+        .total_cmp(&left.final_score)
+        .then_with(|| right.updated_at.cmp(&left.updated_at))
+        .then_with(|| left.memory_id.cmp(&right.memory_id))
 }
 
 fn provenance_decay_multiplier(status: &SourceProvenanceStatus, config: &ProvenanceConfig) -> f64 {
@@ -2000,5 +2005,191 @@ mod tests {
             (unboosted.final_score - baseline.final_score).abs() < 1e-9,
             "weight 0 must leave ranking byte-identical"
         );
+    }
+
+    mod ranker_properties {
+        use super::super::*;
+        use chrono::Duration;
+        use proptest::prelude::*;
+
+        #[derive(Debug, Clone)]
+        struct CandidateInputs {
+            chunk_fts: f64,
+            entry_fts: f64,
+            semantic_similarity: f64,
+            graph_boost: f64,
+            importance: i32,
+            confidence: f32,
+            age_days: i64,
+            activation: f64,
+        }
+
+        fn candidate_inputs() -> impl Strategy<Value = CandidateInputs> {
+            (
+                0.0..10.0f64,
+                0.0..10.0f64,
+                -1.0..1.0f64,
+                0.0..20.0f64,
+                0..6i32,
+                0.0..1.0f32,
+                0..2000i64,
+                0.0..25.0f64,
+            )
+                .prop_map(
+                    |(
+                        chunk_fts,
+                        entry_fts,
+                        semantic_similarity,
+                        graph_boost,
+                        importance,
+                        confidence,
+                        age_days,
+                        activation,
+                    )| CandidateInputs {
+                        chunk_fts,
+                        entry_fts,
+                        semantic_similarity,
+                        graph_boost,
+                        importance,
+                        confidence,
+                        age_days,
+                        activation,
+                    },
+                )
+        }
+
+        fn build_candidate(inputs: &CandidateInputs, memory_id: Uuid) -> CandidateRecord {
+            CandidateRecord {
+                memory_id,
+                project: None,
+                project_name: None,
+                repo_root: None,
+                summary: "Ranker property sample".to_string(),
+                memory_type: MemoryType::Implementation,
+                canonical_text: "Ranker property sample detail.".to_string(),
+                importance: inputs.importance,
+                confidence: inputs.confidence,
+                updated_at: Utc::now() - Duration::days(inputs.age_days),
+                entry_fts: inputs.entry_fts,
+                chunk_fts: inputs.chunk_fts,
+                semantic_similarity: inputs.semantic_similarity,
+                best_chunk_text: "Ranker property sample detail.".to_string(),
+                tags: Vec::new(),
+                source_paths: Vec::new(),
+                graph_boost: inputs.graph_boost,
+                graph_match_count: 0,
+                graph_edge_count: 0,
+                graph_connections: Vec::new(),
+            }
+        }
+
+        fn rank(
+            inputs: &CandidateInputs,
+            memory_id: Uuid,
+            needs_review: bool,
+            decay_status: Option<SourceProvenanceStatus>,
+        ) -> RankedCandidate {
+            let signal = ReinforcementRankSignal {
+                activation: inputs.activation,
+                needs_review,
+            };
+            let provenance = decay_status.map(|status| ProvenanceRankSignal {
+                decay_status: Some(status),
+                unverified_count: 0,
+            });
+            rank_candidate(
+                build_candidate(inputs, memory_id),
+                &QueryIntent::from_query("ranker property sample"),
+                &HashMap::new(),
+                provenance.as_ref(),
+                &ProvenanceConfig::default(),
+                false,
+                Some(&signal),
+                &ReinforcementRankParams::default(),
+            )
+        }
+
+        proptest! {
+            #[test]
+            fn final_score_is_finite(inputs in candidate_inputs(), needs_review: bool) {
+                let ranked = rank(&inputs, Uuid::new_v4(), needs_review, None);
+                prop_assert!(ranked.final_score.is_finite());
+                prop_assert!(ranked.final_score >= 0.0);
+            }
+
+            #[test]
+            fn needs_review_penalty_never_raises_score(inputs in candidate_inputs()) {
+                let id = Uuid::new_v4();
+                let clean = rank(&inputs, id, false, None);
+                let flagged = rank(&inputs, id, true, None);
+                prop_assert!(flagged.final_score <= clean.final_score + 1e-9);
+            }
+
+            #[test]
+            fn provenance_decay_never_raises_score(inputs in candidate_inputs()) {
+                let id = Uuid::new_v4();
+                let verified = rank(&inputs, id, false, Some(SourceProvenanceStatus::Verified));
+                for status in [
+                    SourceProvenanceStatus::MissingFile,
+                    SourceProvenanceStatus::MissingSymbol,
+                    SourceProvenanceStatus::Stale,
+                ] {
+                    let decayed = rank(&inputs, id, false, Some(status));
+                    prop_assert!(decayed.final_score <= verified.final_score + 1e-9);
+                }
+            }
+
+            #[test]
+            fn positive_signals_are_monotone(inputs in candidate_inputs(), bump in 0.01..5.0f64) {
+                let id = Uuid::new_v4();
+                let base = rank(&inputs, id, false, None);
+                let raised = [
+                    CandidateInputs { chunk_fts: inputs.chunk_fts + bump, ..inputs.clone() },
+                    CandidateInputs { entry_fts: inputs.entry_fts + bump, ..inputs.clone() },
+                    CandidateInputs {
+                        semantic_similarity: (inputs.semantic_similarity + bump).min(1.0),
+                        ..inputs.clone()
+                    },
+                    CandidateInputs { graph_boost: inputs.graph_boost + bump, ..inputs.clone() },
+                    CandidateInputs { importance: inputs.importance + 1, ..inputs.clone() },
+                    CandidateInputs {
+                        confidence: (inputs.confidence + bump as f32).min(1.0),
+                        ..inputs.clone()
+                    },
+                    CandidateInputs { activation: inputs.activation + bump, ..inputs.clone() },
+                ];
+                for stronger in raised {
+                    let ranked = rank(&stronger, id, false, None);
+                    prop_assert!(
+                        ranked.final_score >= base.final_score - 1e-9,
+                        "raising a positive signal lowered the score: {stronger:?}"
+                    );
+                }
+            }
+
+            #[test]
+            fn ranked_ordering_is_total(all_inputs in proptest::collection::vec(candidate_inputs(), 2..12)) {
+                let mut ranked = all_inputs
+                    .iter()
+                    .map(|inputs| rank(inputs, Uuid::new_v4(), false, None))
+                    .collect::<Vec<_>>();
+                for left in &ranked {
+                    prop_assert_eq!(compare_ranked(left, left), std::cmp::Ordering::Equal);
+                    for right in &ranked {
+                        prop_assert_eq!(
+                            compare_ranked(left, right),
+                            compare_ranked(right, left).reverse()
+                        );
+                    }
+                }
+                ranked.sort_by(compare_ranked);
+                for pair in ranked.windows(2) {
+                    prop_assert_ne!(
+                        compare_ranked(&pair[0], &pair[1]),
+                        std::cmp::Ordering::Greater
+                    );
+                }
+            }
+        }
     }
 }
