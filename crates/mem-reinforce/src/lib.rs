@@ -7,6 +7,7 @@
 //! `validate` behind the [`validate::VerdictProvider`] trait so this crate
 //! never talks to an LLM directly.
 
+pub mod procedural;
 pub mod propagation;
 pub mod recorder;
 pub mod repository;
@@ -14,6 +15,10 @@ pub mod scoring;
 pub mod selection;
 pub mod validate;
 
+pub use procedural::{
+    ProceduralRewards, RecommendationThresholds, RewardEvent, UtilityParams, UtilitySnapshot,
+    apply_utility_update, utility_recommendation,
+};
 pub use propagation::{CanonicalEdge, PropagatedIncrement, propagation_increments};
 pub use recorder::{AccessBatch, ThresholdCrossing, record_access_batch};
 pub use scoring::{

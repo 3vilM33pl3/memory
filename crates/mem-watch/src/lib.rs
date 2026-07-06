@@ -929,6 +929,7 @@ mod tests {
             reinforcement: mem_api::ReinforcementConfig::default(),
             curation: mem_api::CurationConfig::default(),
             consolidation: mem_api::ConsolidationConfig::default(),
+            procedural: mem_api::ProceduralConfig::default(),
             profile: mem_api::Profile::Prod,
             resolved_config_path: None,
             resolved_dev_overlay_path: None,

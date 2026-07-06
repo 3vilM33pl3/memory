@@ -3940,6 +3940,8 @@ pub struct AppConfig {
     pub curation: CurationConfig,
     #[serde(default)]
     pub consolidation: ConsolidationConfig,
+    #[serde(default)]
+    pub procedural: ProceduralConfig,
     #[serde(skip, default = "default_profile")]
     pub profile: Profile,
     /// Path of the resolved config file (base file in dev mode). Useful when
@@ -5024,6 +5026,106 @@ fn default_consolidation_daily_cap() -> u32 {
     20
 }
 
+/// ACT-R procedural utility learning: per-loop learned value from proposal
+/// decisions and citations. Deterministic and advisory — it informs listing
+/// order and recommendations, never permission gates — so it defaults on,
+/// like activation scoring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProceduralConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Delta-rule learning rate, 0..1.
+    #[serde(default = "default_procedural_alpha")]
+    pub alpha: f64,
+    #[serde(default)]
+    pub initial_utility: f64,
+    #[serde(default = "default_procedural_min_utility")]
+    pub min_utility: f64,
+    #[serde(default = "default_procedural_max_utility")]
+    pub max_utility: f64,
+    // Reward magnitudes.
+    #[serde(default = "default_reward_approved")]
+    pub reward_approved: f64,
+    #[serde(default = "default_reward_edited_approved")]
+    pub reward_edited_approved: f64,
+    #[serde(default = "default_reward_rejected")]
+    pub reward_rejected: f64,
+    #[serde(default = "default_reward_run_error")]
+    pub reward_run_error: f64,
+    #[serde(default = "default_reward_cited")]
+    pub reward_cited: f64,
+    // Recommendation thresholds.
+    #[serde(default = "default_procedural_min_samples")]
+    pub min_samples: i64,
+    #[serde(default = "default_procedural_snooze_threshold")]
+    pub snooze_threshold: f64,
+    #[serde(default = "default_procedural_keep_threshold")]
+    pub keep_threshold: f64,
+    /// When on, auto-trigger paths skip firing loops whose learned utility is
+    /// below `utility_floor` (with at least `min_samples` decisions). Manual
+    /// runs and permission gates are never affected.
+    #[serde(default)]
+    pub utility_floor_enabled: bool,
+    #[serde(default)]
+    pub utility_floor: f64,
+}
+
+impl Default for ProceduralConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            alpha: default_procedural_alpha(),
+            initial_utility: 0.0,
+            min_utility: default_procedural_min_utility(),
+            max_utility: default_procedural_max_utility(),
+            reward_approved: default_reward_approved(),
+            reward_edited_approved: default_reward_edited_approved(),
+            reward_rejected: default_reward_rejected(),
+            reward_run_error: default_reward_run_error(),
+            reward_cited: default_reward_cited(),
+            min_samples: default_procedural_min_samples(),
+            snooze_threshold: default_procedural_snooze_threshold(),
+            keep_threshold: default_procedural_keep_threshold(),
+            utility_floor_enabled: false,
+            utility_floor: 0.0,
+        }
+    }
+}
+
+fn default_procedural_alpha() -> f64 {
+    0.2
+}
+fn default_procedural_min_utility() -> f64 {
+    -5.0
+}
+fn default_procedural_max_utility() -> f64 {
+    10.0
+}
+fn default_reward_approved() -> f64 {
+    1.0
+}
+fn default_reward_edited_approved() -> f64 {
+    0.4
+}
+fn default_reward_rejected() -> f64 {
+    -1.0
+}
+fn default_reward_run_error() -> f64 {
+    -0.2
+}
+fn default_reward_cited() -> f64 {
+    0.5
+}
+fn default_procedural_min_samples() -> i64 {
+    5
+}
+fn default_procedural_snooze_threshold() -> f64 {
+    -0.5
+}
+fn default_procedural_keep_threshold() -> f64 {
+    0.5
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvenanceConfig {
     #[serde(default = "default_missing_file_decay")]
@@ -5643,6 +5745,56 @@ mod tests {
             "max_completion_tokens"
         );
         assert!(llm_requires_api_key(&config));
+    }
+
+    #[test]
+    fn procedural_config_defaults_on_and_roundtrips() {
+        let config: AppConfig = toml::from_str(
+            r#"
+            [service]
+            bind_addr = "127.0.0.1:4040"
+            capnp_unix_socket = "/tmp/memory-test.sock"
+            capnp_tcp_addr = "127.0.0.1:4041"
+            api_token = "token"
+            request_timeout = "30s"
+
+            [database]
+            url = "postgresql://memory"
+            "#,
+        )
+        .expect("parse config without procedural section");
+        // On by default: deterministic and advisory, like activation scoring.
+        assert!(config.procedural.enabled);
+        assert!(!config.procedural.utility_floor_enabled);
+        assert_eq!(config.procedural.alpha, 0.2);
+        assert_eq!(config.procedural.reward_approved, 1.0);
+        assert_eq!(config.procedural.reward_rejected, -1.0);
+
+        let overridden: AppConfig = toml::from_str(
+            r#"
+            [service]
+            bind_addr = "127.0.0.1:4040"
+            capnp_unix_socket = "/tmp/memory-test.sock"
+            capnp_tcp_addr = "127.0.0.1:4041"
+            api_token = "token"
+            request_timeout = "30s"
+
+            [database]
+            url = "postgresql://memory"
+
+            [procedural]
+            enabled = false
+            alpha = 0.5
+            reward_rejected = -2.0
+            "#,
+        )
+        .expect("parse config with procedural overrides");
+        assert!(!overridden.procedural.enabled);
+        assert_eq!(overridden.procedural.alpha, 0.5);
+        assert_eq!(overridden.procedural.reward_rejected, -2.0);
+        // Unspecified knobs keep their defaults.
+        assert_eq!(overridden.procedural.reward_approved, 1.0);
+        assert_eq!(overridden.procedural.min_samples, 5);
     }
 
     #[test]
