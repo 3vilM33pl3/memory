@@ -23,7 +23,7 @@ New here? Run `memory quickstart`-style setup with `memory wizard`, load a
 demo project with `memory demo`, then explore with `memory query` and `memory tui`.
 
 Command groups:
-  Core          wizard, init, remember, query, resume, tui
+  Core          wizard, init, demo, tour, remember, query, resume, tui
   Status        status, health, stats, doctor
   Memory        capture, curate, scan, proposals, review, archive
   Reinforcement scores, validate
@@ -510,6 +510,18 @@ Examples:
 
 See also:
   docs/user/cli/query.md";
+
+const TOUR_AFTER_HELP: &str = "\
+What it does:
+  Seeds the showcase corpus, then actually runs remember, query, and resume
+  against it — with their real output — pausing between steps so you can read
+  each one. The honest message: those three commands are the whole daily loop.
+
+Requires a running service — `docker compose up` or `memory service run` first.
+
+Examples:
+  memory tour
+  memory tour --project playground";
 
 const DEMO_AFTER_HELP: &str = "\
 What it does:
@@ -1166,6 +1178,8 @@ pub(in crate::commands) enum Command {
     Init(InitArgs),
     #[command(about = "Load a demo project so you can try queries immediately.", after_help = DEMO_AFTER_HELP)]
     Demo(DemoArgs),
+    #[command(about = "Guided walkthrough of the three core commands.", after_help = TOUR_AFTER_HELP)]
+    Tour(TourArgs),
     #[command(about = "Capture and curate completed work into memory.", after_help = REMEMBER_AFTER_HELP)]
     Remember(RememberArgs),
     #[command(about = "Ask a project-specific question against curated memory.", after_help = QUERY_AFTER_HELP)]
@@ -1644,6 +1658,17 @@ pub(in crate::commands) enum WatcherManagerCommand {
 )]
 pub(in crate::commands) struct DemoArgs {
     /// Project slug to load the demo memories into.
+    #[arg(long, default_value = "demo")]
+    pub(crate) project: String,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Guided walkthrough of the three core commands.",
+    after_help = TOUR_AFTER_HELP
+)]
+pub(in crate::commands) struct TourArgs {
+    /// Project slug the tour runs against.
     #[arg(long, default_value = "demo")]
     pub(crate) project: String,
 }
@@ -3199,6 +3224,9 @@ pub(super) async fn run() -> Result<()> {
         Command::Commits(args) => crate::commands::commits::handle(args, client, config).await?,
         Command::Demo(args) => {
             crate::commands::demo::handle(args, client, config, cli_writer_id).await?
+        }
+        Command::Tour(args) => {
+            crate::commands::tour::handle(args, client, config, cli_writer_id).await?
         }
         Command::Query(args) => crate::commands::query::handle(args, client, config).await?,
         Command::VerifyProvenance(args) => {

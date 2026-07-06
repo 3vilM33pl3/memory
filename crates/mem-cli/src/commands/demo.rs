@@ -14,25 +14,27 @@ use crate::{
 /// embedded so `memory demo` works from a fresh install with no files on disk.
 const DEMO_CORPUS: &str = include_str!("../assets/demo-corpus.json");
 
-pub(super) async fn handle(
-    args: DemoArgs,
-    client: Client,
-    config: AppConfig,
-    cli_writer_id: Option<String>,
-) -> Result<()> {
+/// Seed and curate the embedded showcase corpus into `project`. Returns the
+/// number of loaded candidates. Shared by `memory demo` and `memory tour`.
+pub(super) async fn seed_demo_corpus(
+    project: &str,
+    client: &Client,
+    config: &AppConfig,
+    cli_writer_id: Option<&str>,
+) -> Result<usize> {
     let mut request: CaptureTaskRequest =
         serde_json::from_str(DEMO_CORPUS).context("parse embedded demo corpus")?;
-    request.project = args.project.clone();
+    request.project = project.to_string();
     if request.writer_id.trim().is_empty() {
-        let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
+        let writer = resolve_writer_identity(config, cli_writer_id)?;
         request.writer_id = writer.id;
         request.writer_name = request.writer_name.or(writer.name);
     }
     let candidate_count = request.structured_candidates.len();
 
     let capture = client
-        .post(service_url(&config, "/v1/capture/task"))
-        .headers(write_headers(&config)?)
+        .post(service_url(config, "/v1/capture/task"))
+        .headers(write_headers(config)?)
         .json(&request)
         .send()
         .await
@@ -44,10 +46,10 @@ pub(super) async fn handle(
     }
 
     let curate = client
-        .post(service_url(&config, "/v1/curate"))
-        .headers(write_headers(&config)?)
+        .post(service_url(config, "/v1/curate"))
+        .headers(write_headers(config)?)
         .json(&CurateRequest {
-            project: args.project.clone(),
+            project: project.to_string(),
             batch_size: None,
             raw_capture_id: None,
             replacement_policy: None,
@@ -62,6 +64,18 @@ pub(super) async fn handle(
         anyhow::bail!("curation failed ({status}): {body}");
     }
 
+    Ok(candidate_count)
+}
+
+pub(super) async fn handle(
+    args: DemoArgs,
+    client: Client,
+    config: AppConfig,
+    cli_writer_id: Option<String>,
+) -> Result<()> {
+    let candidate_count =
+        seed_demo_corpus(&args.project, &client, &config, cli_writer_id.as_deref()).await?;
+
     let project = &args.project;
     println!("Loaded {candidate_count} demo memories into project '{project}'.\n");
     println!("Try one of these:");
@@ -69,6 +83,7 @@ pub(super) async fn handle(
     println!(
         "  memory query --project {project} --question \"What does the service need to run?\""
     );
+    println!("  memory tour  # a guided three-command walkthrough");
     println!("  memory tui   # browse and search everything, including the memory graph");
     Ok(())
 }

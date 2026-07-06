@@ -39,6 +39,7 @@ pub(crate) mod skill_support;
 mod stats;
 mod status;
 pub(crate) mod status_support;
+mod tour;
 mod tui;
 mod up_to_speed;
 mod upgrade;
