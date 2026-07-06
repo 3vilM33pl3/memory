@@ -9,16 +9,27 @@ Memory types make search and curation more precise. A type describes why a memor
 
 ## Type reference
 
+Memory Layer defines the following canonical types (the exact set the CLI, service, and search accept — kept in sync with the `MemoryType` enum by a parity test). You rarely need to set a type by hand: capture and curation classify most memories for you.
+
 | Type | Use it for | Good canonical text says |
 |---|---|---|
+| `architecture` | System structure, boundaries, and how components fit together | The component, its responsibility, and how it relates to the rest of the system. |
+| `convention` | Project conventions, style rules, and expected patterns | The rule, where it applies, and why it exists. |
+| `decision` | Architecture or process decisions | The selected choice, rejected alternatives if relevant, and rationale. |
+| `incident` | Outages, regressions, and their diagnosis and fix | What broke, the root cause, and how it was resolved. |
+| `debugging` | Non-obvious debugging findings and root-cause analyses | The symptom, the underlying cause, and the reasoning that connected them. |
+| `environment` | Environment, tooling, and local/CI setup facts | The setting, its value or constraint, and where it takes effect. |
+| `domain_fact` | Stable project facts — commands, routes, config locations, workflow rules | The fact, its scope, and the source of truth. |
+| `documentation` | Docs, screenshots, diagrams, public-site, or README work | What content changed and which audience it serves. |
 | `task` | Completed implementation, debugging, release, migration, or operational work | What was done, where, why it matters, and how it was verified. |
 | `plan` | Approved implementation plans and active work checkpoints | The intended work, constraints, status, and remaining checklist items. |
-| `fact` | Stable project facts, commands, routes, config locations, or workflow rules | The fact, scope, and source of truth. |
-| `decision` | Architecture or process decisions | The selected choice, rejected alternatives if relevant, and rationale. |
-| `feedback` | User preference or correction | The preference and the context where it should apply. |
-| `reference` | External or internal reference material worth retrieving | The linked material and why it is useful. |
-| `documentation` | Docs, screenshots, diagrams, public-site, or README work | What content changed and which audience it serves. |
+| `implementation` | Durable facts about how something is built | The mechanism, the key files or symbols, and the constraints that hold. |
 | `refactor` | Code reshaping without intended behavior change | What moved or changed structurally, what behavior should remain unchanged, and which old memories may need updates. |
+| `user` | Facts about the user — role, expertise, working preferences | What was learned about the person and how it should shape future work. |
+| `feedback` | A user correction or a confirmed approach | The preference or rule, and the context where it applies. |
+| `project` | Ongoing goals, deadlines, and initiatives not derivable from the code | The goal or constraint, and the motivation behind it. |
+| `reference` | External or internal reference material worth retrieving | The linked material and why it is useful. |
+| `insight` | A consolidated meta-memory synthesized from a cluster of related memories | The unifying concept plus the tensions, gaps, and implications the cluster reveals. See [Consolidation](/docs/how-it-works/consolidation). |
 
 ## What makes a memory good
 

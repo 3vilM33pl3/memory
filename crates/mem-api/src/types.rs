@@ -39,6 +39,57 @@ pub enum MemoryType {
     Insight,
 }
 
+impl MemoryType {
+    /// Every memory type, in canonical order. The exhaustive `match` forces
+    /// this list (and the parity test that consumes it) to be updated whenever
+    /// a variant is added, so the code and the documented type table cannot
+    /// silently drift.
+    pub const ALL: [MemoryType; 17] = {
+        // Exhaustiveness guard: adding a variant makes this match fail to
+        // compile until `ALL` is updated.
+        const fn _assert_exhaustive(value: MemoryType) {
+            match value {
+                MemoryType::Architecture
+                | MemoryType::Convention
+                | MemoryType::Decision
+                | MemoryType::Incident
+                | MemoryType::Debugging
+                | MemoryType::Environment
+                | MemoryType::DomainFact
+                | MemoryType::Documentation
+                | MemoryType::Task
+                | MemoryType::Plan
+                | MemoryType::Implementation
+                | MemoryType::Refactor
+                | MemoryType::User
+                | MemoryType::Feedback
+                | MemoryType::Project
+                | MemoryType::Reference
+                | MemoryType::Insight => {}
+            }
+        }
+        [
+            MemoryType::Architecture,
+            MemoryType::Convention,
+            MemoryType::Decision,
+            MemoryType::Incident,
+            MemoryType::Debugging,
+            MemoryType::Environment,
+            MemoryType::DomainFact,
+            MemoryType::Documentation,
+            MemoryType::Task,
+            MemoryType::Plan,
+            MemoryType::Implementation,
+            MemoryType::Refactor,
+            MemoryType::User,
+            MemoryType::Feedback,
+            MemoryType::Project,
+            MemoryType::Reference,
+            MemoryType::Insight,
+        ]
+    };
+}
+
 impl fmt::Display for MemoryType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {

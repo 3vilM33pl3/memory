@@ -1598,6 +1598,24 @@ mod tests {
     }
 
     #[test]
+    fn every_memory_type_round_trips_display_and_parse() {
+        // Parity guard: every canonical type's Display string must parse back
+        // to itself, so `parse_memory_type` cannot silently coerce a real type
+        // to the `Convention` fallback (this is how the docs' nonexistent
+        // `fact` type was masking `domain_fact`). `MemoryType::ALL` is
+        // exhaustiveness-checked, so a new variant forces this test to cover it.
+        for memory_type in MemoryType::ALL {
+            let rendered = memory_type.to_string();
+            assert_eq!(
+                parse_memory_type(&rendered),
+                memory_type,
+                "`{rendered}` did not round-trip through parse_memory_type"
+            );
+        }
+        assert_eq!(MemoryType::ALL.len(), 17);
+    }
+
+    #[test]
     fn embedding_registry_is_empty_when_no_backends_ready() {
         // An EmbeddingBackendConfig without a model never resolves to a
         // concrete backend; the registry should be empty.
