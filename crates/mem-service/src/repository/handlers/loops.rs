@@ -650,8 +650,14 @@ pub(crate) async fn approve_loop_memory_proposal(
         ));
     }
     Ok(Json(
-        resolve_loop_memory_proposal_decision(&state.pool()?, proposal_id, "approved", &request)
-            .await?,
+        resolve_loop_memory_proposal_decision(
+            &state.pool()?,
+            &state.config.procedural,
+            proposal_id,
+            "approved",
+            &request,
+        )
+        .await?,
     ))
 }
 
@@ -674,8 +680,14 @@ pub(crate) async fn reject_loop_memory_proposal(
         ));
     }
     Ok(Json(
-        resolve_loop_memory_proposal_decision(&state.pool()?, proposal_id, "rejected", &request)
-            .await?,
+        resolve_loop_memory_proposal_decision(
+            &state.pool()?,
+            &state.config.procedural,
+            proposal_id,
+            "rejected",
+            &request,
+        )
+        .await?,
     ))
 }
 
@@ -2122,11 +2134,12 @@ pub async fn queue_semantic_dedup_proposals(
 
 pub async fn record_loop_memory_proposal_decision(
     pool: &PgPool,
+    procedural: &mem_api::ProceduralConfig,
     proposal_id: Uuid,
     status: &str,
     request: &LoopMemoryProposalDecisionRequest,
 ) -> Result<LoopMemoryProposalDecisionResponse> {
-    resolve_loop_memory_proposal_decision(pool, proposal_id, status, request)
+    resolve_loop_memory_proposal_decision(pool, procedural, proposal_id, status, request)
         .await
         .map_err(|error| anyhow::anyhow!(error.message))
 }
@@ -2174,6 +2187,17 @@ async fn insert_loop_memory_proposal(
     })
 }
 
+/// Test/CLI-facing wrapper mirroring [`record_loop_memory_proposal_decision`].
+pub async fn record_loop_memory_proposal_edit(
+    pool: &PgPool,
+    proposal_id: Uuid,
+    request: &LoopMemoryProposalDecisionRequest,
+) -> Result<LoopMemoryProposalDecisionResponse> {
+    edit_loop_memory_proposal_record(pool, proposal_id, request)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.message))
+}
+
 async fn edit_loop_memory_proposal_record(
     pool: &PgPool,
     proposal_id: Uuid,
@@ -2186,7 +2210,8 @@ async fn edit_loop_memory_proposal_record(
             evidence_json = COALESCE($3, evidence_json),
             risk_notes = COALESCE($4, risk_notes),
             status = 'pending',
-            resolved_at = NULL
+            resolved_at = NULL,
+            was_edited = TRUE
         WHERE id = $1
         RETURNING
             id, run_id, (SELECT slug FROM projects WHERE id = memory_proposals.project_id) AS project,
@@ -2212,13 +2237,48 @@ async fn edit_loop_memory_proposal_record(
 
 async fn resolve_loop_memory_proposal_decision(
     pool: &PgPool,
+    procedural: &mem_api::ProceduralConfig,
     proposal_id: Uuid,
     status: &str,
     request: &LoopMemoryProposalDecisionRequest,
 ) -> Result<LoopMemoryProposalDecisionResponse, ApiError> {
     validate_memory_proposal_status(status)?;
     if status == "rejected" {
-        let proposal = update_memory_proposal_status(pool, proposal_id, status).await?;
+        // One transaction covers the status write, the procedural-utility
+        // reward, and its audit row, so learning can never diverge from the
+        // recorded decision.
+        let mut tx = pool.begin().await.map_err(ApiError::sql)?;
+        let locked = lock_memory_proposal(&mut tx, proposal_id).await?;
+        let undecided = locked.record.status == "pending" || locked.record.status == "edited";
+        let row = sqlx::query(
+            r#"
+            UPDATE memory_proposals
+            SET status = 'rejected',
+                resolved_at = now()
+            WHERE id = $1
+            RETURNING
+                id, run_id, (SELECT slug FROM projects WHERE id = memory_proposals.project_id) AS project,
+                loop_id, proposal_type, target_memory_id, candidate_json, evidence_json,
+                confidence, risk_notes, status, created_at, resolved_at
+            "#,
+        )
+        .bind(proposal_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(ApiError::sql)?;
+        // Reward only the first terminal decision — re-rejecting an already
+        // resolved proposal must not double-penalize the loop.
+        if undecided {
+            emit_proposal_reward(
+                &mut tx,
+                procedural,
+                &locked,
+                mem_reinforce::RewardEvent::ProposalRejected,
+            )
+            .await?;
+        }
+        tx.commit().await.map_err(ApiError::sql)?;
+        let proposal = row_to_memory_proposal(row)?;
         append_memory_proposal_trace(pool, &proposal, "rejected", request.reason.as_deref())
             .await?;
         return Ok(LoopMemoryProposalDecisionResponse {
@@ -2257,6 +2317,12 @@ async fn resolve_loop_memory_proposal_decision(
     .fetch_one(&mut *tx)
     .await
     .map_err(ApiError::sql)?;
+    let event = if proposal.was_edited {
+        mem_reinforce::RewardEvent::ProposalEditedApproved
+    } else {
+        mem_reinforce::RewardEvent::ProposalApproved
+    };
+    emit_proposal_reward(&mut tx, procedural, &proposal, event).await?;
     tx.commit().await.map_err(ApiError::sql)?;
 
     let proposal = row_to_memory_proposal(row)?;
@@ -2267,35 +2333,56 @@ async fn resolve_loop_memory_proposal_decision(
     })
 }
 
-async fn update_memory_proposal_status(
-    pool: &PgPool,
-    proposal_id: Uuid,
-    status: &str,
-) -> Result<LoopMemoryProposalRecord, ApiError> {
-    let row = sqlx::query(
-        r#"
-        UPDATE memory_proposals
-        SET status = $2,
-            resolved_at = now()
-        WHERE id = $1
-        RETURNING
-            id, run_id, (SELECT slug FROM projects WHERE id = memory_proposals.project_id) AS project,
-            loop_id, proposal_type, target_memory_id, candidate_json, evidence_json,
-            confidence, risk_notes, status, created_at, resolved_at
-        "#,
+/// Applies the ACT-R delta-rule utility update + audit for one proposal
+/// decision, inside the caller's transaction. Advisory learning only — this
+/// never touches loop modes or permission gates.
+async fn emit_proposal_reward(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    procedural: &mem_api::ProceduralConfig,
+    proposal: &LockedMemoryProposal,
+    event: mem_reinforce::RewardEvent,
+) -> Result<(), ApiError> {
+    if !procedural.enabled {
+        return Ok(());
+    }
+    let params = mem_reinforce::UtilityParams::from(procedural);
+    let rewards = mem_reinforce::ProceduralRewards::from(procedural);
+    let reward = event.reward(&rewards);
+    let update = mem_reinforce::repository::apply_utility_reward(
+        &mut **tx,
+        proposal.project_id,
+        "loop",
+        &proposal.record.loop_id,
+        reward,
+        &params,
     )
-    .bind(proposal_id)
-    .bind(status)
-    .fetch_optional(pool)
     .await
-    .map_err(ApiError::sql)?
-    .ok_or_else(|| ApiError::not_found("loop memory proposal not found"))?;
-    row_to_memory_proposal(row)
+    .map_err(ApiError::io)?;
+    mem_reinforce::repository::insert_utility_audit(
+        &mut **tx,
+        proposal.project_id,
+        "loop",
+        &proposal.record.loop_id,
+        event.audit_reason(),
+        reward,
+        params.alpha,
+        &update,
+        serde_json::json!({
+            "proposal_id": proposal.record.id,
+            "run_id": proposal.record.run_id,
+        }),
+    )
+    .await
+    .map_err(ApiError::io)?;
+    Ok(())
 }
 
 struct LockedMemoryProposal {
     record: LoopMemoryProposalRecord,
     project_id: Uuid,
+    /// True when the proposal was human-edited before this decision; an
+    /// edited-then-approved proposal earns only partial procedural reward.
+    was_edited: bool,
 }
 
 async fn lock_memory_proposal(
@@ -2307,7 +2394,8 @@ async fn lock_memory_proposal(
         SELECT
             mp.id, mp.run_id, mp.project_id, p.slug AS project, mp.loop_id,
             mp.proposal_type, mp.target_memory_id, mp.candidate_json, mp.evidence_json,
-            mp.confidence, mp.risk_notes, mp.status, mp.created_at, mp.resolved_at
+            mp.confidence, mp.risk_notes, mp.status, mp.created_at, mp.resolved_at,
+            mp.was_edited
         FROM memory_proposals mp
         LEFT JOIN projects p ON p.id = mp.project_id
         WHERE mp.id = $1
@@ -2320,8 +2408,13 @@ async fn lock_memory_proposal(
     .map_err(ApiError::sql)?
     .ok_or_else(|| ApiError::not_found("loop memory proposal not found"))?;
     let project_id = row.try_get("project_id").map_err(ApiError::sql)?;
+    let was_edited = row.try_get("was_edited").map_err(ApiError::sql)?;
     let record = row_to_memory_proposal(row)?;
-    Ok(LockedMemoryProposal { record, project_id })
+    Ok(LockedMemoryProposal {
+        record,
+        project_id,
+        was_edited,
+    })
 }
 
 async fn apply_memory_proposal(

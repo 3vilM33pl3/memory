@@ -598,6 +598,7 @@ async fn loop_repository_approves_memory_proposal_and_writes_provenance() {
 
     let approved = mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
         &pool,
+        &mem_api::ProceduralConfig::default(),
         created.proposal.id,
         "approved",
         &LoopMemoryProposalDecisionRequest {
@@ -702,6 +703,7 @@ async fn loop_repository_applies_consolidate_proposal_atomically() {
             .expect("create consolidate proposal");
     let approved = mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
         &pool,
+        &mem_api::ProceduralConfig::default(),
         created.proposal.id,
         "approved",
         &LoopMemoryProposalDecisionRequest {
@@ -752,6 +754,192 @@ async fn loop_repository_applies_consolidate_proposal_atomically() {
     .await
     .expect("count memory provenance");
     assert_eq!(memory_sources, 3);
+
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
+#[tokio::test]
+async fn procedural_utility_learns_from_proposal_decisions() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+    let project = mem_test_support::unique_project_slug("service-utility");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+    let procedural = mem_api::ProceduralConfig::default();
+
+    let make_request = |summary: &str| LoopMemoryProposalCreateRequest {
+        project: project.clone(),
+        loop_id: mem_loops::LOOP_MEMORY_HYGIENE.to_string(),
+        proposal_type: "add".to_string(),
+        run_id: None,
+        target_memory_id: None,
+        candidate: serde_json::json!({
+            "canonical_text": format!("{summary} canonical text"),
+            "summary": summary,
+            "memory_type": "implementation",
+        }),
+        evidence: serde_json::json!([]),
+        confidence: 0.8,
+        risk_notes: None,
+    };
+    let decision = |reason: &str| LoopMemoryProposalDecisionRequest {
+        reviewer: Some("utility-test".to_string()),
+        reason: Some(reason.to_string()),
+        edited_candidate: None,
+        edited_evidence: None,
+        edited_risk_notes: None,
+    };
+    let fetch_utility = |pool: PgPool, project: String| async move {
+        sqlx::query_as::<_, (f64, i64)>(
+            r#"
+            SELECT pu.utility, pu.update_count
+            FROM procedural_utility pu
+            JOIN projects p ON p.id = pu.project_id
+            WHERE p.slug = $1 AND pu.producer_kind = 'loop' AND pu.producer_id = $2
+            "#,
+        )
+        .bind(&project)
+        .bind(mem_loops::LOOP_MEMORY_HYGIENE)
+        .fetch_optional(&pool)
+        .await
+        .expect("fetch utility row")
+    };
+
+    // Approve raises utility from zero.
+    let created = mem_service::repository::handlers::loops::create_memory_proposal_record(
+        &pool,
+        &make_request("Utility approve fixture"),
+    )
+    .await
+    .expect("create proposal");
+    mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
+        &pool,
+        &procedural,
+        created.proposal.id,
+        "approved",
+        &decision("approve"),
+    )
+    .await
+    .expect("approve proposal");
+    let (after_approve, count) = fetch_utility(pool.clone(), project.clone())
+        .await
+        .expect("utility row after approve");
+    assert!(after_approve > 0.0, "approve must raise utility");
+    assert_eq!(count, 1);
+
+    // Reject lowers it, atomically with the status write.
+    let created = mem_service::repository::handlers::loops::create_memory_proposal_record(
+        &pool,
+        &make_request("Utility reject fixture"),
+    )
+    .await
+    .expect("create reject proposal");
+    mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
+        &pool,
+        &procedural,
+        created.proposal.id,
+        "rejected",
+        &decision("reject"),
+    )
+    .await
+    .expect("reject proposal");
+    let (after_reject, count) = fetch_utility(pool.clone(), project.clone())
+        .await
+        .expect("utility row after reject");
+    assert!(after_reject < after_approve, "reject must lower utility");
+    assert_eq!(count, 2);
+
+    // Re-rejecting an already-resolved proposal must not double-penalize.
+    mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
+        &pool,
+        &procedural,
+        created.proposal.id,
+        "rejected",
+        &decision("reject again"),
+    )
+    .await
+    .expect("re-reject proposal");
+    let (after_second_reject, count) = fetch_utility(pool.clone(), project.clone())
+        .await
+        .expect("utility row after re-reject");
+    assert_eq!(after_second_reject, after_reject);
+    assert_eq!(count, 2);
+
+    // Edited-then-approved earns the partial reward, exactly once.
+    let created = mem_service::repository::handlers::loops::create_memory_proposal_record(
+        &pool,
+        &make_request("Utility edited fixture"),
+    )
+    .await
+    .expect("create edited proposal");
+    mem_service::repository::handlers::loops::record_loop_memory_proposal_edit(
+        &pool,
+        created.proposal.id,
+        &LoopMemoryProposalDecisionRequest {
+            reviewer: Some("utility-test".to_string()),
+            reason: Some("tweak wording".to_string()),
+            edited_candidate: Some(serde_json::json!({
+                "canonical_text": "Edited canonical text",
+                "summary": "Utility edited fixture",
+                "memory_type": "implementation",
+            })),
+            edited_evidence: None,
+            edited_risk_notes: None,
+        },
+    )
+    .await
+    .expect("edit proposal");
+    let (after_edit, count_after_edit) = fetch_utility(pool.clone(), project.clone())
+        .await
+        .expect("utility row after edit");
+    assert_eq!(
+        (after_edit, count_after_edit),
+        (after_second_reject, 2),
+        "editing alone must not emit a reward"
+    );
+    mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
+        &pool,
+        &procedural,
+        created.proposal.id,
+        "approved",
+        &decision("approve edited"),
+    )
+    .await
+    .expect("approve edited proposal");
+    let (_, count) = fetch_utility(pool.clone(), project.clone())
+        .await
+        .expect("utility row after edited approve");
+    assert_eq!(count, 3);
+    let edited_reason: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*) FROM procedural_utility_audit pa
+        JOIN projects p ON p.id = pa.project_id
+        WHERE p.slug = $1 AND pa.reason = 'proposal_edited_approved'
+        "#,
+    )
+    .bind(&project)
+    .fetch_one(&pool)
+    .await
+    .expect("count edited-approved audits");
+    assert_eq!(edited_reason, 1);
+
+    // Every decision left exactly one audit row.
+    let audit_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*) FROM procedural_utility_audit pa
+        JOIN projects p ON p.id = pa.project_id
+        WHERE p.slug = $1
+        "#,
+    )
+    .bind(&project)
+    .fetch_one(&pool)
+    .await
+    .expect("count audit rows");
+    assert_eq!(audit_count, 3);
 
     mem_test_support::cleanup_project(&pool, &project)
         .await

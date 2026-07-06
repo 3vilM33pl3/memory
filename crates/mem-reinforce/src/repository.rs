@@ -280,6 +280,149 @@ pub async fn insert_score_audit(
     Ok(())
 }
 
+/// Result of one procedural-utility delta-rule update.
+#[derive(Debug, Clone, Copy)]
+pub struct UtilityUpdate {
+    pub old_utility: f64,
+    pub new_utility: f64,
+    pub update_count: i64,
+}
+
+/// Applies the ACT-R delta rule `U + alpha*(reward - U)` (clamped) to a
+/// producer's utility in one race-free upsert, mirroring [`apply_score_boost`].
+/// Executor-generic so callers can run it inside the same transaction as the
+/// decision that earned the reward.
+pub async fn apply_utility_reward<'e, E>(
+    executor: E,
+    project_id: Uuid,
+    producer_kind: &str,
+    producer_id: &str,
+    reward: f64,
+    params: &crate::procedural::UtilityParams,
+) -> Result<UtilityUpdate>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let alpha = params.alpha.clamp(0.0, 1.0);
+    let (old_utility, new_utility, update_count): (f64, f64, i64) = sqlx::query_as(
+        r#"
+        WITH existing AS (
+            SELECT utility FROM procedural_utility
+            WHERE project_id = $1 AND producer_kind = $2 AND producer_id = $3
+        ), upsert AS (
+            INSERT INTO procedural_utility (
+                project_id, producer_kind, producer_id, utility, update_count,
+                last_reward, last_update_at, updated_at
+            ) VALUES (
+                $1, $2, $3,
+                LEAST($7, GREATEST($6, $8 + $4 * ($5 - $8))),
+                1, $5, now(), now()
+            )
+            ON CONFLICT (project_id, producer_kind, producer_id) DO UPDATE SET
+                utility = LEAST($7, GREATEST($6,
+                    procedural_utility.utility
+                        + $4 * ($5 - procedural_utility.utility))),
+                update_count = procedural_utility.update_count + 1,
+                last_reward = $5,
+                last_update_at = now(),
+                updated_at = now()
+            RETURNING utility, update_count
+        )
+        SELECT
+            COALESCE((SELECT utility FROM existing), $8)::float8,
+            (SELECT utility FROM upsert)::float8,
+            (SELECT update_count FROM upsert)
+        "#,
+    )
+    .bind(project_id)
+    .bind(producer_kind)
+    .bind(producer_id)
+    .bind(alpha)
+    .bind(reward)
+    .bind(params.min_utility)
+    .bind(params.max_utility)
+    .bind(params.initial_utility)
+    .fetch_one(executor)
+    .await
+    .context("apply procedural utility reward")?;
+    Ok(UtilityUpdate {
+        old_utility,
+        new_utility,
+        update_count,
+    })
+}
+
+/// Audits one utility update. Executor-generic for the same atomicity reason.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_utility_audit<'e, E>(
+    executor: E,
+    project_id: Uuid,
+    producer_kind: &str,
+    producer_id: &str,
+    reason: &str,
+    reward: f64,
+    alpha: f64,
+    update: &UtilityUpdate,
+    details: serde_json::Value,
+) -> Result<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        r#"
+        INSERT INTO procedural_utility_audit (
+            id, project_id, producer_kind, producer_id, reason,
+            reward, alpha, old_utility, new_utility, details_json
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(project_id)
+    .bind(producer_kind)
+    .bind(producer_id)
+    .bind(reason)
+    .bind(reward)
+    .bind(alpha)
+    .bind(update.old_utility)
+    .bind(update.new_utility)
+    .bind(details)
+    .execute(executor)
+    .await
+    .context("insert procedural utility audit row")?;
+    Ok(())
+}
+
+/// All learned utilities for one producer kind in a project, highest first.
+pub async fn list_procedural_utility(
+    pool: &PgPool,
+    project_id: Uuid,
+    producer_kind: &str,
+) -> Result<Vec<crate::procedural::UtilitySnapshot>> {
+    let rows: Vec<(String, f64, i64)> = sqlx::query_as(
+        r#"
+        SELECT producer_id, utility, update_count
+        FROM procedural_utility
+        WHERE project_id = $1 AND producer_kind = $2
+        ORDER BY utility DESC, producer_id
+        "#,
+    )
+    .bind(project_id)
+    .bind(producer_kind)
+    .fetch_all(pool)
+    .await
+    .context("list procedural utility")?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(producer_id, utility, update_count)| crate::procedural::UtilitySnapshot {
+                producer_id,
+                utility,
+                update_count,
+            },
+        )
+        .collect())
+}
+
 pub async fn prune_access_events(pool: &PgPool, older_than: DateTime<Utc>) -> Result<u64> {
     let result = sqlx::query("DELETE FROM memory_access_events WHERE accessed_at < $1")
         .bind(older_than)
