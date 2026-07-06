@@ -5,7 +5,15 @@ description: "Install Memory Layer, configure PostgreSQL with pgvector, and init
 
 # Install
 
-Memory Layer installs as a native service on your machine. Pick your platform:
+The fastest paths are the [five-minute quickstart](/docs/quickstart) (Docker, nothing else to install) or the one-line installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/3vilM33pl3/memory/main/scripts/install.sh | sh
+```
+
+The installer detects your platform (Homebrew on macOS, the `.deb` release on Debian/Ubuntu), checks whether a PostgreSQL is reachable, and points you at the bundled Docker stack when none is found.
+
+For a manual native install, pick your platform:
 
 <CardGroup cols={3}>
   <Card title="Linux / Debian" href="/docs/install/linux-debian">
