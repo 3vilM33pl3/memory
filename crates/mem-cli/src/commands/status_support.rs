@@ -418,6 +418,52 @@ pub(crate) fn doctor_check(
     }
 }
 
+/// Check whether the `memory` binary is resolvable on `PATH`. This is the one
+/// "command not found" failure `doctor` could not previously diagnose (it runs
+/// as the binary, so PATH resolution is otherwise invisible). Reported as a
+/// warning, not a failure, because doctor is clearly already executing.
+fn cli_path_check() -> DoctorCheckResult {
+    let current_exe = std::env::current_exe().ok();
+    let exe_dir = current_exe
+        .as_ref()
+        .and_then(|path| path.parent())
+        .map(Path::to_path_buf);
+    let binary_name = "memory";
+
+    let resolved = std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join(binary_name))
+            .find(|candidate| candidate.is_file())
+    });
+
+    match resolved {
+        Some(path) => doctor_check(
+            "cli.on_path",
+            DoctorStatus::Ok,
+            "The `memory` command is on PATH.",
+            Some(path.display().to_string()),
+            None,
+            false,
+        ),
+        None => doctor_check(
+            "cli.on_path",
+            DoctorStatus::Warn,
+            "The `memory` command is not on PATH.",
+            current_exe.as_ref().map(|path| path.display().to_string()),
+            Some(match exe_dir {
+                Some(dir) => format!(
+                    "Add this directory to your PATH so `memory` resolves everywhere: {}",
+                    dir.display()
+                ),
+                None => {
+                    "Add the directory containing the `memory` binary to your PATH.".to_string()
+                }
+            }),
+            false,
+        ),
+    }
+}
+
 pub(crate) fn repo_uses_go_skill_runtime(repo_root: &Path) -> bool {
     repo_root
         .join(".agents/skills/memory-layer/scripts/go.mod")
@@ -454,6 +500,8 @@ pub(crate) async fn run_doctor(
         fix_mode: fix,
         checks: Vec::new(),
     };
+
+    report.push(cli_path_check());
 
     let mem_dir = repo_root.join(".mem");
     let project_path = mem_dir.join("project.toml");
@@ -825,13 +873,39 @@ pub(crate) async fn run_doctor(
                             None,
                             false,
                         )),
+                        Ok(None) if fix => {
+                            match sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
+                                .execute(&pool)
+                                .await
+                            {
+                                Ok(_) => report.push(doctor_check(
+                                    "database.pgvector_extension",
+                                    DoctorStatus::Ok,
+                                    "Enabled the pgvector extension in the target database.",
+                                    None,
+                                    None,
+                                    true,
+                                )),
+                                Err(error) => report.push(doctor_check(
+                                    "database.pgvector_extension",
+                                    DoctorStatus::Fail,
+                                    "pgvector extension is missing and could not be created automatically.",
+                                    Some(error.to_string()),
+                                    Some(
+                                        "Install the pgvector package for your PostgreSQL version (e.g. postgresql-16-pgvector), then run CREATE EXTENSION vector; in the target database."
+                                            .to_string(),
+                                    ),
+                                    false,
+                                )),
+                            }
+                        }
                         Ok(None) => report.push(doctor_check(
                             "database.pgvector_extension",
                             DoctorStatus::Fail,
                             "pgvector extension is not enabled in the target database.",
                             None,
                             Some(
-                                "Install pgvector for your PostgreSQL version and run CREATE EXTENSION vector; in the target database."
+                                "Run `memory doctor --fix` to attempt CREATE EXTENSION vector, or install pgvector for your PostgreSQL version and run CREATE EXTENSION vector; in the target database."
                                     .to_string(),
                             ),
                             false,
