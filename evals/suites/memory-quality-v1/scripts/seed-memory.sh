@@ -171,6 +171,42 @@ cat > "$payload" <<'JSON'
       "importance": 2,
       "tags": ["mq-stale-deploy"],
       "sources": [{"source_kind": "note", "excerpt": "legacy Jenkins pipeline, pre-migration"}]
+    },
+    {
+      "canonical_text": "The ingest path validates each record's schema before enqueue.",
+      "summary": "Ingest validates schema before enqueue.",
+      "memory_type": "reference",
+      "confidence": 0.9,
+      "importance": 3,
+      "tags": ["mq-ingest-member"],
+      "sources": [{"file_path": "docs/quality/ingest.md", "source_kind": "file", "excerpt": "schema validation before enqueue"}]
+    },
+    {
+      "canonical_text": "The ingest path retries transient enqueue failures with capped backoff.",
+      "summary": "Ingest retries transient failures with capped backoff.",
+      "memory_type": "reference",
+      "confidence": 0.9,
+      "importance": 3,
+      "tags": ["mq-ingest-member"],
+      "sources": [{"file_path": "docs/quality/ingest.md", "source_kind": "file", "excerpt": "capped backoff retries"}]
+    },
+    {
+      "canonical_text": "The ingest path emits a metric per accepted and rejected record.",
+      "summary": "Ingest emits accept/reject metrics per record.",
+      "memory_type": "reference",
+      "confidence": 0.9,
+      "importance": 3,
+      "tags": ["mq-ingest-member"],
+      "sources": [{"file_path": "docs/quality/ingest.md", "source_kind": "file", "excerpt": "per-record accept/reject metric"}]
+    },
+    {
+      "canonical_text": "Ingest reliability overview: the ingest path forms one reliability pipeline that validates each record's schema before enqueue, retries transient enqueue failures with capped backoff, and emits accept and reject metrics per record. Taken together these give at-least-once ingest with observable back-pressure; the open gap is that schema-rejected records are dropped silently rather than dead-lettered.",
+      "summary": "Ingest reliability pipeline: validation, backoff retries, and per-record metrics.",
+      "memory_type": "insight",
+      "confidence": 0.85,
+      "importance": 4,
+      "tags": ["insight", "consolidation", "mq-ingest-insight"],
+      "sources": [{"source_kind": "memory", "excerpt": "consolidated from ingest reliability member memories"}]
     }
   ]
 }

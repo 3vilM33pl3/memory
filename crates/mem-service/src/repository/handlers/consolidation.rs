@@ -147,7 +147,12 @@ pub(crate) async fn run_memory_consolidation(
         sim_floor: cfg.sim_floor,
         coaccess_norm: cfg.coaccess_norm,
     };
-    let edges = fuse_edges(&inputs.relations, &inputs.similarities, &inputs.coaccess, &weights);
+    let edges = fuse_edges(
+        &inputs.relations,
+        &inputs.similarities,
+        &inputs.coaccess,
+        &weights,
+    );
     let graph = mem_consolidate::FusedGraph::from_edges(edges);
     let communities = detect_communities(&graph, &DetectParams::default());
 
@@ -184,7 +189,11 @@ pub(crate) async fn run_memory_consolidation(
         };
 
         let member_set: BTreeSet<Uuid> = community.members.iter().copied().collect();
-        if is_covered(&member_set, &inputs.insight_coverage, cfg.novelty_overlap_max) {
+        if is_covered(
+            &member_set,
+            &inputs.insight_coverage,
+            cfg.novelty_overlap_max,
+        ) {
             covered_skipped += 1;
             continue;
         }
@@ -268,7 +277,13 @@ async fn fetch_consolidation_inputs(
     let coaccess = fetch_coaccess_edges(pool, project_id, since, cfg.min_coaccess_count).await?;
     let insight_coverage = fetch_insight_coverage(pool, project).await?;
 
-    Ok(ConsolidationInputs { memories, relations, similarities, coaccess, insight_coverage })
+    Ok(ConsolidationInputs {
+        memories,
+        relations,
+        similarities,
+        coaccess,
+        insight_coverage,
+    })
 }
 
 /// Latest active version of every canonical memory, with decay-adjusted

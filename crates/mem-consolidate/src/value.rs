@@ -93,7 +93,12 @@ pub fn evaluate_cluster(
     };
     let coaccess_mass: f64 = members.iter().map(|m| m.coaccess_mass).sum();
     let activation_mass: f64 = members.iter().map(|m| m.activation).sum();
-    let metrics = ClusterMetrics { size, intra_density, coaccess_mass, activation_mass };
+    let metrics = ClusterMetrics {
+        size,
+        intra_density,
+        coaccess_mass,
+        activation_mass,
+    };
 
     let outcome = if size < cfg.min_size {
         GateOutcome::Reject("below min_size")
@@ -127,14 +132,22 @@ mod tests {
         let mut edges = Vec::new();
         for (i, &a) in ids.iter().enumerate() {
             for &b in &ids[i + 1..] {
-                edges.push(WeightedEdge { a: id(a), b: id(b), weight: 1.0 });
+                edges.push(WeightedEdge {
+                    a: id(a),
+                    b: id(b),
+                    weight: 1.0,
+                });
             }
         }
         FusedGraph::from_edges(edges)
     }
 
     fn member(byte: u8, activation: f64, coaccess: f64) -> MemberStat {
-        MemberStat { canonical_id: id(byte), activation, coaccess_mass: coaccess }
+        MemberStat {
+            canonical_id: id(byte),
+            activation,
+            coaccess_mass: coaccess,
+        }
     }
 
     #[test]
@@ -152,7 +165,11 @@ mod tests {
     fn accepts_salient_dense_cluster_via_use() {
         let g = clique(&[1, 2, 3]);
         let (metrics, outcome) = evaluate_cluster(
-            &[member(1, 3.0, 0.0), member(2, 3.0, 0.0), member(3, 3.0, 0.0)],
+            &[
+                member(1, 3.0, 0.0),
+                member(2, 3.0, 0.0),
+                member(3, 3.0, 0.0),
+            ],
             &g,
             &ValueGateConfig::default(),
         );
@@ -164,7 +181,11 @@ mod tests {
     fn accepts_dense_cold_cluster_via_non_use() {
         let g = clique(&[1, 2, 3]);
         let (_, outcome) = evaluate_cluster(
-            &[member(1, 0.1, 0.0), member(2, 0.1, 0.0), member(3, 0.1, 0.0)],
+            &[
+                member(1, 0.1, 0.0),
+                member(2, 0.1, 0.0),
+                member(3, 0.1, 0.0),
+            ],
             &g,
             &ValueGateConfig::default(),
         );
@@ -174,9 +195,17 @@ mod tests {
     #[test]
     fn rejects_sparse_cluster() {
         // Three nodes, only one edge -> density 1/3 < 0.35.
-        let g = FusedGraph::from_edges([WeightedEdge { a: id(1), b: id(2), weight: 1.0 }]);
+        let g = FusedGraph::from_edges([WeightedEdge {
+            a: id(1),
+            b: id(2),
+            weight: 1.0,
+        }]);
         let (_, outcome) = evaluate_cluster(
-            &[member(1, 5.0, 5.0), member(2, 5.0, 5.0), member(3, 5.0, 5.0)],
+            &[
+                member(1, 5.0, 5.0),
+                member(2, 5.0, 5.0),
+                member(3, 5.0, 5.0),
+            ],
             &g,
             &ValueGateConfig::default(),
         );
@@ -188,7 +217,11 @@ mod tests {
         let g = clique(&[1, 2, 3]);
         // activation_mass = 1.5 (below min_salience 2.0) but above cold ceiling 1.0.
         let (_, outcome) = evaluate_cluster(
-            &[member(1, 0.5, 0.0), member(2, 0.5, 0.0), member(3, 0.5, 0.0)],
+            &[
+                member(1, 0.5, 0.0),
+                member(2, 0.5, 0.0),
+                member(3, 0.5, 0.0),
+            ],
             &g,
             &ValueGateConfig::default(),
         );

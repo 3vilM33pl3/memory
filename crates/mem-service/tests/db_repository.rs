@@ -647,9 +647,10 @@ async fn loop_repository_applies_consolidate_proposal_atomically() {
     mem_test_support::cleanup_project(&pool, &project)
         .await
         .expect("cleanup old test project");
-    let project_id = mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
-        .await
-        .expect("upsert project");
+    let project_id =
+        mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+            .await
+            .expect("upsert project");
 
     // Three member memories the insight will summarize.
     let mut members = Vec::new();

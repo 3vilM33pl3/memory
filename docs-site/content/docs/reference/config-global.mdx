@@ -110,6 +110,24 @@ semantic_duplicate_threshold = 0.90  # min max-chunk cosine similarity
 
 This is separate from the per-repo `curation.replacement_policy` agent setting, which governs lexical replacement decisions at capture time.
 
+## Consolidation section
+
+The `[consolidation]` section controls [memory consolidation](/docs/how-it-works/memory-quality#consolidation-and-insights): discovering clusters of related memories and synthesizing higher-level `insight` memories. Off by default and dry-run first, matching the reinforcement posture. When enabled, a deterministic cluster scan runs on the curate path and surfaces `consolidation_due`; with `auto_trigger` on, a due cluster wakes the LLM synthesis in the background. Every result is a human-gated proposal.
+
+```toml
+[consolidation]
+enabled = false                # discover clusters and synthesize insights
+dry_run = true                 # report clusters but do not synthesize
+auto_trigger = true            # wake synthesis when usage crosses the salience floor
+sim_floor = 0.82               # cosine floor for a semantic-similarity edge
+min_size = 3                   # smallest cluster worth consolidating
+max_size = 25                  # largest (guards against blob clusters)
+min_cohesion = 0.35            # minimum intra-cluster edge density
+min_salience = 2.0             # co-access / activation mass for the "use" trigger
+novelty_overlap_max = 0.5      # skip clusters already covered by an insight
+daily_cap = 20                 # ceiling on LLM syntheses per run
+```
+
 ## Precedence and diagnostics
 
 For prod/profile-installed commands, config is loaded from the explicit `--config` path if supplied, otherwise from the discovered global config and the current repo's user-local project config when available. Environment variables with the `MEMORY_LAYER__...` shape override TOML values.

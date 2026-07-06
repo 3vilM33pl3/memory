@@ -1808,15 +1808,15 @@ async fn create_control_plane_loop_run_with_trigger(
             // LLM synthesis + proposal emission happens separately where an
             // AppState (and thus the LLM client) is available.
             let cfg = mem_api::ConsolidationConfig::default();
-            let project = request.project.as_deref().ok_or_else(|| {
-                ApiError::validation(ValidationError::new("project is required"))
-            })?;
-            let report = crate::repository::handlers::consolidation::run_memory_consolidation_default(
-                pool,
-                project,
-                &cfg,
-            )
-            .await?;
+            let project = request
+                .project
+                .as_deref()
+                .ok_or_else(|| ApiError::validation(ValidationError::new("project is required")))?;
+            let report =
+                crate::repository::handlers::consolidation::run_memory_consolidation_default(
+                    pool, project, &cfg,
+                )
+                .await?;
             let output = serde_json::to_value(&report).map_err(|error| {
                 ApiError::io(anyhow::anyhow!("serialize consolidation report: {error}"))
             })?;

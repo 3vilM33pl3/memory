@@ -51,7 +51,11 @@ pub fn fuse_edges(
     let mut edges = Vec::with_capacity(relations.len() + similarities.len() + coaccess.len());
 
     for &(a, b) in relations {
-        edges.push(WeightedEdge { a, b, weight: w.relation });
+        edges.push(WeightedEdge {
+            a,
+            b,
+            weight: w.relation,
+        });
     }
 
     let span = (1.0 - w.sim_floor).max(f64::EPSILON);

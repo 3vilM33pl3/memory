@@ -104,7 +104,11 @@ mod tests {
     }
 
     fn edge(a: u8, b: u8, weight: f64) -> WeightedEdge {
-        WeightedEdge { a: id(a), b: id(b), weight }
+        WeightedEdge {
+            a: id(a),
+            b: id(b),
+            weight,
+        }
     }
 
     #[test]

@@ -73,8 +73,16 @@ mod tests {
     #[test]
     fn parallel_edges_sum_and_mirror() {
         let g = FusedGraph::from_edges([
-            WeightedEdge { a: id(1), b: id(2), weight: 0.5 },
-            WeightedEdge { a: id(2), b: id(1), weight: 0.25 },
+            WeightedEdge {
+                a: id(1),
+                b: id(2),
+                weight: 0.5,
+            },
+            WeightedEdge {
+                a: id(2),
+                b: id(1),
+                weight: 0.25,
+            },
         ]);
         assert_eq!(g.edge_weight(id(1), id(2)), 0.75);
         assert_eq!(g.edge_weight(id(2), id(1)), 0.75);
@@ -83,9 +91,21 @@ mod tests {
     #[test]
     fn drops_self_loops_and_nonpositive() {
         let g = FusedGraph::from_edges([
-            WeightedEdge { a: id(1), b: id(1), weight: 1.0 },
-            WeightedEdge { a: id(1), b: id(2), weight: 0.0 },
-            WeightedEdge { a: id(1), b: id(3), weight: -1.0 },
+            WeightedEdge {
+                a: id(1),
+                b: id(1),
+                weight: 1.0,
+            },
+            WeightedEdge {
+                a: id(1),
+                b: id(2),
+                weight: 0.0,
+            },
+            WeightedEdge {
+                a: id(1),
+                b: id(3),
+                weight: -1.0,
+            },
         ]);
         assert_eq!(g.node_count(), 0);
     }

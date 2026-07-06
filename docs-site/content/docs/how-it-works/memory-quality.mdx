@@ -66,6 +66,16 @@ Background loops propose cleanups over the existing corpus: merging likely dupli
 
 **Read more:** [Automations](/docs/automations) · [TUI automations tab](/docs/tui/automations)
 
+### Consolidation and insights
+
+Recall of many small, related memories is worse than recall of one that sees the whole picture. Consolidation discovers clusters of related memories and synthesizes a higher-level **`insight`** memory that summarizes them — and, crucially, names the unifying concept, the internal tensions or contradictions, the open gaps, and the implications for design or refactoring. This is where the memory layer stops being a filing cabinet and starts producing understanding.
+
+Clusters are found by fusing three signals into one graph and running community detection over it: memory **relations**, embedding **similarity**, and **co-access** (memories retrieved or cited together in the same query). A value gate keeps only clusters that are cohesive and either salient (**used** together) or dense-but-cold (**not used** individually) — so consolidation triggers on both use and neglect, and noise is left unconsolidated. Synthesis is a two-step LLM pass with the same citable-evidence guard as validation: it may only reference the member memories it was shown. The result is a human-gated proposal that, once approved, inserts the insight, links it to each member with a `summarizes` relation, and records the members as provenance — atomically, in one review. Insights are ordinary memories, so a later run consolidates insights into higher-level insights: a schema tree that grows with the project.
+
+The mechanism is grounded in memory science — complementary learning systems and schema consolidation (Tse et al. 2007), sleep-replay gist extraction, the reflection trees of generative agents, and hierarchical summarization (RAPTOR, GraphRAG). It is off by default and dry-run first, like validation.
+
+**Read more:** [`[consolidation]` config section](/docs/reference/config-global#consolidation-section) · [Automations](/docs/automations) · [`memory proposals`](/docs/reference/cli/capture-curation#memory-proposals)
+
 ## Recall
 
 ### Hybrid retrieval and ranking
@@ -101,6 +111,7 @@ Honest status: the adversarial group currently **fails** — deterministic synth
 | Activation scoring | Maintenance | Retrievals, citations, reads, graph proximity | No (deterministic) |
 | Evidence-backed validation | Maintenance | LLM verdict over gathered evidence | Corrections always human-gated |
 | Hygiene automations | Maintenance | Duplicate/stale heuristics | Always (proposal queue) |
+| Consolidation (insights) | Maintenance | Relation + similarity + co-access clustering, use/non-use salience | Always (consolidate proposal) |
 | Hybrid ranking | Recall | Match strength + confidence/recency/activation, penalties | Score explanations for audit |
 | Synthesis guardrails | Recall | Citation coverage, refusal threshold | — |
 | Evals & gates | Measurement | Paired success rates, adversarial floors | Reviewed suites |
