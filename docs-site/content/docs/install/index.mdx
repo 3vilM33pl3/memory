@@ -42,40 +42,25 @@ You need a PostgreSQL database with the pgvector extension enabled. See [Postgre
 | Optional embedding provider | Semantic search and graph-enhanced retrieval quality. | `memory embeddings status --project <slug>` |
 | Go | Required by repo-local Memory Layer skills used by agents. | `go version` |
 
-## Configure the machine
-
-```bash
-memory wizard --global
-```
-
-The wizard writes global configuration and secrets (database URL, API keys) outside your repository so they are never committed. See [Global wizard](/docs/install/wizard-global) for details.
-
-The global configuration is machine-level. It should answer:
-
-- Which PostgreSQL database should Memory Layer use?
-- Which local service URL and API token should clients use?
-- Which LLM and embedding providers are enabled?
-- Should MCP HTTP be enabled and token-protected?
-- Which defaults apply before a project-specific config is loaded?
-
-## Configure a project
+## Configure everything in one pass
 
 ```bash
 cd /path/to/project
-memory wizard --dry-run
-memory wizard
+memory setup
 ```
 
-The dry run previews repo-local files before anything is written. The wizard creates `.mem/project.toml` and the `.agents/` directory with Memory Layer skills and hooks. See [Project wizard](/docs/install/wizard-project) for details.
+`memory setup` runs the setup flow once, covering both the shared machine configuration (database URL, service URL and token, optional LLM/embedding providers — all skippable) and, when run inside a repository, the repo-local project setup (`.mem/project.toml` plus the `.agents/` directory with Memory Layer skills). Secrets are written outside your repository so they are never committed. Use `memory setup --dry-run` to preview every file and service action first.
 
-Repo-local configuration is project-level. It should answer:
+The prompts answer, with strong defaults:
 
-- What is the project slug?
-- Which repository root does it describe?
-- Which generated agent instructions should be committed?
-- Which `.mem/` and `.agents/` files already exist and need preserving?
+- Which PostgreSQL database should Memory Layer use?
+- Which local service URL and API token should clients use?
+- Which LLM and embedding providers are enabled (optional)?
+- What is the project slug, and which generated files should be written?
 
-Review the dry-run output before accepting writes in established repositories.
+### Granular reconfiguration
+
+`memory wizard` remains available when you want to edit one layer at a time — `memory wizard --global` for machine-level settings only, `memory wizard` inside a repo for project files only. See [Global wizard](/docs/install/wizard-global) and [Project wizard](/docs/install/wizard-project). Review `--dry-run` output before accepting writes in established repositories.
 
 ## Check health
 

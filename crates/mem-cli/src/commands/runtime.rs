@@ -19,11 +19,11 @@ use uuid::Uuid;
 use crate::commands::{api::ApiClient, skill_support::set_private_file_permissions};
 
 const ROOT_AFTER_HELP: &str = "\
-New here? Run `memory quickstart`-style setup with `memory wizard`, load a
-demo project with `memory demo`, then explore with `memory query` and `memory tui`.
+New here? Run `memory setup`, load a demo project with `memory demo` (or take
+the guided `memory tour`), then explore with `memory query` and `memory tui`.
 
 Command groups:
-  Core          wizard, init, demo, tour, remember, query, resume, tui
+  Core          setup, init, demo, tour, remember, query, resume, tui
   Status        status, health, stats, doctor
   Memory        capture, curate, scan, proposals, review, archive
   Reinforcement scores, validate
@@ -510,6 +510,20 @@ Examples:
 
 See also:
   docs/user/cli/query.md";
+
+const SETUP_AFTER_HELP: &str = "\
+What it does:
+  Runs the setup flow once, covering both the shared machine configuration
+  (database, service, optional LLM/embedding providers — all skippable) and,
+  when run inside a repository, the repo-local project setup. Strong defaults;
+  accept them and you are done.
+
+This replaces the older two-step `memory wizard --global` + `memory wizard`
+flow. `memory wizard` remains available for granular reconfiguration.
+
+Examples:
+  memory setup
+  memory setup --dry-run";
 
 const TOUR_AFTER_HELP: &str = "\
 What it does:
@@ -1172,6 +1186,8 @@ pub(in crate::commands) struct Cli {
 #[derive(Debug, Subcommand)]
 pub(in crate::commands) enum Command {
     // --- Core: getting started and daily use ---
+    #[command(about = "One-step setup: machine and project configuration in a single pass.", after_help = SETUP_AFTER_HELP)]
+    Setup(SetupArgs),
     #[command(about = "Run the interactive setup wizard.", after_help = WIZARD_AFTER_HELP)]
     Wizard(WizardArgs),
     #[command(about = "Bootstrap a repo-local Memory Layer setup.", after_help = INIT_AFTER_HELP)]
@@ -1341,6 +1357,20 @@ pub(in crate::commands) struct WizardArgs {
     #[arg(long)]
     pub(crate) global: bool,
     /// Preview the wizard's file and service actions without applying them.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "One-step setup covering machine and project configuration.",
+    after_help = SETUP_AFTER_HELP
+)]
+pub(in crate::commands) struct SetupArgs {
+    /// Override the project slug used for repo-local setup.
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    /// Preview the file and service actions without applying them.
     #[arg(long)]
     pub(crate) dry_run: bool,
 }
@@ -3160,6 +3190,10 @@ pub(super) async fn run() -> Result<()> {
     }
 
     match &command {
+        Command::Setup(args) => {
+            crate::commands::wizard::handle_setup(args).await?;
+            return Ok(());
+        }
         Command::Wizard(args) => {
             crate::commands::wizard::handle(args).await?;
             return Ok(());
@@ -3199,6 +3233,7 @@ pub(super) async fn run() -> Result<()> {
         .context("build http client")?;
 
     match command {
+        Command::Setup(_) => unreachable!("setup is handled before config loading"),
         Command::Wizard(_) => unreachable!("wizard is handled before config loading"),
         Command::Init(_) => unreachable!("init is handled before config loading"),
         Command::Upgrade(_) => unreachable!("upgrade is handled before config loading"),
