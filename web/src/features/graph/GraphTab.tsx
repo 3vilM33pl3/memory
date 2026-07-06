@@ -324,8 +324,12 @@ export function GraphTab({
         </div>
       ) : graph && !graph.status.has_graph && !(memoryGraph?.nodes.length ?? 0) ? (
         <div className="graph-empty">
-          <h2>No code graph extracted</h2>
+          <h2>No graph data yet</h2>
           <p>Run <code>memory graph extract --project {project}</code> and refresh this tab.</p>
+          <p>
+            No memories at all yet? <code>memory demo</code> loads a showcase project whose memory
+            graph renders here.
+          </p>
         </div>
       ) : (
         <div className="graph-workspace">

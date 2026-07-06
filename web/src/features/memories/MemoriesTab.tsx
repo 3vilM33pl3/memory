@@ -81,6 +81,23 @@ export function MemoriesTab({
           </select>
         </div>
         <div className="list-view">
+          {filteredMemories.length === 0 ? (
+            <div className="muted" style={{ padding: "1rem" }}>
+              <p>
+                <strong>No memories here yet.</strong>
+              </p>
+              <p>
+                Load a showcase project with <code>memory demo</code>, take the guided{" "}
+                <code>memory tour</code>, or capture real work with <code>memory remember</code> —
+                then refresh this tab.
+              </p>
+              <p>
+                <a href="https://www.memory-layer.dev/docs/quickstart" target="_blank" rel="noreferrer">
+                  Five-minute quickstart
+                </a>
+              </p>
+            </div>
+          ) : null}
           {filteredMemories.map((item) => (
             <button
               key={item.id}

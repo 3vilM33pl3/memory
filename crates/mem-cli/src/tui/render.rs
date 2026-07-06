@@ -271,13 +271,46 @@ pub(super) fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
         }
         lines
     } else if app.memories.filtered_memories.is_empty() {
-        vec![Line::from(Span::styled(
-            format!(
-                "No memories match the current filters for project {}.",
-                app.project
-            ),
-            Style::default().fg(Theme::MUTED),
-        ))]
+        if app.memories.all_memories.is_empty() {
+            // Fresh project: point at the fastest first-run wins instead of a
+            // dead end.
+            vec![
+                Line::from(Span::styled(
+                    format!("Project {} has no memories yet.", app.project),
+                    Style::default().fg(Theme::MUTED),
+                )),
+                Line::from(Span::raw("")),
+                Line::from(Span::styled(
+                    "Get something to explore:",
+                    Style::default().fg(Theme::TEXT),
+                )),
+                Line::from(Span::styled(
+                    "  memory demo   # load a showcase project",
+                    Style::default().fg(Theme::MUTED),
+                )),
+                Line::from(Span::styled(
+                    "  memory tour   # guided remember -> query -> resume walkthrough",
+                    Style::default().fg(Theme::MUTED),
+                )),
+                Line::from(Span::styled(
+                    "  memory remember --project <slug> ...   # capture real work",
+                    Style::default().fg(Theme::MUTED),
+                )),
+                Line::from(Span::raw("")),
+                Line::from(Span::styled(
+                    "Quickstart: https://www.memory-layer.dev/docs/quickstart",
+                    Style::default().fg(Theme::MUTED),
+                )),
+            ]
+        } else {
+            vec![Line::from(Span::styled(
+                format!(
+                    "No memories match the current filters for project {}.",
+                    app.project
+                ),
+                Style::default().fg(Theme::MUTED),
+            ))]
+        }
     } else {
         vec![Line::from(Span::styled(
             "Select a memory to load its details.",
