@@ -2080,6 +2080,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mem-consolidate"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "uuid",
+]
+
+[[package]]
 name = "mem-curate"
 version = "1.0.0"
 dependencies = [
