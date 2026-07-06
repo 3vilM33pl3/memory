@@ -103,7 +103,10 @@ pub(crate) fn batch_from_query_response(response: &QueryResponse) -> Option<Acce
         return None;
     }
     Some(AccessBatch {
-        operation_id: Some("query".to_string()),
+        // A unique id per query response so co-access analysis can tell which
+        // memories were retrieved/cited together in one operation. Scoring
+        // ignores operation_id; only consolidation reads it.
+        operation_id: Some(Uuid::new_v4().to_string()),
         events: kinds.into_iter().collect(),
     })
 }
@@ -117,7 +120,9 @@ pub(crate) fn record_direct_read(state: &AppState, memory_id: Uuid) {
     send_batch(
         runtime,
         AccessBatch {
-            operation_id: Some("direct_read".to_string()),
+            // Prefixed so the kind stays greppable; single-memory reads never
+            // form co-access pairs but keep the column uniformly unique.
+            operation_id: Some(format!("direct_read:{}", Uuid::new_v4())),
             events: vec![(memory_id, AccessKind::DirectRead)],
         },
     );
@@ -280,4 +285,55 @@ pub(crate) fn build_validation_prompt(context: &mem_reinforce::ValidationContext
     lines.push(String::new());
     lines.push("Assess the memory now. Return JSON only.".to_string());
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mem_api::{MemoryType, QueryMatchKind, QueryResult, QueryResultDebug};
+
+    fn response_with_result(memory_id: Uuid) -> QueryResponse {
+        QueryResponse {
+            answer: String::new(),
+            confidence: 1.0,
+            results: vec![QueryResult {
+                memory_id,
+                project: None,
+                project_name: None,
+                repo_root: None,
+                summary: "sample".to_string(),
+                memory_type: MemoryType::Reference,
+                score: 1.0,
+                snippet: String::new(),
+                match_kind: QueryMatchKind::Lexical,
+                score_explanation: Vec::new(),
+                debug: QueryResultDebug::default(),
+                tags: Vec::new(),
+                sources: Vec::new(),
+                graph_connections: Vec::new(),
+                needs_review: false,
+            }],
+            insufficient_evidence: false,
+            answer_generation: Default::default(),
+            answer_citations: Vec::new(),
+            diagnostics: Default::default(),
+        }
+    }
+
+    #[test]
+    fn query_batches_get_unique_operation_ids() {
+        let memory_id = Uuid::new_v4();
+        let first = batch_from_query_response(&response_with_result(memory_id))
+            .expect("batch")
+            .operation_id
+            .expect("operation id");
+        let second = batch_from_query_response(&response_with_result(memory_id))
+            .expect("batch")
+            .operation_id
+            .expect("operation id");
+        // Distinct per operation so co-access can group co-retrieved memories,
+        // and parseable as a UUID (no longer the literal "query").
+        assert_ne!(first, second);
+        assert!(Uuid::parse_str(&first).is_ok());
+    }
 }
