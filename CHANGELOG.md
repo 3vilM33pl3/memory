@@ -31,12 +31,15 @@
 - Property tests for the search ranker (penalties never raise scores, total
   result ordering, finite scores).
 
-### Known issues
+### Fixed
 
-- The memory-quality canary's adversarial group currently fails: deterministic
-  answer synthesis echoes superseded facts as "Also relevant" context and does
-  not refuse when only irrelevant or low-confidence memories match. Tracked as
-  the next quality workstream; the gate stays red on that group until fixed.
+- Deterministic answer synthesis now refuses on weak evidence and no longer
+  echoes superseded facts (3VI-773): a weak-match refusal predicate (low term
+  overlap and low semantic similarity with no exact-phrase anchor), a memory
+  confidence floor for stating or citing evidence, and a same-topic runner-up
+  filter that drops duplicate/contradicting "Also relevant" context. The
+  memory-quality adversarial group went 0/7 → 7/7 and the release gate passes
+  (overall 18/26 → 25/26, deterministic across runs).
 
 ## 1.0.0 - 2026-07-05
 

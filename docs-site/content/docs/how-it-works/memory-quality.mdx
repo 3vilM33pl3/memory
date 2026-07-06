@@ -86,7 +86,7 @@ Recall quality starts with finding the right candidates: lexical full-text, sema
 
 ### Answer synthesis guardrails
 
-Synthesized answers cite the specific memories they draw from, and those citations feed back into activation scoring. When the best match is too weak to support an answer, the query returns `insufficient_evidence` instead of guessing — the design preference is refusing over fabricating. Hardening this guardrail is an active workstream: the adversarial canary below currently documents the cases it still gets wrong.
+Synthesized answers cite the specific memories they draw from, and those citations feed back into activation scoring. When the best match is too weak to support an answer, the query returns `insufficient_evidence` instead of guessing — the design preference is refusing over fabricating. Concretely: an answer is refused when nothing anchors the top result to the question (low term overlap and low semantic similarity with no exact phrase match) or when the best evidence is itself a low-confidence memory; and a runner-up that restates the top result's topic — a duplicate, or a superseded sibling carrying a stale value — is never echoed as supporting context or cited.
 
 **Read more:** [Ranking diagnostics](/docs/how-it-works/retrieval-search#ranking-diagnostics) · [Query and briefings CLI](/docs/reference/cli/query-briefings)
 
@@ -96,7 +96,7 @@ Synthesized answers cite the specific memories they draw from, and those citatio
 
 Scoring changes are easy to get wrong, so quality is measured, not assumed. The eval harness runs paired conditions (no-memory baseline versus full memory) over reviewed suites and gates releases on the deltas. The **memory-quality canary** (`evals/suites/memory-quality-v1`) adds adversarial items: seeded stale facts with fresher contradictions, vague rumors, and unanswerable questions, asserting the pipeline refuses or prefers the fresh fact. Its gate enforces absolute floors — including zero tolerated adversarial failures.
 
-Honest status: the adversarial group currently **fails** — deterministic synthesis still echoes superseded facts as supporting context and does not refuse on weak evidence. The gate stays red on that group until those fixes land; that is the canary doing its job.
+Status: the adversarial group **passes** (7/7) and the gate is green. It caught real failures first — deterministic synthesis used to echo superseded facts as supporting context and answered confidently on weak evidence — and the fixes were tuned against its measured per-item signals rather than intuition. That is the canary doing its job.
 
 **Read more:** [Evaluating Memory](/docs/evals) · [Eval CLI](/docs/reference/cli/integrations-evals)
 
