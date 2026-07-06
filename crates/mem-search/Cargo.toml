@@ -18,6 +18,7 @@ pgvector.workspace = true
 uuid.workspace = true
 async-trait = "0.1"
 thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 mem-test-support = { path = "../mem-test-support" }

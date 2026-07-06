@@ -435,10 +435,18 @@ async fn query_memory_execution(
 
     let graph_started = Instant::now();
     let (graph_candidates, graph_status) = if graph_enabled {
-        match repository::fetch_graph_candidates(pool, request, &normalized, candidate_limit).await
+        // The graph channel is bounded so a slow code-graph scan can never
+        // sink the whole query; on timeout it degrades to an empty channel
+        // with a diagnostic status, exactly like an error.
+        match tokio::time::timeout(
+            graph_channel_timeout(),
+            repository::fetch_graph_candidates(pool, request, &normalized, candidate_limit),
+        )
+        .await
         {
-            Ok(outcome) => (outcome.candidates, outcome.status),
-            Err(_) => (Vec::new(), "error".to_string()),
+            Ok(Ok(outcome)) => (outcome.candidates, outcome.status),
+            Ok(Err(_)) => (Vec::new(), "error".to_string()),
+            Err(_) => (Vec::new(), "timed_out".to_string()),
         }
     } else {
         (Vec::new(), "disabled_by_mode".to_string())
@@ -1231,6 +1239,18 @@ fn compare_ranked(left: &RankedCandidate, right: &RankedCandidate) -> std::cmp::
         .total_cmp(&left.final_score)
         .then_with(|| right.updated_at.cmp(&left.updated_at))
         .then_with(|| left.memory_id.cmp(&right.memory_id))
+}
+
+/// Upper bound for the graph retrieval channel (default 8s). Override with
+/// `MEMORY_LAYER_GRAPH_TIMEOUT_SECS`; values must be a positive integer
+/// number of seconds.
+fn graph_channel_timeout() -> std::time::Duration {
+    let secs = std::env::var("MEMORY_LAYER_GRAPH_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(8);
+    std::time::Duration::from_secs(secs)
 }
 
 fn provenance_decay_multiplier(status: &SourceProvenanceStatus, config: &ProvenanceConfig) -> f64 {

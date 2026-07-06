@@ -280,6 +280,21 @@ impl PostgresGraphRepository {
         .execute(&mut *tx)
         .await
         .context("complete graph extraction run")?;
+        // Superseded runs only slow retrieval down: only the latest completed
+        // run is ever queried, but its predecessors' symbol/reference rows
+        // still get scanned. Cascades remove their symbols, references,
+        // nodes, edges, and evidence.
+        sqlx::query(
+            r#"
+            DELETE FROM graph_extraction_runs
+            WHERE project_id = $1 AND id <> $2
+            "#,
+        )
+        .bind(project_id)
+        .bind(run_id)
+        .execute(&mut *tx)
+        .await
+        .context("prune superseded graph extraction runs")?;
         tx.commit().await.context("commit graph transaction")?;
 
         Ok(GraphExtractionReport {

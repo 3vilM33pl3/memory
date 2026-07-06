@@ -726,7 +726,57 @@ pub(super) async fn fetch_graph_candidates(
         .map(|value| value.to_string())
         .collect::<Vec<_>>();
 
-    let rows = sqlx::query(
+    // Term predicates are expanded to one ILIKE per term instead of
+    // `ILIKE ANY(array)`: the planner can serve single ILIKE '%term%'
+    // predicates from the pg_trgm GIN indexes (BitmapOr), while ANY(array)
+    // forces a sequential scan over the whole table. Terms are still bound
+    // parameters; only placeholder numbers are generated. Placeholders $1-$8
+    // are the fixed binds; terms start at $9 and are shared by both CTEs.
+    //
+    // The hit CTEs are capped with deterministic ordering: broad terms
+    // ("memory", "query") can match thousands of symbols/references, and the
+    // downstream neighbor expansion and memory_sources path join scale with
+    // the hit count, not the final LIMIT. The graph channel is a bounded
+    // boost signal, so bounded intermediate results are the intended shape.
+    const GRAPH_DIRECT_SYMBOL_CAP: usize = 200;
+    const GRAPH_DIRECT_REFERENCE_CAP: usize = 400;
+    const GRAPH_NEIGHBOR_CAP: usize = 400;
+    const FIRST_TERM_PLACEHOLDER: usize = 9;
+    let term_predicate = |columns: &[&str], first: usize, count: usize| -> String {
+        if count == 0 {
+            return "FALSE".to_string();
+        }
+        (first..first + count)
+            .flat_map(|index| {
+                columns
+                    .iter()
+                    .map(move |column| format!("{column} ILIKE ${index}"))
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    };
+    let graph_term_count = graph_like_terms.len();
+    let path_first = FIRST_TERM_PLACEHOLDER + graph_term_count;
+    let symbol_predicate = format!(
+        "({} OR {})",
+        term_predicate(
+            &["cs.name", "cs.qualified_name"],
+            FIRST_TERM_PLACEHOLDER,
+            graph_term_count
+        ),
+        term_predicate(&["cs.file_path"], path_first, path_like_terms.len())
+    );
+    let reference_predicate = format!(
+        "({} OR {})",
+        term_predicate(
+            &["cr.target_text", "cr.source_text"],
+            FIRST_TERM_PLACEHOLDER,
+            graph_term_count
+        ),
+        term_predicate(&["cr.file_path"], path_first, path_like_terms.len())
+    );
+
+    let sql = format!(
         r#"
         WITH latest_runs AS (
             SELECT DISTINCT ON (ger.project_id)
@@ -748,19 +798,14 @@ pub(super) async fn fetch_graph_candidates(
                 NULL::text AS edge_kind,
                 NULL::text AS neighbor_symbol,
                 'direct'::text AS direction,
-                $7::float8 AS boost,
+                $5::float8 AS boost,
                 'code symbol match'::text AS reason,
                 FALSE AS edge_hit
             FROM code_symbols cs
             JOIN latest_runs lr ON lr.id = cs.extraction_run_id
-            WHERE
-              (
-                    ($2::text[] IS NOT NULL AND (
-                        cs.name ILIKE ANY($2)
-                        OR COALESCE(cs.qualified_name, '') ILIKE ANY($2)
-                    ))
-                    OR (cardinality($3::text[]) > 0 AND cs.file_path ILIKE ANY($3))
-              )
+            WHERE {symbol_predicate}
+            ORDER BY cs.file_path, cs.display_name
+            LIMIT {GRAPH_DIRECT_SYMBOL_CAP}
         ),
         direct_reference_hits AS (
             SELECT
@@ -772,7 +817,7 @@ pub(super) async fn fetch_graph_candidates(
                 cr.reference_kind AS edge_kind,
                 NULL::text AS neighbor_symbol,
                 'direct'::text AS direction,
-                $8::float8 AS boost,
+                $6::float8 AS boost,
                 'code reference match'::text AS reason,
                 FALSE AS edge_hit
             FROM code_references cr
@@ -780,13 +825,9 @@ pub(super) async fn fetch_graph_candidates(
             LEFT JOIN code_symbols cs
               ON cs.extraction_run_id = cr.extraction_run_id
              AND cs.stable_identity = cr.target_symbol_identity
-            WHERE (
-                    ($2::text[] IS NOT NULL AND (
-                        cr.target_text ILIKE ANY($2)
-                        OR COALESCE(cr.source_text, '') ILIKE ANY($2)
-                    ))
-                    OR (cardinality($3::text[]) > 0 AND cr.file_path ILIKE ANY($3))
-              )
+            WHERE {reference_predicate}
+            ORDER BY cr.file_path, cr.target_text
+            LIMIT {GRAPH_DIRECT_REFERENCE_CAP}
         ),
         direct_node_hits AS (
             SELECT extraction_run_id, graph_node_id FROM direct_symbol_hits WHERE graph_node_id IS NOT NULL
@@ -806,7 +847,7 @@ pub(super) async fn fetch_graph_candidates(
                     WHEN ge.source_node_id = direct_node_hits.graph_node_id THEN 'outgoing'
                     ELSE 'incoming'
                 END AS direction,
-                $9::float8 AS boost,
+                $7::float8 AS boost,
                 'one-hop graph neighbor'::text AS reason,
                 TRUE AS edge_hit
             FROM direct_node_hits
@@ -822,6 +863,8 @@ pub(super) async fn fetch_graph_candidates(
             JOIN code_symbols anchor
               ON anchor.extraction_run_id = ge.extraction_run_id
              AND anchor.graph_node_id = direct_node_hits.graph_node_id
+            ORDER BY neighbor.file_path, neighbor.display_name
+            LIMIT {GRAPH_NEIGHBOR_CAP}
         ),
         graph_hits AS (
             SELECT * FROM direct_symbol_hits
@@ -874,7 +917,7 @@ pub(super) async fn fetch_graph_candidates(
         WHERE ($1::text IS NULL OR p.slug = $1)
           AND m.status = 'active'
           AND (
-                $6::boolean
+                $4::boolean
                 OR (
                     m.is_tombstone = FALSE
                     AND m.version_no = (
@@ -884,40 +927,41 @@ pub(super) async fn fetch_graph_candidates(
                     )
                 )
           )
-          AND ($4::text[] IS NULL OR m.memory_type = ANY($4))
+          AND ($2::text[] IS NULL OR m.memory_type = ANY($2))
           AND (
-                cardinality($5::text[]) = 0
+                cardinality($3::text[]) = 0
                 OR EXISTS (
                     SELECT 1
                     FROM memory_tags mt
                     WHERE mt.memory_entry_id = m.id
-                      AND mt.tag = ANY($5)
+                      AND mt.tag = ANY($3)
                 )
           )
         ORDER BY gh.boost DESC, m.updated_at DESC, m.id
-        LIMIT $10
-        "#,
-    )
-    .bind(request.project)
-    .bind(if graph_like_terms.is_empty() {
-        None::<Vec<String>>
-    } else {
-        Some(graph_like_terms)
-    })
-    .bind(&path_like_terms)
-    .bind(if memory_type_filters.is_empty() {
-        None::<Vec<String>>
-    } else {
-        Some(memory_type_filters)
-    })
-    .bind(&request.filters.tags)
-    .bind(request.history)
-    .bind(GRAPH_DIRECT_BOOST)
-    .bind(GRAPH_REFERENCE_BOOST)
-    .bind(GRAPH_NEIGHBOR_BOOST)
-    .bind(candidate_limit * 6)
-    .fetch_all(pool)
-    .await?;
+        LIMIT $8
+        "#
+    );
+
+    let mut query = sqlx::query(&sql)
+        .bind(request.project)
+        .bind(if memory_type_filters.is_empty() {
+            None::<Vec<String>>
+        } else {
+            Some(memory_type_filters)
+        })
+        .bind(&request.filters.tags)
+        .bind(request.history)
+        .bind(GRAPH_DIRECT_BOOST)
+        .bind(GRAPH_REFERENCE_BOOST)
+        .bind(GRAPH_NEIGHBOR_BOOST)
+        .bind(candidate_limit * 6);
+    for term in &graph_like_terms {
+        query = query.bind(term);
+    }
+    for term in &path_like_terms {
+        query = query.bind(term);
+    }
+    let rows = query.fetch_all(pool).await?;
 
     let mut candidates = HashMap::<Uuid, CandidateRecord>::new();
     for row in rows {
