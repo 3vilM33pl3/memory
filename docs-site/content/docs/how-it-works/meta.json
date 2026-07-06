@@ -2,11 +2,13 @@
   "title": "How it works",
   "pages": [
     "index",
+    "mental-model",
     "memory-types",
     "retrieval-search",
+    "runtime-topology",
+    "---The science---",
     "reinforcement",
     "consolidation",
-    "memory-quality",
-    "runtime-topology"
+    "memory-quality"
   ]
 }

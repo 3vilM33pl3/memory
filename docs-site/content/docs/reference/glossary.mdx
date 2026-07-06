@@ -1,0 +1,61 @@
+---
+title: "Glossary"
+description: "Every Memory Layer term defined once, with a map of how the concepts connect."
+---
+
+# Glossary
+
+Every term the docs use, defined once. The map shows how they connect; the [three things to know](/docs/how-it-works/mental-model) page explains the core loop.
+
+<Mermaid chart="flowchart TD\n    P[Project] --> C[Captures]\n    C -->|curation| M[(Canonical memories)]\n    M --> T[Types & tags]\n    M --> R[Relations]\n    M --> S[Sources / provenance]\n    Q[Query / Resume] --> M\n    Q -->|citations| ACT[Activation]\n    ACT -->|validation when hot| M\n    M -->|clusters| I[Insights]\n    L[Loops] -->|proposals| REV[Review queue]\n    REV -->|human approval| M\n    G[Code graph] --> Q" />
+
+## Core
+
+| Term | Definition |
+|---|---|
+| **Project** | The scoping unit for all memory — usually one repository or working directory, identified by a slug. |
+| **Capture** | A raw record of completed work (`memory remember`, `memory capture`, watchers). Input to curation, never served directly. |
+| **Curation** | The pipeline that distills captures into canonical memories: extracts durable claims, drops noise, deduplicates, and decides replacements. |
+| **Memory (canonical)** | A short, citable durable fact with a summary, canonical text, type, tags, confidence, importance, and sources. Immutable per version; superseded rather than edited. |
+| **Memory type** | One of 17 classifications (decision, convention, incident, insight, …) that sharpen search and curation. See [memory types](/docs/how-it-works/memory-types). |
+| **Query** | Hybrid retrieval (lexical + semantic + graph) over canonical memories, synthesized into a cited answer — or an honest refusal. |
+| **Resume** | A briefing built from checkpoints, recent activity, and memories that gets you back into flow after time away. |
+
+## Evidence and trust
+
+| Term | Definition |
+|---|---|
+| **Source / provenance** | Where a memory came from: files, commits, notes, or other memories. Verified against the filesystem; missing sources decay a memory's rank. |
+| **Confidence** | How likely a memory's claim is true (0–1). Set at curation, raised by re-observation, decayed by failed validation. Low-confidence memories are never stated as answers. |
+| **Importance** | How much a memory matters to the project (1–5); a ranking weight. |
+| **Citation** | The specific memories an answer drew from, numbered in the response. Citations feed reinforcement. |
+| **insufficient_evidence** | The query response flag meaning "the evidence is too weak to answer" — the design prefers refusing over fabricating. |
+| **Replacement proposal** | A queued, human-reviewed suggestion that a new memory supersede an old one. Nothing durable changes without approval. |
+| **Review queue** | Where all proposals (replacements, corrections, merges, insights) wait for human approve/reject — in the TUI Review tab, web UI, or `memory review`. |
+
+## The self-maintaining layer
+
+| Term | Definition |
+|---|---|
+| **Activation** | A memory's usage-driven strength, from the ACT-R cognitive model: raised by retrieval, spread along relations, decayed by time. Deterministic, no LLM. |
+| **Spreading activation** | When a memory is used, a fraction of its activation flows to related memories, keeping linked knowledge warm. |
+| **Validation** | When a memory runs hot, evidence is gathered from the repository and an LLM verdict confirms, improves, or flags it. Corrections are human-gated. |
+| **Relations** | Typed links between memories: supports, supersedes, duplicates, depends_on, summarizes, related_to. |
+| **Consolidation** | Clustering related memories (by relations, embeddings, and co-access) and proposing one **insight** memory that captures the pattern. |
+| **Insight** | A consolidated meta-memory: the gist of a cluster plus its tensions and gaps. |
+| **Procedural utility** | Per-loop learned usefulness (ACT-R utility learning) from proposal decisions — advisory scores for the automation loops. |
+
+## The machinery
+
+| Term | Definition |
+|---|---|
+| **Service** | The local backend (`memory service run` or Docker): PostgreSQL + pgvector storage, HTTP API, and the web UI. Everything stays on your machine. |
+| **Code graph** | Files, symbols, and references extracted from the repository; powers graph-aware retrieval and the 3D graph view. |
+| **Embeddings** | Vector representations enabling semantic search. Optional — lexical retrieval works keyless. |
+| **Watcher** | A per-project daemon that observes repository activity and feeds captures. |
+| **Loop** | A built-in background automation (hygiene, CI triage, context packs, consolidation, evals…) that produces reports and proposals, never silent mutations. |
+| **Skill** | Repo-local instructions + helpers that teach a coding agent (Claude Code, Codex) to use Memory Layer well. |
+| **MCP** | The built-in Model Context Protocol server exposing read-first memory tools to any MCP client. |
+| **Bundle** | A shareable, privacy-safe export of a project's memories (`memory bundle`). |
+| **Checkpoint** | A saved execution state for plan-backed work (`memory checkpoint`), used by resume and plan verification. |
+| **Eval / gate** | The measurement harness: paired no-memory vs full-memory runs over reviewed suites, with release gates enforcing floors. |

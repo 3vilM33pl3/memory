@@ -1,20 +1,24 @@
 {
   "title": "Memory Layer",
   "pages": [
+    "---Start here---",
     "index",
     "quickstart",
-    "roadmap",
     "install",
+    "how-it-works",
+    "---Daily use---",
     "tui",
     "web-ui",
-    "automations",
-    "how-it-works",
     "agents",
+    "---Advanced---",
+    "automations",
     "watchers",
     "mcp",
     "evals",
     "operations",
     "reference",
+    "---Project---",
+    "roadmap",
     "help"
   ]
 }

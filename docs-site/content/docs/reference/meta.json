@@ -2,6 +2,7 @@
   "title": "Reference",
   "pages": [
     "index",
+    "glossary",
     "cli",
     "config-global",
     "config-project",

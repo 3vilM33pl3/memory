@@ -1,0 +1,46 @@
+---
+title: "Three things to know"
+description: "The whole mental model in one page: memories, retrieval, reinforcement. Everything else is optional depth."
+---
+
+# Three things to know
+
+Memory Layer has many features, but its mental model is three ideas. If you understand this page, you can use the product; everything else is optional depth.
+
+<Mermaid chart="flowchart LR\n    W[Your work] -->|remember| M[(Memories)]\n    M -->|query / resume| A[Answers & briefings]\n    A -->|every use strengthens\nwhat helped| M" />
+
+## 1. Memories — durable facts, not chat logs
+
+When work completes, `memory remember` captures it. Curation distills the capture into short, citable **memories**: a durable claim, its scope, and the evidence behind it (files, commits, notes). Raw conversation is never stored as memory — only what stays true tomorrow.
+
+```bash
+memory remember --project app --title "Switched auth to sessions" \
+  --summary "JWTs replaced with server-side sessions" \
+  --note "Session cookies are HttpOnly; TTL 24h; see auth/session.rs"
+```
+
+## 2. Retrieval — ask, get a cited answer or an honest refusal
+
+`memory query` searches those memories three ways at once — keywords, meaning (embeddings), and the code graph — and synthesizes a short answer that **cites the exact memories it used**. When the evidence is weak, it says so (`insufficient_evidence`) instead of guessing. `memory resume` uses the same retrieval to build a briefing that gets you back into flow after time away.
+
+```bash
+memory query --project app --question "How does auth work now?"
+memory resume --project app
+```
+
+## 3. Reinforcement — memory maintains itself
+
+Every retrieval strengthens the memories that earned it; activation spreads to linked memories and decays over time, exactly like the [ACT-R cognitive model](/docs/how-it-works/reinforcement). Frequently used knowledge stays sharp; hot memories get validated against your actual code; stale claims lose rank and can be superseded — with every durable change gated behind human review.
+
+You don't run reinforcement. It happens because you use the system.
+
+## That's the loop
+
+**remember → query/resume → (automatic) reinforcement.** Three commands cover daily use — try them live with `memory tour`.
+
+## When you want more depth
+
+- [Memory types](/docs/how-it-works/memory-types) — how knowledge is classified.
+- [Retrieval and search](/docs/how-it-works/retrieval-search) — the three channels and ranking.
+- [Reinforcement](/docs/how-it-works/reinforcement) and [Consolidation](/docs/how-it-works/consolidation) — the cognitive science, with citations.
+- [Automations](/docs/automations), [Watchers](/docs/watchers), [MCP](/docs/mcp) — the background machinery.
