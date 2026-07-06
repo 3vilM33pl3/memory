@@ -511,6 +511,18 @@ Examples:
 See also:
   docs/user/cli/query.md";
 
+const DEMO_AFTER_HELP: &str = "\
+What it does:
+  Seeds a showcase project with a relatable set of memories about Memory Layer itself,
+  so query, resume, and the graph show real results on a fresh install. Works keyless
+  (no LLM or embedding provider required). Safe to rerun or delete and reseed.
+
+Requires a running service — `docker compose up` or `memory service run` first.
+
+Examples:
+  memory demo
+  memory demo --project playground";
+
 const VERIFY_PROVENANCE_AFTER_HELP: &str = "\
 Agent notes:
   Use before relying on source citations after large refactors, file moves, or cleanup.
@@ -1152,6 +1164,8 @@ pub(in crate::commands) enum Command {
     Wizard(WizardArgs),
     #[command(about = "Bootstrap a repo-local Memory Layer setup.", after_help = INIT_AFTER_HELP)]
     Init(InitArgs),
+    #[command(about = "Load a demo project so you can try queries immediately.", after_help = DEMO_AFTER_HELP)]
+    Demo(DemoArgs),
     #[command(about = "Capture and curate completed work into memory.", after_help = REMEMBER_AFTER_HELP)]
     Remember(RememberArgs),
     #[command(about = "Ask a project-specific question against curated memory.", after_help = QUERY_AFTER_HELP)]
@@ -1621,6 +1635,17 @@ pub(in crate::commands) enum WatcherManagerCommand {
     Disable(ServiceLifecycleArgs),
     #[command(about = "Show watcher manager status.", after_help = WATCHER_MANAGER_STATUS_AFTER_HELP)]
     Status,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Load a demo project so you can try queries immediately.",
+    after_help = DEMO_AFTER_HELP
+)]
+pub(in crate::commands) struct DemoArgs {
+    /// Project slug to load the demo memories into.
+    #[arg(long, default_value = "demo")]
+    pub(crate) project: String,
 }
 
 #[derive(Debug, Args)]
@@ -3172,6 +3197,9 @@ pub(super) async fn run() -> Result<()> {
             crate::commands::status::handle(args, cli_config_path, client, config).await?
         }
         Command::Commits(args) => crate::commands::commits::handle(args, client, config).await?,
+        Command::Demo(args) => {
+            crate::commands::demo::handle(args, client, config, cli_writer_id).await?
+        }
         Command::Query(args) => crate::commands::query::handle(args, client, config).await?,
         Command::VerifyProvenance(args) => {
             crate::commands::verify_provenance::handle(args, client, config).await?

@@ -1,0 +1,157 @@
+{
+  "project": "demo",
+  "task_title": "Load the Memory Layer demo showcase",
+  "user_prompt": "Seed a relatable demo project so a new user can query, browse, and resume against real memories.",
+  "writer_id": "memory-demo-seed",
+  "writer_name": "Memory Layer Demo",
+  "agent_summary": "Seeded a self-referential showcase corpus of durable facts about Memory Layer itself.",
+  "files_changed": [],
+  "tests": [],
+  "notes": ["Self-referential demo corpus; safe to delete and reseed with `memory demo`."],
+  "structured_candidates": [
+    {
+      "canonical_text": "Memory Layer is a local-first memory system for coding agents: it captures durable project knowledge, curates it into canonical memories, and serves it back over a hybrid lexical + vector + graph retrieval path. The service, TUI, and web UI all read the same backend APIs.",
+      "summary": "Memory Layer captures, curates, and serves durable project memory locally.",
+      "memory_type": "architecture",
+      "confidence": 0.95,
+      "importance": 5,
+      "tags": ["overview", "architecture"],
+      "sources": [{"source_kind": "note", "excerpt": "hybrid lexical + vector + graph retrieval; shared backend APIs"}]
+    },
+    {
+      "canonical_text": "The backend service auto-applies its embedded SQL migrations on startup and requires PostgreSQL with the pgvector extension. It binds 127.0.0.1:4040 by default and serves the web UI from the first web/dist-style directory it discovers.",
+      "summary": "The service needs Postgres + pgvector, migrates on boot, and binds 4040.",
+      "memory_type": "reference",
+      "confidence": 0.95,
+      "importance": 4,
+      "tags": ["service", "postgres", "pgvector"],
+      "sources": [{"source_kind": "note", "excerpt": "auto-migrate on boot; default bind 127.0.0.1:4040"}]
+    },
+    {
+      "canonical_text": "Retrieval strengthens the memories that earn it: every access raises a memory's activation, activation spreads to linked memories, and it decays over time. This ACT-R-grounded reinforcement is deterministic and needs no LLM.",
+      "summary": "Reinforcement raises activation on use, spreads to links, and decays over time.",
+      "memory_type": "architecture",
+      "confidence": 0.9,
+      "importance": 5,
+      "tags": ["reinforcement", "activation", "act-r"],
+      "sources": [{"source_kind": "note", "excerpt": "access-driven activation with spreading and decay; deterministic"}]
+    },
+    {
+      "canonical_text": "Consolidation clusters related memories by relation edges, embedding similarity, and co-access, then proposes a single insight memory summarizing the cluster. Insights are human-gated: nothing is written without approval, and member memories keep living.",
+      "summary": "Consolidation proposes human-gated insight memories from clusters of related memories.",
+      "memory_type": "architecture",
+      "confidence": 0.9,
+      "importance": 4,
+      "tags": ["consolidation", "insight"],
+      "sources": [{"source_kind": "note", "excerpt": "three-signal clustering; human-gated insight proposals"}]
+    },
+    {
+      "canonical_text": "Loop automations run through the local service control plane and produce reports, approval requests, or reviewable proposals rather than bypassing the Memory APIs. Built-ins cover context-pack refresh, memory hygiene, CI triage, and evaluation.",
+      "summary": "Loop automations are approval-gated and run through the service control plane.",
+      "memory_type": "architecture",
+      "confidence": 0.9,
+      "importance": 4,
+      "tags": ["automations", "safety"],
+      "sources": [{"source_kind": "note", "excerpt": "reports, approval requests, or reviewable proposals; never bypass Memory APIs"}]
+    },
+    {
+      "canonical_text": "The built-in MCP server is read-first: it exposes query, resume, overview, activities, and memory-inspection tools for agents, while write and loop-control tools require approval. HTTP MCP is protected by the service API token.",
+      "summary": "The MCP server is read-first; memory tools read, loop tools require approval.",
+      "memory_type": "architecture",
+      "confidence": 0.9,
+      "importance": 3,
+      "tags": ["mcp", "api", "read-only"],
+      "sources": [{"source_kind": "note", "excerpt": "read-first MCP; token-protected HTTP"}]
+    },
+    {
+      "canonical_text": "Decision: lexical keyword search works with no API keys, so the deterministic retrieval paths run fully local and offline; LLM and embedding providers are optional and only improve curation and semantic search.",
+      "summary": "Keyless lexical retrieval is the default; LLM/embeddings are optional upgrades.",
+      "memory_type": "decision",
+      "confidence": 0.95,
+      "importance": 4,
+      "tags": ["local-first", "keyless"],
+      "sources": [{"source_kind": "note", "excerpt": "lexical works keyless; LLM/embeddings optional"}]
+    },
+    {
+      "canonical_text": "Convention: memories should be short, inspectable, and useful without reading the original chat — a durable claim plus its scope and evidence. Weak memories record activity ('looked at runtime.rs'); strong ones record the durable outcome.",
+      "summary": "Good memories state a durable claim with scope and evidence, not raw activity.",
+      "memory_type": "convention",
+      "confidence": 0.9,
+      "importance": 4,
+      "tags": ["memory-quality", "curation"],
+      "sources": [{"source_kind": "note", "excerpt": "durable claim + scope + evidence; outcome over activity"}]
+    },
+    {
+      "canonical_text": "The Graph tab keeps the isolation radius client-side and anchors traversal on the selected node, so expanding or isolating a neighborhood never re-queries the backend. The 3D force graph layers code, provenance, and relationship edges.",
+      "summary": "The web Graph tab keeps isolate-depth client-side, anchored on the selection.",
+      "memory_type": "implementation",
+      "confidence": 0.85,
+      "importance": 3,
+      "tags": ["web", "graph", "ui"],
+      "sources": [{"source_kind": "note", "excerpt": "isolate_depth stays local; traversal anchored on selected node"}]
+    },
+    {
+      "canonical_text": "Code-graph extraction stores files, symbols, and references as graph nodes and edges, linking imports, callers, and memory provenance. Graph-aware retrieval uses these edges to surface memories connected to the code a query touches.",
+      "summary": "Code-graph extraction stores files/symbols/references and powers graph-aware retrieval.",
+      "memory_type": "implementation",
+      "confidence": 0.85,
+      "importance": 3,
+      "tags": ["graph", "repository", "provenance"],
+      "sources": [{"source_kind": "note", "excerpt": "files, symbols, references; imports, callers, memory provenance"}]
+    },
+    {
+      "canonical_text": "Repo-local skills resolve the source checkout's dev CLI before an installed memory binary, so a running dev service is used in preference to the packaged one. This avoids 401 invalid-api-token errors from mixing dev and prod services.",
+      "summary": "Repo-local skills prefer the dev CLI to avoid mixed dev/prod token errors.",
+      "memory_type": "environment",
+      "confidence": 0.85,
+      "importance": 3,
+      "tags": ["skills", "auth", "dev"],
+      "sources": [{"source_kind": "note", "excerpt": "prefer source checkout dev CLI; avoids 401 from mixed services"}]
+    },
+    {
+      "canonical_text": "The public documentation site is a separate Next.js + Fumadocs app rooted at docs-site and deployed on Vercel; the /demo route is a backend-free snapshot using sanitized static data and browser-only interactions.",
+      "summary": "The docs site is a separate Next/Fumadocs app on Vercel; /demo is backend-free.",
+      "memory_type": "documentation",
+      "confidence": 0.9,
+      "importance": 3,
+      "tags": ["docs-site", "vercel", "demo"],
+      "sources": [{"source_kind": "note", "excerpt": "docs-site Next/Fumadocs on Vercel; /demo static snapshot"}]
+    },
+    {
+      "canonical_text": "Refactor: CLI command parsing was moved out of the monolithic entrypoint into support modules; runtime.rs now keeps the shared command types and dispatch helpers. Memories citing the old single-file layout should be updated.",
+      "summary": "CLI parsing moved into support modules; runtime.rs keeps shared types and dispatch.",
+      "memory_type": "refactor",
+      "confidence": 0.85,
+      "importance": 3,
+      "tags": ["cli", "refactor"],
+      "sources": [{"source_kind": "note", "excerpt": "command parsing split into support modules; runtime.rs = shared types + dispatch"}]
+    },
+    {
+      "canonical_text": "The release workflow verifies git tags, built packages, GitHub release assets, and the Homebrew formula before a release is considered ready, so a published version always has matching artifacts across channels.",
+      "summary": "The release workflow verifies tags, packages, GitHub assets, and the Homebrew formula.",
+      "memory_type": "reference",
+      "confidence": 0.85,
+      "importance": 3,
+      "tags": ["release", "homebrew"],
+      "sources": [{"source_kind": "note", "excerpt": "verifies tags, packages, GitHub assets, Homebrew formula"}]
+    },
+    {
+      "canonical_text": "Incident: a 401 'invalid api token' surfaced when a repo-local skill talked to the installed prod service while the dev service was running on a different port and token. The fix was to make skill helpers resolve the dev CLI and its token first.",
+      "summary": "A 401 came from mixing dev/prod services; fixed by resolving the dev CLI first.",
+      "memory_type": "incident",
+      "confidence": 0.9,
+      "importance": 3,
+      "tags": ["auth", "dev", "incident"],
+      "sources": [{"source_kind": "note", "excerpt": "401 from mixed dev/prod services; resolve dev CLI + token first"}]
+    },
+    {
+      "canonical_text": "Insight: Memory Layer's safety posture is consistent across surfaces — consolidation, curation replacements, loop automations, and MCP writes all produce human-gated proposals rather than silent mutations. The unifying rule is that durable state changes are reviewable, and the open tension is latency when a reviewer is not present.",
+      "summary": "Every durable state change in Memory Layer is a human-gated, reviewable proposal.",
+      "memory_type": "insight",
+      "confidence": 0.85,
+      "importance": 4,
+      "tags": ["insight", "safety", "consolidation"],
+      "sources": [{"source_kind": "memory", "excerpt": "consolidated from consolidation, curation, automation, and MCP safety memories"}]
+    }
+  ]
+}

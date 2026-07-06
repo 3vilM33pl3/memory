@@ -9,6 +9,7 @@ mod checkpoint;
 mod commits;
 mod completion;
 mod curate;
+mod demo;
 mod dev;
 mod doctor;
 mod embeddings;
