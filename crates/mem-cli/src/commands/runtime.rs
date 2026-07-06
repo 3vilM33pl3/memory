@@ -19,6 +19,20 @@ use uuid::Uuid;
 use crate::commands::{api::ApiClient, skill_support::set_private_file_permissions};
 
 const ROOT_AFTER_HELP: &str = "\
+New here? Run `memory quickstart`-style setup with `memory wizard`, load a
+demo project with `memory demo`, then explore with `memory query` and `memory tui`.
+
+Command groups:
+  Core          wizard, init, remember, query, resume, tui
+  Status        status, health, stats, doctor
+  Memory        capture, curate, scan, proposals, review, archive
+  Reinforcement scores, validate
+  History       history, prune-history, verify-provenance, bundle
+  Workflow      checkpoint, activities, up-to-speed
+  Service       service, watcher, agent, loops, automation, mcp, embeddings
+  Repository    commits, repo, graph
+  Maintenance   eval, upgrade
+
 Agent contract:
   Use this CLI from Codex, Claude, or scripts to read and write durable project memory.
   Prefer --json for commands that support it when another tool will parse the output.
@@ -1127,85 +1141,108 @@ pub(in crate::commands) struct Cli {
     pub(crate) command: Command,
 }
 
+// Variants are ordered so the everyday "core" commands appear first in
+// `memory --help`. clap lists every subcommand under one "Commands:" heading,
+// so the grouped map lives in ROOT_AFTER_HELP; two internal commands
+// (`completion`, `dev`) are hidden from the list but still work.
 #[derive(Debug, Subcommand)]
 pub(in crate::commands) enum Command {
+    // --- Core: getting started and daily use ---
     #[command(about = "Run the interactive setup wizard.", after_help = WIZARD_AFTER_HELP)]
     Wizard(WizardArgs),
     #[command(about = "Bootstrap a repo-local Memory Layer setup.", after_help = INIT_AFTER_HELP)]
     Init(InitArgs),
-    #[command(about = "Upgrade repo-local Memory Layer skill files.", after_help = UPGRADE_AFTER_HELP)]
-    Upgrade(UpgradeArgs),
+    #[command(about = "Capture and curate completed work into memory.", after_help = REMEMBER_AFTER_HELP)]
+    Remember(RememberArgs),
+    #[command(about = "Ask a project-specific question against curated memory.", after_help = QUERY_AFTER_HELP)]
+    Query(QueryArgs),
+    #[command(about = "Generate a resume briefing for a project.", after_help = RESUME_AFTER_HELP)]
+    Resume(ResumeArgs),
+    #[command(about = "Open the terminal UI.", after_help = TUI_AFTER_HELP)]
+    Tui(TuiArgs),
+
+    // --- Status and health ---
+    #[command(about = "Show the aggregate Memory Layer diagnostic status.", after_help = STATUS_AFTER_HELP)]
+    Status(StatusArgs),
+    #[command(about = "Check backend service health.", after_help = HEALTH_AFTER_HELP)]
+    Health,
+    #[command(about = "Show memory and project summary statistics.", after_help = STATS_AFTER_HELP)]
+    Stats,
+    #[command(about = "Inspect configuration and environment health.", after_help = DOCTOR_AFTER_HELP)]
+    Doctor(DoctorArgs),
+
+    // --- Memory pipeline ---
+    #[command(about = "Capture structured task context from a file.", after_help = CAPTURE_GROUP_AFTER_HELP)]
+    Capture(CaptureArgs),
+    #[command(about = "Curate raw captures into canonical memory.", after_help = CURATE_AFTER_HELP)]
+    Curate(CurateArgs),
+    #[command(about = "Scan a repository for candidate durable memories.", after_help = SCAN_AFTER_HELP)]
+    Scan(ScanArgs),
+    #[command(about = "Review pending memory replacement proposals.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
+    Proposals(ProposalsArgs),
+    #[command(about = "Review pending validation corrections.", after_help = REVIEW_GROUP_AFTER_HELP)]
+    Review(ReviewArgs),
+    #[command(about = "Archive low-signal memories by confidence and importance.", after_help = ARCHIVE_AFTER_HELP)]
+    Archive(ArchiveArgs),
+
+    // --- Reinforcement and validation ---
+    #[command(about = "Show reinforcement activation scores for a project.", after_help = SCORES_AFTER_HELP)]
+    Scores(ScoresArgs),
+    #[command(about = "Validate one memory against project evidence.", after_help = VALIDATE_AFTER_HELP)]
+    Validate(ValidateMemoryArgs),
+
+    // --- Memory history and sharing ---
+    #[command(about = "Show the full version history for a memory, including tombstones.", after_help = HISTORY_AFTER_HELP)]
+    History(HistoryArgs),
+    #[command(about = "Prune old memory versions and tombstoned canonicals.", after_help = PRUNE_HISTORY_AFTER_HELP)]
+    PruneHistory(PruneHistoryArgs),
+    #[command(about = "Verify memory source provenance against the filesystem.", after_help = VERIFY_PROVENANCE_AFTER_HELP)]
+    VerifyProvenance(VerifyProvenanceArgs),
+    #[command(about = "Export and import shareable project memory bundles.", after_help = BUNDLE_GROUP_AFTER_HELP)]
+    Bundle(BundleArgs),
+
+    // --- Workflow ---
+    #[command(about = "Save, inspect, and verify execution checkpoints.", after_help = CHECKPOINT_GROUP_AFTER_HELP)]
+    Checkpoint(CheckpointArgs),
+    #[command(about = "List persisted project activity events.", after_help = ACTIVITIES_AFTER_HELP)]
+    Activities(ActivitiesArgs),
+    #[command(about = "Generate a new-agent get-up-to-speed briefing.", after_help = UP_TO_SPEED_AFTER_HELP)]
+    UpToSpeed(UpToSpeedArgs),
+
+    // --- Service and automation ---
     #[command(about = "Manage the Memory Layer backend service.", after_help = SERVICE_GROUP_AFTER_HELP)]
     Service(ServiceArgs),
-    #[command(about = "Run and inspect the built-in Memory MCP server.", after_help = MCP_GROUP_AFTER_HELP)]
-    Mcp(McpArgs),
     #[command(about = "Manage project watchers and watcher daemons.", after_help = WATCHER_GROUP_AFTER_HELP)]
     Watcher(WatcherArgs),
     #[command(about = "Coordinate concurrent agent workspaces.", after_help = AGENT_GROUP_AFTER_HELP)]
     Agent(AgentArgs),
-    #[command(about = "Inspect configuration and environment health.", after_help = DOCTOR_AFTER_HELP)]
-    Doctor(DoctorArgs),
-    #[command(about = "Show the aggregate Memory Layer diagnostic status.", after_help = STATUS_AFTER_HELP)]
-    Status(StatusArgs),
+    #[command(about = "Inspect and operate loop automations.", after_help = LOOPS_GROUP_AFTER_HELP)]
+    Loops(LoopsArgs),
+    #[command(about = "Inspect and flush automation state.", after_help = AUTOMATION_GROUP_AFTER_HELP)]
+    Automation(AutomationArgs),
+    #[command(about = "Run and inspect the built-in Memory MCP server.", after_help = MCP_GROUP_AFTER_HELP)]
+    Mcp(McpArgs),
+    #[command(about = "Rebuild and maintain embedding spaces.", after_help = EMBEDDINGS_GROUP_AFTER_HELP)]
+    Embeddings(EmbeddingsArgs),
+
+    // --- Repository and code graph ---
     #[command(about = "Import and inspect git commit history.", after_help = COMMITS_GROUP_AFTER_HELP)]
     Commits(CommitsArgs),
     #[command(about = "Build and inspect the local repository index.", after_help = REPO_GROUP_AFTER_HELP)]
     Repo(RepoArgs),
     #[command(about = "Extract and inspect the project code graph.", after_help = GRAPH_GROUP_AFTER_HELP)]
     Graph(GraphArgs),
-    #[command(about = "Export and import shareable project memory bundles.", after_help = BUNDLE_GROUP_AFTER_HELP)]
-    Bundle(BundleArgs),
-    #[command(about = "Save, inspect, and verify execution checkpoints.", after_help = CHECKPOINT_GROUP_AFTER_HELP)]
-    Checkpoint(CheckpointArgs),
-    #[command(about = "Generate a resume briefing for a project.", after_help = RESUME_AFTER_HELP)]
-    Resume(ResumeArgs),
-    #[command(about = "List persisted project activity events.", after_help = ACTIVITIES_AFTER_HELP)]
-    Activities(ActivitiesArgs),
-    #[command(about = "Generate a new-agent get-up-to-speed briefing.", after_help = UP_TO_SPEED_AFTER_HELP)]
-    UpToSpeed(UpToSpeedArgs),
+
+    // --- Evaluation and maintenance ---
     #[command(about = "Run automated Memory quality evaluations.", after_help = EVAL_GROUP_AFTER_HELP)]
     Eval(EvalArgs),
-    #[command(about = "Ask a project-specific question against curated memory.", after_help = QUERY_AFTER_HELP)]
-    Query(QueryArgs),
-    #[command(about = "Verify memory source provenance against the filesystem.", after_help = VERIFY_PROVENANCE_AFTER_HELP)]
-    VerifyProvenance(VerifyProvenanceArgs),
-    #[command(about = "Show the full version history for a memory, including tombstones.", after_help = HISTORY_AFTER_HELP)]
-    History(HistoryArgs),
-    #[command(about = "Prune old memory versions and tombstoned canonicals.", after_help = PRUNE_HISTORY_AFTER_HELP)]
-    PruneHistory(PruneHistoryArgs),
-    #[command(about = "Scan a repository for candidate durable memories.", after_help = SCAN_AFTER_HELP)]
-    Scan(ScanArgs),
-    #[command(about = "Capture structured task context from a file.", after_help = CAPTURE_GROUP_AFTER_HELP)]
-    Capture(CaptureArgs),
-    #[command(about = "Capture and curate completed work into memory.", after_help = REMEMBER_AFTER_HELP)]
-    Remember(RememberArgs),
-    #[command(about = "Curate raw captures into canonical memory.", after_help = CURATE_AFTER_HELP)]
-    Curate(CurateArgs),
-    #[command(about = "Review pending memory replacement proposals.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
-    Proposals(ProposalsArgs),
-    #[command(about = "Show reinforcement activation scores for a project.", after_help = SCORES_AFTER_HELP)]
-    Scores(ScoresArgs),
-    #[command(about = "Validate one memory against project evidence.", after_help = VALIDATE_AFTER_HELP)]
-    Validate(ValidateMemoryArgs),
-    #[command(about = "Review pending validation corrections.", after_help = REVIEW_GROUP_AFTER_HELP)]
-    Review(ReviewArgs),
-    #[command(about = "Inspect and operate loop automations.", after_help = LOOPS_GROUP_AFTER_HELP)]
-    Loops(LoopsArgs),
-    #[command(about = "Rebuild and maintain embedding spaces.", after_help = EMBEDDINGS_GROUP_AFTER_HELP)]
-    Embeddings(EmbeddingsArgs),
-    #[command(about = "Check backend service health.", after_help = HEALTH_AFTER_HELP)]
-    Health,
-    #[command(about = "Show memory and project summary statistics.", after_help = STATS_AFTER_HELP)]
-    Stats,
-    #[command(about = "Archive low-signal memories by confidence and importance.", after_help = ARCHIVE_AFTER_HELP)]
-    Archive(ArchiveArgs),
-    #[command(about = "Inspect and flush automation state.", after_help = AUTOMATION_GROUP_AFTER_HELP)]
-    Automation(AutomationArgs),
-    #[command(about = "Open the terminal UI.", after_help = TUI_AFTER_HELP)]
-    Tui(TuiArgs),
-    #[command(about = "Generate shell completion scripts.", after_help = COMPLETION_AFTER_HELP)]
+    #[command(about = "Upgrade repo-local Memory Layer skill files.", after_help = UPGRADE_AFTER_HELP)]
+    Upgrade(UpgradeArgs),
+
+    // --- Hidden utilities (still fully functional) ---
+    #[command(hide = true, about = "Generate shell completion scripts.", after_help = COMPLETION_AFTER_HELP)]
     Completion(CompletionArgs),
-    #[command(about = "Scaffold and inspect the dev-profile overlay.", after_help = DEV_GROUP_AFTER_HELP)]
+    #[command(hide = true, about = "Scaffold and inspect the dev-profile overlay.", after_help = DEV_GROUP_AFTER_HELP)]
     Dev(DevArgs),
 }
 
