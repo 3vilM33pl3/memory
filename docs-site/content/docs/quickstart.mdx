@@ -1,0 +1,72 @@
+---
+title: "Quickstart"
+description: "From nothing to a working Memory Layer with a demo project in about five minutes."
+---
+
+# Quickstart
+
+This is the fastest path to a running Memory Layer with real memories to explore. It uses the bundled Docker stack, so you don't need to install PostgreSQL, pgvector, or configure anything by hand. It works **keyless** — no API keys required.
+
+## 1. Start the stack
+
+From a clone of the repository:
+
+```bash
+docker compose up
+```
+
+That builds and starts three things together: PostgreSQL with pgvector, the Memory Layer service (which applies its database migrations on boot), and the browser UI. When it settles, the service is listening on **http://localhost:4040**.
+
+Open [http://localhost:4040](http://localhost:4040) to see the web UI. It starts empty — the next step fills it.
+
+## 2. Load the demo project
+
+In another terminal:
+
+```bash
+memory demo
+```
+
+This seeds a project called `demo` with a relatable set of memories about Memory Layer itself — its architecture, decisions, conventions, and more — then curates them. Now every surface has something real to show.
+
+<Callout title="Don't have the memory CLI yet?">
+You can run the same command inside the container while the stack is up:
+
+```bash
+docker compose exec memory memory demo
+```
+</Callout>
+
+## 3. Ask it something
+
+```bash
+memory query --project demo --question "How does reinforcement work?"
+memory query --project demo --question "What does the service need to run?"
+```
+
+You'll get a short, cited answer drawn from the demo memories — with a confidence score and an honest signal when the evidence is thin.
+
+## 4. Explore
+
+```bash
+memory tui
+```
+
+The terminal UI lets you browse and search every memory, inspect where each came from, and open the memory graph. The [browser UI](/docs/web-ui) at `http://localhost:4040` shows the same data with wider panes and a 3D graph view.
+
+## What you only need to know
+
+Three commands cover day-to-day use:
+
+- **`memory remember`** — capture and curate completed work into memory.
+- **`memory query`** — ask a project-specific question against curated memory.
+- **`memory resume`** — get a briefing to pick up where you left off.
+
+Everything else is grouped under `memory --help`, and the [full install guide](/docs/install) covers native (non-Docker) setups, LLM and embedding providers, and connecting your coding agent.
+
+## Next steps
+
+- [How it works](/docs/how-it-works) — memories, retrieval, reinforcement, and the code graph.
+- [Memory types](/docs/how-it-works/memory-types) — how knowledge is classified.
+- [Install guide](/docs/install) — native install, providers, and agent setup.
+- [Automations](/docs/automations) — the built-in loop workflows.

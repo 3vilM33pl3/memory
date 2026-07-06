@@ -2,6 +2,7 @@
   "title": "Memory Layer",
   "pages": [
     "index",
+    "quickstart",
     "roadmap",
     "install",
     "tui",
