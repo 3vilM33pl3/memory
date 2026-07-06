@@ -3912,6 +3912,8 @@ pub struct AppConfig {
     pub reinforcement: ReinforcementConfig,
     #[serde(default)]
     pub curation: CurationConfig,
+    #[serde(default)]
+    pub consolidation: ConsolidationConfig,
     #[serde(skip, default = "default_profile")]
     pub profile: Profile,
     /// Path of the resolved config file (base file in dev mode). Useful when
@@ -4870,6 +4872,130 @@ impl Default for CurationConfig {
 
 fn default_semantic_duplicate_threshold() -> f64 {
     0.90
+}
+
+/// Controls memory consolidation: discovering clusters of related memories and
+/// synthesizing higher-level `insight` memories. Off by default (LLM cost);
+/// enable with dry-run first, matching the reinforcement validation posture.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsolidationConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub dry_run: bool,
+    /// Auto-run the consolidation loop when the usage accumulator crosses the
+    /// salience threshold (still bounded by `enabled`, `dry_run`, `daily_cap`).
+    #[serde(default = "default_true")]
+    pub auto_trigger: bool,
+    // Fusion / clustering knobs.
+    #[serde(default = "default_consolidation_sim_floor")]
+    pub sim_floor: f64,
+    #[serde(default = "default_consolidation_knn_k")]
+    pub knn_k: i64,
+    #[serde(default = "default_consolidation_weight")]
+    pub relation_weight: f64,
+    #[serde(default = "default_consolidation_weight")]
+    pub similarity_weight: f64,
+    #[serde(default = "default_consolidation_weight")]
+    pub coaccess_weight: f64,
+    #[serde(default = "default_consolidation_coaccess_norm")]
+    pub coaccess_norm: f64,
+    #[serde(default = "default_consolidation_coaccess_window_days")]
+    pub coaccess_window_days: i64,
+    #[serde(default = "default_consolidation_min_coaccess")]
+    pub min_coaccess_count: i64,
+    // Value-gate knobs.
+    #[serde(default = "default_consolidation_min_size")]
+    pub min_size: usize,
+    #[serde(default = "default_consolidation_max_size")]
+    pub max_size: usize,
+    #[serde(default = "default_consolidation_min_cohesion")]
+    pub min_cohesion: f64,
+    #[serde(default = "default_consolidation_min_salience")]
+    pub min_salience: f64,
+    #[serde(default = "default_consolidation_cold_activation_max")]
+    pub cold_activation_max: f64,
+    /// Fraction of a cluster already summarized by an existing insight above
+    /// which the cluster is skipped as non-novel.
+    #[serde(default = "default_consolidation_novelty_overlap_max")]
+    pub novelty_overlap_max: f64,
+    // Synthesis knobs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default = "default_consolidation_max_output_tokens")]
+    pub max_output_tokens_cap: u32,
+    #[serde(default = "default_consolidation_daily_cap")]
+    pub daily_cap: u32,
+}
+
+impl Default for ConsolidationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dry_run: true,
+            auto_trigger: true,
+            sim_floor: default_consolidation_sim_floor(),
+            knn_k: default_consolidation_knn_k(),
+            relation_weight: default_consolidation_weight(),
+            similarity_weight: default_consolidation_weight(),
+            coaccess_weight: default_consolidation_weight(),
+            coaccess_norm: default_consolidation_coaccess_norm(),
+            coaccess_window_days: default_consolidation_coaccess_window_days(),
+            min_coaccess_count: default_consolidation_min_coaccess(),
+            min_size: default_consolidation_min_size(),
+            max_size: default_consolidation_max_size(),
+            min_cohesion: default_consolidation_min_cohesion(),
+            min_salience: default_consolidation_min_salience(),
+            cold_activation_max: default_consolidation_cold_activation_max(),
+            novelty_overlap_max: default_consolidation_novelty_overlap_max(),
+            model: None,
+            max_output_tokens_cap: default_consolidation_max_output_tokens(),
+            daily_cap: default_consolidation_daily_cap(),
+        }
+    }
+}
+
+fn default_consolidation_sim_floor() -> f64 {
+    0.82
+}
+fn default_consolidation_knn_k() -> i64 {
+    8
+}
+fn default_consolidation_weight() -> f64 {
+    1.0
+}
+fn default_consolidation_coaccess_norm() -> f64 {
+    4.0
+}
+fn default_consolidation_coaccess_window_days() -> i64 {
+    30
+}
+fn default_consolidation_min_coaccess() -> i64 {
+    2
+}
+fn default_consolidation_min_size() -> usize {
+    3
+}
+fn default_consolidation_max_size() -> usize {
+    25
+}
+fn default_consolidation_min_cohesion() -> f64 {
+    0.35
+}
+fn default_consolidation_min_salience() -> f64 {
+    2.0
+}
+fn default_consolidation_cold_activation_max() -> f64 {
+    1.0
+}
+fn default_consolidation_novelty_overlap_max() -> f64 {
+    0.5
+}
+fn default_consolidation_max_output_tokens() -> u32 {
+    1400
+}
+fn default_consolidation_daily_cap() -> u32 {
+    20
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

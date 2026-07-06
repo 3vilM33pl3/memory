@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod bundle;
+pub(crate) mod consolidation;
 pub(crate) mod embeddings;
 pub(crate) mod graph;
 pub mod loops;

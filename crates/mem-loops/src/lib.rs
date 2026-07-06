@@ -27,6 +27,7 @@ pub const LOOP_DRAFT_PR: &str = "draft_pr";
 pub const LOOP_REVIEWER_DRIFT_DETECTION: &str = "reviewer_drift_detection";
 pub const LOOP_SKILL_MINING: &str = "skill_mining";
 pub const LOOP_MEMORY_EVAL: &str = "memory_eval";
+pub const LOOP_MEMORY_CONSOLIDATION: &str = "memory_consolidation";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuiltinLoopDefinition {
@@ -149,6 +150,16 @@ pub fn builtin_loop_definitions() -> Vec<BuiltinLoopDefinition> {
             vec!["manual", "schedule", "retriever_changed"],
             vec!["read_memory", "read_eval_fixtures"],
             vec!["eval_report", "metrics"],
+        ),
+        builtin(
+            LOOP_MEMORY_CONSOLIDATION,
+            "Memory Consolidation",
+            "Discovers clusters of related memories and synthesizes higher-level insight memories that summarize them.",
+            LoopRiskLevel::Medium,
+            LoopMode::SuggestOnly,
+            vec!["manual", "schedule", "memory_changed"],
+            vec!["read_memory"],
+            vec!["consolidation_report", "memory_proposals"],
         ),
     ]
 }
@@ -1015,7 +1026,7 @@ mod tests {
     #[test]
     fn builtins_are_valid_and_versioned() {
         let builtins = builtin_loop_definitions();
-        assert_eq!(builtins.len(), 8);
+        assert_eq!(builtins.len(), 9);
         for builtin in &builtins {
             validate_definition(builtin).expect("builtin definition is valid");
             assert_eq!(builtin.version, 1);
