@@ -4,6 +4,18 @@
 
 ### Added
 
+- Procedural utility learning (ACT-R production utility, ADR-0003): each
+  automation loop learns a per-project utility from proposal decisions via
+  the delta rule (approve +1.0, edited-approve +0.4, reject −1.0, cited
+  memory +0.5), updated atomically with the decision and fully audited
+  (`procedural_utility` / `procedural_utility_audit`, migration 0024).
+  Advisory only — `memory loops --project` shows utility and
+  recommendations; modes and permission gates are never affected. Optional
+  `utility_floor` (default off) can suppress auto-triggers for
+  collapsed-utility loops. New `[procedural]` config section. Also makes
+  proposal rejection transactional (previously status and trace were
+  separate writes).
+
 - Memory-quality canary suite (`evals/suites/memory-quality-v1`) with a new
   `adversarial_stale` eval item type (refuse-or-prefer-fresh contracts) and a
   release gate (`evals/gates/memory-quality-v1.toml`) enforcing absolute

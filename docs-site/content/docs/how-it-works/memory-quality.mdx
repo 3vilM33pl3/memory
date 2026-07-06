@@ -112,6 +112,7 @@ Honest status: the adversarial group currently **fails** — deterministic synth
 | Evidence-backed validation | Maintenance | LLM verdict over gathered evidence | Corrections always human-gated |
 | Hygiene automations | Maintenance | Duplicate/stale heuristics | Always (proposal queue) |
 | Consolidation (insights) | Maintenance | Relation + similarity + co-access clustering, use/non-use salience | Always (consolidate proposal) |
+| Procedural utility | Maintenance | Proposal approve/edit/reject outcomes, citation bonus | Advisory recommendations only |
 | Hybrid ranking | Recall | Match strength + confidence/recency/activation, penalties | Score explanations for audit |
 | Synthesis guardrails | Recall | Citation coverage, refusal threshold | — |
 | Evals & gates | Measurement | Paired success rates, adversarial floors | Reviewed suites |
@@ -135,5 +136,9 @@ The quality mechanisms are grounded in the memory and retrieval literature rathe
 - Sarthi, P. et al. (2024). [RAPTOR.](https://arxiv.org/abs/2401.18059) — recursive embed-cluster-summarize hierarchies.
 - Edge, D. et al. (2024). [From Local to Global (GraphRAG).](https://arxiv.org/abs/2404.16130) — community detection plus per-community summaries.
 - Raghavan, U. N., Albert, R. & Kumara, S. (2007). [Near linear time algorithm to detect community structures.](https://arxiv.org/abs/0709.2938) — the label-propagation clustering used for consolidation.
+
+**Procedural utility (loop learning):**
+
+- Fu, W.-T. & Anderson, J. R. (2006). [From recurrent choice to skill learning: a reinforcement-learning model.](https://doi.org/10.1037/0096-3445.135.2.184) *Journal of Experimental Psychology: General* — the delta-rule utility learning behind ACT-R's procedural module, used here to learn each automation loop's value from proposal outcomes.
 
 See the [consolidation](/docs/how-it-works/consolidation#references) page for how each result maps onto the implementation. Deeper design material lives in the repository: `docs/developer/architecture/memory-reinforcement.md`, `docs/developer/architecture/graph-and-curation-foundations.md`, and `docs/developer/adr/`.

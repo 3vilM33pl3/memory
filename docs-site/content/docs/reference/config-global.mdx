@@ -128,6 +128,23 @@ novelty_overlap_max = 0.5      # skip clusters already covered by an insight
 daily_cap = 20                 # ceiling on LLM syntheses per run
 ```
 
+## Procedural section
+
+The `[procedural]` section controls [procedural utility learning](/docs/how-it-works/reinforcement#procedural-utility-loops-learn-their-worth): each automation loop learns a utility from how its proposals are received (ACT-R delta rule). Deterministic and advisory — it informs the loop listing and recommendations, never modes or permission gates — so it defaults on. The only runtime effect is the opt-in auto-trigger floor.
+
+```toml
+[procedural]
+enabled = true                 # learn per-loop utility from proposal decisions
+alpha = 0.2                    # delta-rule learning rate
+reward_approved = 1.0          # proposal approved as-is
+reward_edited_approved = 0.4   # approved after human editing
+reward_rejected = -1.0         # proposal rejected
+reward_cited = 0.5             # loop-produced memory cited in an answer
+min_samples = 5                # decisions before recommendations appear
+utility_floor_enabled = false  # opt-in: suppress AUTO-triggers below the floor
+utility_floor = 0.0
+```
+
 ## Precedence and diagnostics
 
 For prod/profile-installed commands, config is loaded from the explicit `--config` path if supplied, otherwise from the discovered global config and the current repo's user-local project config when available. Environment variables with the `MEMORY_LAYER__...` shape override TOML values.

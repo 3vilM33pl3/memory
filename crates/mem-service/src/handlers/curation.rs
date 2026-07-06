@@ -139,16 +139,34 @@ pub(crate) async fn curate_memory(
             Ok(report) => {
                 let due = report.due_infos();
                 if !due.is_empty() && cfg.auto_trigger && !cfg.dry_run {
-                    let state = state.clone();
-                    let project = request.project.clone();
-                    tokio::spawn(async move {
-                        if let Err(error) =
-                            crate::consolidate::emit_consolidation_proposals(&state, &project, None)
-                                .await
-                        {
-                            tracing::warn!(error = %error, "auto-triggered consolidation failed");
-                        }
-                    });
+                    // Opt-in utility floor: suppress the auto-fire (never the
+                    // manual run, never a mode/gate) when the loop's learned
+                    // utility has collapsed. Advisory learning acting only on
+                    // automation cadence.
+                    let suppressed = auto_trigger_suppressed_by_utility(
+                        &state,
+                        response.project_id,
+                        mem_loops::LOOP_MEMORY_CONSOLIDATION,
+                    )
+                    .await;
+                    if suppressed {
+                        tracing::info!(
+                            loop_id = mem_loops::LOOP_MEMORY_CONSOLIDATION,
+                            "auto-trigger suppressed: learned utility below floor; review or snooze the loop"
+                        );
+                    } else {
+                        let state = state.clone();
+                        let project = request.project.clone();
+                        tokio::spawn(async move {
+                            if let Err(error) = crate::consolidate::emit_consolidation_proposals(
+                                &state, &project, None,
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %error, "auto-triggered consolidation failed");
+                            }
+                        });
+                    }
                 }
                 response.consolidation_due = due;
             }
@@ -350,6 +368,34 @@ pub(crate) async fn project_replacement_policy_update(
         replacement_policy: request.replacement_policy,
         writable: true,
     }))
+}
+
+/// True when the opt-in procedural utility floor says this loop's auto-fire
+/// should be skipped: floor enabled, enough decisions observed, and learned
+/// utility below the floor. Errors and missing rows never suppress.
+pub(crate) async fn auto_trigger_suppressed_by_utility(
+    state: &AppState,
+    project_id: Uuid,
+    loop_id: &str,
+) -> bool {
+    let procedural = &state.config.procedural;
+    if !procedural.enabled || !procedural.utility_floor_enabled {
+        return false;
+    }
+    let Ok(pool) = state.pool() else {
+        return false;
+    };
+    match mem_reinforce::repository::list_procedural_utility(&pool, project_id, "loop").await {
+        Ok(snapshots) => snapshots.iter().any(|snapshot| {
+            snapshot.producer_id == loop_id
+                && snapshot.update_count >= procedural.min_samples
+                && snapshot.utility < procedural.utility_floor
+        }),
+        Err(error) => {
+            tracing::warn!(error = %error, "utility floor lookup failed; not suppressing");
+            false
+        }
+    }
 }
 
 pub(crate) fn resolve_project_repo_root(

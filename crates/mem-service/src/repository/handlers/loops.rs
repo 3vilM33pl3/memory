@@ -129,8 +129,7 @@ pub(crate) async fn list_loop_definitions(
             .map_err(ApiError::io)?
             .into_iter()
             .map(|snapshot| {
-                let recommendation =
-                    mem_reinforce::utility_recommendation(&snapshot, &thresholds);
+                let recommendation = mem_reinforce::utility_recommendation(&snapshot, &thresholds);
                 mem_api::LoopUtilityInfo {
                     loop_id: snapshot.producer_id,
                     utility: snapshot.utility,

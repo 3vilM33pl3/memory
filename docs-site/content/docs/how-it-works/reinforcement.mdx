@@ -73,6 +73,14 @@ Everything lives under `[reinforcement]` in the global config. Defaults are safe
 
 With the defaults, a memory that is retrieved *and cited* three or four times within a month becomes due for validation. Lower the threshold to cover more of the long tail; raise it to focus the LLM budget on the hottest memories. See the [global config reference](/docs/reference/config-global) and the [reinforcement CLI reference](/docs/reference/cli/reinforcement) for the full surface.
 
+## Procedural utility (loops learn their worth)
+
+Activation ranks *memories* by how they are used; **procedural utility** ranks the *automation loops* by how their output is received — the other half of the ACT-R declarative/procedural split. Every loop proposal decision teaches the loop's utility via the ACT-R delta rule `U ← U + α·(R − U)`: an approval rewards it (+1.0), an approval that needed human editing rewards it partially (+0.4), a rejection penalizes it (−1.0), and a loop-produced memory later cited in an answer earns a delayed bonus (+0.5). The update runs in the same transaction as the decision and every change is audited.
+
+Utility is **advisory only**: `memory loops --project <slug>` shows each loop's learned utility, decision count, and a recommendation ("consistently rejected; consider snoozing" / "high-value loop") once enough decisions accumulate — but it never changes a loop's mode or permission gates. The one opt-in runtime effect (`utility_floor_enabled`, default off) can suppress an *automatic* trigger for a loop whose utility has collapsed; manual runs are always unaffected. Deliberately unlike ACT-R, there is no noise term — utility is deterministic and clock-free, moved only by decisions.
+
+Configuration lives in the [`[procedural]` section](/docs/reference/config-global#procedural-section).
+
 ## Rollout advice
 
 1. Leave scoring on and watch `memory scores` for a while — no cost, useful signal.

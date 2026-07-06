@@ -246,10 +246,12 @@ mod tests {
         };
         assert!(utility_recommendation(&sparse, &thresholds).is_none());
 
-        let bad = UtilitySnapshot { update_count: 8, ..sparse.clone() };
+        let bad = UtilitySnapshot {
+            update_count: 8,
+            ..sparse.clone()
+        };
         assert!(
-            utility_recommendation(&bad, &thresholds)
-                .is_some_and(|text| text.contains("snoozing"))
+            utility_recommendation(&bad, &thresholds).is_some_and(|text| text.contains("snoozing"))
         );
 
         let good = UtilitySnapshot {
@@ -262,7 +264,10 @@ mod tests {
                 .is_some_and(|text| text.contains("High-value"))
         );
 
-        let middling = UtilitySnapshot { utility: 0.1, ..good };
+        let middling = UtilitySnapshot {
+            utility: 0.1,
+            ..good
+        };
         assert!(utility_recommendation(&middling, &thresholds).is_none());
     }
 }

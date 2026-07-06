@@ -834,10 +834,9 @@ async fn procedural_utility_learns_from_proposal_decisions() {
     // The approved memory carries a durable producer link, so a later
     // citation can reward the loop that created it.
     let memory_id = approved.memory_id.expect("approve wrote memory");
-    let producers =
-        mem_reinforce::repository::loop_producers_for_memories(&pool, &[memory_id])
-            .await
-            .expect("resolve loop producers");
+    let producers = mem_reinforce::repository::loop_producers_for_memories(&pool, &[memory_id])
+        .await
+        .expect("resolve loop producers");
     assert_eq!(producers.len(), 1);
     assert_eq!(producers[0].loop_id, mem_loops::LOOP_MEMORY_HYGIENE);
 
@@ -950,6 +949,24 @@ async fn procedural_utility_learns_from_proposal_decisions() {
     .await
     .expect("count audit rows");
     assert_eq!(audit_count, 3);
+
+    // Advisory boundary: utility learning must never write loop settings or
+    // modes. All the decisions above left the settings table untouched.
+    let settings_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*) FROM loop_settings ls
+        JOIN projects p ON p.id = ls.project_id
+        WHERE p.slug = $1
+        "#,
+    )
+    .bind(&project)
+    .fetch_one(&pool)
+    .await
+    .expect("count loop settings");
+    assert_eq!(
+        settings_count, 0,
+        "utility learning must not write loop settings"
+    );
 
     mem_test_support::cleanup_project(&pool, &project)
         .await
