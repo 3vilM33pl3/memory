@@ -1,0 +1,107 @@
+---
+title: "Consolidation and insights"
+description: "How Memory Layer discovers clusters of related memories and synthesizes higher-level insight memories — the mechanism, the triggers, and the science behind it."
+---
+
+# Consolidation and insights
+
+Recall of a dozen small, related facts is worse than recall of one memory that already sees the whole picture. A memory layer that only ever stores atomic observations grows into a filing cabinet: everything is in there, but the *shape* of the knowledge — the conventions, the trade-offs, the recurring tensions — is never written down anywhere. **Consolidation** is the mechanism that extracts that shape.
+
+It discovers clusters of related memories, decides which clusters are worth consolidating, and synthesizes a higher-level **`insight`** memory that summarizes each one. Crucially, an insight is not just a summary: it names the unifying concept, the internal tensions or contradictions between its members, the open gaps, and the implications for design or refactoring. That is what turns consolidation from compression into *understanding* — and it is where new ideas, better refactorings, and a clearer mental model of the system come from.
+
+Consolidation is **off by default and dry-run first**, like [validation](/docs/how-it-works/reinforcement#validation), and every result is a human-gated proposal — nothing reaches retrieval without review.
+
+## The biological model
+
+The design is not an ad-hoc pipeline; it follows how brains turn episodic experience into durable, generalized knowledge.
+
+- **Complementary learning systems** ([McClelland, McNaughton & O'Reilly 1995](https://doi.org/10.1037/0033-295X.102.3.419)): a fast store that captures individual episodes, and a slow store that gradually extracts the structure shared across them. Memory Layer's atomic memories are the fast store; insights are the slow, generalized one.
+- **Schema consolidation** ([Tse et al. 2007](https://doi.org/10.1126/science.1135935)): new information consolidates far faster and more durably when it can attach to an existing *schema*. An insight is that schema — and because insights are themselves memories, later runs consolidate them into higher-level schemas.
+- **Sleep-replay gist extraction**: overlapping replay of recently co-activated memories abstracts their shared "gist." Memory Layer's offline consolidation pass is the analogue, and its **co-access** signal is the analogue of prioritized replay — the memories used *together* are the ones consolidated together.
+- **Reflection** ([Park et al. 2023, *Generative Agents*](https://arxiv.org/abs/2304.03442)): the two-step "surface the salient themes, then synthesize the insights" pattern, and the idea that reflections can be reflected upon to form a tree, come directly from this work.
+
+The retrieval-side structure follows the RAG literature on hierarchical summarization: [RAPTOR](https://arxiv.org/abs/2401.18059) (recursively embed, cluster, and summarize) and [GraphRAG](https://arxiv.org/abs/2404.16130) (community detection over a knowledge graph, then per-community summaries for "global" sensemaking).
+
+## Discovering the hidden structure
+
+The hard part is finding which memories belong together. Memory Layer fuses **three independent signals** into a single weighted graph over memories, then runs one community-detection pass over it. Using three signals means a cluster can be discovered by content, by explicit links, or by usage — whichever reveals it.
+
+| Signal | Edge means | Source |
+|---|---|---|
+| **Relations** | The two memories are already linked (supports, depends-on, related-to, …) | `memory_relations`, excluding version lineage |
+| **Similarity** | Their embeddings are close (paraphrases, same topic) | pgvector cosine kNN over chunk embeddings, in-database |
+| **Co-access** | They were retrieved or cited *together* in the same query | `memory_access_events`, grouped per query operation |
+
+The co-access signal is the one grounded in real usage rather than content — the classic information-retrieval "session-vector" idea that documents opened together in a session belong together. It is why the layer can consolidate memories that no similarity metric would group but that agents keep reaching for as a set.
+
+### Community detection
+
+The fused edges are combined (weights sum across signals) into one graph, and clusters are found with **deterministic weighted label propagation** ([Raghavan, Albert & Kumara 2007](https://arxiv.org/abs/0709.2938)). Label propagation needs no target number of clusters, runs in near-linear time (important on Raspberry-Pi-class hardware), and leaves genuinely unrelated memories in their own singleton "clusters" that the value gate discards.
+
+The implementation is made fully reproducible — the same graph always yields the same clusters — with three choices that avoid any randomness or wall-clock: nodes are visited in ascending id order, ties are broken toward the smallest label, and a node keeps its current label whenever that label is already tied for best (an oscillation guard that prevents the flip-flopping vanilla label propagation suffers on symmetric graphs). For very dense corpora where label propagation can collapse everything into one giant community, the similarity channel is kept deliberately sparse (a high cosine floor and a small neighbor count) and the value gate rejects over-large clusters; the algorithm can be swapped for [Leiden-style](https://arxiv.org/abs/1810.08473) community detection behind the same interface if a project's data needs it.
+
+## Deciding what is worth consolidating
+
+Not every cluster deserves an insight — consolidating noise would just add noise. A **value gate** scores each cluster and accepts it only when it is cohesive *and* meets one of two triggers:
+
+- **Salient (used)** — the members are frequently co-accessed or highly activated. This is the "use" trigger: a set of memories agents keep pulling together is a strong signal that a unifying insight would help.
+- **Dense-but-cold (not used)** — the members are tightly interrelated but individually cold. This is the "non-use" trigger: a coherent topic that is fragmented across many rarely-touched memories is worth compressing into one, so the big picture is visible and the fragments can cool under a single schema.
+
+Clusters that are too small, too large, or too loosely connected are rejected, as are clusters already covered by an existing insight (the novelty check). So consolidation is driven by **both use and neglect**, and the gate is where "is this valuable?" is actually answered.
+
+## Synthesizing the insight
+
+An accepted cluster goes through a **two-step LLM synthesis**, reusing the same strict-JSON path and audit trail as validation:
+
+1. **Themes** — given the members, extract the one to three high-level themes or questions the cluster collectively answers.
+2. **Insight** — synthesize the consolidated memory: the unifying concept, then the internal **tensions** or contradictions, the **gaps** or open questions, and the concrete **implications** for design or refactoring.
+
+Synthesis carries the same **anti-hallucination guard** as memory validation: every member is shown with an explicit id, and the model may cite only ids it was shown. A synthesis that grounds itself in none of the actual members is rejected outright, so an insight can never be a confident fabrication.
+
+## One atomic, human-gated proposal
+
+An insight and its links cannot be written as separate steps — the insight does not exist until it is approved. So consolidation emits **one atomic `consolidate` proposal**. On approval, in a single transaction, it:
+
+1. inserts the `insight` memory (with the tensions, gaps, and implications folded into its text so they surface on retrieval);
+2. links it to each member's current version with a `summarizes` relation;
+3. records each member as first-class `memory` provenance on the insight.
+
+Members are never deleted or archived — they stay active and simply cool as the insight absorbs the cluster's retrievals. Everything is reversible through memory history, and the proposal is reviewed in the standard queue (`memory proposals` or the TUI) exactly like every other write.
+
+## A schema tree that grows with the project
+
+Because an insight is an ordinary memory — embedded, ranked, and linked — the next consolidation run treats it as just another node. Insights over insights form naturally: a *reflection tree* in the Generative-Agents sense, a *recursive summary hierarchy* in the RAPTOR sense. The novelty check keeps it from re-summarizing ground it has already covered, and the `summarizes` links feed [spreading activation](/docs/how-it-works/reinforcement#activation-scoring), so touching a hot insight gently warms the members beneath it — the schema keeps its cluster alive.
+
+## Configuration
+
+Consolidation lives in the `[consolidation]` section of the [global config](/docs/reference/config-global#consolidation-section). It is disabled and dry-run by default. When enabled, a deterministic cluster scan runs on the curate path and reports `consolidation_due`; with `auto_trigger` on, a due cluster wakes the LLM synthesis in the background, still bounded by the dry-run flag and a daily cap.
+
+```toml
+[consolidation]
+enabled = false                # discover clusters and synthesize insights
+dry_run = true                 # report clusters but do not synthesize
+auto_trigger = true            # wake synthesis when usage crosses the salience floor
+sim_floor = 0.82               # cosine floor for a semantic-similarity edge
+min_size = 3                   # smallest cluster worth consolidating
+max_size = 25                  # largest (guards against blob clusters)
+min_cohesion = 0.35            # minimum intra-cluster edge density
+min_salience = 2.0             # co-access / activation mass for the "use" trigger
+novelty_overlap_max = 0.5      # skip clusters already covered by an insight
+daily_cap = 20                 # ceiling on LLM syntheses per run
+```
+
+Consolidation is the first LLM-backed automation loop, so it inherits the conservative posture of the reinforcement system: enable scoring-only behavior first (dry-run reports which clusters *would* consolidate), review the proposals, and turn off dry-run once the insights look right.
+
+## References
+
+Consolidation is grounded in the memory and retrieval literature:
+
+- McClelland, J. L., McNaughton, B. L. & O'Reilly, R. C. (1995). [Why there are complementary learning systems in the hippocampus and neocortex.](https://doi.org/10.1037/0033-295X.102.3.419) *Psychological Review* — the fast/slow store division insights formalize.
+- Tse, D. et al. (2007). [Schemas and memory consolidation.](https://doi.org/10.1126/science.1135935) *Science* — consolidation is faster and more durable when it attaches to an existing schema.
+- Park, J. S. et al. (2023). [Generative Agents: Interactive Simulacra of Human Behavior.](https://arxiv.org/abs/2304.03442) — reflection: salient-theme extraction, insight synthesis, and reflection trees.
+- Sarthi, P. et al. (2024). [RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval.](https://arxiv.org/abs/2401.18059) — recursive embed-cluster-summarize hierarchies.
+- Edge, D. et al. (2024). [From Local to Global: A Graph RAG Approach to Query-Focused Summarization.](https://arxiv.org/abs/2404.16130) — community detection plus per-community summaries for global sensemaking.
+- Raghavan, U. N., Albert, R. & Kumara, S. (2007). [Near linear time algorithm to detect community structures in large-scale networks.](https://arxiv.org/abs/0709.2938) — the label-propagation clustering used here.
+- Traag, V. A., Waltman, L. & van Eck, N. J. (2019). [From Louvain to Leiden: guaranteeing well-connected communities.](https://arxiv.org/abs/1810.08473) — the community-detection upgrade path.
+
+The activation and spreading-activation machinery consolidation builds on is documented on the [self-maintaining memory](/docs/how-it-works/reinforcement) page; the full quality picture is on [memory quality](/docs/how-it-works/memory-quality).

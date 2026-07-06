@@ -72,9 +72,9 @@ Recall of many small, related memories is worse than recall of one that sees the
 
 Clusters are found by fusing three signals into one graph and running community detection over it: memory **relations**, embedding **similarity**, and **co-access** (memories retrieved or cited together in the same query). A value gate keeps only clusters that are cohesive and either salient (**used** together) or dense-but-cold (**not used** individually) — so consolidation triggers on both use and neglect, and noise is left unconsolidated. Synthesis is a two-step LLM pass with the same citable-evidence guard as validation: it may only reference the member memories it was shown. The result is a human-gated proposal that, once approved, inserts the insight, links it to each member with a `summarizes` relation, and records the members as provenance — atomically, in one review. Insights are ordinary memories, so a later run consolidates insights into higher-level insights: a schema tree that grows with the project.
 
-The mechanism is grounded in memory science — complementary learning systems and schema consolidation (Tse et al. 2007), sleep-replay gist extraction, the reflection trees of generative agents, and hierarchical summarization (RAPTOR, GraphRAG). It is off by default and dry-run first, like validation.
+The mechanism is grounded in memory science — complementary learning systems and schema consolidation, sleep-replay gist extraction, the reflection trees of generative agents, and hierarchical summarization (RAPTOR, GraphRAG). It is off by default and dry-run first, like validation.
 
-**Read more:** [`[consolidation]` config section](/docs/reference/config-global#consolidation-section) · [Automations](/docs/automations) · [`memory proposals`](/docs/reference/cli/capture-curation#memory-proposals)
+**Read more:** [Consolidation and insights](/docs/how-it-works/consolidation) — the full mechanism, triggers, and cited science · [`[consolidation]` config section](/docs/reference/config-global#consolidation-section) · [`memory proposals`](/docs/reference/cli/capture-curation#memory-proposals)
 
 ## Recall
 
@@ -118,11 +118,22 @@ Honest status: the adversarial group currently **fails** — deterministic synth
 
 ## References
 
-The reinforcement model is grounded in the memory literature rather than invented heuristics:
+The quality mechanisms are grounded in the memory and retrieval literature rather than invented heuristics.
 
-- Anderson, J. R. & Schooler, L. J. (1991). *Reflections of the environment in memory.* Psychological Science — ACT-R base-level activation: usefulness of a memory tracks recency and frequency of use.
-- Petrov, A. A. (2006). *Computationally efficient approximation of the base-level learning equation in ACT-R.* ICCM — the O(1) incremental form used for the running activation score.
-- Collins, A. M. & Loftus, E. F. (1975). *A spreading-activation theory of semantic processing.* Psychological Review — spreading activation over related memories.
-- Anderson, J. R. (1983). *A spreading activation theory of memory.* JVLVB — the fan effect behind hub normalization.
+**Reinforcement (activation scoring):**
 
-Deeper design material lives in the repository: `docs/developer/architecture/memory-reinforcement.md` (architecture and scientific grounding), `docs/developer/architecture/graph-and-curation-foundations.md` (curation strategy direction), and `docs/developer/adr/` (decision records).
+- Anderson, J. R. & Schooler, L. J. (1991). [Reflections of the environment in memory.](https://doi.org/10.1111/j.1467-9280.1991.tb00174.x) *Psychological Science* — ACT-R base-level activation: usefulness of a memory tracks recency and frequency of use.
+- Petrov, A. A. (2006). [Computationally efficient approximation of the base-level learning equation in ACT-R.](http://alexpetrov.com/pub/iccm06/) *ICCM* — the O(1) incremental form used for the running activation score.
+- Collins, A. M. & Loftus, E. F. (1975). [A spreading-activation theory of semantic processing.](https://doi.org/10.1037/0033-295X.82.6.407) *Psychological Review* — spreading activation over related memories.
+- Anderson, J. R. (1983). [A spreading activation theory of memory.](https://doi.org/10.1016/S0022-5371(83)90201-3) *Journal of Verbal Learning and Verbal Behavior* — the fan effect behind hub normalization.
+
+**Consolidation (insights):**
+
+- McClelland, J. L., McNaughton, B. L. & O'Reilly, R. C. (1995). [Why there are complementary learning systems in the hippocampus and neocortex.](https://doi.org/10.1037/0033-295X.102.3.419) *Psychological Review* — the fast/slow memory-store division.
+- Tse, D. et al. (2007). [Schemas and memory consolidation.](https://doi.org/10.1126/science.1135935) *Science* — consolidation is faster when it attaches to an existing schema.
+- Park, J. S. et al. (2023). [Generative Agents.](https://arxiv.org/abs/2304.03442) — reflection: theme extraction, insight synthesis, and reflection trees.
+- Sarthi, P. et al. (2024). [RAPTOR.](https://arxiv.org/abs/2401.18059) — recursive embed-cluster-summarize hierarchies.
+- Edge, D. et al. (2024). [From Local to Global (GraphRAG).](https://arxiv.org/abs/2404.16130) — community detection plus per-community summaries.
+- Raghavan, U. N., Albert, R. & Kumara, S. (2007). [Near linear time algorithm to detect community structures.](https://arxiv.org/abs/0709.2938) — the label-propagation clustering used for consolidation.
+
+See the [consolidation](/docs/how-it-works/consolidation#references) page for how each result maps onto the implementation. Deeper design material lives in the repository: `docs/developer/architecture/memory-reinforcement.md`, `docs/developer/architecture/graph-and-curation-foundations.md`, and `docs/developer/adr/`.
