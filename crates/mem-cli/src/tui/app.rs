@@ -334,7 +334,7 @@ async fn load_automation_snapshot(
 ) -> Result<AutomationSnapshot, String> {
     let repo_root = repo_root.display().to_string();
     let definitions = api
-        .loop_definitions()
+        .loop_definitions(Some(project))
         .await
         .map_err(|error| error.to_string())?;
     let mut warnings = Vec::new();

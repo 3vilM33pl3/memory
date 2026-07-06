@@ -856,14 +856,15 @@ impl ApiClient {
         .await
     }
 
-    pub(crate) async fn loop_definitions(&self) -> Result<LoopDefinitionsResponse> {
-        get_json(
-            self.client
-                .get(service_url(&self.config, "/v1/loops"))
-                .send()
-                .await?,
-        )
-        .await
+    pub(crate) async fn loop_definitions(
+        &self,
+        project: Option<&str>,
+    ) -> Result<LoopDefinitionsResponse> {
+        let mut request = self.client.get(service_url(&self.config, "/v1/loops"));
+        if let Some(project) = project {
+            request = request.query(&[("project", project)]);
+        }
+        get_json(request.send().await?).await
     }
 
     pub(crate) async fn loop_definition(

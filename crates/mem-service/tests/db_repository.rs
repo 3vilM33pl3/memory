@@ -816,7 +816,7 @@ async fn procedural_utility_learns_from_proposal_decisions() {
     )
     .await
     .expect("create proposal");
-    mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
+    let approved = mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
         &pool,
         &procedural,
         created.proposal.id,
@@ -830,6 +830,16 @@ async fn procedural_utility_learns_from_proposal_decisions() {
         .expect("utility row after approve");
     assert!(after_approve > 0.0, "approve must raise utility");
     assert_eq!(count, 1);
+
+    // The approved memory carries a durable producer link, so a later
+    // citation can reward the loop that created it.
+    let memory_id = approved.memory_id.expect("approve wrote memory");
+    let producers =
+        mem_reinforce::repository::loop_producers_for_memories(&pool, &[memory_id])
+            .await
+            .expect("resolve loop producers");
+    assert_eq!(producers.len(), 1);
+    assert_eq!(producers[0].loop_id, mem_loops::LOOP_MEMORY_HYGIENE);
 
     // Reject lowers it, atomically with the status write.
     let created = mem_service::repository::handlers::loops::create_memory_proposal_record(

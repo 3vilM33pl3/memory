@@ -423,6 +423,45 @@ pub async fn list_procedural_utility(
         .collect())
 }
 
+/// One loop-produced memory hit for a set of cited memory version ids.
+#[derive(Debug, Clone)]
+pub struct LoopProducerHit {
+    pub project_id: Uuid,
+    pub loop_id: String,
+    pub canonical_id: Uuid,
+}
+
+/// Resolves which cited memories were produced by a loop, for the citation
+/// reward. Version ids in, producer links out.
+pub async fn loop_producers_for_memories(
+    pool: &PgPool,
+    memory_ids: &[Uuid],
+) -> Result<Vec<LoopProducerHit>> {
+    if memory_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<(Uuid, String, Uuid)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT lpm.project_id, lpm.loop_id, lpm.canonical_id
+        FROM memory_entries me
+        JOIN loop_produced_memory lpm ON lpm.canonical_id = me.canonical_id
+        WHERE me.id = ANY($1)
+        "#,
+    )
+    .bind(memory_ids)
+    .fetch_all(pool)
+    .await
+    .context("resolve loop producers for cited memories")?;
+    Ok(rows
+        .into_iter()
+        .map(|(project_id, loop_id, canonical_id)| LoopProducerHit {
+            project_id,
+            loop_id,
+            canonical_id,
+        })
+        .collect())
+}
+
 pub async fn prune_access_events(pool: &PgPool, older_than: DateTime<Utc>) -> Result<u64> {
     let result = sqlx::query("DELETE FROM memory_access_events WHERE accessed_at < $1")
         .bind(older_than)

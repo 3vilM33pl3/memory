@@ -2544,6 +2544,9 @@ pub(in crate::commands) enum LoopsCommand {
 
 #[derive(Debug, Args)]
 pub(in crate::commands) struct LoopListArgs {
+    /// Project slug; includes learned per-loop utility when supplied.
+    #[arg(long)]
+    pub(crate) project: Option<String>,
     /// Emit the response as JSON.
     #[arg(long)]
     pub(crate) json: bool,

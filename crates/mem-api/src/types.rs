@@ -2162,9 +2162,23 @@ pub struct LoopDefinitionRecord {
     pub created_at: DateTime<Utc>,
 }
 
+/// Learned procedural utility for one loop, advisory only. Present on the
+/// listing when a project is supplied and utility learning is enabled.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopUtilityInfo {
+    pub loop_id: String,
+    pub utility: f64,
+    pub update_count: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommendation: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopDefinitionsResponse {
     pub definitions: Vec<LoopDefinitionRecord>,
+    /// Ordered highest-utility first; informational, never a permission input.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub utilities: Vec<LoopUtilityInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

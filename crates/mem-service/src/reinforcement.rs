@@ -73,8 +73,66 @@ pub(crate) fn spawn_access_worker(state: AppState, mut rx: mpsc::Receiver<Access
                     tracing::warn!(error = %error, "record reinforcement access batch");
                 }
             }
+            if let Err(error) = reward_cited_loop_producers(&state, &pool, &batch).await {
+                tracing::warn!(error = %error, "reward loops for cited memories");
+            }
         }
     });
+}
+
+/// Citation bonus for procedural utility: a loop-produced memory being cited
+/// in an answer is delayed evidence the loop was valuable. Advisory, best
+/// effort, never affects scoring or gates.
+async fn reward_cited_loop_producers(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    batch: &AccessBatch,
+) -> anyhow::Result<()> {
+    let procedural = &state.config.procedural;
+    if !procedural.enabled {
+        return Ok(());
+    }
+    let cited: Vec<Uuid> = batch
+        .events
+        .iter()
+        .filter(|(_, kind)| matches!(kind, mem_reinforce::AccessKind::Citation))
+        .map(|(memory_id, _)| *memory_id)
+        .collect();
+    if cited.is_empty() {
+        return Ok(());
+    }
+    let hits = mem_reinforce::repository::loop_producers_for_memories(pool, &cited).await?;
+    if hits.is_empty() {
+        return Ok(());
+    }
+    let params = mem_reinforce::UtilityParams::from(procedural);
+    let rewards = mem_reinforce::ProceduralRewards::from(procedural);
+    let event = mem_reinforce::RewardEvent::MemoryCited;
+    for hit in hits {
+        let reward = event.reward(&rewards);
+        let update = mem_reinforce::repository::apply_utility_reward(
+            pool,
+            hit.project_id,
+            "loop",
+            &hit.loop_id,
+            reward,
+            &params,
+        )
+        .await?;
+        mem_reinforce::repository::insert_utility_audit(
+            pool,
+            hit.project_id,
+            "loop",
+            &hit.loop_id,
+            event.audit_reason(),
+            reward,
+            params.alpha,
+            &update,
+            serde_json::json!({ "canonical_id": hit.canonical_id }),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// Records the memories a query returned (retrieval) and the subset the

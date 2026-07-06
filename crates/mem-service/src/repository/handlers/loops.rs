@@ -116,8 +116,34 @@ pub(crate) async fn list_loop_definitions(
     }
     let pool = &state.pool()?;
     let definitions = fetch_loop_definitions(pool).await?;
-    let _ = query;
-    Ok(Json(LoopDefinitionsResponse { definitions }))
+    // Advisory learned-utility sidecar: project-scoped, ordered by utility,
+    // never an input to modes or permission gates.
+    let mut utilities = Vec::new();
+    if state.config.procedural.enabled
+        && let Some(project) = query.project.as_deref()
+        && let Some(project_id) = find_project_id(pool, project).await?
+    {
+        let thresholds = mem_reinforce::RecommendationThresholds::from(&state.config.procedural);
+        utilities = mem_reinforce::repository::list_procedural_utility(pool, project_id, "loop")
+            .await
+            .map_err(ApiError::io)?
+            .into_iter()
+            .map(|snapshot| {
+                let recommendation =
+                    mem_reinforce::utility_recommendation(&snapshot, &thresholds);
+                mem_api::LoopUtilityInfo {
+                    loop_id: snapshot.producer_id,
+                    utility: snapshot.utility,
+                    update_count: snapshot.update_count,
+                    recommendation,
+                }
+            })
+            .collect();
+    }
+    Ok(Json(LoopDefinitionsResponse {
+        definitions,
+        utilities,
+    }))
 }
 
 pub(crate) async fn get_loop_definition(
@@ -2611,6 +2637,22 @@ async fn insert_memory_from_proposal(
 
     insert_memory_tags_from_candidate(tx, memory_id, candidate).await?;
     insert_memory_sources_from_proposal(tx, memory_id, proposal).await?;
+    // Durable producer link so later citations of this memory can reward the
+    // loop that created it (procedural utility), without parsing note strings.
+    sqlx::query(
+        r#"
+        INSERT INTO loop_produced_memory (canonical_id, project_id, loop_id, run_id)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (canonical_id) DO NOTHING
+        "#,
+    )
+    .bind(canonical_id)
+    .bind(proposal.project_id)
+    .bind(&proposal.record.loop_id)
+    .bind(proposal.record.run_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(ApiError::sql)?;
     Ok(memory_id)
 }
 

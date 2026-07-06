@@ -20,7 +20,7 @@ use crate::commands::{
 pub(super) async fn handle(args: LoopsArgs, api: &ApiClient) -> Result<()> {
     match args.command {
         LoopsCommand::List(args) => {
-            let response = api.loop_definitions().await?;
+            let response = api.loop_definitions(args.project.as_deref()).await?;
             if args.json {
                 print_json(&response)?;
             } else {
@@ -496,6 +496,19 @@ fn print_loop_definitions(response: &mem_api::LoopDefinitionsResponse) {
             definition.name
         );
         println!("  {}", definition.description);
+    }
+    if !response.utilities.is_empty() {
+        println!();
+        println!("Learned utility (advisory, highest first):");
+        for info in &response.utilities {
+            println!(
+                "- {} utility={:.2} over {} decision(s)",
+                info.loop_id, info.utility, info.update_count
+            );
+            if let Some(recommendation) = &info.recommendation {
+                println!("  {recommendation}");
+            }
+        }
     }
 }
 
