@@ -34,6 +34,9 @@ pub enum MemoryType {
     Feedback,
     Project,
     Reference,
+    /// A consolidated meta-memory synthesized from a cluster of related
+    /// memories: the schema/gist plus its tensions, gaps, and implications.
+    Insight,
 }
 
 impl fmt::Display for MemoryType {
@@ -55,6 +58,7 @@ impl fmt::Display for MemoryType {
             Self::Feedback => "feedback",
             Self::Project => "project",
             Self::Reference => "reference",
+            Self::Insight => "insight",
         };
         f.write_str(value)
     }
@@ -266,6 +270,8 @@ pub enum MemoryRelationType {
     Supports,
     RelatedTo,
     DependsOn,
+    /// A meta-memory (insight) that summarizes the target member memory.
+    Summarizes,
 }
 
 impl fmt::Display for MemoryRelationType {
@@ -276,6 +282,7 @@ impl fmt::Display for MemoryRelationType {
             Self::Supports => "supports",
             Self::RelatedTo => "related_to",
             Self::DependsOn => "depends_on",
+            Self::Summarizes => "summarizes",
         };
         f.write_str(value)
     }
@@ -297,6 +304,9 @@ pub enum SourceKind {
     CommandOutput,
     Test,
     Note,
+    /// Provenance pointing at another memory (e.g. a consolidated insight's
+    /// member memories).
+    Memory,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

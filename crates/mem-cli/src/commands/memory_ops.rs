@@ -1086,6 +1086,7 @@ impl SourceKindString for mem_api::SourceKind {
             mem_api::SourceKind::CommandOutput => "command_output",
             mem_api::SourceKind::Test => "test",
             mem_api::SourceKind::Note => "note",
+            mem_api::SourceKind::Memory => "memory",
         }
     }
 }

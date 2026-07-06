@@ -2233,6 +2233,7 @@ dependencies = [
  "libc",
  "mem-agenttop",
  "mem-api",
+ "mem-consolidate",
  "mem-curate",
  "mem-graph",
  "mem-ingest",

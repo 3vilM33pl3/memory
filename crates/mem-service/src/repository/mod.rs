@@ -395,6 +395,7 @@ fn source_node_label(
         mem_api::SourceKind::CommandOutput => "command output",
         mem_api::SourceKind::Test => "test",
         mem_api::SourceKind::Note => "note",
+        mem_api::SourceKind::Memory => "memory",
     }
     .to_string()
 }

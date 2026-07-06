@@ -322,9 +322,24 @@ pub(crate) async fn run_loop(
             proxy_post_json(&state, &format!("/v1/loops/{loop_id}/run"), &request, true).await?,
         ));
     }
-    Ok(Json(
-        create_control_plane_loop_run(&state.pool()?, &loop_id, &request).await?,
-    ))
+    let response = create_control_plane_loop_run(&state.pool()?, &loop_id, &request).await?;
+    // Consolidation is the one LLM-backed loop: after the deterministic report
+    // is stored, synthesize insight proposals when enabled and not dry-run.
+    // Runs where the LLM or a cluster fails are logged, never fatal.
+    if loop_id == mem_loops::LOOP_MEMORY_CONSOLIDATION
+        && state.config.consolidation.enabled
+        && !state.config.consolidation.dry_run
+        && !request.dry_run
+        && let Some(project) = request.project.as_deref()
+    {
+        let run_id = Some(response.run.summary.id);
+        if let Err(error) =
+            crate::consolidate::emit_consolidation_proposals(&state, project, run_id).await
+        {
+            tracing::warn!(error = %error, "consolidation proposal emission failed");
+        }
+    }
+    Ok(Json(response))
 }
 
 pub(crate) async fn route_loop_trigger(
@@ -2296,7 +2311,7 @@ async fn lock_memory_proposal(
         FROM memory_proposals mp
         LEFT JOIN projects p ON p.id = mp.project_id
         WHERE mp.id = $1
-        FOR UPDATE
+        FOR UPDATE OF mp
         "#,
     )
     .bind(proposal_id)
@@ -2322,10 +2337,68 @@ async fn apply_memory_proposal(
             .map(Some),
         "deprecate" => archive_memory_from_proposal(tx, proposal).await.map(Some),
         "merge" | "link" => link_memories_from_proposal(tx, proposal).await.map(Some),
+        "consolidate" => apply_consolidation_proposal(tx, proposal).await.map(Some),
         _ => Err(ApiError::validation(ValidationError::new(
             "unsupported proposal_type",
         ))),
     }
+}
+
+/// Applies a `consolidate` proposal atomically: inserts the new `insight`
+/// meta-memory (with member provenance carried as `memory` sources), then
+/// links it to each member's latest active version with a `summarizes`
+/// relation. One approval, one transaction — members stay `active`.
+async fn apply_consolidation_proposal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    proposal: &LockedMemoryProposal,
+) -> Result<Uuid, ApiError> {
+    let meta_id = insert_memory_from_proposal(tx, proposal, None).await?;
+    let members = proposal
+        .record
+        .candidate
+        .get("member_canonical_ids")
+        .and_then(serde_json::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .filter_map(|value| Uuid::parse_str(value).ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    for member_canonical_id in members {
+        let member_version_id: Option<Uuid> = sqlx::query_scalar(
+            r#"
+            SELECT id FROM memory_entries
+            WHERE canonical_id = $1
+              AND status = 'active'
+              AND COALESCE(is_tombstone, false) = false
+            ORDER BY version_no DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(member_canonical_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(ApiError::sql)?;
+        let Some(member_version_id) = member_version_id else {
+            continue;
+        };
+        sqlx::query(
+            r#"
+            INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id)
+            VALUES (gen_random_uuid(), $1, 'summarizes', $2)
+            ON CONFLICT DO NOTHING
+            "#,
+        )
+        .bind(meta_id)
+        .bind(member_version_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(ApiError::sql)?;
+    }
+    Ok(meta_id)
 }
 
 async fn insert_memory_update_from_proposal(
@@ -2720,6 +2793,7 @@ fn source_kind_string(value: &str) -> &'static str {
         SourceKind::CommandOutput => "command_output",
         SourceKind::Test => "test",
         SourceKind::Note => "note",
+        SourceKind::Memory => "memory",
     }
 }
 

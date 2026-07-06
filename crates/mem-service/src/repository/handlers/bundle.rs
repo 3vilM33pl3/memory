@@ -629,6 +629,7 @@ pub(crate) async fn project_bundle_import(
                 SourceKind::CommandOutput => "command_output",
                 SourceKind::Test => "test",
                 SourceKind::Note => "note",
+                SourceKind::Memory => "memory",
             })
             .bind(&source.excerpt)
             .execute(pool)

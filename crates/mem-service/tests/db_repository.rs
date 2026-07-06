@@ -639,6 +639,125 @@ async fn loop_repository_approves_memory_proposal_and_writes_provenance() {
 }
 
 #[tokio::test]
+async fn loop_repository_applies_consolidate_proposal_atomically() {
+    let Some(pool) = mem_test_support::migrated_pool().await else {
+        return;
+    };
+    let project = mem_test_support::unique_project_slug("service-consolidate");
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup old test project");
+    let project_id = mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+        .await
+        .expect("upsert project");
+
+    // Three member memories the insight will summarize.
+    let mut members = Vec::new();
+    for i in 0..3 {
+        members.push(
+            insert_hygiene_memory_fixture(
+                &pool,
+                project_id,
+                &format!("Member fact {i}"),
+                &format!("Member canonical text {i}"),
+                0.9,
+                3,
+            )
+            .await,
+        );
+    }
+    let member_ids: Vec<String> = members.iter().map(|id| id.to_string()).collect();
+
+    let request = LoopMemoryProposalCreateRequest {
+        project: project.clone(),
+        loop_id: mem_loops::LOOP_MEMORY_CONSOLIDATION.to_string(),
+        proposal_type: "consolidate".to_string(),
+        run_id: None,
+        target_memory_id: None,
+        candidate: serde_json::json!({
+            "canonical_text": "These three facts form one subsystem convention.",
+            "summary": "Subsystem convention insight",
+            "memory_type": "insight",
+            "scope": "project",
+            "importance": 4,
+            "confidence": 0.7,
+            "tags": ["insight", "consolidation"],
+            "member_canonical_ids": member_ids,
+            "theme": "subsystem convention"
+        }),
+        evidence: serde_json::json!(
+            members
+                .iter()
+                .map(|id| serde_json::json!({ "source_kind": "memory", "excerpt": id.to_string() }))
+                .collect::<Vec<_>>()
+        ),
+        confidence: 0.7,
+        risk_notes: Some("consolidation test".to_string()),
+    };
+
+    let created =
+        mem_service::repository::handlers::loops::create_memory_proposal_record(&pool, &request)
+            .await
+            .expect("create consolidate proposal");
+    let approved = mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
+        &pool,
+        created.proposal.id,
+        "approved",
+        &LoopMemoryProposalDecisionRequest {
+            reviewer: Some("repository-test".to_string()),
+            reason: Some("Approve consolidation.".to_string()),
+            edited_candidate: None,
+            edited_evidence: None,
+            edited_risk_notes: None,
+        },
+    )
+    .await
+    .expect("approve consolidate proposal");
+
+    let meta_id = approved.memory_id.expect("consolidate wrote a memory");
+    let meta = mem_service::repository::handlers::memory::fetch_memory_entry(&pool, meta_id)
+        .await
+        .expect("fetch insight memory")
+        .expect("insight exists");
+    assert_eq!(meta.memory_type, mem_api::MemoryType::Insight);
+
+    // Exactly three summarizes relations to the members' latest version ids.
+    let relation_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM memory_relations WHERE src_memory_id = $1 AND relation_type = 'summarizes'",
+    )
+    .bind(meta_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count relations");
+    assert_eq!(relation_count, 3);
+    for member in &members {
+        let linked: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memory_relations WHERE src_memory_id = $1 AND dst_memory_id = $2 AND relation_type = 'summarizes'",
+        )
+        .bind(meta_id)
+        .bind(member)
+        .fetch_one(&pool)
+        .await
+        .expect("count member link");
+        assert_eq!(linked, 1, "member {member} must be linked");
+    }
+
+    // Member provenance recorded with source_kind = 'memory'.
+    let memory_sources: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM memory_sources WHERE memory_entry_id = $1 AND source_kind = 'memory'",
+    )
+    .bind(meta_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count memory provenance");
+    assert_eq!(memory_sources, 3);
+
+    mem_test_support::cleanup_project(&pool, &project)
+        .await
+        .expect("cleanup test project");
+}
+
+#[tokio::test]
 async fn loop_repository_memory_hygiene_emits_cleanup_proposals() {
     let Some(pool) = mem_test_support::migrated_pool().await else {
         return;

@@ -582,6 +582,11 @@ fn summarize_candidate_sources(sources: &[CaptureCandidateSourceInput]) -> Vec<S
                 .as_ref()
                 .map(|excerpt| format!("note:{excerpt}"))
                 .or_else(|| Some("note".to_string())),
+            SourceKind::Memory => source
+                .excerpt
+                .as_ref()
+                .map(|excerpt| format!("memory:{excerpt}"))
+                .or_else(|| Some("memory".to_string())),
         })
         .collect();
     preview.sort();

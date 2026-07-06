@@ -9,6 +9,7 @@ pub(crate) fn source_kind_name(source_kind: &SourceKind) -> &'static str {
         SourceKind::CommandOutput => "command_output",
         SourceKind::Test => "test",
         SourceKind::Note => "note",
+        SourceKind::Memory => "memory",
     }
 }
 

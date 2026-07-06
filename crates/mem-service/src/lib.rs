@@ -1,4 +1,5 @@
 mod auth;
+mod consolidate;
 mod error;
 mod handlers;
 mod llm;

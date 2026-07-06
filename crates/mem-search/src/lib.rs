@@ -679,6 +679,7 @@ pub fn parse_memory_type(value: &str) -> MemoryType {
         "feedback" => MemoryType::Feedback,
         "project" => MemoryType::Project,
         "reference" => MemoryType::Reference,
+        "insight" => MemoryType::Insight,
         _ => MemoryType::Convention,
     }
 }
@@ -689,6 +690,7 @@ pub fn parse_relation_type(value: &str) -> MemoryRelationType {
         "supersedes" => MemoryRelationType::Supersedes,
         "supports" => MemoryRelationType::Supports,
         "depends_on" => MemoryRelationType::DependsOn,
+        "summarizes" => MemoryRelationType::Summarizes,
         _ => MemoryRelationType::RelatedTo,
     }
 }
@@ -779,6 +781,7 @@ pub fn parse_source_kind(value: &str) -> SourceKind {
         "command_output" => SourceKind::CommandOutput,
         "test" => SourceKind::Test,
         "note" => SourceKind::Note,
+        "memory" => SourceKind::Memory,
         _ => SourceKind::Note,
     }
 }
@@ -1044,6 +1047,9 @@ fn rank_candidate(
                     MemoryRelationType::Supports => 0.28,
                     MemoryRelationType::RelatedTo => 0.18,
                     MemoryRelationType::DependsOn => 0.20,
+                    // An insight pulls its members' activation so the cluster
+                    // warms together; weighted like Supports.
+                    MemoryRelationType::Summarizes => 0.28,
                 })
                 .sum::<f64>()
         })
