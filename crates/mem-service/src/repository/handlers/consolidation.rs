@@ -74,6 +74,25 @@ pub(crate) struct ConsolidationReport {
 }
 
 impl ConsolidationReport {
+    /// Maps accepted clusters to the curate-response accumulator view.
+    pub(crate) fn due_infos(&self) -> Vec<mem_api::ConsolidationDueInfo> {
+        self.accepted
+            .iter()
+            .map(|cluster| mem_api::ConsolidationDueInfo {
+                cluster_seed: cluster
+                    .members
+                    .iter()
+                    .map(|m| m.canonical_id)
+                    .min()
+                    .unwrap_or_default(),
+                size: cluster.size,
+                coaccess_mass: cluster.coaccess_mass,
+                activation_mass: cluster.activation_mass,
+                trigger: cluster.trigger.clone(),
+            })
+            .collect()
+    }
+
     pub(crate) fn summary(&self) -> String {
         format!(
             "Consolidation scanned {} candidate cluster(s): {} accepted, {} rejected, {} already covered.",

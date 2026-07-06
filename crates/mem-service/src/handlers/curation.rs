@@ -122,6 +122,41 @@ pub(crate) async fn curate_memory(
             tracing::warn!(error = %error, "reinforcement due-validation check failed");
         }
     }
+    // Consolidation accumulator: when enabled, report clusters worth
+    // consolidating and, if auto-trigger is on, wake the LLM synthesis in the
+    // background. Deterministic scan only; advisory and never fails curation.
+    if state.config.consolidation.enabled {
+        let cfg = &state.config.consolidation;
+        let half_life_secs = state.config.reinforcement.half_life.as_secs_f64().max(1.0);
+        match crate::repository::handlers::consolidation::run_memory_consolidation(
+            &state.pool()?,
+            &request.project,
+            cfg,
+            half_life_secs,
+        )
+        .await
+        {
+            Ok(report) => {
+                let due = report.due_infos();
+                if !due.is_empty() && cfg.auto_trigger && !cfg.dry_run {
+                    let state = state.clone();
+                    let project = request.project.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) =
+                            crate::consolidate::emit_consolidation_proposals(&state, &project, None)
+                                .await
+                        {
+                            tracing::warn!(error = %error, "auto-triggered consolidation failed");
+                        }
+                    });
+                }
+                response.consolidation_due = due;
+            }
+            Err(error) => {
+                tracing::warn!(error = %error.message, "consolidation due check failed");
+            }
+        }
+    }
     notify_project_changed(
         &state,
         project,

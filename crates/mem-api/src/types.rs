@@ -1187,6 +1187,22 @@ pub struct CurateResponse {
     /// validation, reported when the reinforcement system is enabled.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validation_due: Vec<ValidationDueInfo>,
+    /// Clusters of related memories that passed the value gate and are not yet
+    /// covered by an insight, reported when consolidation is enabled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub consolidation_due: Vec<ConsolidationDueInfo>,
+}
+
+/// One consolidation candidate surfaced on the curate response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsolidationDueInfo {
+    /// Smallest member canonical id, a stable handle for the cluster.
+    pub cluster_seed: Uuid,
+    pub size: usize,
+    pub coaccess_mass: f64,
+    pub activation_mass: f64,
+    /// `salient` (use) or `cold_dense` (non-use).
+    pub trigger: String,
 }
 
 /// Reinforcement score state for one memory, as exposed by the API.
@@ -5627,6 +5643,55 @@ mod tests {
             "max_completion_tokens"
         );
         assert!(llm_requires_api_key(&config));
+    }
+
+    #[test]
+    fn consolidation_config_defaults_off_and_roundtrips() {
+        let config: AppConfig = toml::from_str(
+            r#"
+            [service]
+            bind_addr = "127.0.0.1:4040"
+            capnp_unix_socket = "/tmp/memory-test.sock"
+            capnp_tcp_addr = "127.0.0.1:4041"
+            api_token = "token"
+            request_timeout = "30s"
+
+            [database]
+            url = "postgresql://memory"
+            "#,
+        )
+        .expect("parse config without consolidation section");
+        // Off and dry-run by default, matching the reinforcement posture.
+        assert!(!config.consolidation.enabled);
+        assert!(config.consolidation.dry_run);
+        assert!(config.consolidation.auto_trigger);
+        assert_eq!(config.consolidation.min_size, 3);
+        assert_eq!(config.consolidation.sim_floor, 0.82);
+
+        let overridden: AppConfig = toml::from_str(
+            r#"
+            [service]
+            bind_addr = "127.0.0.1:4040"
+            capnp_unix_socket = "/tmp/memory-test.sock"
+            capnp_tcp_addr = "127.0.0.1:4041"
+            api_token = "token"
+            request_timeout = "30s"
+
+            [database]
+            url = "postgresql://memory"
+
+            [consolidation]
+            enabled = true
+            dry_run = false
+            min_size = 4
+            "#,
+        )
+        .expect("parse config with consolidation overrides");
+        assert!(overridden.consolidation.enabled);
+        assert!(!overridden.consolidation.dry_run);
+        assert_eq!(overridden.consolidation.min_size, 4);
+        // Unspecified knobs keep their defaults.
+        assert_eq!(overridden.consolidation.max_size, 25);
     }
 
     #[test]
