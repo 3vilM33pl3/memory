@@ -79,3 +79,23 @@ result.
    grounded items, or expected-file items pointed at real paths).
 3. Once fixed, re-run and re-baseline; the gate's adversarial floor remains
    intentionally red until the synthesis refusal work lands.
+
+## Re-baseline after fixture provenance fix (3VI-772, same day)
+
+The fixture was made provenance-stable: all seed sources are now
+`note`-kind (unverifiable — never decayed by the ranker), retrieval items
+assert `expected_tags` only, and the `memory-quality-eval` project was reset
+and re-seeded fresh. File-recall coverage is intentionally no longer part of
+this suite.
+
+| Group | Rotted run (earlier today) | Re-baseline |
+|---|---|---|
+| retrieval_qa | 10/10 | **10/10** |
+| grounded_answer | 1/9 | **8/9** (`ga-ingest-gap` depends on insight ranking) |
+| adversarial_stale | 1/7 | 0/7 (intentionally red — 3VI-773) |
+| Overall | 0.462 | **0.692** (18/26) |
+
+Comparable to the 2026-07-05 baseline (0.708 over 24 items) with two harder
+consolidation items added. This is the new reference run. Gate remains red
+on the adversarial floor until 3VI-773 lands; the graph latency fix is
+tracked as 3VI-771.

@@ -26,7 +26,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.95,
       "importance": 4,
       "tags": ["mq-decision", "mq-sync"],
-      "sources": [{"file_path": "docs/quality/sync-engine.md", "source_kind": "file", "excerpt": "batched two-phase commit, 250 ms flush window"}]
+      "sources": [{"source_kind": "note", "excerpt": "batched two-phase commit, 250 ms flush window"}]
     },
     {
       "canonical_text": "Export formats: the ledger bridge exports CSV and Parquet only. JSON export was evaluated and rejected for size reasons.",
@@ -35,7 +35,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.95,
       "importance": 4,
       "tags": ["mq-reference", "mq-export"],
-      "sources": [{"file_path": "docs/quality/exports.md", "source_kind": "file", "excerpt": "CSV and Parquet only; JSON rejected"}]
+      "sources": [{"source_kind": "note", "excerpt": "CSV and Parquet only; JSON rejected"}]
     },
     {
       "canonical_text": "Error banner convention: a failed sync shows a slate banner with a retry action, and syncs are never auto-retried more than twice.",
@@ -44,7 +44,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.9,
       "importance": 3,
       "tags": ["mq-convention", "mq-ui"],
-      "sources": [{"file_path": "docs/quality/ui-errors.md", "source_kind": "file", "excerpt": "slate banner, retry action, at most twice"}]
+      "sources": [{"source_kind": "note", "excerpt": "slate banner, retry action, at most twice"}]
     },
     {
       "canonical_text": "Incident QLT-9: duplicated ledger rows were caused by replaying the same batch after a timeout. The fix is idempotency keys on batch ids.",
@@ -53,7 +53,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.95,
       "importance": 4,
       "tags": ["mq-incident"],
-      "sources": [{"file_path": "docs/quality/incidents/qlt-9.md", "source_kind": "file", "excerpt": "batch replay after timeout; idempotency keys"}]
+      "sources": [{"source_kind": "note", "excerpt": "batch replay after timeout; idempotency keys"}]
     },
     {
       "canonical_text": "The reconciliation job runs every 20 minutes and writes its report to reports/reconcile.log.",
@@ -62,7 +62,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.9,
       "importance": 3,
       "tags": ["mq-reference", "mq-reconcile"],
-      "sources": [{"file_path": "docs/quality/reconcile.md", "source_kind": "file", "excerpt": "every 20 minutes; reports/reconcile.log"}]
+      "sources": [{"source_kind": "note", "excerpt": "every 20 minutes; reports/reconcile.log"}]
     },
     {
       "canonical_text": "Schema changes require a migration note in the migrations doc and a paired rollback script.",
@@ -71,7 +71,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.9,
       "importance": 3,
       "tags": ["mq-convention", "mq-migrations"],
-      "sources": [{"file_path": "docs/quality/migrations.md", "source_kind": "file", "excerpt": "migration note plus rollback script"}]
+      "sources": [{"source_kind": "note", "excerpt": "migration note plus rollback script"}]
     },
     {
       "canonical_text": "Rate limits: the bridge API allows 40 requests per minute per token and returns retry-after headers on 429 responses.",
@@ -80,7 +80,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.9,
       "importance": 3,
       "tags": ["mq-reference", "mq-api"],
-      "sources": [{"file_path": "docs/quality/api-limits.md", "source_kind": "file", "excerpt": "40 requests per minute per token"}]
+      "sources": [{"source_kind": "note", "excerpt": "40 requests per minute per token"}]
     },
     {
       "canonical_text": "Storage decision: ledger snapshots live in content-addressed storage keyed by BLAKE3 digests.",
@@ -89,7 +89,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.95,
       "importance": 4,
       "tags": ["mq-decision", "mq-storage"],
-      "sources": [{"file_path": "docs/quality/storage.md", "source_kind": "file", "excerpt": "content-addressed, BLAKE3 digests"}]
+      "sources": [{"source_kind": "note", "excerpt": "content-addressed, BLAKE3 digests"}]
     },
     {
       "canonical_text": "The bridge gateway listens on port 7100.",
@@ -98,7 +98,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.5,
       "importance": 2,
       "tags": ["mq-stale-port"],
-      "sources": [{"file_path": "docs/quality/gateway.md", "source_kind": "file", "excerpt": "port 7100"}]
+      "sources": [{"source_kind": "note", "excerpt": "port 7100"}]
     },
     {
       "canonical_text": "The bridge gateway listens on port 7420 since the network rework.",
@@ -107,7 +107,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.95,
       "importance": 4,
       "tags": ["mq-fresh-port"],
-      "sources": [{"file_path": "docs/quality/gateway.md", "source_kind": "file", "excerpt": "port 7420 since the network rework"}]
+      "sources": [{"source_kind": "note", "excerpt": "port 7420 since the network rework"}]
     },
     {
       "canonical_text": "The benchmark database codename is Copper Kettle.",
@@ -116,7 +116,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.5,
       "importance": 2,
       "tags": ["mq-stale-codename"],
-      "sources": [{"file_path": "docs/quality/codename.md", "source_kind": "file", "excerpt": "Copper Kettle"}]
+      "sources": [{"source_kind": "note", "excerpt": "Copper Kettle"}]
     },
     {
       "canonical_text": "The benchmark database codename is Silver Anvil as of migration 12; earlier codenames are retired.",
@@ -125,7 +125,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.95,
       "importance": 4,
       "tags": ["mq-fresh-codename"],
-      "sources": [{"file_path": "docs/quality/codename.md", "source_kind": "file", "excerpt": "Silver Anvil as of migration 12"}]
+      "sources": [{"source_kind": "note", "excerpt": "Silver Anvil as of migration 12"}]
     },
     {
       "canonical_text": "Ledger exports are retained for 30 days.",
@@ -134,7 +134,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.5,
       "importance": 2,
       "tags": ["mq-stale-retention"],
-      "sources": [{"file_path": "docs/quality/retention.md", "source_kind": "file", "excerpt": "30 day retention"}]
+      "sources": [{"source_kind": "note", "excerpt": "30 day retention"}]
     },
     {
       "canonical_text": "Ledger exports are retained for 90 days after the compliance retention update.",
@@ -143,7 +143,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.95,
       "importance": 4,
       "tags": ["mq-fresh-retention"],
-      "sources": [{"file_path": "docs/quality/retention.md", "source_kind": "file", "excerpt": "90 days after compliance update"}]
+      "sources": [{"source_kind": "note", "excerpt": "90 days after compliance update"}]
     },
     {
       "canonical_text": "Someone suggested the cache layer might eventually move to a managed key-value store; nothing was decided.",
@@ -179,7 +179,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.9,
       "importance": 3,
       "tags": ["mq-ingest-member"],
-      "sources": [{"file_path": "docs/quality/ingest.md", "source_kind": "file", "excerpt": "schema validation before enqueue"}]
+      "sources": [{"source_kind": "note", "excerpt": "schema validation before enqueue"}]
     },
     {
       "canonical_text": "The ingest path retries transient enqueue failures with capped backoff.",
@@ -188,7 +188,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.9,
       "importance": 3,
       "tags": ["mq-ingest-member"],
-      "sources": [{"file_path": "docs/quality/ingest.md", "source_kind": "file", "excerpt": "capped backoff retries"}]
+      "sources": [{"source_kind": "note", "excerpt": "capped backoff retries"}]
     },
     {
       "canonical_text": "The ingest path emits a metric per accepted and rejected record.",
@@ -197,7 +197,7 @@ cat > "$payload" <<'JSON'
       "confidence": 0.9,
       "importance": 3,
       "tags": ["mq-ingest-member"],
-      "sources": [{"file_path": "docs/quality/ingest.md", "source_kind": "file", "excerpt": "per-record accept/reject metric"}]
+      "sources": [{"source_kind": "note", "excerpt": "per-record accept/reject metric"}]
     },
     {
       "canonical_text": "Ingest reliability overview: the ingest path forms one reliability pipeline that validates each record's schema before enqueue, retries transient enqueue failures with capped backoff, and emits accept and reject metrics per record. Taken together these give at-least-once ingest with observable back-pressure; the open gap is that schema-rejected records are dropped silently rather than dead-lettered.",
