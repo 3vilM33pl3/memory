@@ -1272,6 +1272,41 @@ struct QueryAnswerSynthesis {
     answer_citations: Vec<QueryAnswerCitation>,
 }
 
+/// Content-bearing tokens of a summary, for topic comparison between results.
+fn topic_tokens(text: &str) -> HashSet<String> {
+    const STOPWORDS: &[&str] = &[
+        "the", "a", "an", "is", "are", "was", "were", "be", "for", "of", "on", "in", "to", "and",
+        "or", "as", "at", "by", "with", "since", "after", "before", "it", "its", "that", "this",
+        "not", "no",
+    ];
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|token| token.len() >= 2 && !STOPWORDS.contains(token))
+        .map(str::to_string)
+        .collect()
+}
+
+/// How much of the smaller token set is contained in the other. Near 1.0 means
+/// the two summaries state the same fact (possibly with different values).
+fn topic_containment(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
+    let smaller = a.len().min(b.len());
+    if smaller == 0 {
+        return 0.0;
+    }
+    a.intersection(b).count() as f64 / smaller as f64
+}
+
+/// Memories below this confidence are treated as too weak to state as fact:
+/// they neither justify an answer on their own nor earn a citation as
+/// supporting context. The canary fixture's vague/superseded memories sit at
+/// 0.3-0.5; real curated facts land at 0.8+.
+const ANSWER_CONFIDENCE_FLOOR: f32 = 0.55;
+
+/// A runner-up whose summary restates the top result's topic is either a
+/// duplicate or a contradiction (same fact, different value — the stale-echo
+/// failure); either way it must not be echoed as supporting context.
+const RUNNER_UP_TOPIC_OVERLAP_LIMIT: f64 = 0.55;
+
 fn synthesize_answer(results: &[QueryResult]) -> QueryAnswerSynthesis {
     let Some(top) = results.first() else {
         return QueryAnswerSynthesis {
@@ -1295,8 +1330,22 @@ fn synthesize_answer(results: &[QueryResult]) -> QueryAnswerSynthesis {
         .filter(|(_, result)| result.score >= best_score * 0.72)
         .collect::<Vec<_>>();
 
+    // Weak-match refusal: nothing anchors the top result to the question —
+    // low term overlap AND low semantic similarity, with no exact-phrase
+    // match. A high aggregate score alone (from confidence/importance boosts)
+    // must not turn an off-topic memory into a confident answer. Tag matches
+    // are deliberately not an anchor: they use substring matching and misfire
+    // on short question terms. Thresholds tuned against memory-quality-v1:
+    // legitimate answers sit at overlap >= 0.55 or similarity >= 0.60;
+    // off-topic tops sit below both.
+    let weakly_matched = top.debug.term_overlap < 0.55
+        && top.debug.semantic_similarity < 0.60
+        && top.debug.exact_phrase_matches == 0;
+
     let insufficient = strong_results.is_empty()
         || normalized < 0.38
+        || weakly_matched
+        || top.debug.memory_confidence < ANSWER_CONFIDENCE_FLOOR
         || strong_results[0]
             .1
             .score_explanation
@@ -1316,10 +1365,24 @@ fn synthesize_answer(results: &[QueryResult]) -> QueryAnswerSynthesis {
         };
     }
 
+    let top_topic = topic_tokens(&top.summary);
     let mut summaries = Vec::new();
     let mut citations = Vec::new();
     let mut seen = HashSet::new();
     for (index, result) in strong_results {
+        if index > 0 {
+            // Runner-ups must earn their place: skip low-confidence memories
+            // (never cite weak evidence as support) and same-topic restatements
+            // of the top result — a superseded sibling stating a different
+            // value would otherwise be echoed right next to the fresh fact.
+            if result.debug.memory_confidence < ANSWER_CONFIDENCE_FLOOR {
+                continue;
+            }
+            let overlap = topic_containment(&top_topic, &topic_tokens(&result.summary));
+            if overlap >= RUNNER_UP_TOPIC_OVERLAP_LIMIT {
+                continue;
+            }
+        }
         let normalized_summary = result.summary.to_lowercase();
         if seen.insert(normalized_summary) {
             summaries.push(result.summary.clone());
@@ -1833,54 +1896,44 @@ mod tests {
         assert_eq!(vector, Vector::from(vec![1.0, 2.0, 3.0]));
     }
 
+    fn synthesis_result(summary: &str, score: f64, memory_confidence: f32) -> QueryResult {
+        QueryResult {
+            memory_id: Uuid::new_v4(),
+            project: None,
+            project_name: None,
+            repo_root: None,
+            summary: summary.to_string(),
+            memory_type: MemoryType::Architecture,
+            score,
+            snippet: summary.to_string(),
+            match_kind: QueryMatchKind::Lexical,
+            score_explanation: vec![
+                "strong chunk match 1.20".to_string(),
+                "term overlap 80%".to_string(),
+            ],
+            debug: QueryResultDebug {
+                term_overlap: 0.8,
+                semantic_similarity: 0.7,
+                memory_confidence,
+                ..QueryResultDebug::default()
+            },
+            tags: vec![],
+            sources: vec![],
+            graph_connections: vec![],
+            needs_review: false,
+        }
+    }
+
     #[test]
     fn synthesize_answer_prefers_multiple_strong_results() {
         let results = vec![
-            QueryResult {
-                memory_id: Uuid::new_v4(),
-                project: None,
-                project_name: None,
-                repo_root: None,
-                summary: "Primary summary".to_string(),
-                memory_type: MemoryType::Architecture,
-                score: 7.0,
-                snippet: "Primary snippet".to_string(),
-                match_kind: QueryMatchKind::Lexical,
-                score_explanation: vec![
-                    "strong chunk match 1.20".to_string(),
-                    "term overlap 100%".to_string(),
-                ],
-                debug: QueryResultDebug::default(),
-                tags: vec![],
-                sources: vec![],
-                graph_connections: vec![],
-                needs_review: false,
-            },
-            QueryResult {
-                memory_id: Uuid::new_v4(),
-                project: None,
-                project_name: None,
-                repo_root: None,
-                summary: "Secondary summary".to_string(),
-                memory_type: MemoryType::Convention,
-                score: 5.5,
-                snippet: "Secondary snippet".to_string(),
-                match_kind: QueryMatchKind::Semantic,
-                score_explanation: vec![
-                    "semantic similarity 0.84".to_string(),
-                    "term overlap 67%".to_string(),
-                ],
-                debug: QueryResultDebug::default(),
-                tags: vec![],
-                sources: vec![],
-                graph_connections: vec![],
-                needs_review: false,
-            },
+            synthesis_result("The gateway terminates client sessions.", 7.0, 0.9),
+            synthesis_result("Deploys run through the release pipeline.", 5.5, 0.9),
         ];
 
         let synthesis = synthesize_answer(&results);
-        assert!(synthesis.answer.contains("Primary summary"));
-        assert!(synthesis.answer.contains("Secondary summary"));
+        assert!(synthesis.answer.contains("gateway terminates"));
+        assert!(synthesis.answer.contains("release pipeline"));
         assert!(synthesis.confidence > 0.45);
         assert!(!synthesis.insufficient_evidence);
         assert_eq!(
@@ -1888,6 +1941,75 @@ mod tests {
             QueryAnswerMethod::Deterministic
         );
         assert_eq!(synthesis.answer_generation.cited_result_numbers, vec![1, 2]);
+        assert_eq!(synthesis.answer_citations.len(), 2);
+    }
+
+    #[test]
+    fn synthesize_answer_refuses_on_low_confidence_evidence() {
+        // A vague, low-confidence memory can top the ranking on term overlap
+        // alone; it must not be stated as a confident answer.
+        let results = vec![synthesis_result(
+            "Someone suggested moving the cache layer; nothing was decided.",
+            7.0,
+            0.3,
+        )];
+
+        let synthesis = synthesize_answer(&results);
+        assert!(synthesis.insufficient_evidence);
+        assert!(synthesis.answer_citations.is_empty());
+    }
+
+    #[test]
+    fn synthesize_answer_refuses_on_weak_match_evidence() {
+        // High aggregate score from confidence/importance boosts, but nothing
+        // ties the memory to the question: low overlap, low similarity, no
+        // phrase or tag anchor.
+        let mut result = synthesis_result("The bridge gateway listens on port 7420.", 8.0, 0.95);
+        result.debug.term_overlap = 0.28;
+        result.debug.semantic_similarity = 0.4;
+        result.score_explanation = vec!["term overlap 28%".to_string()];
+
+        let synthesis = synthesize_answer(&[result]);
+        assert!(synthesis.insufficient_evidence);
+    }
+
+    #[test]
+    fn synthesize_answer_skips_same_topic_runner_up() {
+        // The stale sibling states the same fact with a different value; it
+        // must be neither echoed in the answer nor cited.
+        let results = vec![
+            synthesis_result(
+                "The bridge gateway listens on port 7420 since the network rework.",
+                8.0,
+                0.95,
+            ),
+            synthesis_result("The bridge gateway listens on port 7100.", 6.5, 0.5),
+        ];
+
+        let synthesis = synthesize_answer(&results);
+        assert!(!synthesis.insufficient_evidence);
+        assert!(synthesis.answer.contains("7420"));
+        assert!(!synthesis.answer.contains("7100"));
+        assert_eq!(synthesis.answer_citations.len(), 1);
+    }
+
+    #[test]
+    fn synthesize_answer_keeps_complementary_runner_up() {
+        let results = vec![
+            synthesis_result(
+                "Ingest validates each record's schema before enqueue.",
+                8.0,
+                0.9,
+            ),
+            synthesis_result(
+                "Failed syncs show a slate banner with a retry action.",
+                6.5,
+                0.9,
+            ),
+        ];
+
+        let synthesis = synthesize_answer(&results);
+        assert!(!synthesis.insufficient_evidence);
         assert_eq!(synthesis.answer_citations.len(), 2);
     }
 
