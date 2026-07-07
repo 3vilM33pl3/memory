@@ -1,0 +1,56 @@
+---
+title: "Home automation"
+description: "Record automation decisions as memories and ask why the house did what it did."
+---
+
+# Home automation
+
+Home automation's oldest complaint: *why did the heating turn on at 3am?* Record every automation decision as a memory and the answer is one query away — with the decision's own evidence cited.
+
+## Capture decisions from your automations
+
+From Home Assistant (a `rest_command`), Node-RED, or a plain shell hook:
+
+```yaml
+# Home Assistant configuration.yaml
+rest_command:
+  memory_capture:
+    url: "http://127.0.0.1:4040/v1/capture/task"
+    method: POST
+    headers:
+      Authorization: "Bearer YOUR_API_TOKEN"
+    content_type: "application/json"
+    payload: >
+      {"project": "house", "task_title": "Automation decision",
+       "user_prompt": "Record an automation decision.", "writer_id": "home-assistant",
+       "agent_summary": "{{ summary }}",
+       "structured_candidates": [{
+         "canonical_text": "{{ detail }}",
+         "summary": "{{ summary }}",
+         "memory_type": "incident", "confidence": 0.9, "importance": 3,
+         "tags": ["automation", "{{ area }}"],
+         "sources": [{"source_kind": "note", "excerpt": "{{ trigger_desc }}"}]}]}
+```
+
+Call it from an automation's action with the decision and its trigger:
+
+```yaml
+- service: rest_command.memory_capture
+  data:
+    summary: "Heating on in the studio at 03:12"
+    detail: "Heating turned on in the studio at 03:12 because the temperature dropped to 14.5°C, below the 15°C frost-guard threshold, while the away-mode override was inactive."
+    area: "studio"
+    trigger_desc: "sensor.studio_temperature = 14.5"
+```
+
+Run `curl .../v1/curate -d '{"project": "house"}'` on a schedule (or after each capture) to promote the captures.
+
+## Ask the house
+
+```bash
+memory query --project house --question "Why did the heating turn on in the studio last night?"
+```
+
+The answer cites the exact decision memory, with the trigger reading as provenance. Durable configuration knowledge belongs here too — capture threshold changes and device quirks as `decision`/`environment` memories, and six months later "why is the frost guard at 15 degrees?" has a real answer.
+
+Everything stays on your LAN: the service binds localhost by default, works keyless, and runs happily on a Raspberry Pi–class machine next to your automation hub.

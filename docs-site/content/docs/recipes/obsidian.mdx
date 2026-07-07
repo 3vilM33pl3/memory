@@ -1,0 +1,40 @@
+---
+title: "Obsidian / note vault"
+description: "Make a Markdown vault queryable with cited answers."
+---
+
+# Obsidian / note vault
+
+An Obsidian vault is already what Memory Layer wants: a folder of Markdown files, each holding durable knowledge. One command makes it queryable.
+
+## Ingest the vault
+
+```bash
+memory ingest ~/Documents/vault --project vault --tag obsidian --dry-run   # review first
+memory ingest ~/Documents/vault --project vault --tag obsidian
+```
+
+Each note becomes a memory: its first heading as the summary, an excerpt as the canonical text, and the file as verifiable provenance. Files over 256 KB, hidden folders, and non-Markdown attachments are skipped automatically.
+
+## Ask your notes questions
+
+```bash
+memory query --project vault --question "What did I decide about the greenhouse irrigation?"
+```
+
+Answers cite the exact notes they draw from — and when your vault doesn't contain an answer, you get an honest `insufficient_evidence` refusal instead of a guess. `memory tui` gives you browsing, search, and the memory graph over the whole vault.
+
+## Keep it synced
+
+Re-running `memory ingest` on an unchanged vault re-observes rather than duplicates (re-observation raises confidence). A daily cron keeps it fresh:
+
+```bash
+# crontab -e
+0 7 * * * memory ingest ~/Documents/vault --project vault --tag obsidian
+```
+
+Edited notes arrive as new candidates; curation's replacement engine supersedes the old version or queues a reviewable proposal, so your query results track the vault instead of its history.
+
+## See the structure
+
+Open the **Graph** tab (`memory tui` or the web UI at `http://localhost:4040`) on the `vault` project: notes appear as memory nodes with provenance edges to their files, sized by how often you actually retrieve them — your vault's real usage topology, not just its link structure.

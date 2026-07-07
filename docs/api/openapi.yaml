@@ -1654,7 +1654,7 @@ components:
           type: object
           description: Optional type/tag filters.
           properties:
-            memory_types: { type: array, items: { type: string } }
+            types: { type: array, items: { type: string } }
             tags: { type: array, items: { type: string } }
           additionalProperties: true
         retrieval_mode:

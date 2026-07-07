@@ -1,0 +1,58 @@
+---
+title: "Research-paper corpus"
+description: "Ingest reading notes, query across them with citations, and share the corpus as a bundle."
+---
+
+# Research-paper corpus
+
+Keep one Markdown note per paper (abstract, key claims, your critique) and Memory Layer becomes a cited, queryable literature memory.
+
+## Ingest the corpus
+
+```bash
+memory ingest ~/research/notes --project lit-review \
+  --type documentation --tag corpus-2026 --dry-run
+memory ingest ~/research/notes --project lit-review \
+  --type documentation --tag corpus-2026
+```
+
+The `--tag` marks the whole corpus so it can be filtered, re-ingested, or bulk-archived as one unit when the review cycle ends.
+
+## Query across the literature
+
+```bash
+memory query --project lit-review \
+  --question "Which papers found spacing effects in procedural learning?"
+```
+
+Every answer cites the notes it draws from — and refuses when your corpus doesn't actually support an answer, which matters more in research than anywhere else. Retrieval is keyless (lexical); configure an embedding provider to add semantic search for paraphrased questions.
+
+## Structured claims (optional, better)
+
+For higher-precision recall, post distilled claims per paper through the [HTTP API](/docs/reference/http-api) instead of raw notes — one `structured_candidates` entry per claim with the paper as provenance:
+
+```bash
+curl -s http://127.0.0.1:4040/v1/capture/task \
+  -H "Authorization: Bearer $MEMORY_API_TOKEN" -H "Content-Type: application/json" -d '{
+  "project": "lit-review", "task_title": "Cepeda 2006 notes",
+  "user_prompt": "Distill Cepeda et al. 2006", "writer_id": "reading-notes",
+  "agent_summary": "Distilled distributed-practice meta-analysis.",
+  "structured_candidates": [{
+    "canonical_text": "Cepeda et al. 2006 meta-analysis: spacing effects are robust across 254 studies; optimal gap scales with retention interval.",
+    "summary": "Cepeda 2006: spacing robust; optimal gap scales with retention interval.",
+    "memory_type": "domain_fact", "confidence": 0.9, "importance": 4,
+    "tags": ["corpus-2026", "spacing"],
+    "sources": [{"source_kind": "note", "excerpt": "Cepeda, Pashler, Vul, Wixted & Rohrer (2006)"}]
+  }]}'
+curl -s http://127.0.0.1:4040/v1/curate \
+  -H "Authorization: Bearer $MEMORY_API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"project": "lit-review"}'
+```
+
+## Share it
+
+```bash
+memory bundle export --project lit-review --out lit-review.mlbundle.zip
+```
+
+Bundles are privacy-safe by default (no raw captures, writer IDs, or local paths) and import idempotently — a colleague can `memory bundle import` your corpus and query it immediately. In the **Graph** tab, co-cited papers cluster visibly as relation edges accumulate between frequently co-retrieved notes.

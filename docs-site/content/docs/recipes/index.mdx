@@ -1,0 +1,31 @@
+---
+title: "Recipes"
+description: "Copy-paste integrations for unconventional projects: note vaults, research corpora, games, home automation, and AI chats."
+---
+
+# Recipes
+
+Memory Layer is built for coding agents, but the engine underneath — capture, curation, cited retrieval, honest refusals, self-maintaining activation — works for any project that accumulates durable knowledge. These recipes are short, copy-paste paths into five unconventional uses. Each needs only a running service ([quickstart](/docs/quickstart)) and works keyless.
+
+<CardGroup cols={2}>
+  <Card title="Obsidian / note vault" href="/docs/recipes/obsidian">
+    Make a Markdown vault queryable with cited answers, and keep it synced.
+  </Card>
+  <Card title="Research-paper corpus" href="/docs/recipes/research-corpus">
+    Ingest reading notes, query across them, and share the corpus as a bundle.
+  </Card>
+  <Card title="Game NPC memory" href="/docs/recipes/game-npc-memory">
+    Give NPCs durable, decaying memory of what the player did — over the HTTP API.
+  </Card>
+  <Card title="Home automation" href="/docs/recipes/home-automation">
+    Record automation decisions as memories and ask "why did the heating turn on?".
+  </Card>
+  <Card title="Memory for your AI chats" href="/docs/recipes/ai-chats">
+    Point any MCP client (Claude Desktop, Codex) at a chats project — pure configuration.
+  </Card>
+</CardGroup>
+
+Two building blocks appear in every recipe:
+
+- **[`memory ingest`](/docs/reference/cli)** — turn a directory of documents into memories, no git required.
+- **The [HTTP API](/docs/reference/http-api)** — the frozen v1 surface (`/v1/capture/task`, `/v1/query`, …) for anything that isn't a directory of files.

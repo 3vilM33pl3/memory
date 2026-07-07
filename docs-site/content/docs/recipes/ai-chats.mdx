@@ -1,0 +1,56 @@
+---
+title: "Memory for your AI chats"
+description: "Point any MCP client — Claude Desktop, Codex — at a chats project. Pure configuration, no code."
+---
+
+# Memory for your AI chats
+
+The cheapest integration of all: Memory Layer already ships an [MCP server](/docs/mcp), so giving your AI assistant durable memory across conversations is configuration, not code.
+
+## 1. Create a chats project and seed it
+
+```bash
+memory remember --project chats --type user \
+  --title "Working preferences" \
+  --summary "Baseline preferences for AI assistants" \
+  --note "Prefers concise answers with sources; working hours Europe/London; primary projects: memory-layer, rillforge."
+```
+
+Add anything an assistant should durably know: preferences, ongoing projects, decisions, people. `memory ingest` works too if you keep such notes as files.
+
+## 2. Point Claude Desktop at it
+
+```json
+// claude_desktop_config.json
+{
+  "mcpServers": {
+    "memory-layer": {
+      "command": "memory",
+      "args": ["mcp", "run", "--project", "chats"]
+    }
+  }
+}
+```
+
+Codex and other MCP clients take the same stdio command. The server is **read-first by design**: the assistant can query, resume, and inspect memories, but cannot write, delete, or reconfigure anything — your memory stays yours.
+
+## 3. Use it
+
+Ask your assistant things only your memory can answer:
+
+> "Check memory: what did I decide about the greenhouse irrigation?"
+
+The MCP tools return cited memories, and the same honest-refusal contract applies — no memory, no invented answer.
+
+## Closing the loop
+
+Since the MCP surface is read-only, write back at the end of a conversation yourself:
+
+```bash
+memory remember --project chats --type project \
+  --title "Chat outcome: holiday planning" \
+  --summary "Settled on the Dolomites for September" \
+  --note "Week 2 of September; basecamp in Val Gardena; needs the cabin booked by July."
+```
+
+One project, every assistant: because the memory lives in Memory Layer rather than in any one vendor's chat history, Claude Desktop, Codex, and your CLI all read the same durable knowledge.

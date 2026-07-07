@@ -1,0 +1,60 @@
+---
+title: "Game NPC memory"
+description: "Give NPCs durable, decaying memory of what the player did — over the HTTP API."
+---
+
+# Game NPC memory
+
+An NPC that remembers what the player did — and slowly forgets what stopped mattering — is exactly the ACT-R model Memory Layer runs: activation rises on use, spreads to related memories, and decays with time. Use one project per world (tag per NPC) or one project per major NPC.
+
+## Record events as memories
+
+When something memorable happens, capture it from your game server:
+
+```python
+import requests
+
+BASE, TOKEN = "http://127.0.0.1:4040", "<api token>"
+
+def npc_remember(npc: str, text: str, importance: int = 3):
+    requests.post(f"{BASE}/v1/capture/task",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={
+            "project": "world-aldercrest", "task_title": f"{npc} witnesses an event",
+            "user_prompt": "Record an NPC observation.", "writer_id": "game-server",
+            "agent_summary": text,
+            "structured_candidates": [{
+                "canonical_text": text, "summary": text[:90],
+                "memory_type": "incident", "confidence": 0.9, "importance": importance,
+                "tags": [f"npc-{npc}"],
+                "sources": [{"source_kind": "note", "excerpt": "game event"}],
+            }],
+        }).raise_for_status()
+    requests.post(f"{BASE}/v1/curate", headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"project": "world-aldercrest"}).raise_for_status()
+
+npc_remember("mara", "The player returned Mara's stolen ledger instead of selling it.", importance=4)
+```
+
+## Ask what an NPC remembers
+
+```python
+def npc_recall(npc: str, question: str) -> dict:
+    r = requests.post(f"{BASE}/v1/query",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"project": "world-aldercrest", "query": question,
+              "filters": {"tags": [f"npc-{npc}"]},
+              "answer_mode": "deterministic"})
+    return r.json()
+
+recall = npc_recall("mara", "What does Mara think of the player?")
+# recall["answer"], recall["confidence"], recall["insufficient_evidence"]
+```
+
+`answer_mode: "deterministic"` keeps recall fast, free, and reproducible — no LLM in the loop at runtime. The behavioral hooks come for free:
+
+- **Forgetting**: rarely retrieved memories decay in activation and rank lower — Mara naturally stops bringing up old slights unless they keep coming up.
+- **Fuzzy recall**: `insufficient_evidence: true` is your "Mara doesn't remember" branch; `confidence` can drive hedged dialogue ("I *think* you were there...").
+- **Gossip**: spreading activation warms related memories, so asking about the ledger also warms what Mara knows about the thief.
+
+Watch it live: the **Graph** tab on the world project shows each NPC's memories heat up (colour/size = activation) as the player interacts — a debugging view of your world's living memory.
