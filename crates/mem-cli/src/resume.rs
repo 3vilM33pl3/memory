@@ -49,6 +49,70 @@ fn save_store(store: &StoredCheckpoints) -> Result<PathBuf> {
     Ok(path)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct StoredPlanThreads {
+    #[serde(default)]
+    threads: BTreeMap<String, String>,
+}
+
+fn plan_thread_store_path() -> Result<PathBuf> {
+    let state_dir = preferred_user_state_dir()
+        .ok_or_else(|| anyhow::anyhow!("could not determine user state directory"))?;
+    Ok(state_dir.join("active-plan-threads.json"))
+}
+
+fn load_plan_threads() -> Result<StoredPlanThreads> {
+    let path = plan_thread_store_path()?;
+    if !path.exists() {
+        return Ok(StoredPlanThreads::default());
+    }
+    let contents = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&contents).context("parse plan thread store")
+}
+
+fn save_plan_threads(store: &StoredPlanThreads) -> Result<()> {
+    let path = plan_thread_store_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    fs::write(&path, serde_json::to_vec_pretty(store)?)
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+/// Remember which plan thread `checkpoint start-execution` most recently
+/// started in this repo, so `finish-execution` can resolve it without an
+/// explicit --thread-key even when several plans are active.
+pub(crate) fn save_active_plan_thread(
+    project: &str,
+    repo_root: &Path,
+    thread_key: &str,
+) -> Result<()> {
+    let mut store = load_plan_threads()?;
+    store
+        .threads
+        .insert(scope_key(project, repo_root), thread_key.to_string());
+    save_plan_threads(&store)
+}
+
+pub(crate) fn load_active_plan_thread(project: &str, repo_root: &Path) -> Option<String> {
+    load_plan_threads()
+        .ok()
+        .and_then(|store| store.threads.get(&scope_key(project, repo_root)).cloned())
+}
+
+pub(crate) fn clear_active_plan_thread(project: &str, repo_root: &Path) -> Result<()> {
+    let mut store = load_plan_threads()?;
+    if store
+        .threads
+        .remove(&scope_key(project, repo_root))
+        .is_some()
+    {
+        save_plan_threads(&store)?;
+    }
+    Ok(())
+}
+
 fn git_value(args: &[&str]) -> Option<String> {
     let output = std::process::Command::new("git").args(args).output().ok()?;
     if !output.status.success() {

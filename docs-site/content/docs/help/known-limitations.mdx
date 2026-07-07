@@ -30,11 +30,13 @@ advanced and should be used with that context.
 
 ## Release-candidate blockers
 
-- Plan-memory completion can fail if `/v1/curate` times out.
-- Repositories with multiple active plan memories may need explicit
-  `--thread-key` when finishing a plan.
 - Final v1.0 should only be tagged after packaged install and upgrade testing
   passes for the release candidate.
+
+Two previously listed blockers are fixed: plan flows now curate only their own
+capture (bounded, no whole-project timeout) and degrade to a warning when the
+plan is already durable, and `finish-execution` resolves the plan thread
+recorded at `start-execution` so `--thread-key` is only needed to override.
 
 ## Upgrade checklist
 

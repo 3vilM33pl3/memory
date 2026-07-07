@@ -33,6 +33,13 @@
 
 ### Fixed
 
+- Plan checkpoint flows no longer stall on `/v1/curate` timeouts (3VI-824):
+  start-execution, finish-execution plan sync, and the implementation memory
+  each curate only the capture they just created instead of the whole project
+  backlog, and start-execution degrades a curation error to a warning since
+  the checkpoint and capture are already durable. `finish-execution` also
+  resolves the plan thread recorded at start-execution, so `--thread-key` is
+  only needed to override when several plans are active.
 - Deterministic answer synthesis now refuses on weak evidence and no longer
   echoes superseded facts (3VI-773): a weak-match refusal predicate (low term
   overlap and low semantic similarity with no exact-phrase anchor), a memory

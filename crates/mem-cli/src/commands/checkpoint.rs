@@ -136,28 +136,29 @@ pub(super) async fn handle(
                     return Err(error.context("checkpoint saved, but approved plan capture failed"));
                 }
             };
+            // Curate only the plan capture just created: whole-project curation
+            // can exceed the client timeout when a backlog is pending (the
+            // documented /v1/curate timeout failure). A curation error here is
+            // degraded to a warning — the checkpoint and capture are already
+            // durable, and a client timeout usually means the server is still
+            // finishing the work.
             let curate = match api
-                .curate(&project, repo_replacement_policy(&repo_root), args.dry_run)
+                .curate_capture(
+                    &project,
+                    capture.raw_capture_id,
+                    repo_replacement_policy(&repo_root),
+                    args.dry_run,
+                )
                 .await
             {
-                Ok(curate) => curate,
+                Ok(curate) => serde_json::json!(curate),
                 Err(error) => {
-                    if args.dry_run {
-                        eprintln!(
-                            "Would save checkpoint for `{project}` to {}\n\n{}",
-                            path.display(),
-                            checkpoint_store::format_checkpoint(&checkpoint)
-                        );
-                    } else {
-                        eprintln!(
-                            "Saved checkpoint for `{project}` to {}\n\n{}",
-                            path.display(),
-                            checkpoint_store::format_checkpoint(&checkpoint)
-                        );
-                    }
-                    return Err(
-                        error.context("checkpoint saved and plan captured, but curation failed")
+                    eprintln!(
+                        "warning: plan captured, but curation did not confirm ({error}). \
+                         It may still complete server-side; if the plan memory does not \
+                         appear, run `memory curate --project {project}`."
                     );
+                    serde_json::json!({ "deferred": error.to_string() })
                 }
             };
             let start_request = build_plan_activity_request(
@@ -178,6 +179,14 @@ pub(super) async fn handle(
                 && let Err(error) = api.log_plan_activity(&start_request).await
             {
                 eprintln!("warning: failed to log plan activity for `{project}`: {error}");
+            }
+            // Remember the started thread so finish-execution can resolve it
+            // without --thread-key even when other plans are active.
+            if !args.dry_run
+                && let Err(error) =
+                    checkpoint_store::save_active_plan_thread(&project, &repo_root, &thread_key)
+            {
+                eprintln!("warning: could not record active plan thread: {error}");
             }
             println!(
                 "{}",
@@ -276,8 +285,35 @@ pub(super) async fn handle(
         CheckpointCommand::FinishExecution(args) => {
             let project = resolve_project_slug(args.project, &cwd)?;
             let api = ApiClient::new(client.clone(), config.clone());
-            let selection =
-                resolve_active_plan_selection(&api, &project, args.thread_key.as_deref()).await?;
+            // Without an explicit --thread-key, fall back to the thread this
+            // repo most recently started; only error when neither identifies
+            // a single active plan.
+            let selection = match resolve_active_plan_selection(
+                &api,
+                &project,
+                args.thread_key.as_deref(),
+            )
+            .await
+            {
+                Ok(selection) => selection,
+                Err(error) if args.thread_key.is_none() => {
+                    let Some(saved) =
+                        checkpoint_store::load_active_plan_thread(&project, &repo_root)
+                    else {
+                        return Err(error);
+                    };
+                    match resolve_active_plan_selection(&api, &project, Some(&saved)).await {
+                        Ok(selection) => {
+                            eprintln!(
+                                "note: resolved plan thread `{saved}` (recorded at start-execution); pass --thread-key to override."
+                            );
+                            selection
+                        }
+                        Err(_) => return Err(error),
+                    }
+                }
+                Err(error) => return Err(error),
+            };
             let mut synced_plan = false;
             let mut synced_source_path = None;
 
@@ -304,12 +340,21 @@ pub(super) async fn handle(
                         repo_git_head(&repo_root).as_deref(),
                     );
                     request.dry_run = false;
-                    api.capture_task(&request)
+                    let sync_capture = api
+                        .capture_task(&request)
                         .await
                         .context("sync updated plan before finish verification")?;
-                    api.curate(&project, repo_replacement_policy(&repo_root), false)
-                        .await
-                        .context("curate updated plan before finish verification")?;
+                    // Curate only the synced plan capture; whole-project
+                    // curation here is what used to time out and block
+                    // plan completion.
+                    api.curate_capture(
+                        &project,
+                        sync_capture.raw_capture_id,
+                        repo_replacement_policy(&repo_root),
+                        false,
+                    )
+                    .await
+                    .context("curate updated plan before finish verification")?;
                     synced_plan = true;
                     synced_source_path =
                         source_path.as_ref().map(|path| path.display().to_string());
@@ -383,7 +428,12 @@ pub(super) async fn handle(
                         || "plan verification succeeded, but implementation capture failed",
                     )?;
                     let (curate, curate_error) = match api
-                        .curate(&project, repo_replacement_policy(&repo_root), false)
+                        .curate_capture(
+                            &project,
+                            capture.raw_capture_id,
+                            repo_replacement_policy(&repo_root),
+                            false,
+                        )
                         .await
                     {
                         Ok(response) => (Some(response), None),
@@ -432,6 +482,12 @@ pub(super) async fn handle(
                             .await
                             .context("archive completed plan memory")?,
                     );
+                    // The thread is finished; stop defaulting to it.
+                    if let Err(error) =
+                        checkpoint_store::clear_active_plan_thread(&project, &repo_root)
+                    {
+                        eprintln!("warning: could not clear active plan thread: {error}");
+                    }
                 }
             }
             if args.json {
