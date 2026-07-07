@@ -230,6 +230,7 @@ fn root_command_doc_name(command_name: &str) -> Option<&'static str> {
         "history" => Some("history.md"),
         "prune-history" => Some("prune-history.md"),
         "scan" => Some("scan.md"),
+        "ingest" => Some("ingest.md"),
         "capture" => Some("capture.md"),
         "remember" => Some("remember.md"),
         "curate" => Some("curate.md"),

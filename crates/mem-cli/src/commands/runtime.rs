@@ -25,7 +25,7 @@ the guided `memory tour`), then explore with `memory query` and `memory tui`.
 Command groups:
   Core          setup, init, demo, tour, remember, query, resume, tui
   Status        status, health, stats, doctor
-  Memory        capture, curate, scan, proposals, review, archive
+  Memory        capture, ingest, curate, scan, proposals, review, archive
   Reinforcement scores, validate
   History       history, prune-history, verify-provenance, bundle
   Workflow      checkpoint, activities, up-to-speed
@@ -510,6 +510,26 @@ Examples:
 
 See also:
   docs/user/cli/query.md";
+
+const INGEST_AFTER_HELP: &str = "\
+What it does:
+  Walks a directory (or takes one file), turns each text document into a
+  durable memory candidate — first heading as the summary, a capped excerpt
+  as the canonical text, the file as verifiable provenance — then captures
+  and curates them. Deterministic, keyless, and independent of git: built
+  for research corpora, note vaults, and other non-repository projects.
+
+Defaults: extensions md/markdown/txt/rst/org/adoc, files over 256 KB skipped,
+at most 200 files per run, memory type `reference`.
+
+Agent notes:
+  Prefer --dry-run first to review what would be ingested.
+  Use --tag to mark the corpus so it can be filtered or bulk-archived later.
+  Re-ingesting the same unchanged documents re-observes rather than duplicates.
+
+Examples:
+  memory ingest ~/notes --project notes --dry-run
+  memory ingest ./papers --project research --type documentation --tag corpus-2026";
 
 const SETUP_AFTER_HELP: &str = "\
 What it does:
@@ -1236,6 +1256,8 @@ pub(in crate::commands) enum Command {
     Curate(CurateArgs),
     #[command(about = "Scan a repository for candidate durable memories.", after_help = SCAN_AFTER_HELP)]
     Scan(ScanArgs),
+    #[command(about = "Ingest documents from any directory — no git required.", after_help = INGEST_AFTER_HELP)]
+    Ingest(IngestArgs),
     #[command(about = "Review pending memory replacement proposals.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
     Proposals(ProposalsArgs),
     #[command(about = "Review pending validation corrections.", after_help = REVIEW_GROUP_AFTER_HELP)]
@@ -1715,6 +1737,34 @@ pub(in crate::commands) struct TourArgs {
     /// Project slug the tour runs against.
     #[arg(long, default_value = "demo")]
     pub(crate) project: String,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Ingest documents from any directory — no git required.",
+    after_help = INGEST_AFTER_HELP
+)]
+pub(in crate::commands) struct IngestArgs {
+    /// Directory (or single file) to ingest.
+    pub(crate) path: PathBuf,
+    /// Project slug to ingest into.
+    #[arg(long)]
+    pub(crate) project: String,
+    /// Memory type for the ingested documents.
+    #[arg(long = "type")]
+    pub(crate) memory_type: Option<String>,
+    /// Tag to attach to every ingested memory (repeatable).
+    #[arg(long = "tag")]
+    pub(crate) tags: Vec<String>,
+    /// File extensions to include (defaults to common text/markdown formats).
+    #[arg(long = "ext")]
+    pub(crate) extensions: Vec<String>,
+    /// Maximum number of files to ingest in one run.
+    #[arg(long, default_value_t = 200)]
+    pub(crate) max_files: usize,
+    /// List what would be ingested without writing anything.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -3307,6 +3357,9 @@ pub(super) async fn run() -> Result<()> {
         }
         Command::Capture(args) => {
             crate::commands::capture::handle(args, client, config, cli_writer_id).await?
+        }
+        Command::Ingest(args) => {
+            crate::commands::ingest::handle(args, client, config, cli_writer_id).await?
         }
         Command::Remember(args) => {
             crate::commands::remember::handle(args, client, config, cli_writer_id).await?

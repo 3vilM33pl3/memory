@@ -18,6 +18,7 @@ pub(crate) mod eval_support;
 mod graph;
 mod health;
 mod history;
+mod ingest;
 mod init;
 pub(crate) mod init_support;
 mod loops;
