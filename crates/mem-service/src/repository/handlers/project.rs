@@ -117,8 +117,9 @@ pub(crate) async fn project_memory_graph(
         return Ok(Json(proxy_get_json(&state, &path).await?));
     }
 
+    let half_life_secs = state.config.reinforcement.half_life.as_secs_f64().max(1.0);
     Ok(Json(
-        fetch_project_memory_graph(&state.pool()?, &slug, limit, offset)
+        fetch_project_memory_graph(&state.pool()?, &slug, limit, offset, half_life_secs)
             .await
             .map_err(ApiError::sql)?,
     ))

@@ -147,6 +147,7 @@ pub async fn fetch_project_memory_graph(
     slug: &str,
     limit: i64,
     offset: i64,
+    activation_half_life_secs: f64,
 ) -> Result<ProjectMemoryGraphResponse, sqlx::Error> {
     let total_query = format!(
         r#"
@@ -163,6 +164,9 @@ pub async fn fetch_project_memory_graph(
         .await?
         .try_get("count")?;
 
+    // Activation is decayed at read time with the same half-life math the
+    // ranker uses (fetch_reinforcement_rank_map), so the graph displays the
+    // value retrieval actually acts on.
     let memory_query = format!(
         r#"
         WITH {LATEST_PROJECT_MEMORIES_CTE}
@@ -173,12 +177,20 @@ pub async fn fetch_project_memory_graph(
             m.confidence,
             m.importance,
             m.updated_at,
-            ARRAY_REMOVE(ARRAY_AGG(DISTINCT mt.tag), NULL) AS tags
+            ARRAY_REMOVE(ARRAY_AGG(DISTINCT mt.tag), NULL) AS tags,
+            (
+                SELECT (s.activation * power(
+                    0.5,
+                    GREATEST(EXTRACT(EPOCH FROM (now() - s.last_decay_at)), 0) / $4
+                ))::float8
+                FROM memory_scores s
+                WHERE s.canonical_id = m.canonical_id
+            ) AS activation
         FROM latest m
         LEFT JOIN memory_tags mt ON mt.memory_entry_id = m.id
         WHERE m.is_tombstone = FALSE
           AND m.status = 'active'
-        GROUP BY m.id, m.summary, m.memory_type, m.confidence, m.importance, m.updated_at
+        GROUP BY m.id, m.canonical_id, m.summary, m.memory_type, m.confidence, m.importance, m.updated_at
         ORDER BY m.updated_at DESC, m.id DESC
         LIMIT $2 OFFSET $3
         "#
@@ -187,6 +199,7 @@ pub async fn fetch_project_memory_graph(
         .bind(slug)
         .bind(limit)
         .bind(offset)
+        .bind(activation_half_life_secs.max(1.0))
         .fetch_all(pool)
         .await?;
 
@@ -213,6 +226,7 @@ pub async fn fetch_project_memory_graph(
             symbol_kind: None,
             provenance_status: None,
             summary: Some(summary),
+            activation: row.try_get("activation")?,
         });
     }
 
@@ -296,6 +310,7 @@ pub async fn fetch_project_memory_graph(
                 symbol_kind: symbol_kind.clone(),
                 provenance_status: provenance_status.clone(),
                 summary: None,
+                activation: None,
             });
         edges.push(ProjectMemoryGraphEdge {
             id: format!("provenance:{memory_id}:{node_id}"),

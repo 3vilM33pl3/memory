@@ -950,6 +950,10 @@ pub struct ProjectMemoryGraphNode {
     pub provenance_status: Option<SourceProvenanceStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// Decayed ACT-R activation at read time (same decay math as ranking).
+    /// Only set on memory nodes with a reinforcement score row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

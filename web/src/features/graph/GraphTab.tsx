@@ -556,6 +556,7 @@ function GraphInspector({
           <dt>Type</dt><dd>{memory.memory_type ?? "n/a"}</dd>
           <dt>Confidence</dt><dd>{formatScore(memory.confidence)}</dd>
           <dt>Importance</dt><dd>{memory.importance ?? "n/a"}</dd>
+          <dt>Activation</dt><dd>{formatActivation(memory.activation)}</dd>
           <dt>Tags</dt><dd>{memory.tags.length ? memory.tags.join(", ") : "n/a"}</dd>
           <dt>Identity</dt><dd><code>{memory.memory_id ?? memory.id}</code></dd>
         </dl>
@@ -1207,7 +1208,10 @@ export function buildLayeredRenderData({
           primaryLayer,
           renderKind: node.node_kind === "memory" ? "memory_node" : "source_node",
           memoryNode: node,
-          val: selected ? 16 : node.node_kind === "memory" ? 9 : 6,
+          val:
+            selected ? 16
+            : node.node_kind === "memory" ? 9 + activationSizeBoost(node.activation)
+            : 6,
           color: selected ? "#ffffff" : colorForMemoryNode(node, primaryLayer),
         },
         hoveredLayer,
@@ -1303,9 +1307,21 @@ function applyLayerHighlight<T extends { layers: GraphLayer[]; color: string; wi
   };
 }
 
+/// Size boost for a memory node from its decayed ACT-R activation. Activation
+/// is capped server-side (default max 20); the boost stays below the selected
+/// size so selection always reads largest.
+function activationSizeBoost(activation: number | null | undefined): number {
+  return Math.min(6, Math.max(0, activation ?? 0) * 0.5);
+}
+
+function formatActivation(activation: number | null | undefined): string {
+  if (activation === null || activation === undefined) return "0.00 (never retrieved)";
+  return activation.toFixed(2);
+}
+
 function nodeLabel(node: RenderNode): string {
   if (node.renderKind === "memory_node") {
-    return `${node.label}<br/>memory ${node.memoryNode?.memory_type ?? "unknown"}<br/>confidence ${formatScore(node.memoryNode?.confidence)}`;
+    return `${node.label}<br/>memory ${node.memoryNode?.memory_type ?? "unknown"}<br/>confidence ${formatScore(node.memoryNode?.confidence)}<br/>activation ${formatActivation(node.memoryNode?.activation)}`;
   }
   if (node.renderKind === "source_node") {
     return `${node.label}<br/>source ${node.memoryNode?.source_kind ?? "unknown"}<br/>${node.memoryNode?.provenance_status ?? "not checked"}`;

@@ -49,6 +49,7 @@ export interface ProjectMemoryGraphNode {
   symbol_kind?: string | null;
   provenance_status?: SourceProvenanceStatus | null;
   summary?: string | null;
+  activation?: number | null;
 }
 
 export interface ProjectMemoryGraphEdge {
