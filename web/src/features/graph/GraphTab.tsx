@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
+import ForceGraph2D from "force-graph";
 
 import type {
   CodeGraphEdge,
@@ -325,11 +326,11 @@ export function GraphTab({
       </div>
 
       {!webglSupported ? (
-        <div className="graph-empty">
-          <h2>WebGL is required</h2>
-          <p>This graph explorer needs a browser with WebGL enabled.</p>
+        <div className="graph-empty" role="note">
+          <p>WebGL is unavailable — using the flat 2D renderer.</p>
         </div>
-      ) : graph && !graph.status.has_graph && !(memoryGraph?.nodes.length ?? 0) ? (
+      ) : null}
+      {graph && !graph.status.has_graph && !(memoryGraph?.nodes.length ?? 0) ? (
         <div className="graph-empty">
           <h2>No graph data yet</h2>
           <p>Run <code>memory graph extract --project {project}</code> and refresh this tab.</p>
@@ -348,6 +349,7 @@ export function GraphTab({
               onClearSelection={handleClearGraphSelection}
               onHoverLayer={setHoveredLayer}
               activationPulse={activationPulse}
+              renderer={webglSupported ? "webgl" : "canvas"}
             />
             <GraphLayerControls
               visibleLayers={visibleLayers}
@@ -428,6 +430,7 @@ function GraphScene({
   onClearSelection,
   onHoverLayer,
   activationPulse,
+  renderer = "webgl",
 }: {
   renderData: { nodes: RenderNode[]; links: RenderLink[] };
   onSelectNode: (node: RenderNode, options?: { shiftKey?: boolean }) => void;
@@ -435,6 +438,7 @@ function GraphScene({
   onClearSelection: () => void;
   onHoverLayer: (layer: GraphLayer | null) => void;
   activationPulse?: { nodeId: string; seq: number } | null;
+  renderer?: "webgl" | "canvas";
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<ForceGraph3DInstance<RenderNode, RenderLink> | null>(null);
@@ -455,13 +459,22 @@ function GraphScene({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const instance = new ForceGraph3D(container, {
-      controlType: "orbit",
-      rendererConfig: { antialias: true, alpha: false },
-    }) as unknown as ForceGraph3DInstance<RenderNode, RenderLink>;
+    // The 2D canvas renderer (force-graph) shares the 3D fluent API for
+    // everything used below except showNavInfo/linkOpacity, so it slots in as
+    // a fallback for WebGL-less browsers, screenshots, and low-end machines.
+    const instance = (
+      renderer === "canvas"
+        ? new ForceGraph2D(container)
+        : new ForceGraph3D(container, {
+            controlType: "orbit",
+            rendererConfig: { antialias: true, alpha: false },
+          })
+    ) as unknown as ForceGraph3DInstance<RenderNode, RenderLink>;
+    if (renderer === "webgl") {
+      instance.showNavInfo(false).linkOpacity(0.45);
+    }
     instance
       .backgroundColor("#081019")
-      .showNavInfo(false)
       .nodeId("id")
       .linkSource("source")
       .linkTarget("target")
@@ -471,7 +484,6 @@ function GraphScene({
       .nodeColor((node) => node.color)
       .linkColor((link) => link.color)
       .linkWidth((link) => link.width)
-      .linkOpacity(0.45)
       .linkDirectionalArrowLength(3)
       .linkDirectionalArrowRelPos(1)
       // One-shot particles for the spreading-activation pulse; no persistent
@@ -502,7 +514,8 @@ function GraphScene({
       instanceRef.current = null;
       container.replaceChildren();
     };
-  }, []);
+    // Reconstruct when the renderer changes (webgl <-> canvas fallback).
+  }, [renderer]);
 
   useEffect(() => {
     // Spreading-activation pulse: when a memory node is selected, fire three

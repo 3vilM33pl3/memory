@@ -24,7 +24,7 @@ advanced and should be used with that context.
 | Surface | Limitation |
 |---|---|
 | Loop automation | Approval-gated by design; risky actions stop for human review. |
-| Code graph UI | Requires WebGL and depends on extraction coverage for each repository. |
+| Code graph UI | Falls back to a flat 2D canvas renderer without WebGL; depends on extraction coverage for each repository. |
 | Eval research workflows | Release claims still require reviewed held-out suites and a passing gate. |
 | Demo web UI | Uses browser-local sample data and is not a live backend. |
 

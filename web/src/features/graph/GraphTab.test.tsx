@@ -176,12 +176,17 @@ afterEach(() => {
 });
 
 describe("GraphTab", () => {
-  it("requires WebGL support", async () => {
+  it("falls back to the 2D renderer without WebGL", async () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
 
     render(<GraphTab {...baseProps} status={emptyStatus} graph={emptyGraph} />);
 
-    expect(await screen.findByRole("heading", { name: "WebGL is required" })).toBeInTheDocument();
+    expect(
+      await screen.findByText("WebGL is unavailable — using the flat 2D renderer."),
+    ).toBeInTheDocument();
+    // No dead end: the tab continues to its normal content (here the
+    // no-data empty state, since this fixture has no graph).
+    expect(screen.getByRole("heading", { name: "No graph data yet" })).toBeInTheDocument();
   });
 
   it("shows the extraction command when the project has no graph", async () => {
