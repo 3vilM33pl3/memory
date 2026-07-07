@@ -150,6 +150,14 @@ is captured, because cost is part of the benchmark evidence.
 
 ## Commands
 
+Reproduce a published suite result end-to-end with one command — seed the fixture, run the no-memory baseline and full-memory candidate under the keyless offline profile, compare, and check the release gate:
+
+```bash
+memory eval reproduce --suite evals/suites/memory-quality-v1
+```
+
+Artifacts land under `--out` (default `target/memory-evals/reproduce/<suite>`); `--policy` overrides the gate file, `--skip-seed` skips fixture seeding. This is the scientist-facing path: no API keys, deterministic retrieval and synthesis, and a pass/fail gate verdict at the end.
+
 Check a suite and environment before spending provider tokens:
 
 ```bash

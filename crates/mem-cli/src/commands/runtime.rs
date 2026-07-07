@@ -250,6 +250,21 @@ Examples:
 See also:
   docs/user/cli/eval.md";
 
+const EVAL_REPRODUCE_AFTER_HELP: &str = "\
+What it does:
+  One command reproduces a published suite result end-to-end: runs the suite's
+  seed script (fixture data), executes the no-memory baseline and full-memory
+  candidate under the offline profile (keyless — deterministic retrieval and
+  synthesis, no API keys), compares the runs, and checks the release gate.
+
+Agent notes:
+  Use to verify a claimed eval result before trusting or citing it.
+  Requires a running service; artifacts land under --out for inspection.
+
+Examples:
+  memory eval reproduce --suite evals/suites/memory-quality-v1
+  memory eval reproduce --suite evals/suites/research-v1 --skip-seed";
+
 const EVAL_RUN_AFTER_HELP: &str = "\
 Agent notes:
   Runs a suite under one or more conditions and writes immutable JSON artifacts under target/memory-evals by default.
@@ -2164,6 +2179,11 @@ pub(in crate::commands) enum EvalCommand {
     )]
     Run(EvalRunArgs),
     #[command(
+        about = "Reproduce a suite end-to-end: seed, run both conditions, compare, gate.",
+        after_help = EVAL_REPRODUCE_AFTER_HELP
+    )]
+    Reproduce(EvalReproduceArgs),
+    #[command(
         about = "Compare two eval run JSON files.",
         after_help = EVAL_COMPARE_AFTER_HELP
     )]
@@ -2250,6 +2270,26 @@ pub(in crate::commands) struct EvalRunArgs {
     /// Emit a human-readable text view instead of JSON.
     #[arg(long)]
     pub(crate) text: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Reproduce a suite end-to-end: seed, run both conditions, compare, gate.",
+    after_help = EVAL_REPRODUCE_AFTER_HELP
+)]
+pub(in crate::commands) struct EvalReproduceArgs {
+    /// Path to the eval suite directory.
+    #[arg(long)]
+    pub(crate) suite: PathBuf,
+    /// Output directory for run artifacts and the comparison.
+    #[arg(long, default_value = "target/memory-evals/reproduce")]
+    pub(crate) out: PathBuf,
+    /// Gate policy TOML; defaults to evals/gates/<suite-name>.toml when present.
+    #[arg(long)]
+    pub(crate) policy: Option<PathBuf>,
+    /// Skip the suite's seed script even when one exists.
+    #[arg(long)]
+    pub(crate) skip_seed: bool,
 }
 
 #[derive(Debug, Args)]

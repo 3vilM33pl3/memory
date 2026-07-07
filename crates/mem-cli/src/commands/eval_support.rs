@@ -26,8 +26,137 @@ use crate::commands::{
     api::ApiClient,
     memory_ops::resolve_project_slug,
     output::service_url,
-    runtime::{EvalArgs, EvalCommand},
+    runtime::{
+        EvalArgs, EvalCommand, EvalCompareArgs, EvalGateArgs, EvalReproduceArgs, EvalRunArgs,
+    },
 };
+
+/// One-command reproduction: seed the suite's fixture, run both conditions
+/// under the keyless offline profile, compare, and gate. Orchestrates the
+/// existing run/compare/gate handlers so the steps stay identical to running
+/// them by hand.
+async fn reproduce_suite(args: EvalReproduceArgs, cwd: &Path, api: &ApiClient) -> Result<()> {
+    let suite_name = args
+        .suite
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("suite")
+        .to_string();
+    let out_dir = args.out.join(&suite_name);
+    std::fs::create_dir_all(&out_dir)
+        .with_context(|| format!("create output directory {}", out_dir.display()))?;
+
+    // Step 1: seed the fixture with the suite's own script, driving it with
+    // this exact binary so dev/prod profiles stay consistent.
+    let seed_script = args.suite.join("scripts").join("seed-memory.sh");
+    if !args.skip_seed && seed_script.is_file() {
+        println!("[reproduce] seeding fixture via {}", seed_script.display());
+        let current_exe = std::env::current_exe().context("resolve current executable")?;
+        let status = std::process::Command::new("sh")
+            .arg(&seed_script)
+            .env("MEMORY_EVAL_MEMORY_CMD", &current_exe)
+            .status()
+            .context("run suite seed script")?;
+        anyhow::ensure!(status.success(), "suite seed script failed");
+    } else {
+        println!(
+            "[reproduce] no seed step ({}).",
+            if args.skip_seed {
+                "--skip-seed"
+            } else {
+                "no seed script"
+            }
+        );
+    }
+
+    // Step 2: both conditions under the keyless offline profile.
+    println!("[reproduce] running no-memory and full-memory (offline profile, keyless)");
+    Box::pin(handle_eval_command(
+        EvalArgs {
+            command: EvalCommand::Run(EvalRunArgs {
+                suite: args.suite.clone(),
+                conditions: vec!["no-memory".to_string(), "full-memory".to_string()],
+                out: out_dir.clone(),
+                profile: "offline".to_string(),
+                repeat: 1,
+                max_cost: None,
+                write_transcripts: false,
+                llm_judge: false,
+                fail_on_unreviewed_labels: false,
+                allow_shell: false,
+                retriever_cmd: None,
+                dry_run: false,
+                text: true,
+            }),
+        },
+        cwd,
+        api,
+    ))
+    .await?;
+
+    let newest = |condition: &str| -> Result<PathBuf> {
+        let mut files: Vec<_> = std::fs::read_dir(&out_dir)?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains(condition) && name.ends_with(".json"))
+            })
+            .collect();
+        files.sort();
+        files.pop().ok_or_else(|| {
+            anyhow::anyhow!("no {condition} run artifact found in {}", out_dir.display())
+        })
+    };
+    let baseline = newest("no-memory")?;
+    let candidate = newest("full-memory")?;
+
+    // Step 3: compare.
+    let comparison = out_dir.join("comparison.json");
+    println!("[reproduce] comparing baseline vs candidate");
+    Box::pin(handle_eval_command(
+        EvalArgs {
+            command: EvalCommand::Compare(EvalCompareArgs {
+                baseline: vec![baseline],
+                candidate: vec![candidate],
+                out: Some(comparison.clone()),
+                text: true,
+            }),
+        },
+        cwd,
+        api,
+    ))
+    .await?;
+
+    // Step 4: gate, when a policy exists for this suite.
+    let policy = args.policy.clone().or_else(|| {
+        let default = PathBuf::from("evals")
+            .join("gates")
+            .join(format!("{suite_name}.toml"));
+        default.is_file().then_some(default)
+    });
+    match policy {
+        Some(policy) => {
+            println!("[reproduce] checking gate policy {}", policy.display());
+            Box::pin(handle_eval_command(
+                EvalArgs {
+                    command: EvalCommand::Gate(EvalGateArgs {
+                        comparison,
+                        policy,
+                        text: true,
+                    }),
+                },
+                cwd,
+                api,
+            ))
+            .await?;
+        }
+        None => println!("[reproduce] no gate policy found; skipped gate check."),
+    }
+    println!("[reproduce] artifacts: {}", out_dir.display());
+    Ok(())
+}
 
 pub(super) async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiClient) -> Result<()> {
     match args.command {
@@ -197,6 +326,9 @@ pub(super) async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiCli
             } else {
                 println!("{}", serde_json::to_string_pretty(&payload)?);
             }
+        }
+        EvalCommand::Reproduce(args) => {
+            reproduce_suite(args, cwd, api).await?;
         }
         EvalCommand::Run(args) => {
             let suite = mem_eval::load_suite(&args.suite)?;
