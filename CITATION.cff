@@ -1,0 +1,62 @@
+cff-version: 1.2.0
+message: "If you use Memory Layer or its evaluation suites in research, please cite it as below."
+title: "Memory Layer"
+abstract: >-
+  A local-first, evidence-backed memory system for coding agents: captured
+  work is curated into durable, citable memories; retrieval combines lexical,
+  semantic, and code-graph channels; and an ACT-R-grounded reinforcement
+  model (base-level activation with spreading and decay) keeps frequently
+  used knowledge accurate through evidence-backed validation. Includes a
+  deterministic, release-gated evaluation harness with paired
+  no-memory/full-memory ablations and adversarial staleness canaries.
+type: software
+authors:
+  - family-names: "Van Acker"
+    given-names: "Olivier"
+repository-code: "https://github.com/3vilM33pl3/memory"
+url: "https://www.memory-layer.dev"
+license: MIT
+keywords:
+  - memory systems
+  - coding agents
+  - ACT-R
+  - spreading activation
+  - memory consolidation
+  - retrieval augmented generation
+  - reproducible evaluation
+references:
+  - type: article
+    title: "Reflections of the environment in memory"
+    authors:
+      - family-names: Anderson
+        given-names: "John R."
+      - family-names: Schooler
+        given-names: "Lael J."
+    journal: "Psychological Science"
+    volume: 2
+    year: 1991
+    doi: 10.1111/j.1467-9280.1991.tb00174.x
+  - type: article
+    title: "Why there are complementary learning systems in the hippocampus and neocortex"
+    authors:
+      - family-names: McClelland
+        given-names: "James L."
+      - family-names: McNaughton
+        given-names: "Bruce L."
+      - family-names: "O'Reilly"
+        given-names: "Randall C."
+    journal: "Psychological Review"
+    volume: 102
+    year: 1995
+    doi: 10.1037/0033-295X.102.3.419
+  - type: article
+    title: "From recurrent choice to skill learning: A reinforcement-learning model"
+    authors:
+      - family-names: Fu
+        given-names: "Wai-Tat"
+      - family-names: Anderson
+        given-names: "John R."
+    journal: "Journal of Experimental Psychology: General"
+    volume: 135
+    year: 2006
+    doi: 10.1037/0096-3445.135.2.184
