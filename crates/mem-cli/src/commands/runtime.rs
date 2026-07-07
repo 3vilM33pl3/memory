@@ -521,6 +521,11 @@ What it does:
 This replaces the older two-step `memory wizard --global` + `memory wizard`
 flow. `memory wizard` remains available for granular reconfiguration.
 
+Agent notes:
+  Interactive TUI; do not run from a non-interactive agent session. Suggest
+  the user runs it, or use `memory init` for repo bootstrap files only.
+  Prefer --dry-run first in established repositories.
+
 Examples:
   memory setup
   memory setup --dry-run";
@@ -533,6 +538,10 @@ What it does:
 
 Requires a running service — `docker compose up` or `memory service run` first.
 
+Agent notes:
+  Built for humans exploring interactively; agents should call remember,
+  query, and resume directly instead. Non-interactive runs skip the pauses.
+
 Examples:
   memory tour
   memory tour --project playground";
@@ -544,6 +553,11 @@ What it does:
   (no LLM or embedding provider required). Safe to rerun or delete and reseed.
 
 Requires a running service — `docker compose up` or `memory service run` first.
+
+Agent notes:
+  Safe to run for a user who asks to try Memory Layer: it only writes into
+  the chosen demo project and is idempotent. Do not seed demo data into a
+  real project slug.
 
 Examples:
   memory demo
