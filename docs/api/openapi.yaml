@@ -1,0 +1,1837 @@
+# Memory Layer HTTP API v1 — OpenAPI 3.1 specification.
+#
+# Source of truth for the public API surface, served by the service at
+# GET /v1/openapi.yaml. A contract test in mem-service keeps this file's
+# path inventory in sync with the axum router (routes.rs) in both
+# directions.
+#
+# Stability contract: operations marked x-stability: core are frozen —
+# existing fields never change meaning, additive fields may appear, and
+# clients must ignore unknown fields. Operations marked x-stability:
+# internal form the service control plane (loops, watchers, agents,
+# admin) and may change between minor versions.
+openapi: 3.1.0
+info:
+  title: Memory Layer API
+  version: "1.0"
+  description: |
+    Local-first project memory for coding agents: capture completed work,
+    curate it into durable memories, and query it back with cited answers
+    or honest refusals. The service listens on localhost only by default;
+    nothing leaves your machine.
+servers:
+  - url: http://127.0.0.1:4040
+    description: Local service (native install default)
+  - url: http://localhost:4040
+    description: Bundled Docker Compose stack
+security:
+  - bearerToken: []
+paths:
+  /v1/openapi.yaml:
+    get:
+      operationId: get_v1_openapi_yaml
+      summary: "This specification, served by the running service."
+      tags: ["System"]
+      x-stability: core
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/yaml:
+              schema: { type: string }
+  /healthz:
+    get:
+      operationId: get_healthz
+      summary: "Service health, database status, instance identity, and version."
+      tags: ["System"]
+      x-stability: core
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+  /ws:
+    get:
+      operationId: get_ws
+      summary: "WebSocket upgrade for live UI event streams."
+      tags: ["System"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/web/auth-token:
+    get:
+      operationId: get_v1_web_auth_token
+      summary: "Short-lived auth token for the bundled web UI (loopback only)."
+      tags: ["System"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/admin/shutdown:
+    post:
+      operationId: post_v1_admin_shutdown
+      summary: "Gracefully stop the service."
+      tags: ["System"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/runtime/status:
+    get:
+      operationId: get_v1_runtime_status
+      summary: "Runtime role, cluster, and scheduler status."
+      tags: ["System"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/offline/pending:
+    get:
+      operationId: get_v1_offline_pending
+      summary: "Pending offline-outbox rows awaiting replay."
+      tags: ["System"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/skills:
+    get:
+      operationId: get_v1_skills
+      summary: "List repo-local skill bundles known to the service."
+      tags: ["Skills"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/skills/repair:
+    post:
+      operationId: post_v1_skills_repair
+      summary: "Repair or refresh skill files."
+      tags: ["Skills"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/skills/{skill_name}:
+    parameters:
+      - name: skill_name
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_skills_skill_name
+      summary: "Read one skill bundle."
+      tags: ["Skills"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/query:
+    post:
+      operationId: post_v1_query
+      summary: "Query one project's memory: hybrid retrieval plus a cited, synthesized answer (or an honest refusal)."
+      tags: ["Query"]
+      x-stability: core
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueryRequest' }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueryResponse' }
+  /v1/query/global:
+    post:
+      operationId: post_v1_query_global
+      summary: "Query across every project."
+      tags: ["Query"]
+      x-stability: core
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GlobalQueryRequest' }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueryResponse' }
+  /v1/checkpoint/activity:
+    post:
+      operationId: post_v1_checkpoint_activity
+      summary: "Record a checkpoint activity event."
+      tags: ["Activity & commits"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/plan/activity:
+    post:
+      operationId: post_v1_plan_activity
+      summary: "Record a plan lifecycle activity event."
+      tags: ["Activity & commits"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/scan/activity:
+    post:
+      operationId: post_v1_scan_activity
+      summary: "Record a scan activity event."
+      tags: ["Activity & commits"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/graph/activity:
+    post:
+      operationId: post_v1_graph_activity
+      summary: "Record a graph-extraction activity event."
+      tags: ["Activity & commits"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/commits/sync:
+    post:
+      operationId: post_v1_commits_sync
+      summary: "Import or update git commit history for a project."
+      tags: ["Activity & commits"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/capture/task:
+    post:
+      operationId: post_v1_capture_task
+      summary: "Capture completed work (raw capture with optional structured candidates). The write entry point."
+      tags: ["Capture & curation"]
+      x-stability: core
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CaptureTaskRequest' }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaptureTaskResponse' }
+  /v1/curate:
+    post:
+      operationId: post_v1_curate
+      summary: "Curate raw captures into canonical memories."
+      tags: ["Capture & curation"]
+      x-stability: core
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CurateRequest' }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurateResponse' }
+  /v1/provenance/verify:
+    post:
+      operationId: post_v1_provenance_verify
+      summary: "Verify memory source provenance against the filesystem."
+      tags: ["Memories"]
+      x-stability: core
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/reindex:
+    post:
+      operationId: post_v1_reindex
+      summary: "Rebuild the repository index for a project."
+      tags: ["Indexing & embeddings"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/reembed:
+    post:
+      operationId: post_v1_reembed
+      summary: "Recompute embeddings for a project."
+      tags: ["Indexing & embeddings"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/prune-embeddings:
+    post:
+      operationId: post_v1_prune_embeddings
+      summary: "Drop embeddings for inactive spaces."
+      tags: ["Indexing & embeddings"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/embeddings/backends:
+    get:
+      operationId: get_v1_embeddings_backends
+      summary: "List configured embedding backends and their status."
+      tags: ["Indexing & embeddings"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/embeddings/activate:
+    post:
+      operationId: post_v1_embeddings_activate
+      summary: "Activate an embedding backend."
+      tags: ["Indexing & embeddings"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/embeddings/deactivate:
+    post:
+      operationId: post_v1_embeddings_deactivate
+      summary: "Deactivate an embedding backend."
+      tags: ["Indexing & embeddings"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/embeddings/create-enabled:
+    post:
+      operationId: post_v1_embeddings_create_enabled
+      summary: "Toggle automatic embedding creation."
+      tags: ["Indexing & embeddings"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/config/llm-audit:
+    get:
+      operationId: get_v1_config_llm_audit
+      summary: "Read the LLM audit-log setting."
+      tags: ["System"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    post:
+      operationId: post_v1_config_llm_audit
+      summary: "Update the LLM audit-log setting."
+      tags: ["System"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops:
+    get:
+      operationId: get_v1_loops
+      summary: "loops"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/global-kill-switch:
+    get:
+      operationId: get_v1_loops_global_kill_switch
+      summary: "global kill switch"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    post:
+      operationId: post_v1_loops_global_kill_switch
+      summary: "global kill switch"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/runs:
+    get:
+      operationId: get_v1_loops_runs
+      summary: "runs"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/runs/{run_id}:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_loops_runs_run_id
+      summary: "{run id}"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/runs/{run_id}/context-pack:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_loops_runs_run_id_context_pack
+      summary: "context pack"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/runs/{run_id}/cancel:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_runs_run_id_cancel
+      summary: "cancel"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/runs/{run_id}/feedback:
+    parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_runs_run_id_feedback
+      summary: "feedback"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/approvals:
+    get:
+      operationId: get_v1_loops_approvals
+      summary: "approvals"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/memory-proposals:
+    get:
+      operationId: get_v1_loops_memory_proposals
+      summary: "memory proposals"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+    post:
+      operationId: post_v1_loops_memory_proposals
+      summary: "memory proposals"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/triggers/route:
+    post:
+      operationId: post_v1_loops_triggers_route
+      summary: "route"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/approvals/{approval_id}/approve:
+    parameters:
+      - name: approval_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_approvals_approval_id_approve
+      summary: "approve"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/approvals/{approval_id}/reject:
+    parameters:
+      - name: approval_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_approvals_approval_id_reject
+      summary: "reject"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/approvals/{approval_id}/edit:
+    parameters:
+      - name: approval_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_approvals_approval_id_edit
+      summary: "edit"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/memory-proposals/{proposal_id}/approve:
+    parameters:
+      - name: proposal_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_memory_proposals_proposal_id_approve
+      summary: "approve"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/memory-proposals/{proposal_id}/reject:
+    parameters:
+      - name: proposal_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_memory_proposals_proposal_id_reject
+      summary: "reject"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/memory-proposals/{proposal_id}/edit:
+    parameters:
+      - name: proposal_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_memory_proposals_proposal_id_edit
+      summary: "edit"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/{loop_id}:
+    parameters:
+      - name: loop_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_loops_loop_id
+      summary: "{loop id}"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/{loop_id}/enable:
+    parameters:
+      - name: loop_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_loop_id_enable
+      summary: "enable"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/{loop_id}/disable:
+    parameters:
+      - name: loop_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_loop_id_disable
+      summary: "disable"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/{loop_id}/pause:
+    parameters:
+      - name: loop_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_loop_id_pause
+      summary: "pause"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/{loop_id}/snooze:
+    parameters:
+      - name: loop_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_loop_id_snooze
+      summary: "snooze"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/{loop_id}/run:
+    parameters:
+      - name: loop_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_loops_loop_id_run
+      summary: "run"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/loops/{loop_id}/context-pack:
+    parameters:
+      - name: loop_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_loops_loop_id_context_pack
+      summary: "context pack"
+      tags: ["Loops (control plane)"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/memory/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_memory_id
+      summary: "Fetch one memory with tags, sources, relations, and scores."
+      tags: ["Memories"]
+      x-stability: core
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/memory/{id}/validate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_memory_id_validate
+      summary: "Validate one memory against gathered repository evidence."
+      tags: ["Memories"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/validation-runs/{id}/review:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_validation_runs_id_review
+      summary: "Approve or reject a validation correction."
+      tags: ["Memories"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/memory/{id}/archive:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_memory_id_archive
+      summary: "Archive one memory."
+      tags: ["Memories"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/memory/{id}/history:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_memory_id_history
+      summary: "Full version history for a memory, including tombstones."
+      tags: ["Memories"]
+      x-stability: core
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/memory:
+    delete:
+      operationId: delete_v1_memory
+      summary: "Tombstone-delete a memory (immutable versioning)."
+      tags: ["Memories"]
+      x-stability: core
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/prune-history:
+    post:
+      operationId: post_v1_prune_history
+      summary: "Prune old memory versions and tombstoned canonicals."
+      tags: ["Memories"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/stats:
+    get:
+      operationId: get_v1_stats
+      summary: "Compact project and service statistics."
+      tags: ["System"]
+      x-stability: core
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{project}/memory-scores:
+    parameters:
+      - name: project
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_project_memory_scores
+      summary: "Reinforcement activation scores for a project."
+      tags: ["Projects"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{project}/validation-runs:
+    parameters:
+      - name: project
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_project_validation_runs
+      summary: "Validation runs for a project."
+      tags: ["Projects"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/commits:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_slug_commits
+      summary: "Imported commits for a project."
+      tags: ["Projects"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/commits/{hash}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+      - name: hash
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_slug_commits_hash
+      summary: "One imported commit with details."
+      tags: ["Projects"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/bundle/export/preview:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_projects_slug_bundle_export_preview
+      summary: "Preview a shareable memory bundle export."
+      tags: ["Bundles"]
+      x-stability: core
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/bundle/export:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_projects_slug_bundle_export
+      summary: "Export a shareable, privacy-safe memory bundle."
+      tags: ["Bundles"]
+      x-stability: core
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/bundle/import/preview:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_projects_slug_bundle_import_preview
+      summary: "Preview a bundle import."
+      tags: ["Bundles"]
+      x-stability: core
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/bundle/import:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_projects_slug_bundle_import
+      summary: "Import a memory bundle (idempotent)."
+      tags: ["Bundles"]
+      x-stability: core
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/replacement-proposals:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_slug_replacement_proposals
+      summary: "Pending memory replacement proposals."
+      tags: ["Projects"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/replacement-proposals/{proposal_id}/approve:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+      - name: proposal_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_projects_slug_replacement_proposals_proposal_id_approve
+      summary: "Approve a replacement proposal."
+      tags: ["Projects"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/replacement-proposals/{proposal_id}/reject:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+      - name: proposal_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_projects_slug_replacement_proposals_proposal_id_reject
+      summary: "Reject a replacement proposal."
+      tags: ["Projects"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/replacement-policy:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_slug_replacement_policy
+      summary: "Effective replacement policy for a project."
+      tags: ["Projects"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/memories:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_slug_memories
+      summary: "List a project's canonical memories."
+      tags: ["Projects"]
+      x-stability: core
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/memory-graph:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_slug_memory_graph
+      summary: "Memory graph: memory and source nodes, provenance and relation edges, decayed activation."
+      tags: ["Projects"]
+      x-stability: core
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectMemoryGraphResponse' }
+  /v1/projects/{slug}/overview:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_slug_overview
+      summary: "Project overview: counts, watchers, recent activity."
+      tags: ["Projects"]
+      x-stability: core
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/graph/status:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_slug_graph_status
+      summary: "Code-graph extraction status."
+      tags: ["Projects"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/graph:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_slug_graph
+      summary: "Code graph: files, symbols, references."
+      tags: ["Projects"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/resume:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_projects_slug_resume
+      summary: "Resume briefing for project re-entry."
+      tags: ["Projects"]
+      x-stability: core
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/activities:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_slug_activities
+      summary: "Project activity timeline."
+      tags: ["Projects"]
+      x-stability: core
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/up-to-speed:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_projects_slug_up_to_speed
+      summary: "New-agent get-up-to-speed briefing."
+      tags: ["Projects"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/watchers/heartbeat:
+    post:
+      operationId: post_v1_watchers_heartbeat
+      summary: "Watcher heartbeat."
+      tags: ["Watchers"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/watchers/unregister:
+    post:
+      operationId: post_v1_watchers_unregister
+      summary: "Unregister a watcher."
+      tags: ["Watchers"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/watchers/restart-local:
+    post:
+      operationId: post_v1_watchers_restart_local
+      summary: "Restart local watchers."
+      tags: ["Watchers"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/archive:
+    post:
+      operationId: post_v1_archive
+      summary: "Bulk-archive low-signal memories."
+      tags: ["Memories"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/agents:
+    get:
+      operationId: get_v1_agents
+      summary: "Known agents and writers."
+      tags: ["Agents"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/agents/workspaces:
+    get:
+      operationId: get_v1_agents_workspaces
+      summary: "Active agent workspaces."
+      tags: ["Agents"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/agents/workspaces/start:
+    post:
+      operationId: post_v1_agents_workspaces_start
+      summary: "Start an agent workspace lease."
+      tags: ["Agents"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/agents/workspaces/{workspace_id}/heartbeat:
+    parameters:
+      - name: workspace_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_agents_workspaces_workspace_id_heartbeat
+      summary: "Heartbeat an agent workspace."
+      tags: ["Agents"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /v1/agents/workspaces/{workspace_id}/finish:
+    parameters:
+      - name: workspace_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: post_v1_agents_workspaces_workspace_id_finish
+      summary: "Finish an agent workspace."
+      tags: ["Agents"]
+      x-stability: internal
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+components:
+  securitySchemes:
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: |
+        The service API token from the machine configuration
+        ([service].api_token). Loopback requests from the bundled web UI use a
+        trusted-origin path instead. Read-only GETs from loopback may be
+        accepted without a token depending on configuration.
+  schemas:
+    QueryRequest:
+      type: object
+      required: [project, query]
+      properties:
+        project: { type: string, description: Project slug to query. }
+        query: { type: string, description: Natural-language question. }
+        top_k: { type: integer, default: 8, description: Maximum memories retrieved before answer synthesis. }
+        min_confidence: { type: [number, "null"], description: Ignore memories below this confidence. }
+        include_stale: { type: boolean, default: false, description: Bypass provenance-based stale-source de-ranking. }
+        history: { type: boolean, default: false, description: Search all versions including tombstones. }
+        filters:
+          type: object
+          description: Optional type/tag filters.
+          properties:
+            memory_types: { type: array, items: { type: string } }
+            tags: { type: array, items: { type: string } }
+          additionalProperties: true
+        retrieval_mode:
+          type: [string, "null"]
+          description: Eval/debug channel isolation; omit for normal queries.
+        answer_mode:
+          type: [string, "null"]
+          enum: [auto, llm, deterministic, null]
+          description: auto (default) uses the configured LLM when available; deterministic forces the eval-gated template synthesizer.
+    GlobalQueryRequest:
+      type: object
+      required: [query]
+      properties:
+        query: { type: string }
+        top_k: { type: integer, default: 8 }
+      additionalProperties: true
+    QueryResponse:
+      type: object
+      required: [answer, confidence, results, insufficient_evidence]
+      properties:
+        answer: { type: string, description: Synthesized answer, or a refusal sentence when evidence is insufficient. }
+        confidence: { type: number, description: 0-1 answer confidence. }
+        insufficient_evidence: { type: boolean, description: True when the engine refused rather than guessed. }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/QueryResult' }
+        answer_citations:
+          type: array
+          description: The memories the answer draws from, by result number.
+          items:
+            type: object
+            properties:
+              result_number: { type: integer }
+              memory_id: { type: string, format: uuid }
+              summary: { type: string }
+              snippet: { type: string }
+            additionalProperties: true
+        answer_generation:
+          type: object
+          description: How the answer was produced (method, cited results, token usage, fallback reason).
+          additionalProperties: true
+        diagnostics:
+          type: object
+          description: Per-channel retrieval timings and counts.
+          additionalProperties: true
+    QueryResult:
+      type: object
+      required: [memory_id, summary, memory_type, score, snippet]
+      properties:
+        memory_id: { type: string, format: uuid }
+        project: { type: [string, "null"] }
+        summary: { type: string }
+        memory_type: { type: string, description: One of the 17 canonical memory types. }
+        score: { type: number, description: Final ranking score. }
+        snippet: { type: string }
+        match_kind: { type: string, description: lexical | semantic | hybrid. }
+        score_explanation: { type: array, items: { type: string } }
+        tags: { type: array, items: { type: string } }
+        needs_review: { type: boolean, description: Flagged by validation for human review; ranked with a penalty. }
+        sources: { type: array, items: { type: object, additionalProperties: true } }
+        graph_connections: { type: array, items: { type: object, additionalProperties: true } }
+        debug:
+          type: object
+          description: Ranking components (term_overlap, semantic_similarity, memory_confidence, boosts).
+          additionalProperties: true
+    CaptureTaskRequest:
+      type: object
+      required: [project, task_title, user_prompt, writer_id, agent_summary]
+      properties:
+        project: { type: string }
+        task_title: { type: string }
+        user_prompt: { type: string, description: The original request or task framing. }
+        writer_id: { type: string, description: Stable writer identity; auto-derived by the CLI when empty. }
+        writer_name: { type: [string, "null"] }
+        agent_summary: { type: string, description: What was done, in one or two sentences. }
+        files_changed: { type: array, items: { type: string } }
+        git_diff_summary: { type: [string, "null"] }
+        tests: { type: array, items: { type: object, additionalProperties: true } }
+        notes: { type: array, items: { type: string }, description: Durable facts to preserve as evidence. }
+        structured_candidates:
+          type: array
+          description: Pre-distilled memory candidates; curation still gates them.
+          items: { $ref: '#/components/schemas/CaptureCandidateInput' }
+        command_output: { type: [string, "null"] }
+        idempotency_key: { type: [string, "null"] }
+        dry_run: { type: boolean, default: false }
+    CaptureCandidateInput:
+      type: object
+      required: [canonical_text, summary, memory_type]
+      properties:
+        canonical_text: { type: string, description: The durable claim, self-contained. }
+        summary: { type: string }
+        memory_type: { type: string }
+        confidence: { type: number, default: 0.7 }
+        importance: { type: integer, default: 3 }
+        tags: { type: array, items: { type: string } }
+        sources:
+          type: array
+          items:
+            type: object
+            properties:
+              source_kind: { type: string, description: file | commit | note | memory | symbol. }
+              file_path: { type: [string, "null"] }
+              git_commit: { type: [string, "null"] }
+              excerpt: { type: [string, "null"] }
+            additionalProperties: true
+    CaptureTaskResponse:
+      type: object
+      properties:
+        project_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        task_id: { type: string, format: uuid }
+        raw_capture_id: { type: string, format: uuid }
+        idempotency_key: { type: [string, "null"] }
+        dry_run: { type: boolean }
+      additionalProperties: true
+    CurateRequest:
+      type: object
+      required: [project]
+      properties:
+        project: { type: string }
+        batch_size: { type: [integer, "null"], description: Limit raw captures processed in one run. }
+        raw_capture_id: { type: [string, "null"], format: uuid, description: Curate one specific capture. }
+        replacement_policy: { type: [string, "null"], enum: [conservative, balanced, aggressive, null] }
+        dry_run: { type: boolean, default: false }
+    CurateResponse:
+      type: object
+      properties:
+        project_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        input_count: { type: integer }
+        output_count: { type: integer }
+        memory_ids: { type: array, items: { type: string, format: uuid } }
+        proposal_count: { type: integer }
+        replaced_count: { type: integer }
+        replacements: { type: array, items: { type: object, additionalProperties: true } }
+        dry_run: { type: boolean }
+      additionalProperties: true
+    ProjectMemoryGraphResponse:
+      type: object
+      properties:
+        project: { type: string }
+        total_memories: { type: integer }
+        returned_memories: { type: integer }
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              label: { type: string }
+              node_kind: { type: string, enum: [memory, source] }
+              memory_id: { type: [string, "null"], format: uuid }
+              memory_type: { type: [string, "null"] }
+              confidence: { type: [number, "null"] }
+              importance: { type: [integer, "null"] }
+              tags: { type: array, items: { type: string } }
+              activation:
+                type: [number, "null"]
+                description: Decayed ACT-R activation at read time; null when never retrieved.
+            additionalProperties: true
+        edges:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              source: { type: string }
+              target: { type: string }
+              edge_kind: { type: string, enum: [provenance, memory_relation] }
+              relation_type: { type: [string, "null"] }
+            additionalProperties: true
+    HealthResponse:
+      type: object
+      properties:
+        status: { type: string }
+        version: { type: string }
+        database: { type: string }
+      additionalProperties: true
+

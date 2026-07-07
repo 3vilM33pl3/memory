@@ -1,0 +1,71 @@
+---
+title: "HTTP API"
+description: "The Memory Layer REST API: authentication, the v1 stability contract, core endpoints, and the OpenAPI specification."
+---
+
+# HTTP API
+
+Everything the CLI, TUI, and web UI do goes through the local HTTP API — and you can call it directly. The full, machine-readable surface is the OpenAPI 3.1 specification:
+
+- **From a running service:** `GET /v1/openapi.yaml` (always describes exactly the build it came from)
+- **In the repository:** [`docs/api/openapi.yaml`](https://github.com/3vilM33pl3/memory/blob/main/docs/api/openapi.yaml)
+
+A contract test keeps the specification's path inventory in sync with the router in both directions, so it cannot silently drift from the code.
+
+## Base URL and authentication
+
+The service listens on localhost only by default (`127.0.0.1:4040` native, `localhost:4040` in the Docker stack). Write endpoints require the service API token from your machine configuration as a bearer token:
+
+```bash
+curl -s http://127.0.0.1:4040/v1/query \
+  -H "Authorization: Bearer $MEMORY_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"project": "demo", "query": "How does reinforcement work?"}'
+```
+
+The token lives in the global config written by `memory setup` (`[service].api_token`). Loopback requests from the bundled web UI use a trusted-origin path instead.
+
+## The v1 stability contract
+
+Every operation in the spec carries an `x-stability` marker:
+
+- **`core`** — frozen. Existing fields never change meaning; additive fields may appear over time, and clients must ignore unknown fields. These are the endpoints to integrate against.
+- **`internal`** — the service control plane (loops, watchers, agent workspaces, admin, embeddings management). Used by the bundled UIs; may change between minor versions.
+
+## Core endpoints
+
+| Endpoint | What it does |
+|---|---|
+| `POST /v1/query` | Query one project's memory: hybrid retrieval plus a cited, synthesized answer — or an honest refusal (`insufficient_evidence`). |
+| `POST /v1/query/global` | The same across every project. |
+| `POST /v1/capture/task` | Capture completed work — the write entry point, optionally with pre-distilled `structured_candidates`. |
+| `POST /v1/curate` | Curate raw captures into canonical memories. |
+| `GET /v1/memory/{id}` | One memory with tags, sources, relations, and scores. |
+| `GET /v1/memory/{id}/history` | Full version history, including tombstones. |
+| `GET /v1/projects/{slug}/memories` | List a project's canonical memories. |
+| `GET /v1/projects/{slug}/memory-graph` | Memory/source nodes with provenance and relation edges, plus decayed ACT-R activation per memory. |
+| `GET /v1/projects/{slug}/overview` | Counts, watchers, recent activity. |
+| `POST /v1/projects/{slug}/resume` | Resume briefing for project re-entry. |
+| `GET /v1/projects/{slug}/activities` | The activity timeline. |
+| `POST /v1/provenance/verify` | Verify source provenance against the filesystem. |
+| `POST /v1/projects/{slug}/bundle/export` · `import` | Shareable, privacy-safe memory bundles (with `/preview` variants). |
+| `GET /healthz` · `GET /v1/stats` | Health and compact statistics. |
+
+## A five-line integration
+
+```python
+import requests
+
+BASE, TOKEN = "http://127.0.0.1:4040", "<your [service].api_token>"
+r = requests.post(f"{BASE}/v1/query", json={"project": "demo", "query": "How does auth work?"},
+                  headers={"Authorization": f"Bearer {TOKEN}"})
+print(r.json()["answer"], r.json()["answer_citations"])
+```
+
+Typed Python and TypeScript clients generated from the spec are on the [roadmap](/docs/roadmap).
+
+## Related
+
+- [Environment variables](/docs/reference/environment-variables) · [Global config](/docs/reference/config-global)
+- [MCP server](/docs/mcp) — the same read surface over the Model Context Protocol.
+- [Glossary](/docs/reference/glossary) — the concepts the API speaks in.

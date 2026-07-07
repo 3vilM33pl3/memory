@@ -32,12 +32,23 @@ use super::{
     watcher_unregister, web_auth_token, web_unavailable, websocket,
 };
 
+/// The API specification, embedded at compile time so the running service
+/// always describes exactly the surface it was built with. A contract test
+/// keeps the spec's path inventory in sync with this router.
+async fn openapi_spec() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/yaml")],
+        include_str!("../../../docs/api/openapi.yaml"),
+    )
+}
+
 pub(crate) fn build_http_app(state: AppState) -> Router {
     let web_assets = state.web_root.clone();
     let config = state.config.clone();
     let mcp_config = state.config.mcp.clone();
     let mut app = Router::new()
         .route("/healthz", get(healthz))
+        .route("/v1/openapi.yaml", get(openapi_spec))
         .route("/ws", get(websocket))
         .route("/v1/web/auth-token", get(web_auth_token))
         .route("/v1/admin/shutdown", post(admin_shutdown))

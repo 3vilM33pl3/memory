@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "glossary",
+    "http-api",
     "cli",
     "config-global",
     "config-project",
