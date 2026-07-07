@@ -216,7 +216,7 @@ async fn repository_memory_graph_returns_provenance_and_relationship_layers() {
     .await
     .expect("insert memory relation");
 
-    let graph = mem_service::repository::fetch_project_memory_graph(&pool, &project, 250, 0)
+    let graph = mem_service::repository::fetch_project_memory_graph(&pool, &project, 250, 0, 30.0 * 24.0 * 3600.0)
         .await
         .expect("fetch memory graph");
 
@@ -285,7 +285,7 @@ async fn repository_memory_graph_returns_empty_graph_for_empty_project() {
         .await
         .expect("upsert project through repository handler");
 
-    let graph = mem_service::repository::fetch_project_memory_graph(&pool, &project, 250, 0)
+    let graph = mem_service::repository::fetch_project_memory_graph(&pool, &project, 250, 0, 30.0 * 24.0 * 3600.0)
         .await
         .expect("fetch memory graph");
 
