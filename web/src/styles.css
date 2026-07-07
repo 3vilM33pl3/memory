@@ -958,3 +958,15 @@ pre {
     height: 56vh;
   }
 }
+
+/* Keyboard accessibility: a consistent, visible focus indicator everywhere.
+   Individual components may strengthen it, never remove it. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

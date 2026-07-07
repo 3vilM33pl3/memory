@@ -46,7 +46,7 @@ flowchart LR
         ProjectConfig["Project marker and config<br/>.mem/project.toml<br/>.agents/memory-layer.toml"]
         CLI["memory CLI"]
         TUI["Terminal UI"]
-        WebUI["Browser UI"]
+        WebUI["Web UI"]
     end
 
     subgraph Automation["Background automation"]

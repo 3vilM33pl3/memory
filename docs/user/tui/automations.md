@@ -15,7 +15,7 @@ terminal.
   latest run detail, pending approvals, and load warnings
 - global kill-switch state when reported by the service
 
-The TUI tab is read-oriented. Use the browser UI or `memory loops ...` commands
+The TUI tab is read-oriented. Use the web UI or `memory loops ...` commands
 for mode changes, manual runs, approval decisions, or global kill-switch changes.
 
 ## Key Controls
@@ -36,5 +36,5 @@ for mode changes, manual runs, approval decisions, or global kill-switch changes
 ## See Also
 
 - [`memory loops`](../cli/loops.md)
-- [Browser UI Automations](../web-ui.md#automations)
+- [Web UI Automations](../web-ui.md#automations)
 - [TUI Guide](README.md)

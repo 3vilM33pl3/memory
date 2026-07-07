@@ -69,7 +69,7 @@ Shared navigation:
 - If you want high-level health or recent operational activity, open [Project Tab](project.md); for pending-proposal review, open [Review Tab](review.md).
 - If you want watcher liveness and watchdog status, open [Watchers Tab](watchers.md).
 - If repo-local skills look stale or you want to inspect the exact skill instructions an agent will read, open [Skills Tab](skills.md).
-- If you want to see loop-engineering automation state without opening the browser UI, open [Automations Tab](automations.md).
+- If you want to see loop-engineering automation state without opening the web UI, open [Automations Tab](automations.md).
 - If you want to see which embedding backends are configured and switch which one search uses, open [Embeddings Tab](embeddings.md).
 - If you are returning after time away, open [Resume Tab](resume.md) for the re-entry briefing.
 

@@ -18,7 +18,7 @@ Use this map to find the right PR boundary before opening the large files.
 ## Frontends
 
 - `crates/mem-cli/src/tui.rs`: TUI orchestration and tab rendering. Pure helpers are being split under `crates/mem-cli/src/tui/`.
-- `web/src/App.tsx`: browser UI shell, project selection, polling, and feature composition.
+- `web/src/App.tsx`: web UI shell, project selection, polling, and feature composition.
 - `web/src/features/`: extracted browser feature tabs.
 - `web/src/api.ts`: browser API boundary. Keep fetch details here instead of scattering endpoint strings.
 

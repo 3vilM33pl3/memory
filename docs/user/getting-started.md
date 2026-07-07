@@ -773,11 +773,11 @@ If `scan` fails, the two most common causes are:
 
 ## Web UI Notes
 
-The browser UI is served by `mem-service` itself. In a normal install it should work automatically once the service is running.
+The web UI is served by `mem-service` itself. In a normal install it should work automatically once the service is running.
 
 It mirrors the main TUI workflows in a browser: memories, agents, query, activity, errors, project health, review, watchers, embeddings, and resume. It also keeps web-only bundle import/export tooling under More.
 
-See the [Browser UI Guide](web-ui.md) for tab-by-tab behavior, query diagnostics, runtime status, get-up-to-speed briefings, LLM audit/debug logging, and contextual help.
+See the [Web UI Guide](web-ui.md) for tab-by-tab behavior, query diagnostics, runtime status, get-up-to-speed briefings, LLM audit/debug logging, and contextual help.
 
 If you build from source, build the frontend first:
 

@@ -5,13 +5,13 @@ description: "How the CLI, service, UIs, watchers, MCP, config, and database fit
 
 # Runtime topology
 
-Memory Layer is built around one shared service and database. The CLI, TUI, browser UI, watcher manager, and MCP server are adapters around the same project-scoped backend.
+Memory Layer is built around one shared service and database. The CLI, TUI, web UI, watcher manager, and MCP server are adapters around the same project-scoped backend.
 
 ```mermaid
 flowchart TB
     CLI[memory CLI] --> API[mem-service HTTP API]
     TUI[TUI] --> API
-    WEB[Browser UI] --> API
+    WEB[Web UI] --> API
     WATCH[Watchers] --> API
     MCP[MCP stdio or HTTP] --> API
     API --> DB[(PostgreSQL + pgvector)]
@@ -26,7 +26,7 @@ flowchart TB
 | `memory` CLI | Human and agent automation surface. |
 | `mem-service` | Local HTTP API, web UI host, curation pipeline, embedding jobs, MCP HTTP mount. |
 | TUI | Terminal dashboard for humans reviewing memory, evidence, agents, and diagnostics. |
-| Browser UI | Web companion using the same service APIs as the TUI. |
+| Web UI | Web companion using the same service APIs as the TUI. |
 | Watchers | Background processes that observe agent sessions and report activity. |
 | MCP server | Read-first protocol adapter for MCP clients; it reuses the service API. |
 | PostgreSQL | Durable store for projects, memories, captures, activities, history, graph data, and embeddings. |

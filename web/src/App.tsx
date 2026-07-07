@@ -220,7 +220,7 @@ export default function App() {
         </form>
       </header>
 
-      <section className="status-strip">
+      <section className="status-strip" aria-label="Service status">
         <span className={`status-pill status-${connectionState}`}>{connectionState}</span>
         <span><strong>{overview.project}</strong></span>
         <span>Web v{runtimeStatus?.web.version ?? serviceVersion} {runtimeStatus?.web.status ?? "ok"}</span>
@@ -239,7 +239,7 @@ export default function App() {
         {runtimeStatus?.restart_notice ? <span className="restart-text">restart {runtimeStatus.restart_notice.version}</span> : null}
       </section>
 
-      <nav className="tabs">
+      <nav className="tabs" aria-label="Primary tabs">
         {PRIMARY_TABS.map((name, i) => (
           <button
             key={name}
@@ -247,11 +247,12 @@ export default function App() {
             onClick={() => setTab(name)}
             type="button"
             title={`${i + 1}`}
+            aria-current={tab === name ? "page" : undefined}
           >
             {name}
           </button>
         ))}
-        <select className="more-select" value={MORE_TABS.includes(tab as (typeof MORE_TABS)[number]) ? tab : ""} onChange={(event) => event.target.value && setTab(event.target.value as Tab)}>
+        <select className="more-select" aria-label="More tabs" value={MORE_TABS.includes(tab as (typeof MORE_TABS)[number]) ? tab : ""} onChange={(event) => event.target.value && setTab(event.target.value as Tab)}>
           <option value="">More</option>
           {MORE_TABS.map((name) => (
             <option key={name} value={name}>{name}</option>

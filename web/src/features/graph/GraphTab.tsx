@@ -559,7 +559,15 @@ function GraphScene({
     }
   }, [renderData, topologySignature]);
 
-  return <div ref={containerRef} className="graph-scene" data-testid="graph-scene" />;
+  return (
+    <div
+      ref={containerRef}
+      className="graph-scene"
+      data-testid="graph-scene"
+      role="img"
+      aria-label="Interactive graph of memories, sources, and code symbols. Node details appear in the inspector panel when selected."
+    />
+  );
 }
 
 export function graphRenderTopologySignature(renderData: { nodes: RenderNode[]; links: RenderLink[] }): string {

@@ -210,7 +210,7 @@ Current HTTP routes include:
 - `POST /v1/archive`
 - `GET /ws` for browser streaming
 
-The service also serves the browser UI directly. In production or packaged installs it looks for static assets in a configured or discovered web root, and it falls back to a clear error page if the assets are missing.
+The service also serves the web UI directly. In production or packaged installs it looks for static assets in a configured or discovered web root, and it falls back to a clear error page if the assets are missing.
 
 The live UI split is now:
 

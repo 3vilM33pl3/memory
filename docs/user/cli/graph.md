@@ -33,8 +33,8 @@ Shows the latest completed extraction run, analyzer version, strategy version, s
 
 ## Browser Explorer
 
-After a completed extraction exists, the browser UI `Graph` tab can inspect it as
-a bounded 3D WebGL neighborhood. Start the service, open the browser UI, and use
+After a completed extraction exists, the web UI `Graph` tab can inspect it as
+a bounded 3D WebGL neighborhood. Start the service, open the web UI, and use
 the Graph tab filters for text, file path, symbol, edge kind, depth, node cap,
 and edge cap.
 

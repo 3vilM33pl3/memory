@@ -1,6 +1,6 @@
-# Browser UI
+# Web UI
 
-The browser UI is the web companion to the TUI. It is served by `mem-service` and uses the same backend APIs for memories, query, code graph inspection, activities, watchers, embeddings, resume briefings, and curation review.
+The web UI is the web companion to the TUI. It is served by `mem-service` and uses the same backend APIs for memories, query, code graph inspection, activities, watchers, embeddings, resume briefings, and curation review.
 
 Open it while the service is running:
 
@@ -172,7 +172,7 @@ surface in every client.
 
 The status strip shows the same operational components as the TUI bottom bar:
 
-- `Web`: browser UI version and restart-required state.
+- `Web`: web UI version and restart-required state.
 - `Service`: backend version, primary/relay role, and service identity.
 - `Manager`: watcher-manager state, mode, tracked sessions, and warnings.
 - `Watchers`: active/unhealthy watcher counts.
