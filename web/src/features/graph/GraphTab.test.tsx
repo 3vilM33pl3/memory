@@ -17,6 +17,11 @@ const forceGraphMock = vi.hoisted(() => ({
     linkOpacity: ReturnType<typeof vi.fn>;
     linkDirectionalArrowLength: ReturnType<typeof vi.fn>;
     linkDirectionalArrowRelPos: ReturnType<typeof vi.fn>;
+    linkDirectionalParticles: ReturnType<typeof vi.fn>;
+    linkDirectionalParticleWidth: ReturnType<typeof vi.fn>;
+    linkDirectionalParticleSpeed: ReturnType<typeof vi.fn>;
+    linkDirectionalParticleColor: ReturnType<typeof vi.fn>;
+    emitParticle: ReturnType<typeof vi.fn>;
     onNodeClick: ReturnType<typeof vi.fn>;
     onLinkClick: ReturnType<typeof vi.fn>;
     onNodeHover: ReturnType<typeof vi.fn>;
@@ -49,6 +54,11 @@ vi.mock("3d-force-graph", () => {
       linkOpacity: vi.fn(() => instance),
       linkDirectionalArrowLength: vi.fn(() => instance),
       linkDirectionalArrowRelPos: vi.fn(() => instance),
+      linkDirectionalParticles: vi.fn(() => instance),
+      linkDirectionalParticleWidth: vi.fn(() => instance),
+      linkDirectionalParticleSpeed: vi.fn(() => instance),
+      linkDirectionalParticleColor: vi.fn(() => instance),
+      emitParticle: vi.fn(() => instance),
       onNodeClick: vi.fn(() => instance),
       onLinkClick: vi.fn(() => instance),
       onNodeHover: vi.fn(() => instance),
@@ -179,7 +189,7 @@ describe("GraphTab", () => {
 
     render(<GraphTab {...baseProps} status={emptyStatus} graph={emptyGraph} />);
 
-    expect(await screen.findByRole("heading", { name: "No code graph extracted" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "No graph data yet" })).toBeInTheDocument();
     expect(screen.getByText("memory graph extract --project memory")).toBeInTheDocument();
   });
 

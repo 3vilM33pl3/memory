@@ -110,6 +110,12 @@ export function GraphTab({
   const [visibleLayers, setVisibleLayers] = useState<LayerVisibility>(DEFAULT_LAYER_VISIBILITY);
   const [hoveredLayer, setHoveredLayer] = useState<GraphLayer | null>(null);
   const [memorySelection, setMemorySelection] = useState<MemoryGraphSelection | null>(null);
+  // Spreading-activation pulse: bumped whenever a memory node is selected so
+  // the scene fires particles along its relation links — the visual analogue
+  // of the engine spreading activation to related memories on retrieval.
+  const [activationPulse, setActivationPulse] = useState<{ nodeId: string; seq: number } | null>(
+    null,
+  );
   const [memoryDepth, setMemoryDepth] = useState(1);
   const connectionGraph = useMemo(
     () => applyGraphConnectionView(graph, connectionView),
@@ -163,6 +169,7 @@ export function GraphTab({
     if (node.memoryNode?.node_kind === "memory") {
       onClearSelection();
       setMemorySelection({ kind: "memory_node", node: node.memoryNode });
+      setActivationPulse((previous) => ({ nodeId: node.id, seq: (previous?.seq ?? 0) + 1 }));
     } else if (node.memoryNode) {
       onClearSelection();
       setMemorySelection({ kind: "source_node", node: node.memoryNode });
@@ -340,6 +347,7 @@ export function GraphTab({
               onSelectEdge={handleSelectRenderLink}
               onClearSelection={handleClearGraphSelection}
               onHoverLayer={setHoveredLayer}
+              activationPulse={activationPulse}
             />
             <GraphLayerControls
               visibleLayers={visibleLayers}
@@ -419,12 +427,14 @@ function GraphScene({
   onSelectEdge,
   onClearSelection,
   onHoverLayer,
+  activationPulse,
 }: {
   renderData: { nodes: RenderNode[]; links: RenderLink[] };
   onSelectNode: (node: RenderNode, options?: { shiftKey?: boolean }) => void;
   onSelectEdge: (edge: RenderLink) => void;
   onClearSelection: () => void;
   onHoverLayer: (layer: GraphLayer | null) => void;
+  activationPulse?: { nodeId: string; seq: number } | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<ForceGraph3DInstance<RenderNode, RenderLink> | null>(null);
@@ -464,6 +474,12 @@ function GraphScene({
       .linkOpacity(0.45)
       .linkDirectionalArrowLength(3)
       .linkDirectionalArrowRelPos(1)
+      // One-shot particles for the spreading-activation pulse; no persistent
+      // particles are rendered (emitParticle only).
+      .linkDirectionalParticles(0)
+      .linkDirectionalParticleWidth(3.2)
+      .linkDirectionalParticleSpeed(0.012)
+      .linkDirectionalParticleColor(() => "#ffd27f")
       .onNodeClick((node, event) => onSelectNodeRef.current(node, { shiftKey: event.shiftKey }))
       .onLinkClick((link) => onSelectEdgeRef.current(link))
       .onNodeHover((node) => onHoverLayerRef.current(node?.primaryLayer ?? null))
@@ -487,6 +503,32 @@ function GraphScene({
       container.replaceChildren();
     };
   }, []);
+
+  useEffect(() => {
+    // Spreading-activation pulse: when a memory node is selected, fire three
+    // particle waves along its relation links — the visual analogue of the
+    // ACT-R spread the engine performs on retrieval (activation flows from
+    // the retrieved memory to its related memories).
+    const instance = instanceRef.current;
+    if (!instance || !activationPulse) return;
+    const links = instance
+      .graphData()
+      .links.filter(
+        (link) =>
+          link.renderKind === "memory_relation_edge" &&
+          (renderLinkEndpointId(link.source) === activationPulse.nodeId ||
+            renderLinkEndpointId(link.target) === activationPulse.nodeId),
+      );
+    if (!links.length) return;
+    const timers = [0, 350, 700].map((delay) =>
+      window.setTimeout(() => {
+        for (const link of links) instance.emitParticle(link);
+      }, delay),
+    );
+    return () => {
+      for (const timer of timers) window.clearTimeout(timer);
+    };
+  }, [activationPulse]);
 
   useEffect(() => {
     const instance = instanceRef.current;
@@ -1365,8 +1407,28 @@ function colorForEdge(edgeKind: string): string {
 
 function colorForMemoryNode(node: ProjectMemoryGraphNode, layer: GraphLayer): string {
   if (node.node_kind === "source") return layer === "provenance" ? "#75d2ff" : "#9cb0c6";
-  if (layer === "memory_relations") return "#f2c56b";
-  return "#d7a8ff";
+  const base = layer === "memory_relations" ? "#f2c56b" : "#d7a8ff";
+  return heatColor(base, node.activation);
+}
+
+/// Blend a memory node's base colour toward hot white by decayed activation
+/// (server cap 20): frequently retrieved memories glow, never-retrieved ones
+/// sit dimmed at the base palette — the visual form of activation decay.
+function heatColor(baseHex: string, activation: number | null | undefined): string {
+  const heat = Math.min(1, Math.max(0, activation ?? 0) / 20);
+  const mix = (channel: number, target: number) => Math.round(channel + (target - channel) * heat);
+  const r = parseInt(baseHex.slice(1, 3), 16);
+  const g = parseInt(baseHex.slice(3, 5), 16);
+  const b = parseInt(baseHex.slice(5, 7), 16);
+  const dim = 0.72 + 0.28 * heat;
+  return `rgb(${mix(Math.round(r * dim), 255)}, ${mix(Math.round(g * dim), 244)}, ${mix(Math.round(b * dim), 214)})`;
+}
+
+/// force-graph mutates link endpoints from ids to node objects after layout.
+function renderLinkEndpointId(endpoint: RenderLink["source"] | RenderNode): string {
+  return typeof endpoint === "object" && endpoint !== null
+    ? (endpoint as RenderNode).id
+    : String(endpoint);
 }
 
 function colorForMemoryEdge(edge: ProjectMemoryGraphEdge): string {
