@@ -3977,6 +3977,18 @@ fn current_exe_is_in_cargo_target() -> bool {
     false
 }
 
+/// Strictly opt-in usage telemetry. Nothing is ever sent unless BOTH
+/// `enabled = true` AND an `endpoint` are configured: there is no default
+/// collector. Events are counts only (event name, version, OS, an anonymous
+/// random instance id) — never project names, queries, or memory content.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelemetryConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub service: ServiceConfig,
@@ -4011,6 +4023,8 @@ pub struct AppConfig {
     pub consolidation: ConsolidationConfig,
     #[serde(default)]
     pub procedural: ProceduralConfig,
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
     #[serde(skip, default = "default_profile")]
     pub profile: Profile,
     /// Path of the resolved config file (base file in dev mode). Useful when

@@ -4,6 +4,7 @@ mod error_hints;
 mod plan_execution;
 mod resume;
 mod scan;
+mod telemetry;
 mod tui;
 mod wizard;
 mod writer_identity;

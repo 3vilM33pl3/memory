@@ -139,27 +139,32 @@ pub(super) async fn handle(
             let body = response.text().await.unwrap_or_default();
             anyhow::bail!("ingest capture failed ({status}): {body}");
         }
+        let response: mem_api::CaptureTaskResponse = response
+            .json()
+            .await
+            .context("parse ingest capture response")?;
         sent += batch.len();
         println!("Captured {sent}/{total} document(s)...");
-    }
 
-    let curate = client
-        .post(service_url(&config, "/v1/curate"))
-        .headers(write_headers(&config)?)
-        .json(&CurateRequest {
-            project: args.project.clone(),
-            batch_size: None,
-            raw_capture_id: None,
-            replacement_policy: None,
-            dry_run: false,
-        })
-        .send()
-        .await
-        .context("send ingest curate request")?;
-    if !curate.status().is_success() {
-        let status = curate.status();
-        let body = curate.text().await.unwrap_or_default();
-        anyhow::bail!("ingest curation failed ({status}): {body}");
+        // Curate each batch's own capture (bounded — see 3VI-824).
+        let curate = client
+            .post(service_url(&config, "/v1/curate"))
+            .headers(write_headers(&config)?)
+            .json(&CurateRequest {
+                project: args.project.clone(),
+                batch_size: None,
+                raw_capture_id: Some(response.raw_capture_id),
+                replacement_policy: None,
+                dry_run: false,
+            })
+            .send()
+            .await
+            .context("send ingest curate request")?;
+        if !curate.status().is_success() {
+            let status = curate.status();
+            let body = curate.text().await.unwrap_or_default();
+            anyhow::bail!("ingest curation failed ({status}): {body}");
+        }
     }
 
     println!(

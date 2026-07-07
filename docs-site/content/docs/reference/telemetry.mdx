@@ -1,0 +1,38 @@
+---
+title: "Telemetry"
+description: "Strictly opt-in usage counts. Off by default, no default collector, never any content."
+---
+
+# Telemetry
+
+Memory Layer ships with usage telemetry that is **off by default and stays off** unless you explicitly turn it on. There is deliberately **no default collector endpoint**: even setting `enabled = true` sends nothing until you also configure where events should go.
+
+```toml
+# global config — both keys are required before anything is sent
+[telemetry]
+enabled = true
+endpoint = "https://your-collector.example/v1/event"
+```
+
+## What is sent (and what never is)
+
+When fully opted in, exactly these events are recorded, as counts:
+
+| Event | When |
+|---|---|
+| `demo_completed` | `memory demo` finished seeding the showcase project. |
+| `tour_completed` | `memory tour` ran all three steps. |
+
+Each payload contains only: the event name, the Memory Layer version, the operating system name (`linux` / `macos`), and an anonymous instance id — a random UUID generated locally and stored in your state directory, carrying no machine or user information.
+
+**Never sent:** project names, queries, answers, memory content, file paths, hostnames, usernames, tokens, or anything derived from your data.
+
+## Behavior guarantees
+
+- Sending is fire-and-forget with a 3-second timeout; telemetry can never slow down or fail a command.
+- Delete the instance id at any time: remove `telemetry-instance-id` from your state directory and a new random one is generated if telemetry is still enabled.
+- Turning it off is one line: `enabled = false` (or removing the section).
+
+## Why it exists
+
+The adoption roadmap invests heavily in install and first-run experience; opt-in counts of `demo_completed`/`tour_completed` are the only way to know whether that work reaches anyone. If you run a community or team deployment and want to contribute counts, point `endpoint` at your own collector — the payload is a single small JSON object per event.

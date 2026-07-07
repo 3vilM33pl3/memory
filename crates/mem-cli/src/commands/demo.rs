@@ -44,14 +44,18 @@ pub(super) async fn seed_demo_corpus(
         let body = capture.text().await.unwrap_or_default();
         anyhow::bail!("capture failed ({status}): {body}");
     }
+    let capture: mem_api::CaptureTaskResponse =
+        capture.json().await.context("parse capture response")?;
 
+    // Curate only the capture just created: whole-project curation can
+    // exceed the client timeout when a backlog is pending (see 3VI-824).
     let curate = client
         .post(service_url(config, "/v1/curate"))
         .headers(write_headers(config)?)
         .json(&CurateRequest {
             project: project.to_string(),
             batch_size: None,
-            raw_capture_id: None,
+            raw_capture_id: Some(capture.raw_capture_id),
             replacement_policy: None,
             dry_run: false,
         })
@@ -75,6 +79,7 @@ pub(super) async fn handle(
 ) -> Result<()> {
     let candidate_count =
         seed_demo_corpus(&args.project, &client, &config, cli_writer_id.as_deref()).await?;
+    crate::telemetry::record_event(&config, "demo_completed").await;
 
     let project = &args.project;
     println!("Loaded {candidate_count} demo memories into project '{project}'.\n");

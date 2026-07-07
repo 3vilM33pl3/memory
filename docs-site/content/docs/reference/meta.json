@@ -9,6 +9,7 @@
     "config-project",
     "database-schema",
     "environment-variables",
+    "telemetry",
     "exit-codes",
     "files-and-directories"
   ]

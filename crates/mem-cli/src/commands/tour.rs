@@ -88,10 +88,11 @@ pub(super) async fn handle(
             include_llm_summary: true,
         },
         client,
-        config,
+        config.clone(),
     )
     .await?;
 
+    crate::telemetry::record_event(&config, "tour_completed").await;
     println!();
     println!("That is the whole daily loop. Where to go next:");
     println!("  memory tui   # browse every memory, its provenance, and the graph");
