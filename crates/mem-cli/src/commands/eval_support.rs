@@ -27,9 +27,125 @@ use crate::commands::{
     memory_ops::resolve_project_slug,
     output::service_url,
     runtime::{
-        EvalArgs, EvalCommand, EvalCompareArgs, EvalGateArgs, EvalReproduceArgs, EvalRunArgs,
+        EvalArchiveArgs, EvalArgs, EvalCommand, EvalCompareArgs, EvalGateArgs, EvalReproduceArgs,
+        EvalRunArgs,
     },
 };
+
+/// Package a suite plus a set of run artifacts as a citeable, tamper-evident
+/// archive: suite definition + runs + a manifest carrying the git commit, CLI
+/// version, suite checksum, and per-file sha256 digests. A reviewer verifies
+/// with the manifest and re-runs with `memory eval reproduce`.
+fn archive_experiment(args: EvalArchiveArgs) -> Result<()> {
+    use sha2::{Digest, Sha256};
+
+    let suite = mem_eval::load_suite(&args.suite)?;
+    let suite_checksum = mem_eval::suite_checksum(&suite)?;
+    let suite_name = args
+        .suite
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("suite")
+        .to_string();
+
+    let staging = std::env::temp_dir().join(format!(
+        "memory-eval-archive-{}-{suite_name}",
+        std::process::id()
+    ));
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging).ok();
+    }
+    std::fs::create_dir_all(&staging).context("create staging directory")?;
+    let root = staging.join(format!("{suite_name}-experiment"));
+    let copy_tree = |from: &Path, to: &Path| -> Result<Vec<PathBuf>> {
+        let mut copied = Vec::new();
+        let mut stack = vec![from.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir)? {
+                let path = entry?.path();
+                let relative = path.strip_prefix(from).expect("child of from");
+                if path.is_dir() {
+                    stack.push(path.clone());
+                    continue;
+                }
+                let dest = to.join(relative);
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&path, &dest)?;
+                copied.push(dest);
+            }
+        }
+        Ok(copied)
+    };
+
+    let mut files = Vec::new();
+    files.extend(copy_tree(&args.suite, &root.join("suite"))?);
+    files.extend(copy_tree(&args.runs, &root.join("runs"))?);
+
+    let mut file_entries = Vec::new();
+    for file in &files {
+        let bytes = std::fs::read(file)?;
+        let digest = Sha256::digest(&bytes);
+        file_entries.push(serde_json::json!({
+            "path": file.strip_prefix(&root).expect("staged file").display().to_string(),
+            "sha256": format!("{digest:x}"),
+            "bytes": bytes.len(),
+        }));
+    }
+
+    let git_commit = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_string());
+    let manifest = serde_json::json!({
+        "kind": "memory-layer-experiment",
+        "suite_name": suite_name,
+        "suite_checksum": suite_checksum,
+        "item_count": suite.items.len(),
+        "cli_version": env!("CARGO_PKG_VERSION"),
+        "git_commit": git_commit,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "reproduce_with": format!("memory eval reproduce --suite suite/"),
+        "files": file_entries,
+    });
+    std::fs::write(
+        root.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+
+    if let Some(parent) = args.out.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let out_absolute = if args.out.is_absolute() {
+        args.out.clone()
+    } else {
+        std::env::current_dir()?.join(&args.out)
+    };
+    let status = std::process::Command::new("tar")
+        .arg("-czf")
+        .arg(&out_absolute)
+        .arg("-C")
+        .arg(&staging)
+        .arg(format!("{suite_name}-experiment"))
+        .status()
+        .context("run tar")?;
+    std::fs::remove_dir_all(&staging).ok();
+    anyhow::ensure!(status.success(), "tar failed");
+
+    println!(
+        "Archived {} file(s) + manifest to {}",
+        files.len(),
+        args.out.display()
+    );
+    println!("suite checksum: {suite_checksum}");
+    Ok(())
+}
 
 /// One-command reproduction: seed the suite's fixture, run both conditions
 /// under the keyless offline profile, compare, and gate. Orchestrates the
@@ -329,6 +445,9 @@ pub(super) async fn handle_eval_command(args: EvalArgs, cwd: &Path, api: &ApiCli
         }
         EvalCommand::Reproduce(args) => {
             reproduce_suite(args, cwd, api).await?;
+        }
+        EvalCommand::Archive(args) => {
+            archive_experiment(args)?;
         }
         EvalCommand::Run(args) => {
             let suite = mem_eval::load_suite(&args.suite)?;

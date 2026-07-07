@@ -250,6 +250,22 @@ Examples:
 See also:
   docs/user/cli/eval.md";
 
+const EVAL_ARCHIVE_AFTER_HELP: &str = "\
+What it does:
+  Packages the suite definition (items, config, scripts) together with a set
+  of run/comparison artifacts and a signed manifest — git commit, CLI version,
+  suite checksum, and a sha256 for every file — into one .tar.gz a reviewer
+  can verify and re-run with `memory eval reproduce`.
+
+Agent notes:
+  Archive the artifacts produced by `memory eval reproduce` so results cited
+  in reports stay reproducible and tamper-evident.
+
+Examples:
+  memory eval archive --suite evals/suites/memory-quality-v1 \\
+    --runs target/memory-evals/reproduce/memory-quality-v1 \\
+    --out memory-quality-v1-run.tar.gz";
+
 const EVAL_REPRODUCE_AFTER_HELP: &str = "\
 What it does:
   One command reproduces a published suite result end-to-end: runs the suite's
@@ -2184,6 +2200,11 @@ pub(in crate::commands) enum EvalCommand {
     )]
     Reproduce(EvalReproduceArgs),
     #[command(
+        about = "Package a suite and its run artifacts as a citeable archive.",
+        after_help = EVAL_ARCHIVE_AFTER_HELP
+    )]
+    Archive(EvalArchiveArgs),
+    #[command(
         about = "Compare two eval run JSON files.",
         after_help = EVAL_COMPARE_AFTER_HELP
     )]
@@ -2290,6 +2311,23 @@ pub(in crate::commands) struct EvalReproduceArgs {
     /// Skip the suite's seed script even when one exists.
     #[arg(long)]
     pub(crate) skip_seed: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    about = "Package a suite and its run artifacts as a citeable archive.",
+    after_help = EVAL_ARCHIVE_AFTER_HELP
+)]
+pub(in crate::commands) struct EvalArchiveArgs {
+    /// Path to the eval suite directory.
+    #[arg(long)]
+    pub(crate) suite: PathBuf,
+    /// Directory of run/comparison artifacts (e.g. from eval reproduce).
+    #[arg(long)]
+    pub(crate) runs: PathBuf,
+    /// Output archive path (.tar.gz).
+    #[arg(long)]
+    pub(crate) out: PathBuf,
 }
 
 #[derive(Debug, Args)]
