@@ -1,0 +1,20 @@
+{
+  "name": "@memory-layer/client",
+  "version": "0.1.0",
+  "description": "Typed TypeScript client for the Memory Layer HTTP API v1 (core, frozen surface).",
+  "license": "MIT",
+  "repository": "github:3vilM33pl3/memory",
+  "homepage": "https://www.memory-layer.dev/docs/reference/http-api",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test --experimental-strip-types tests/client.test.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

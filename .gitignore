@@ -19,3 +19,6 @@
 __pycache__/
 *.pyc
 .vercel
+/clients/typescript/node_modules
+/clients/typescript/dist
+__pycache__/

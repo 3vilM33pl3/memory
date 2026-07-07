@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "memory-layer-client"
+version = "0.1.0"
+description = "Typed Python client for the Memory Layer HTTP API v1 (core, frozen surface)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Olivier Van Acker" }]
+dependencies = ["requests>=2.31"]
+
+[project.urls]
+Homepage = "https://www.memory-layer.dev"
+Repository = "https://github.com/3vilM33pl3/memory"
+Documentation = "https://www.memory-layer.dev/docs/reference/http-api"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/memory_layer"]
