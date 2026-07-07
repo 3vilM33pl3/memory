@@ -3,6 +3,7 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { type DemoGraphLink, type DemoGraphNode, type DemoMemory, type DemoTab, demoSnapshot, demoTabs } from "./demo-data";
+import { type DemoQueryResponse, runDemoQuery } from "./demo-search";
 
 const backendOnlyMessage = "Demo only: this action needs a running local Memory Layer service.";
 
@@ -18,7 +19,10 @@ export function WebUiDemoApp() {
   const [selectedMemoryId, setSelectedMemoryId] = useState(demoSnapshot.memories[0]?.id ?? "");
   const [showHistory, setShowHistory] = useState(false);
   const [queryText, setQueryText] = useState(demoSnapshot.query.question);
-  const [queryRan, setQueryRan] = useState(true);
+  // Real browser-local search over the snapshot (not a canned replay).
+  const [queryResponse, setQueryResponse] = useState<DemoQueryResponse>(() =>
+    runDemoQuery(demoSnapshot.query.question, demoSnapshot.memories),
+  );
   const [selectedQueryIndex, setSelectedQueryIndex] = useState(0);
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("code-graph-tab");
   const [graphLayers, setGraphLayers] = useState({ code: true, memory: true, provenance: false });
@@ -54,11 +58,13 @@ export function WebUiDemoApp() {
 
   function handleQuerySubmit(event: FormEvent) {
     event.preventDefault();
-    setQueryRan(true);
+    const response = runDemoQuery(queryText, demoSnapshot.memories);
+    setQueryResponse(response);
+    setSelectedQueryIndex(0);
     notify(
-      queryText.trim()
-        ? `Demo replayed a static query for "${queryText.trim()}".`
-        : "Demo only: live search needs a running local Memory Layer service.",
+      response.insufficientEvidence
+        ? "Searched the snapshot: not enough evidence to answer — the engine refuses instead of guessing."
+        : `Searched the snapshot for "${queryText.trim()}" (browser-local lexical ranking).`,
     );
   }
 
@@ -137,7 +143,7 @@ export function WebUiDemoApp() {
         {tab === "query" ? (
           <QueryDemo
             queryText={queryText}
-            queryRan={queryRan}
+            response={queryResponse}
             selectedQueryIndex={selectedQueryIndex}
             onQueryTextChange={setQueryText}
             onQuerySubmit={handleQuerySubmit}
@@ -322,7 +328,7 @@ function MemoriesDemo({
 
 function QueryDemo({
   queryText,
-  queryRan,
+  response,
   selectedQueryIndex,
   onQueryTextChange,
   onQuerySubmit,
@@ -331,7 +337,7 @@ function QueryDemo({
   onBackendOnly,
 }: {
   queryText: string;
-  queryRan: boolean;
+  response: DemoQueryResponse;
   selectedQueryIndex: number;
   onQueryTextChange: (value: string) => void;
   onQuerySubmit: (event: FormEvent) => void;
@@ -339,8 +345,10 @@ function QueryDemo({
   onOpenGraph: (memoryId: string) => void;
   onBackendOnly: (action: string) => void;
 }) {
-  const result = demoSnapshot.query.results[selectedQueryIndex] ?? demoSnapshot.query.results[0];
-  const memory = demoSnapshot.memories.find((item) => item.id === result.memoryId) ?? demoSnapshot.memories[0];
+  const result = response.results[selectedQueryIndex] ?? response.results[0];
+  const memory = result
+    ? demoSnapshot.memories.find((item) => item.id === result.memoryId)
+    : undefined;
   return (
     <div className="demo-stack">
       <form className="demo-panel" onSubmit={onQuerySubmit}>
@@ -349,20 +357,27 @@ function QueryDemo({
           <button type="submit">Query</button>
         </div>
         <label className="demo-check-row"><input type="checkbox" onChange={() => onBackendOnly("Stale ranking can be toggled locally, but live ranking requires the service.")} /> Include stale ranking</label>
-        {queryRan ? (
-          <div className="demo-answer">
-            <p>{demoSnapshot.query.answer}</p>
-            <div className="demo-stat-row">
-              <span>confidence {demoSnapshot.query.confidence.toFixed(2)}</span>
-              {demoSnapshot.query.diagnostics.map((line) => <span key={line}>{line}</span>)}
-            </div>
+        <div className="demo-answer">
+          <p>{response.answer}</p>
+          <div className="demo-stat-row">
+            <span>confidence {response.confidence.toFixed(2)}</span>
+            <span>{response.insufficientEvidence ? "evidence: insufficient" : "evidence: sufficient"}</span>
+            {response.diagnostics.map((line) => <span key={line}>{line}</span>)}
           </div>
-        ) : <p className="demo-muted">Run a query to inspect returned memories and diagnostics.</p>}
+        </div>
+        <p className="demo-muted">
+          This searches the snapshot in your browser with the engine&apos;s lexical contract:
+          cited answers when the evidence anchors, an honest refusal when it does not. The full
+          service adds semantic and graph retrieval on top.
+        </p>
       </form>
       <div className="demo-panel-grid">
         <section className="demo-panel">
           <div className="demo-list">
-            {demoSnapshot.query.results.map((item, index) => {
+            {response.results.length === 0 ? (
+              <p className="demo-muted">No memories matched. Try &quot;graph&quot;, &quot;release&quot;, or &quot;watcher&quot;.</p>
+            ) : null}
+            {response.results.map((item, index) => {
               const itemMemory = demoSnapshot.memories.find((candidate) => candidate.id === item.memoryId);
               return (
                 <button
@@ -383,17 +398,22 @@ function QueryDemo({
             })}
           </div>
         </section>
-        <section className="demo-panel demo-detail">
-          <div className="demo-detail-header">
-            <div>
-              <h2>{memory.summary}</h2>
-              <p>{result.match} - score {result.score.toFixed(2)}</p>
+        {result && memory ? (
+          <section className="demo-panel demo-detail">
+            <div className="demo-detail-header">
+              <div>
+                <h2>{memory.summary}</h2>
+                <p>{result.match} - score {result.score.toFixed(2)}</p>
+              </div>
+              <button type="button" onClick={() => onOpenGraph(memory.id)}>Open in Graph</button>
             </div>
-            <button type="button" onClick={() => onOpenGraph(memory.id)}>Open in Graph</button>
-          </div>
-          <MiniCard title="Why it ranked" text="tag match x2; source path match x3; graph boost 2.50; relation boost 19.76; updated recently" />
-          <MiniCard title="Snippet" text={memory.preview} />
-        </section>
+            <MiniCard
+              title="Why it ranked"
+              text={`term overlap score ${result.score.toFixed(2)}; ${result.cited ? "cited by the answer" : "returned but not cited"}; tags ${memory.tags.join(", ") || "none"}`}
+            />
+            <MiniCard title="Snippet" text={memory.preview} />
+          </section>
+        ) : null}
       </div>
     </div>
   );
