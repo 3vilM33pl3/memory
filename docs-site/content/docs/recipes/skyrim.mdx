@@ -1,0 +1,133 @@
+---
+title: "Skyrim playthrough chronicle"
+description: "Give your Skyrim playthrough a memory: saves and in-game events become queryable memories — 'where did I leave off?' now has a grounded answer."
+---
+
+# Skyrim playthrough chronicle
+
+Come back to a save after three months and the first twenty minutes is
+archaeology: who is this character, where was I going, why is there a bounty
+in Riften? This recipe wires The Elder Scrolls V: Skyrim Special Edition into
+Memory Layer so the playthrough chronicles itself, and
+
+```bash
+memory query --project skyrim --question "Where did I leave off and what was I doing?"
+```
+
+answers with citations into your own play history. Because activation decays,
+what you ask about most stays hot — the same reinforcement model your code
+memories use, applied to a save game.
+
+Everything ships in the repository under
+[`integrations/skyrim/`](https://github.com/3vilM33pl3/memory/tree/main/integrations/skyrim):
+a tiny quest mod, a bridge daemon, and build/install scripts that work on
+Linux (Steam/Proton) using the game's own Papyrus toolchain under
+`mono`/`wine`.
+
+## How it works
+
+Two data channels feed one project:
+
+1. **Save files (no mod required).** Every `.ess` save header already
+   contains the character name, level, location display name, and in-game
+   date. The bridge watches the `Saves/` folder and turns each new save into
+   a checkpoint memory, deduplicated by save number.
+
+2. **The Chronicle mod (live events).** `MemoryLayerChronicle.esp` is a
+   327-byte plugin carrying one start-game-enabled quest with a vanilla
+   Papyrus script. Every 10 seconds it polls the player and traces
+   structured events — session starts, location changes, level-ups, large
+   gold swings, combat — to a dedicated Papyrus user log. The bridge tails
+   that log and stores the interesting ones: session starts, level
+   milestones, and *first* visits to each location.
+
+No SKSE required: location identity comes from Papyrus debug strings, which
+retain editor IDs for location records (`WhiterunBanneredMareLocation` →
+"Whiterun Bannered Mare" after the bridge prettifies them). Everything stays
+on your machine.
+
+## Install
+
+Prerequisites: Skyrim SE via Steam on Linux, the (free) Creation Kit
+installed once via Steam (it provides the Papyrus compiler and script
+sources), plus `mono`, `wine`, `python3`.
+
+```bash
+cd integrations/skyrim
+./mod/build.sh     # compile the Papyrus script, generate the .esp + SEQ
+./install.sh       # copy into the game, enable Papyrus logging, activate plugin
+```
+
+The installer is additive and idempotent; `./install.sh --uninstall` removes
+it. If your Steam library lives elsewhere, set `SKYRIM_DIR` and `SKYRIM_PFX`.
+
+Then start the bridge (against your running Memory Layer service):
+
+```bash
+python3 bridge/skyrim_memory_bridge.py --project skyrim
+```
+
+It uses the Python client from `clients/python` straight out of the repo and
+reads the service API token from `MEMORY_API_TOKEN` or your provisioned
+`memory-layer.env`. Add `--base-url http://127.0.0.1:4250` if you run the dev
+stack.
+
+## Play, then ask
+
+Launch the game, play a while, save. The bridge prints each memory as it
+lands:
+
+```
+  + Skyrim session started at Bleak Falls Barrow
+  + Skyrim: first visit to Riverwood
+  + Skyrim: reached level 18
+  + Skyrim checkpoint: Sigrid at Whiterun
+```
+
+Then:
+
+```bash
+memory query --project skyrim --question "Where did I leave off in Skyrim and what level am I?"
+```
+
+> You last left off around Riverwood after resuming at Bleak Falls Barrow.
+> Your most recently recorded level is 18. [2][3]
+
+Other queries that work well: *"Which places have I discovered?"*,
+*"When did I last make real money?"*, *"How far along is this character?"* —
+and the [graph view](/docs/web-ui) shows your travels warming up as you ask.
+
+## Verify the mod is running
+
+After loading a save, check the user log the quest writes:
+
+```bash
+tail -f "<prefix>/drive_c/users/steamuser/Documents/My Games/Skyrim Special Edition/Logs/Script/User/MemoryLayer.0.log"
+```
+
+You should see `ML1|session|...` within ~15 seconds of gameplay.
+
+Troubleshooting:
+
+- **No log at all** — Papyrus logging is off: the installer appends
+  `[Papyrus] bEnableLogging=1 / bEnableTrace=1` to `SkyrimCustom.ini`; make
+  sure a launcher run didn't remove the file.
+- **Log exists but no `ML1|session`** — the plugin isn't active. The in-game
+  *Mods* menu can rewrite `Plugins.txt`; re-run `./install.sh` (it re-adds
+  the `*MemoryLayerChronicle.esp` line) or enable it in the Mods menu.
+- **Quest never starts on an existing save** — the SEQ file registers
+  start-game-enabled quests; confirm `Data/SEQ/MemoryLayerChronicle.seq`
+  exists.
+
+## Notes on design
+
+- The quest script is deliberately vanilla-only Papyrus (no SKSE, no
+  Creation-Kit-filled properties): `Game.GetPlayer()` instead of a PlayerRef
+  property, and new-session detection via `Utility.GetCurrentRealTime()`
+  running backwards after a game restart.
+- Combat events are traced but not stored one-by-one — a dungeon crawl would
+  drown the chronicle. Save checkpoints get importance 3, exploration 2,
+  gold swings 1, so retrieval naturally prefers the milestones.
+- The mod's events are episodic; the memory system's curation, decay, and
+  consolidation do the rest. A long playthrough consolidates the same way a
+  long-running codebase does.
