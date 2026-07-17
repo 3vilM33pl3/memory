@@ -13,8 +13,7 @@ pub(crate) async fn curate_memory(
             proxy_post_json(&state, "/v1/curate", &request, true).await?,
         ));
     }
-    let project = request.project.clone();
-    let mut response = if request.dry_run {
+    let response = if request.dry_run {
         preview_curate(&state.pool()?, &request)
             .await
             .map_err(ApiError::sql)?
@@ -26,6 +25,28 @@ pub(crate) async fn curate_memory(
     if request.dry_run {
         return Ok(Json(response));
     }
+    // The post-curate pipeline (embedding rebuild, semantic dedup, validation
+    // and consolidation due checks) can outlive the client's timeout on large
+    // projects. Run it in a detached task so a client disconnect — axum drops
+    // the handler future — cannot cancel it mid-flight; awaiting the handle
+    // keeps the response complete for clients that do wait.
+    let task = tokio::spawn(finish_curate(state, request, response));
+    match task.await {
+        Ok(result) => result.map(Json),
+        Err(error) => Err(ApiError::io(anyhow::anyhow!(
+            "post-curate pipeline task failed: {error}"
+        ))),
+    }
+}
+
+/// Everything that happens after the curate transaction commits: advisory
+/// passes that enrich the response but must survive client disconnects.
+async fn finish_curate(
+    state: AppState,
+    request: CurateRequest,
+    mut response: mem_api::CurateResponse,
+) -> Result<mem_api::CurateResponse, ApiError> {
+    let project = request.project.clone();
     let embedders = state.embedders.read().await;
     if !embedders.is_empty() {
         let rebuild_result = if request.raw_capture_id.is_some() {
@@ -215,7 +236,7 @@ pub(crate) async fn curate_memory(
             }),
         );
     }
-    Ok(Json(response))
+    Ok(response)
 }
 
 pub(crate) async fn project_replacement_proposals(
