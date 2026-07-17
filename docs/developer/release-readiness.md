@@ -1,31 +1,32 @@
-# v1.0 Release Readiness
+# Release Readiness
 
-Use this checklist for the `v1.0.0-rc.1` and final `v1.0.0` releases. The goal
-is a stability release, not another feature train.
+Use this checklist before tagging a Memory Layer release. The goal is to ship a
+clean tag from `main`, publish every supported installer, and leave Homebrew in a
+verifiable state.
 
 ## Release contract
 
-The v1 compatibility promise covers:
+The v1 line preserves:
 
 - stable documented CLI commands and JSON output for core workflows
 - stable global and project config file ownership
-- append-only database migrations from the latest `0.9.x` release
-- read-only MCP tools and resource/prompt surfaces
-- packaged service behavior for Debian, Homebrew, and source/dev modes
+- append-only database migrations from the latest published release
+- read-only MCP tools, resources, and prompts
+- packaged service behavior for Debian, Homebrew, macOS `.pkg`, Windows, and source/dev modes
 
-Experimental or advanced surfaces must be documented as such before v1.0:
+Experimental or advanced surfaces must be documented as such before release:
 loop automation, code graph visualization, browser demo data, and research eval
 extensions.
 
-## RC checklist
+## Pre-tag checklist
 
-Before tagging `v1.0.0-rc.1`:
-
-1. Start from a clean pushed `main`, then create `release/v1.0.0-rc.1`.
-2. Bump Cargo, web, and docs-site metadata to `1.0.0-rc.1`.
-3. Confirm `Cargo.lock`, `web/package-lock.json`, and
+1. Start from a clean pushed `main`.
+2. Choose the release version. Patch releases should normally increment from the
+   latest tag, for example `v1.0.1` after `v1.0.0`.
+3. Bump Cargo, web, and docs-site metadata to the chosen version.
+4. Confirm `Cargo.lock`, `web/package-lock.json`, and
    `docs-site/package-lock.json` match their package manifests.
-4. Run:
+5. Run:
 
    ```bash
    cargo fmt --check
@@ -36,7 +37,8 @@ Before tagging `v1.0.0-rc.1`:
    npm --prefix docs-site run build
    ```
 
-5. Run pgvector-backed database tests with:
+6. Run pgvector-backed database tests when the release touches migrations, SQL,
+   graph persistence, curation persistence, or service repository queries:
 
    ```bash
    export MEMORY_LAYER_TEST_DATABASE_URL=postgres://memory:memory@localhost:5432/memory_test
@@ -44,46 +46,76 @@ Before tagging `v1.0.0-rc.1`:
    cargo test -p mem-test-support -p mem-graph -p mem-curate -p mem-search -p mem-service --locked
    ```
 
-6. Run eval release checks:
+7. Run the eval checks relevant to the release:
 
    ```bash
    memory eval doctor --suite evals/suites/research-v1 --text
    memory eval gate --comparison target/memory-evals/comparison.json --policy evals/gates/research-v1.toml --text
-   ```
-
-   Then run the memory-quality canary (seed with
-   `evals/suites/memory-quality-v1/scripts/seed-memory.sh`, run the suite under
-   `no-memory` and `full-memory` conditions, compare, and gate). Its gate
-   enforces absolute floors — at least 90% overall candidate success and zero
-   failed `adversarial_stale` items:
-
-   ```bash
    memory eval doctor --suite evals/suites/memory-quality-v1 --text
    memory eval gate --comparison target/memory-evals/quality-comparison.json --policy evals/gates/memory-quality-v1.toml --text
    ```
 
-   Status 2026-07-05: retrieval and grounding groups pass (17/24 overall);
-   the `adversarial_stale` group fails because deterministic synthesis echoes
-   superseded facts and never refuses on weak evidence. The gate is expected
-   to stay red on that group until the synthesis fixes land (see CHANGELOG
-   "Known issues").
+8. Build the local Debian package smoke:
 
-7. Smoke test fresh install and upgrade paths for Debian, Homebrew, and source
-   dev mode.
-8. Verify core workflows manually: service, status, doctor, TUI, web UI,
-   watcher manager, stdio MCP, HTTP MCP, `memory_query`, and
-   `memory_search_all`.
+   ```bash
+   ./packaging/build-deb.sh --arch amd64
+   ```
 
-## Known release blockers
+9. Commit and push the release-prep changes before tagging.
 
-- `/v1/curate` timeout can block plan-memory closure in the current dev setup.
-- Multiple active plan memories can confuse plan completion unless a thread key
-  is passed.
-- The final release must not be tagged until the release branch passes GitHub
-  Actions and one packaged install/upgrade cycle.
+## Tag and publish
 
-## Final promotion
+1. Tag the release from the pushed commit:
 
-Promote `v1.0.0-rc.1` to `v1.0.0` only after the RC has been installed and used
-locally, all release blockers are closed or explicitly deferred in release
-notes, and the eval gate report is archived under `docs/developer/evaluation-runs/`.
+   ```bash
+   git tag v<version>
+   git push origin v<version>
+   ```
+
+2. Wait for `.github/workflows/release.yml` to finish.
+3. Verify the GitHub Release contains:
+
+   - `memory-layer_<version>_amd64.deb`
+   - `memory-layer_<version>_arm64.deb`
+   - `memory-layer-<version>-macos-x86_64.pkg`
+   - `memory-layer-<version>-macos-aarch64.pkg`
+   - `memory-layer-<version>-windows-x86_64.zip`
+   - `memory-layer-<version>-windows-x86_64.msi`
+   - `memory-<version>.tar.gz`
+   - matching `.sha256` files for every artifact
+
+4. Compute or confirm the source archive SHA256 from the published release
+   asset, then update `Formula/memory-layer.rb`.
+5. Validate the formula:
+
+   ```bash
+   ruby -c Formula/memory-layer.rb
+   ```
+
+6. Commit and push the Homebrew formula refresh.
+
+## Install smoke
+
+Smoke test at least one fresh install and one upgrade path before announcing the
+release:
+
+- Debian amd64: install `memory-layer_<version>_amd64.deb`
+- Debian arm64: install `memory-layer_<version>_arm64.deb` on a 64-bit Raspberry Pi or equivalent ARM Linux host
+- macOS: install Homebrew or the matching `.pkg`
+- Windows: install the x86_64 MSI or unzip the x86_64 ZIP
+
+For each smoke test:
+
+```bash
+memory --version
+memory doctor
+memory health
+memory status --project <project-slug>
+```
+
+## Known cautions
+
+- Do not edit already-applied database migrations.
+- Do not update the Homebrew formula before the release source tarball exists.
+- If macOS signing secrets are absent, the release may contain unsigned `.pkg`
+  files; note that in release communication.

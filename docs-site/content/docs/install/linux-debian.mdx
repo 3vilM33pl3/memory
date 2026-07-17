@@ -7,16 +7,30 @@ description: "Install the Debian package, enable the service, and verify the CLI
 
 ## What you will do
 
-Install the Debian package, configure Memory Layer, enable the backend service, and run health checks.
+Install the Debian package for your CPU architecture, configure Memory Layer,
+enable the backend service, and run health checks.
 
 ## Before you start
 
 Install PostgreSQL and pgvector first, or use a reachable PostgreSQL server with the `vector` extension enabled.
 
+Release packages are published for:
+
+- x86_64 Debian/Ubuntu: `memory-layer_<version>_amd64.deb`
+- arm64 Debian/Ubuntu: `memory-layer_<version>_arm64.deb`
+
+The arm64 package is the Raspberry Pi 4/5 path when the Pi runs a 64-bit
+Debian-family OS. 32-bit Raspberry Pi OS is not a release target yet.
+
 ## Steps
 
 ```bash
+# x86_64
 sudo dpkg -i memory-layer_<version>_amd64.deb
+
+# arm64 / Raspberry Pi 4/5 with a 64-bit OS
+sudo dpkg -i memory-layer_<version>_arm64.deb
+
 memory wizard --global
 cd /path/to/project
 memory wizard --dry-run

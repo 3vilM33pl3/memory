@@ -24,7 +24,7 @@ The workflow starts with a path filter and only runs the jobs affected by the ch
 - `DB Integration`: runs pgvector-backed migration, graph, and curation smoke tests
 - `Offline Eval Smoke`: dry-runs the bundled offline memory evaluation suite
 - `Web Build`: installs and builds the TUI/web frontend
-- `Debian Package Smoke`: builds the `.deb` package and uploads it as an artifact
+- `Debian Package Smoke`: builds amd64 and arm64 `.deb` packages and uploads them as artifacts
 
 The DB integration job runs when a pull request touches `migrations/**`, `mem-graph`, `mem-curate`, `mem-search`, `mem-service`, `mem-api`, or the shared DB test harness. It starts a `pgvector/pgvector:pg16` service and sets:
 
@@ -47,7 +47,23 @@ cargo test -p mem-test-support -p mem-graph -p mem-curate --locked
 
 `.github/workflows/release.yml` runs when a `v*` tag is pushed.
 
-It validates that the tag version matches `Cargo.toml`, `Cargo.lock`, `web/package.json`, and `web/package-lock.json`, then runs Rust validation, builds the Debian package, creates a SHA256 checksum, and publishes a GitHub Release with generated notes.
+It validates that the tag version matches `Cargo.toml`, `Cargo.lock`,
+`web/package.json`, `web/package-lock.json`, `docs-site/package.json`, and
+`docs-site/package-lock.json`, then runs Rust validation once.
+Native package jobs build and checksum the supported installer set:
+
+- Debian amd64 `.deb`
+- Debian arm64 `.deb`
+- macOS Intel `.pkg`
+- macOS Apple Silicon `.pkg`
+- Windows x86_64 `.zip` and `.msi`
+- `memory-<version>.tar.gz` source archive for Homebrew
+
+Each package job uploads workflow artifacts. A single final publish job downloads
+those artifacts, generates release notes, creates the GitHub Release, and
+uploads every package plus its `.sha256` file. Homebrew formula updates happen
+after the release archive exists, because the formula checksum must match the
+published tarball.
 
 ## Agent PR Workflow
 
@@ -67,7 +83,7 @@ Use it for parallel implementation work where a task can be isolated and reviewe
 
 ## Nightly Sweep
 
-`.github/workflows/nightly.yml` runs once per day and can also be dispatched manually. It performs a broad validation sweep across Rust, web, offline evaluation, Debian packaging, and dependency audits. Dependency audit steps are allowed to fail so audit drift is visible without hiding build regressions.
+`.github/workflows/nightly.yml` runs once per day and can also be dispatched manually. It performs a broad validation sweep across Rust, web, offline evaluation, Debian amd64/arm64 packaging, and dependency audits. Dependency audit steps are allowed to fail so audit drift is visible without hiding build regressions.
 
 ## Dependabot
 

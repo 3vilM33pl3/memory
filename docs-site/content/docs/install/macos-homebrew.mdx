@@ -1,15 +1,16 @@
 ---
-title: "macOS / Homebrew"
-description: "Install Memory Layer with Homebrew and run the first health checks."
+title: "macOS"
+description: "Install Memory Layer with Homebrew or a native .pkg and run the first health checks."
 ---
 
-# macOS / Homebrew
+# macOS
 
 ## What you will do
 
-Install Memory Layer through Homebrew, configure global and project settings, and verify the service.
+Install Memory Layer through Homebrew or the native `.pkg`, configure global and
+project settings, and verify the service.
 
-## Steps
+## Homebrew
 
 ```bash
 brew tap 3vilM33pl3/memory https://github.com/3vilM33pl3/memory
@@ -29,6 +30,31 @@ For unreleased changes, use:
 ```bash
 brew install --HEAD 3vilM33pl3/memory/memory-layer
 ```
+
+## Native .pkg
+
+GitHub Releases publish separate native installers:
+
+- Intel Mac: `memory-layer-<version>-macos-x86_64.pkg`
+- Apple Silicon Mac: `memory-layer-<version>-macos-aarch64.pkg`
+
+Download the package for your Mac, run it, then continue with the same setup
+commands:
+
+```bash
+memory wizard --global
+cd /path/to/project
+memory wizard --dry-run
+memory wizard
+memory service enable
+memory doctor
+memory health
+memory tui
+```
+
+If a release notes that the `.pkg` is unsigned, macOS may require an explicit
+Open action from Finder or System Settings. Homebrew remains the preferred path
+when you want the fewest Gatekeeper prompts.
 
 ## Verify
 

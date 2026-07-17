@@ -4,6 +4,8 @@ set -euo pipefail
 # Build a macOS .pkg installer for Memory Layer.
 # Usage:
 #   ./packaging/build-pkg.sh
+#   ./packaging/build-pkg.sh --arch x86_64
+#   ./packaging/build-pkg.sh --arch aarch64
 #   ./packaging/build-pkg.sh \
 #     --sign-app "Developer ID Application: ..." \
 #     --sign-pkg "Developer ID Installer: ..."
@@ -30,8 +32,18 @@ NOTARY_PROFILE=""
 APPLE_ID=""
 TEAM_ID=""
 APPLE_PASSWORD=""
+PKG_ARCH=""
+RUST_TARGET=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --arch)
+      PKG_ARCH="$2"
+      shift 2
+      ;;
+    --target)
+      RUST_TARGET="$2"
+      shift 2
+      ;;
     --sign)
       PKG_SIGN_IDENTITY="$2"
       shift 2
@@ -68,6 +80,36 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z "$PKG_ARCH" ]]; then
+  case "$(uname -m)" in
+    x86_64)
+      PKG_ARCH="x86_64"
+      ;;
+    arm64|aarch64)
+      PKG_ARCH="aarch64"
+      ;;
+    *)
+      echo "Unsupported macOS architecture: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+case "$PKG_ARCH" in
+  x86_64)
+    RUST_TARGET="${RUST_TARGET:-x86_64-apple-darwin}"
+    ;;
+  arm64|aarch64)
+    PKG_ARCH="aarch64"
+    RUST_TARGET="${RUST_TARGET:-aarch64-apple-darwin}"
+    ;;
+  *)
+    echo "Unsupported macOS package architecture: $PKG_ARCH" >&2
+    echo "Supported values: x86_64, aarch64" >&2
+    exit 1
+    ;;
+esac
+
 if [[ "$NOTARIZE" -eq 1 && -z "$PKG_SIGN_IDENTITY" ]]; then
   echo "Notarization requires a signed installer. Pass --sign-pkg." >&2
   exit 1
@@ -83,7 +125,8 @@ fi
 STAGE_DIR="$ROOT_DIR/target/macos-pkg"
 PAYLOAD="$STAGE_DIR/payload"
 SCRIPTS="$STAGE_DIR/scripts"
-PKG_PATH="$ROOT_DIR/target/memory-layer-${VERSION}-macos.pkg"
+PKG_PATH="$ROOT_DIR/target/memory-layer-${VERSION}-macos-${PKG_ARCH}.pkg"
+BINARY_PATH="$ROOT_DIR/target/$RUST_TARGET/release/memory"
 
 rm -rf "$STAGE_DIR"
 mkdir -p \
@@ -96,15 +139,15 @@ mkdir -p \
   "$SCRIPTS"
 
 # --- Build -----------------------------------------------------------------
-echo "Building release binary..."
-cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin memory
+echo "Building release binary for $PKG_ARCH ($RUST_TARGET)..."
+cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin memory --target "$RUST_TARGET"
 
 echo "Building web UI..."
 npm --prefix "$ROOT_DIR/web" ci
 npm --prefix "$ROOT_DIR/web" run build
 
 # --- Stage payload ----------------------------------------------------------
-install -m 0755 "$ROOT_DIR/target/release/memory" "$PAYLOAD/usr/local/bin/memory"
+install -m 0755 "$BINARY_PATH" "$PAYLOAD/usr/local/bin/memory"
 
 if [[ -n "$APP_SIGN_IDENTITY" ]]; then
   echo "Signing binary with Developer ID Application certificate..."

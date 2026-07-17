@@ -1,15 +1,50 @@
 ---
 title: "Windows"
-description: "Run Memory Layer on Windows today via Docker Desktop or WSL2; native packages are planned."
+description: "Install Memory Layer on Windows with the native x86_64 MSI/ZIP, Docker Desktop, or WSL2."
 ---
 
 # Windows
 
-Memory Layer runs on Windows today through two well-trodden routes. A native Windows package (winget/scoop) is planned but not yet shipped.
+Memory Layer publishes native Windows x86_64 release artifacts:
 
-## Recommended: Docker Desktop
+- `memory-layer-<version>-windows-x86_64.msi`
+- `memory-layer-<version>-windows-x86_64.zip`
 
-The bundled Compose stack runs unchanged under [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) (which uses WSL2 under the hood):
+Windows ARM64 is not a release target yet.
+
+## Native MSI
+
+Download the MSI from GitHub Releases and run it. The installer places
+`memory.exe`, the bundled web UI, skill templates, README, example config, and
+PowerShell completion under `Program Files\Memory Layer`.
+
+After installing:
+
+```powershell
+memory --version
+memory wizard --global
+memory doctor
+memory health
+memory tui
+```
+
+The native package does not include PostgreSQL. Use an existing PostgreSQL
+server with pgvector, a local database you manage yourself, or the bundled
+Docker Compose stack.
+
+## Portable ZIP
+
+Use the ZIP when you want to inspect or run the binary without installing the
+MSI. Extract the archive, add its directory to `PATH`, then run:
+
+```powershell
+memory --version
+memory doctor
+```
+
+## Docker Desktop
+
+The bundled Compose stack runs under [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/):
 
 ```powershell
 git clone https://github.com/3vilM33pl3/memory
@@ -17,24 +52,20 @@ cd memory
 docker compose up
 ```
 
-That brings up PostgreSQL with pgvector, the Memory Layer service (migrations applied on boot), and the web UI at [http://localhost:4040](http://localhost:4040) — keyless, no other installs. Load the showcase project from inside the container:
+That brings up PostgreSQL with pgvector, the Memory Layer service, and the web
+UI at [http://localhost:4040](http://localhost:4040). Load the showcase project
+from inside the container:
 
 ```powershell
 docker compose exec memory memory demo
 ```
 
-Then follow the [five-minute quickstart](/docs/quickstart).
+## WSL2
 
-## Full CLI experience: WSL2
+For Linux-native shell behavior, TUI workflows, and file watchers, use an Ubuntu
+[WSL2](https://learn.microsoft.com/windows/wsl/install) distribution and follow
+the [Linux / Debian install](/docs/install/linux-debian) inside it.
 
-For the complete native experience (TUI, watchers, repo-local skills) use an Ubuntu [WSL2](https://learn.microsoft.com/windows/wsl/install) distribution and follow the [Linux / Debian install](/docs/install/linux-debian) inside it — or run the one-line installer:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/3vilM33pl3/memory/main/scripts/install.sh | sh
-```
-
-Your Windows repositories are reachable from WSL2 under `/mnt/c/...`, though keeping repositories inside the WSL2 filesystem is faster and plays better with file watchers.
-
-## Native package: planned
-
-A WiX/MSI build script exists (`packaging/windows/build-windows.ps1`, targeting `x86_64-pc-windows-msvc`) but is not yet CI-built, release-tested, or published to winget/scoop. Until it is, the routes above are the supported paths. Track progress in the [GitHub repository](https://github.com/3vilM33pl3/memory).
+Repositories are reachable from WSL2 under `/mnt/c/...`, though keeping active
+repositories inside the WSL2 filesystem is faster and works better with file
+watchers.

@@ -13,14 +13,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  linux-release:
-    name: Build And Publish Linux Release
-    runs-on: ubuntu-latest
+  validate-release:
+    name: Validate Release
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
@@ -35,6 +37,8 @@ jobs:
           cargo_version="$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)"
           web_version="$(node -p "require('./web/package.json').version")"
           lock_web_version="$(node -p "require('./web/package-lock.json').version")"
+          docs_site_version="$(node -p "require('./docs-site/package.json').version")"
+          lock_docs_site_version="$(node -p "require('./docs-site/package-lock.json').version")"
           lock_mem_cli_version="$(awk '
             $0 == "name = \"mem-cli\"" { found = 1; next }
             found && /^version = / { gsub(/"/, "", $3); print $3; exit }
@@ -43,6 +47,8 @@ jobs:
           test "$cargo_version" = "$version"
           test "$web_version" = "$version"
           test "$lock_web_version" = "$version"
+          test "$docs_site_version" = "$version"
+          test "$lock_docs_site_version" = "$version"
           test "$lock_mem_cli_version" = "$version"
 
       - name: Run release validation
@@ -51,51 +57,125 @@ jobs:
           cargo test --workspace --all-targets --locked
           cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  source-release:
+    name: Build Source Archive
+    runs-on: ubuntu-24.04
+    needs: validate-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build source archive
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p target/source
+          git archive \
+            --format=tar.gz \
+            --prefix="memory-${version}/" \
+            --output="target/source/memory-${version}.tar.gz" \
+            "$GITHUB_SHA"
+          sha256sum "target/source/memory-${version}.tar.gz" > "target/source/memory-${version}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-release
+          path: target/source/*
+          if-no-files-found: error
+
+  linux-release:
+    name: Build Linux ${{ matrix.deb_arch }} Package
+    runs-on: ${{ matrix.runner }}
+    needs: validate-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            deb_arch: amd64
+            rust_target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            deb_arch: arm64
+            rust_target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - name: Build Debian package
-        run: ./packaging/build-deb.sh
+        run: ./packaging/build-deb.sh --arch "${{ matrix.deb_arch }}" --target "${{ matrix.rust_target }}"
 
-      - name: Generate checksums and notes
+      - name: Generate checksum
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          deb="target/debian/memory-layer_${version}_amd64.deb"
-          sha256sum "$deb" > "target/debian/memory-layer_${version}_amd64.deb.sha256"
+          deb="target/debian/memory-layer_${version}_${{ matrix.deb_arch }}.deb"
+          sha256sum "$deb" > "${deb}.sha256"
 
-          previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
-          {
-            echo "## Memory Layer ${GITHUB_REF_NAME}"
-            echo
-            echo "### Changes"
-            if [ -n "$previous_tag" ]; then
-              git log --pretty=format:"- %s" "${previous_tag}..${GITHUB_REF_NAME}"
-            else
-              git log --pretty=format:"- %s" -20 "${GITHUB_REF_NAME}"
-            fi
-            echo
-            echo
-            echo "### Packages"
-            echo "- Debian package: \`memory-layer_${version}_amd64.deb\`"
-            echo "- Windows ZIP: \`memory-layer-${version}-windows-x86_64.zip\`"
-            echo "- Windows MSI: \`memory-layer-${version}-windows-x86_64.msi\`"
-          } > release-notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.deb_arch }}
+          path: |
+            target/debian/memory-layer_*_${{ matrix.deb_arch }}.deb
+            target/debian/memory-layer_*_${{ matrix.deb_arch }}.deb.sha256
+          if-no-files-found: error
 
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
+  macos-release:
+    name: Build macOS ${{ matrix.pkg_arch }} Package
+    runs-on: ${{ matrix.runner }}
+    needs: validate-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26-intel
+            pkg_arch: x86_64
+            rust_target: x86_64-apple-darwin
+          - runner: macos-26
+            pkg_arch: aarch64
+            rust_target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build macOS package
+        run: ./packaging/build-pkg.sh --arch "${{ matrix.pkg_arch }}" --target "${{ matrix.rust_target }}"
+
+      - name: Generate checksum
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" \
-            "target/debian/memory-layer_${version}_amd64.deb" \
-            "target/debian/memory-layer_${version}_amd64.deb.sha256" \
-            --target "$GITHUB_SHA" \
-            --title "Memory Layer ${GITHUB_REF_NAME}" \
-            --notes-file release-notes.md
+          pkg="target/memory-layer-${version}-macos-${{ matrix.pkg_arch }}.pkg"
+          shasum -a 256 "$pkg" > "${pkg}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.pkg_arch }}
+          path: |
+            target/memory-layer-*-macos-${{ matrix.pkg_arch }}.pkg
+            target/memory-layer-*-macos-${{ matrix.pkg_arch }}.pkg.sha256
+          if-no-files-found: error
 
   windows-release:
-    name: Build And Upload Windows Release
+    name: Build Windows x86_64 Package
     runs-on: windows-latest
-    needs: linux-release
+    needs: validate-release
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -121,9 +201,64 @@ jobs:
         shell: pwsh
         run: ./packaging/windows/build-windows.ps1
 
-      - name: Upload Windows artifacts to GitHub Release
-        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: target/windows/dist/*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    needs:
+      - source-release
+      - linux-release
+      - macos-release
+      - windows-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: target/release-assets
+          merge-multiple: true
+
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          previous_tag="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          {
+            echo "## Memory Layer ${GITHUB_REF_NAME}"
+            echo
+            echo "### Changes"
+            if [ -n "$previous_tag" ]; then
+              git log --pretty=format:"- %s" "${previous_tag}..${GITHUB_REF_NAME}"
+            else
+              git log --pretty=format:"- %s" -20 "${GITHUB_REF_NAME}"
+            fi
+            echo
+            echo
+            echo "### Packages"
+            echo "- Debian x86_64: \`memory-layer_${version}_amd64.deb\`"
+            echo "- Debian arm64: \`memory-layer_${version}_arm64.deb\`"
+            echo "- macOS Intel: \`memory-layer-${version}-macos-x86_64.pkg\`"
+            echo "- macOS Apple Silicon: \`memory-layer-${version}-macos-aarch64.pkg\`"
+            echo "- Windows x86_64 ZIP: \`memory-layer-${version}-windows-x86_64.zip\`"
+            echo "- Windows x86_64 MSI: \`memory-layer-${version}-windows-x86_64.msi\`"
+            echo "- Source archive for Homebrew: \`memory-${version}.tar.gz\`"
+            echo
+            echo "Each package has a matching \`.sha256\` checksum file."
+          } > release-notes.md
+
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload $env:GITHUB_REF_NAME target/windows/dist/* --clobber
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            target/release-assets/* \
+            --target "$GITHUB_SHA" \
+            --title "Memory Layer ${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md

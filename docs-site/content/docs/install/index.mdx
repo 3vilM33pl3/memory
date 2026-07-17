@@ -11,7 +11,7 @@ The fastest paths are the [five-minute quickstart](/docs/quickstart) (Docker, no
 curl -fsSL https://raw.githubusercontent.com/3vilM33pl3/memory/main/scripts/install.sh | sh
 ```
 
-The installer detects your platform (Homebrew on macOS, the `.deb` release on Debian/Ubuntu), checks whether a PostgreSQL is reachable, and points you at the bundled Docker stack when none is found.
+The installer detects your platform (Homebrew on macOS, the matching `.deb` release on Debian/Ubuntu amd64 or arm64), checks whether a PostgreSQL is reachable, and points you at the bundled Docker stack when none is found.
 
 For a manual native install, pick your platform:
 
@@ -20,10 +20,10 @@ For a manual native install, pick your platform:
     Install the .deb package and enable the systemd service.
   </Card>
   <Card title="macOS / Homebrew" href="/docs/install/macos-homebrew">
-    Install via Homebrew and enable the background service.
+    Install via Homebrew or the native Intel/Apple Silicon .pkg.
   </Card>
   <Card title="Windows" href="/docs/install/windows">
-    Run today via Docker Desktop or WSL2; native package planned.
+    Install the native x86_64 MSI/ZIP or use Docker Desktop/WSL2.
   </Card>
 </CardGroup>
 

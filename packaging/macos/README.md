@@ -18,7 +18,9 @@ Memory Layer now supports a native macOS service model:
 Build a standalone macOS `.pkg` from the repo root:
 
 ```bash
-./packaging/build-pkg.sh                          # unsigned
+./packaging/build-pkg.sh                          # unsigned, native architecture
+./packaging/build-pkg.sh --arch x86_64            # Intel package
+./packaging/build-pkg.sh --arch aarch64           # Apple Silicon package
 ./packaging/build-pkg.sh \
   --sign-app "Developer ID Application: ..." \
   --sign-pkg "Developer ID Installer: ..."
@@ -30,7 +32,10 @@ Build a standalone macOS `.pkg` from the repo root:
 
 The `.pkg` installs to `/usr/local/` and seeds `~/Library/Application Support/memory-layer/` on first run.
 
-Output: `target/memory-layer-<version>-macos.pkg`
+Outputs:
+
+- `target/memory-layer-<version>-macos-x86_64.pkg`
+- `target/memory-layer-<version>-macos-aarch64.pkg`
 
 ## Official signing and notarization
 
@@ -62,9 +67,9 @@ Then build, sign, notarize, and staple in one pass:
 Validation:
 
 ```bash
-pkgutil --check-signature target/memory-layer-<version>-macos.pkg
-xcrun stapler validate target/memory-layer-<version>-macos.pkg
-spctl -a -vv -t install target/memory-layer-<version>-macos.pkg
+pkgutil --check-signature target/memory-layer-<version>-macos-<arch>.pkg
+xcrun stapler validate target/memory-layer-<version>-macos-<arch>.pkg
+spctl -a -vv -t install target/memory-layer-<version>-macos-<arch>.pkg
 codesign --verify --verbose=2 /usr/local/bin/memory
 ```
 
@@ -84,6 +89,10 @@ For unreleased `main` branch changes:
 ```bash
 brew install --HEAD 3vilM33pl3/memory/memory-layer
 ```
+
+Release tags publish `memory-<version>.tar.gz` as the Homebrew source archive.
+Refresh `Formula/memory-layer.rb` only after that archive exists on the GitHub
+release and its SHA256 has been verified.
 
 After install:
 

@@ -12,7 +12,7 @@ The v1 line aims to preserve:
 - global config, project config, and repo-local skill locations
 - append-only database migrations; already-applied migrations must not be edited
 - read-only MCP query, search, resume, resource, and prompt tools
-- packaged service behavior for Debian and Homebrew installs
+- packaged service behavior for Debian, Homebrew, macOS `.pkg`, and Windows x86_64 installs
 - source/dev isolation from the installed service profile
 
 Compatibility does not mean every experimental feature is frozen. Advanced
@@ -54,13 +54,29 @@ memory upgrade --dry-run
 Run `memory upgrade` only after reviewing the dry run because it can refresh
 repo-local `.agents/` skills and instructions.
 
-## Known v1.0 release-candidate blockers
+## Release artifacts
 
-- Plan-memory completion can fail if `/v1/curate` times out.
-- Repositories with several active plan memories may need explicit
-  `--thread-key` when finishing a plan.
-- Final v1.0 should only be tagged after packaged install and upgrade testing
-  passes for the release candidate.
+GitHub Releases publish the supported native installer set:
+
+- Debian x86_64: `memory-layer_<version>_amd64.deb`
+- Debian arm64: `memory-layer_<version>_arm64.deb`
+- macOS Intel: `memory-layer-<version>-macos-x86_64.pkg`
+- macOS Apple Silicon: `memory-layer-<version>-macos-aarch64.pkg`
+- Windows x86_64: `memory-layer-<version>-windows-x86_64.msi`
+- Windows x86_64 portable archive: `memory-layer-<version>-windows-x86_64.zip`
+
+The Debian arm64 package targets 64-bit ARM Linux, including Raspberry Pi 4/5
+systems running a 64-bit Debian-family OS. Windows ARM64 and 32-bit Raspberry Pi
+OS are not release targets yet.
+
+## Release cautions
+
+- Run `memory doctor` and `memory health` after every package upgrade.
+- Review `memory upgrade --dry-run` before refreshing repo-local skills or
+  instructions.
+- Verify the installer architecture before installing: Debian publishes `amd64`
+  and `arm64`, macOS publishes Intel and Apple Silicon packages, and Windows
+  publishes x86_64 packages.
 
 ## Next
 

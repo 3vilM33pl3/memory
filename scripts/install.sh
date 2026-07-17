@@ -5,7 +5,7 @@
 #
 # What it does:
 #   - macOS:               installs via the Homebrew tap
-#   - Debian/Ubuntu amd64: downloads and installs the latest .deb release
+#   - Debian/Ubuntu:       downloads the latest amd64 or arm64 .deb release
 #   - anything else:       points at the Docker Compose stack or source build
 #
 # After the binary is installed it checks for a reachable PostgreSQL and, when
@@ -55,10 +55,16 @@ Darwin)
     next_steps
     ;;
 Linux)
-    if command -v dpkg >/dev/null 2>&1 && [ "$arch" = "x86_64" ]; then
+    deb_arch=""
+    case "$arch" in
+        x86_64|amd64) deb_arch="amd64" ;;
+        aarch64|arm64) deb_arch="arm64" ;;
+    esac
+
+    if command -v dpkg >/dev/null 2>&1 && [ -n "$deb_arch" ]; then
         head_line "Installing Memory Layer from the latest .deb release"
         api="https://api.github.com/repos/$REPO/releases/latest"
-        deb_url="$(curl -fsSL "$api" | grep -o 'https://[^"]*_amd64\.deb' | head -1)"
+        deb_url="$(curl -fsSL "$api" | grep -o "https://[^\"]*_${deb_arch}\\.deb\"" | sed 's/"$//' | head -1)"
         [ -n "$deb_url" ] || fail "could not find a .deb asset in the latest release"
         tmp="$(mktemp -d)"
         trap 'rm -rf "$tmp"' EXIT
@@ -73,6 +79,10 @@ Linux)
         next_steps
     else
         head_line "No prebuilt package for $os/$arch yet"
+        if command -v dpkg >/dev/null 2>&1; then
+            say "Prebuilt Debian packages are currently published for amd64 and arm64."
+            say ""
+        fi
         say "Two good options:"
         say ""
         say "  Docker (recommended — nothing else to install):"

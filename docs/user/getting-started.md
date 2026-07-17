@@ -176,7 +176,9 @@ GitHub Releases: https://github.com/3vilM33pl3/memory/releases
 ## Linux / Debian path
 
 1. Download the latest Memory Layer `.deb` from https://github.com/3vilM33pl3/memory/releases.
-2. Install it with `sudo dpkg -i memory-layer_<version>_amd64.deb`.
+2. Install the package for the machine architecture:
+   - x86_64: `sudo dpkg -i memory-layer_<version>_amd64.deb`
+   - arm64 / Raspberry Pi 4/5 with a 64-bit OS: `sudo dpkg -i memory-layer_<version>_arm64.deb`
 3. Prepare PostgreSQL before configuring Memory Layer:
    - If using a hosted/existing database, verify that it accepts connections from this machine and supports pgvector.
    - If creating a local database, install PostgreSQL and the matching pgvector package for the server major version, for example `postgresql-16-pgvector` when the server is PostgreSQL 16.
@@ -255,7 +257,11 @@ Report which repo-local files were created or preserved, the project slug, backe
 2. Install it:
 
 ```bash
+# x86_64
 sudo dpkg -i memory-layer_<version>_amd64.deb
+
+# arm64, including Raspberry Pi 4/5 with a 64-bit OS
+sudo dpkg -i memory-layer_<version>_arm64.deb
 ```
 
 3. Create the PostgreSQL database and prepare pgvector using the [PostgreSQL Requirement](#postgresql-requirement) section. Do not continue until these commands work:

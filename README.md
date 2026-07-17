@@ -112,7 +112,7 @@ memory wizard
 Debian:
 
 ```bash
-sudo dpkg -i memory-layer_<version>_amd64.deb
+sudo dpkg -i memory-layer_<version>_<amd64-or-arm64>.deb
 memory wizard --global
 cd /path/to/your-project
 memory wizard --dry-run
@@ -174,7 +174,9 @@ GitHub Releases: https://github.com/3vilM33pl3/memory/releases
 ## Linux / Debian path
 
 1. Download the latest Memory Layer `.deb` from https://github.com/3vilM33pl3/memory/releases.
-2. Install it with `sudo dpkg -i memory-layer_<version>_amd64.deb`.
+2. Install the package for your architecture:
+   - x86_64: `sudo dpkg -i memory-layer_<version>_amd64.deb`
+   - arm64 / Raspberry Pi 4/5 with a 64-bit OS: `sudo dpkg -i memory-layer_<version>_arm64.deb`
 3. Prepare PostgreSQL before configuring Memory Layer:
    - If using a hosted/existing database, verify that it accepts connections from this machine and supports pgvector.
    - If creating a local database, install PostgreSQL and the matching pgvector package for the server major version, for example `postgresql-16-pgvector` when the server is PostgreSQL 16.
