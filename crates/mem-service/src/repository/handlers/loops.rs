@@ -350,7 +350,10 @@ pub(crate) async fn run_loop(
     let response = create_control_plane_loop_run(&state.pool()?, &loop_id, &request).await?;
     // Consolidation is the one LLM-backed loop: after the deterministic report
     // is stored, synthesize insight proposals when enabled and not dry-run.
-    // Runs where the LLM or a cluster fails are logged, never fatal.
+    // Runs where the LLM or a cluster fails are logged, never fatal. The work
+    // is spawned so a client disconnect (axum drops the handler future) cannot
+    // cancel synthesis mid-flight; the await keeps the success path synchronous
+    // so proposals are queued before the response returns.
     if loop_id == mem_loops::LOOP_MEMORY_CONSOLIDATION
         && state.config.consolidation.enabled
         && !state.config.consolidation.dry_run
@@ -358,10 +361,21 @@ pub(crate) async fn run_loop(
         && let Some(project) = request.project.as_deref()
     {
         let run_id = Some(response.run.summary.id);
-        if let Err(error) =
-            crate::consolidate::emit_consolidation_proposals(&state, project, run_id).await
-        {
-            tracing::warn!(error = %error, "consolidation proposal emission failed");
+        let spawn_state = state.clone();
+        let spawn_project = project.to_string();
+        let emission = tokio::spawn(async move {
+            if let Err(error) = crate::consolidate::emit_consolidation_proposals(
+                &spawn_state,
+                &spawn_project,
+                run_id,
+            )
+            .await
+            {
+                tracing::warn!(error = %error, "consolidation proposal emission failed");
+            }
+        });
+        if let Err(error) = emission.await {
+            tracing::warn!(error = %error, "consolidation proposal emission task failed");
         }
     }
     Ok(Json(response))

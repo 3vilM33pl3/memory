@@ -234,6 +234,8 @@ fn root_command_doc_name(command_name: &str) -> Option<&'static str> {
         "capture" => Some("capture.md"),
         "remember" => Some("remember.md"),
         "curate" => Some("curate.md"),
+        "consolidate" => Some("consolidate.md"),
+        "structure" => Some("structure.md"),
         "proposals" => Some("proposals.md"),
         "scores" => Some("scores.md"),
         "validate" => Some("validate.md"),

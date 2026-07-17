@@ -971,6 +971,33 @@ Examples:
 See also:
   docs/user/cli/curate.md";
 
+const CONSOLIDATE_AFTER_HELP: &str = "\
+Agent notes:
+  Convenience over the memory_consolidation loop: discovers clusters of related
+  memories and (unless --dry-run) synthesizes human-gated insight proposals.
+  Nothing is written to memory until a proposal is approved.
+
+Examples:
+  memory consolidate --project memory --dry-run
+  memory consolidate --project memory
+  memory loops memory-proposals --project memory --status pending
+
+See also:
+  docs/user/cli/consolidate.md";
+
+const STRUCTURE_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only view of the project's meta-memory structure: the committed insight
+  tree (summarizes relations, recursive across tiers) plus the clusters the
+  deterministic consolidation scan would propose right now. No LLM calls.
+
+Examples:
+  memory structure --project memory
+  memory structure --project memory --json
+
+See also:
+  docs/user/cli/structure.md";
+
 const SCORES_AFTER_HELP: &str = "\
 Agent notes:
   Read-only view of reinforcement activation scores (access-driven memory strength).
@@ -1291,6 +1318,10 @@ pub(in crate::commands) enum Command {
     Ingest(IngestArgs),
     #[command(about = "Review pending memory replacement proposals.", after_help = PROPOSALS_GROUP_AFTER_HELP)]
     Proposals(ProposalsArgs),
+    #[command(about = "Consolidate related memories into insight proposals.", after_help = CONSOLIDATE_AFTER_HELP)]
+    Consolidate(ConsolidateArgs),
+    #[command(about = "Show the insight tree and discovered consolidation groups.", after_help = STRUCTURE_AFTER_HELP)]
+    Structure(StructureArgs),
     #[command(about = "Review pending validation corrections.", after_help = REVIEW_GROUP_AFTER_HELP)]
     Review(ReviewArgs),
     #[command(about = "Archive low-signal memories by confidence and importance.", after_help = ARCHIVE_AFTER_HELP)]
@@ -2670,6 +2701,29 @@ pub(in crate::commands) struct ProposalsResolveArgs {
 }
 
 #[derive(Debug, Args)]
+pub(in crate::commands) struct ConsolidateArgs {
+    /// Project slug (defaults to the current repository's project).
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    /// Run the deterministic cluster scan only; queue no proposals.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+    /// Emit the run detail as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct StructureArgs {
+    /// Project slug (defaults to the current repository's project).
+    #[arg(long)]
+    pub(crate) project: Option<String>,
+    /// Emit the response as JSON.
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
 pub(in crate::commands) struct ScoresArgs {
     /// Project slug to inspect.
     #[arg(long)]
@@ -3446,6 +3500,14 @@ pub(super) async fn run() -> Result<()> {
         Command::Proposals(args) => {
             let api = ApiClient::new(client, config);
             crate::commands::proposals::handle(args, &api).await?;
+        }
+        Command::Consolidate(args) => {
+            let api = ApiClient::new(client, config);
+            crate::commands::consolidate::handle(args, &api).await?;
+        }
+        Command::Structure(args) => {
+            let api = ApiClient::new(client, config);
+            crate::commands::structure::handle(args, &api).await?;
         }
         Command::Scores(args) => {
             let api = ApiClient::new(client, config);

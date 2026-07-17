@@ -970,18 +970,29 @@ impl ApiClient {
         loop_id: &str,
         request: &LoopRunRequest,
     ) -> Result<LoopRunResponse> {
-        get_json(
-            self.client
-                .post(service_url(
-                    &self.config,
-                    &format!("/v1/loops/{loop_id}/run"),
-                ))
-                .headers(write_headers(&self.config)?)
-                .json(request)
-                .send()
-                .await?,
-        )
-        .await
+        self.loop_run_with_timeout(loop_id, request, None).await
+    }
+
+    /// `timeout` overrides the client-wide request timeout for runs that do
+    /// synchronous LLM work server-side (e.g. consolidation synthesis).
+    pub(crate) async fn loop_run_with_timeout(
+        &self,
+        loop_id: &str,
+        request: &LoopRunRequest,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<LoopRunResponse> {
+        let mut builder = self
+            .client
+            .post(service_url(
+                &self.config,
+                &format!("/v1/loops/{loop_id}/run"),
+            ))
+            .headers(write_headers(&self.config)?)
+            .json(request);
+        if let Some(timeout) = timeout {
+            builder = builder.timeout(timeout);
+        }
+        get_json(builder.send().await?).await
     }
 
     pub(crate) async fn loop_runs(
@@ -1178,6 +1189,22 @@ impl ApiClient {
                 ))
                 .headers(write_headers(&self.config)?)
                 .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn project_structure(
+        &self,
+        project: &str,
+    ) -> Result<mem_api::ProjectStructureResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/structure"),
+                ))
                 .send()
                 .await?,
         )

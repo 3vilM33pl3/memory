@@ -1260,6 +1260,63 @@ pub struct ConsolidationDueInfo {
     pub trigger: String,
 }
 
+/// The project's meta-memory structure: currently discovered consolidation
+/// groups plus the committed insight tree (`summarizes` relations, recursive
+/// across tiers).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectStructureResponse {
+    pub project: String,
+    /// Clusters the deterministic scan discovers right now (value gate passed,
+    /// not yet covered by an insight) — what consolidation would propose next.
+    #[serde(default)]
+    pub groups: Vec<StructureGroupInfo>,
+    /// Community-detection candidates considered in this scan.
+    #[serde(default)]
+    pub candidate_count: usize,
+    /// Candidates rejected by the value gate.
+    #[serde(default)]
+    pub rejected_count: usize,
+    /// Candidates skipped because an existing insight already covers them.
+    #[serde(default)]
+    pub covered_count: usize,
+    /// Roots of the committed insight tree: insights not themselves summarized
+    /// by another insight, with their members nested recursively.
+    #[serde(default)]
+    pub insights: Vec<StructureInsightNode>,
+}
+
+/// One currently discovered (uncommitted) consolidation group.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructureGroupInfo {
+    pub size: usize,
+    /// `salient` (use) or `cold_dense` (non-use).
+    pub trigger: String,
+    pub intra_density: f64,
+    pub coaccess_mass: f64,
+    pub activation_mass: f64,
+    pub members: Vec<StructureMemberInfo>,
+}
+
+/// A memory referenced from the structure view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructureMemberInfo {
+    pub canonical_id: Uuid,
+    pub summary: String,
+    pub memory_type: String,
+}
+
+/// One node of the insight tree: an insight with everything it `summarizes`.
+/// Children that are themselves insights recurse into deeper tiers; leaf
+/// children carry an empty `children` list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructureInsightNode {
+    pub canonical_id: Uuid,
+    pub summary: String,
+    pub memory_type: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<StructureInsightNode>,
+}
+
 /// Reinforcement score state for one memory, as exposed by the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryScoreInfo {

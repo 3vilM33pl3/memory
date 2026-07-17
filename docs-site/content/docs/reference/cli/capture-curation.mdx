@@ -72,6 +72,19 @@ memory proposals reject  --project memory --id <uuid> --json
 
 Approve only when the replacement is better supported and more current. Reject when the old memory remains correct or the proposal lacks enough evidence.
 
+## `memory consolidate` and `memory structure`
+
+Consolidation discovers clusters of related memories and synthesizes each accepted cluster into a higher-level [insight memory](/docs/how-it-works/consolidation) — always as a human-gated proposal, never a direct write.
+
+```bash
+memory consolidate --project memory --dry-run   # deterministic scan, no LLM
+memory consolidate --project memory             # scan + synthesize proposals
+memory loops memory-proposals --project memory --status pending
+memory structure --project memory               # insight tree + discovered groups
+```
+
+`memory structure` is the read-only view of the result: the committed insight tree (`summarizes` relations, recursive across tiers) plus the clusters a scan would currently propose. Requires the `memory_consolidation` loop to be enabled for non-dry runs.
+
 ## `memory archive` and `memory prune-history`
 
 Archive hides low-signal memories without deleting their audit trail. Prune removes old versions and tombstones according to retention rules.

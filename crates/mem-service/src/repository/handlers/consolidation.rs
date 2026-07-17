@@ -29,6 +29,7 @@ struct MemoryRow {
     canonical_id: Uuid,
     summary: String,
     canonical_text: String,
+    memory_type: String,
     activation: f64,
 }
 
@@ -48,6 +49,10 @@ pub(crate) struct ClusterMember {
     pub canonical_id: Uuid,
     pub summary: String,
     pub canonical_text: String,
+    /// Defaulted so reports stored in `loop_runs.output_json` before this
+    /// field existed still deserialize.
+    #[serde(default)]
+    pub memory_type: String,
     pub activation: f64,
 }
 
@@ -206,6 +211,7 @@ pub(crate) async fn run_memory_consolidation(
                 canonical_id: m.canonical_id,
                 summary: m.summary.clone(),
                 canonical_text: m.canonical_text.clone(),
+                memory_type: m.memory_type.clone(),
                 activation: m.activation,
             })
             .collect();
@@ -299,6 +305,7 @@ async fn fetch_active_memories(
             m.canonical_id,
             m.summary,
             m.canonical_text,
+            m.memory_type,
             COALESCE(
                 s.activation * power(
                     0.5,
@@ -333,6 +340,7 @@ async fn fetch_active_memories(
                 canonical_id: row.try_get("canonical_id")?,
                 summary: row.try_get("summary")?,
                 canonical_text: row.try_get("canonical_text")?,
+                memory_type: row.try_get("memory_type")?,
                 activation: row.try_get("activation")?,
             })
         })
@@ -484,6 +492,213 @@ async fn fetch_insight_coverage(
     Ok(coverage.into_values().collect())
 }
 
+/// One `summarizes` edge with the display fields of both ends, deduplicated
+/// across memory versions.
+#[derive(Debug, Clone)]
+struct SummarizesEdge {
+    insight_id: Uuid,
+    insight_summary: String,
+    member_id: Uuid,
+    member_summary: String,
+    member_type: String,
+}
+
+/// Fetches the committed insight tree for a project: every active `insight`
+/// memory with the active memories it `summarizes`, nested recursively across
+/// tiers (an insight summarized by another insight becomes a child subtree).
+/// Returns the roots — insights not summarized by any other insight.
+pub(crate) async fn fetch_insight_tree(
+    pool: &PgPool,
+    project: &str,
+) -> Result<Vec<mem_api::StructureInsightNode>, ApiError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT DISTINCT
+            src.canonical_id AS insight_id,
+            src.summary AS insight_summary,
+            dst.canonical_id AS member_id,
+            dst.summary AS member_summary,
+            dst.memory_type AS member_type
+        FROM memory_relations rel
+        JOIN memory_entries src ON src.id = rel.src_memory_id
+        JOIN memory_entries dst ON dst.id = rel.dst_memory_id
+        JOIN projects p ON p.id = src.project_id
+        WHERE rel.relation_type = 'summarizes'
+          AND p.slug = $1
+          AND src.memory_type = 'insight'
+          AND src.status = 'active'
+          AND COALESCE(src.is_tombstone, false) = false
+          AND dst.status = 'active'
+          AND COALESCE(dst.is_tombstone, false) = false
+        "#,
+    )
+    .bind(project)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::sql)?;
+
+    let edges = rows
+        .into_iter()
+        .map(|row| {
+            Ok(SummarizesEdge {
+                insight_id: row.try_get("insight_id")?,
+                insight_summary: row.try_get("insight_summary")?,
+                member_id: row.try_get("member_id")?,
+                member_summary: row.try_get("member_summary")?,
+                member_type: row.try_get("member_type")?,
+            })
+        })
+        .collect::<Result<Vec<_>, sqlx::Error>>()
+        .map_err(ApiError::sql)?;
+    Ok(build_insight_tree(&edges))
+}
+
+/// Pure tree assembly from `summarizes` edges: roots are insights that never
+/// appear as a member of another insight; children sort by summary for stable
+/// output. A visited-set guards against relation cycles.
+fn build_insight_tree(edges: &[SummarizesEdge]) -> Vec<mem_api::StructureInsightNode> {
+    let mut members: BTreeMap<Uuid, Vec<&SummarizesEdge>> = BTreeMap::new();
+    let mut summaries: BTreeMap<Uuid, &str> = BTreeMap::new();
+    let mut summarized: BTreeSet<Uuid> = BTreeSet::new();
+    for edge in edges {
+        members.entry(edge.insight_id).or_default().push(edge);
+        summaries.insert(edge.insight_id, edge.insight_summary.as_str());
+        summarized.insert(edge.member_id);
+    }
+
+    fn build(
+        insight_id: Uuid,
+        members: &BTreeMap<Uuid, Vec<&SummarizesEdge>>,
+        visited: &mut BTreeSet<Uuid>,
+    ) -> Vec<mem_api::StructureInsightNode> {
+        let Some(edges) = members.get(&insight_id) else {
+            return Vec::new();
+        };
+        let mut children: Vec<mem_api::StructureInsightNode> = edges
+            .iter()
+            .map(|edge| {
+                let grandchildren =
+                    if members.contains_key(&edge.member_id) && visited.insert(edge.member_id) {
+                        let nodes = build(edge.member_id, members, visited);
+                        visited.remove(&edge.member_id);
+                        nodes
+                    } else {
+                        Vec::new()
+                    };
+                mem_api::StructureInsightNode {
+                    canonical_id: edge.member_id,
+                    summary: edge.member_summary.clone(),
+                    memory_type: edge.member_type.clone(),
+                    children: grandchildren,
+                }
+            })
+            .collect();
+        children.sort_by(|a, b| {
+            a.summary
+                .cmp(&b.summary)
+                .then(a.canonical_id.cmp(&b.canonical_id))
+        });
+        children
+    }
+
+    let mut roots: Vec<mem_api::StructureInsightNode> = members
+        .keys()
+        .filter(|id| !summarized.contains(id))
+        .map(|&id| {
+            let mut visited = BTreeSet::from([id]);
+            mem_api::StructureInsightNode {
+                canonical_id: id,
+                summary: summaries.get(&id).copied().unwrap_or_default().to_string(),
+                memory_type: "insight".to_string(),
+                children: build(id, &members, &mut visited),
+            }
+        })
+        .collect();
+    // Cycles with no root would otherwise vanish; surface each cycle once via
+    // its smallest id.
+    if roots.is_empty() && !members.is_empty() {
+        let mut visited: BTreeSet<Uuid> = BTreeSet::new();
+        for (&id, _) in members.iter() {
+            if visited.contains(&id) {
+                continue;
+            }
+            visited.insert(id);
+            let mut inner = BTreeSet::from([id]);
+            roots.push(mem_api::StructureInsightNode {
+                canonical_id: id,
+                summary: summaries.get(&id).copied().unwrap_or_default().to_string(),
+                memory_type: "insight".to_string(),
+                children: build(id, &members, &mut inner),
+            });
+            collect_ids(roots.last().expect("just pushed"), &mut visited);
+        }
+    }
+    roots.sort_by(|a, b| {
+        a.summary
+            .cmp(&b.summary)
+            .then(a.canonical_id.cmp(&b.canonical_id))
+    });
+    roots
+}
+
+fn collect_ids(node: &mem_api::StructureInsightNode, into: &mut BTreeSet<Uuid>) {
+    into.insert(node.canonical_id);
+    for child in &node.children {
+        collect_ids(child, into);
+    }
+}
+
+/// `GET /v1/projects/{project}/structure` — the meta-memory structure view:
+/// a fresh deterministic consolidation scan (current groups, no LLM) plus the
+/// committed insight tree. Read-only; mirrors `memory_scores` in shape.
+pub(crate) async fn project_structure(
+    axum::extract::State(state): axum::extract::State<crate::state::AppState>,
+    axum::extract::Path(project): axum::extract::Path<String>,
+) -> Result<axum::Json<mem_api::ProjectStructureResponse>, ApiError> {
+    if !state.is_primary() {
+        return Ok(axum::Json(
+            crate::repository::stream::proxy_get_json(
+                &state,
+                &format!("/v1/projects/{project}/structure"),
+            )
+            .await?,
+        ));
+    }
+    let pool = state.pool()?;
+    let half_life_secs = state.config.reinforcement.half_life.as_secs_f64().max(1.0);
+    let report =
+        run_memory_consolidation(&pool, &project, &state.config.consolidation, half_life_secs)
+            .await?;
+    let insights = fetch_insight_tree(&pool, &project).await?;
+    Ok(axum::Json(mem_api::ProjectStructureResponse {
+        project,
+        groups: report
+            .accepted
+            .iter()
+            .map(|cluster| mem_api::StructureGroupInfo {
+                size: cluster.size,
+                trigger: cluster.trigger.clone(),
+                intra_density: cluster.intra_density,
+                coaccess_mass: cluster.coaccess_mass,
+                activation_mass: cluster.activation_mass,
+                members: cluster
+                    .members
+                    .iter()
+                    .map(|member| mem_api::StructureMemberInfo {
+                        canonical_id: member.canonical_id,
+                        summary: member.summary.clone(),
+                        memory_type: member.memory_type.clone(),
+                    })
+                    .collect(),
+            })
+            .collect(),
+        candidate_count: report.candidate_count,
+        rejected_count: report.rejected_count,
+        covered_count: report.covered_skipped,
+        insights,
+    }))
+}
+
 /// Convenience wrapper that runs consolidation with the default half-life when
 /// the caller has no reinforcement config in scope.
 pub(crate) async fn run_memory_consolidation_default(
@@ -512,6 +727,15 @@ mod tests {
     }
 
     async fn seed_memory(pool: &PgPool, project_id: Uuid, summary: &str) -> Uuid {
+        seed_typed_memory(pool, project_id, summary, "reference").await
+    }
+
+    async fn seed_typed_memory(
+        pool: &PgPool,
+        project_id: Uuid,
+        summary: &str,
+        memory_type: &str,
+    ) -> Uuid {
         let id = Uuid::new_v4();
         sqlx::query(
             r#"
@@ -519,17 +743,29 @@ mod tests {
                 (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
                  summary, memory_type, scope, importance, confidence, status,
                  created_at, updated_at, search_document)
-            VALUES ($1, $2, $1, 1, false, $3, $3, 'reference', 'project', 3, 0.9,
+            VALUES ($1, $2, $1, 1, false, $3, $3, $4, 'project', 3, 0.9,
                     'active', now(), now(), to_tsvector('english', $3))
             "#,
         )
         .bind(id)
         .bind(project_id)
         .bind(summary)
+        .bind(memory_type)
         .execute(pool)
         .await
         .expect("insert memory");
         id
+    }
+
+    async fn seed_summarizes(pool: &PgPool, src: Uuid, dst: Uuid) {
+        sqlx::query(
+            "INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id) VALUES (gen_random_uuid(), $1, 'summarizes', $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(src)
+        .bind(dst)
+        .execute(pool)
+        .await
+        .expect("insert summarizes relation");
     }
 
     async fn seed_relation(pool: &PgPool, src: Uuid, dst: Uuid) {
@@ -604,6 +840,63 @@ mod tests {
             assert_eq!(cluster.trigger, "salient");
             assert!(cluster.intra_density >= 0.99);
         }
+
+        mem_test_support::cleanup_project(&pool, &slug)
+            .await
+            .expect("cleanup project");
+    }
+
+    #[tokio::test]
+    async fn insight_tree_nests_tiers_and_roots_at_top_insight() {
+        let Some(pool) = mem_test_support::migrated_pool().await else {
+            return;
+        };
+        let slug = mem_test_support::unique_project_slug("structure-db");
+        mem_test_support::cleanup_project(&pool, &slug)
+            .await
+            .expect("cleanup old project");
+        let project_id = seed_project(&pool, &slug).await;
+
+        // tier-2 insight summarizes a tier-1 insight and one leaf; the tier-1
+        // insight summarizes two leaves.
+        let leaf_a = seed_memory(&pool, project_id, "leaf alpha").await;
+        let leaf_b = seed_memory(&pool, project_id, "leaf beta").await;
+        let leaf_c = seed_memory(&pool, project_id, "leaf gamma").await;
+        let tier1 = seed_typed_memory(&pool, project_id, "tier-1 insight", "insight").await;
+        let tier2 = seed_typed_memory(&pool, project_id, "tier-2 insight", "insight").await;
+        seed_summarizes(&pool, tier1, leaf_a).await;
+        seed_summarizes(&pool, tier1, leaf_b).await;
+        seed_summarizes(&pool, tier2, tier1).await;
+        seed_summarizes(&pool, tier2, leaf_c).await;
+
+        let roots = fetch_insight_tree(&pool, &slug).await.expect("fetch tree");
+        assert_eq!(roots.len(), 1, "only the top insight is a root");
+        let root = &roots[0];
+        assert_eq!(root.canonical_id, tier2);
+        assert_eq!(root.memory_type, "insight");
+        assert_eq!(root.children.len(), 2);
+
+        let nested = root
+            .children
+            .iter()
+            .find(|child| child.canonical_id == tier1)
+            .expect("tier-1 insight nested under tier-2");
+        assert_eq!(nested.memory_type, "insight");
+        assert_eq!(
+            nested
+                .children
+                .iter()
+                .map(|child| child.canonical_id)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([leaf_a, leaf_b])
+        );
+        let leaf = root
+            .children
+            .iter()
+            .find(|child| child.canonical_id == leaf_c)
+            .expect("leaf under root");
+        assert!(leaf.children.is_empty());
+        assert_eq!(leaf.memory_type, "reference");
 
         mem_test_support::cleanup_project(&pool, &slug)
             .await

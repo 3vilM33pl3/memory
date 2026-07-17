@@ -1101,6 +1101,23 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+  /v1/projects/{project}/structure:
+    parameters:
+      - name: project
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: get_v1_projects_project_structure
+      summary: "Meta-memory structure: discovered consolidation groups plus the committed insight tree."
+      tags: ["Projects"]
+      x-stability: internal
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
   /v1/projects/{project}/validation-runs:
     parameters:
       - name: project
