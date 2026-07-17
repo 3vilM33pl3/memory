@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+## 1.0.1 - 2026-07-17
+
 ### Added
 
+- Multi-platform release packaging: release tags now build Debian `amd64` and
+  `arm64` packages, macOS Intel and Apple Silicon `.pkg` installers, Windows
+  x86_64 MSI/ZIP artifacts, checksums, and a source archive for Homebrew.
 - Procedural utility learning (ACT-R production utility, ADR-0003): each
   automation loop learns a per-project utility from proposal decisions via
   the delta rule (approve +1.0, edited-approve +0.4, reject −1.0, cited
