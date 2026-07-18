@@ -1,0 +1,102 @@
+---
+title: "Lesson 3 · Consolidation"
+description: "Many related episodes become one general insight. Students run the real consolidation scan, inspect discovered clusters, and debate the human gate."
+---
+
+# Lesson 3 — Consolidation
+
+**Duration:** ~45 min · **Mode:** per-student sandboxes (writes on) or a
+teacher-driven shared project · **Instrument:** `memory structure`,
+`memory consolidate --dry-run`, and the Memories tab
+
+## Learning objectives
+
+1. Explain systems consolidation: episodic detail becomes general knowledge.
+2. Describe how a machine can *discover* structure in memories it was never
+   told about (clustering on relations, similarity, and co-access).
+3. Argue for or against human gates on machine-generated knowledge.
+
+## The science in one paragraph
+
+Brains keep two learning systems: a fast one that records episodes and a
+slow one that gradually extracts what episodes share (McClelland,
+McNaughton & O'Reilly, 1995 — complementary learning systems). New facts
+consolidate dramatically faster when they attach to an existing *schema*
+(Tse et al., 2007). Memory Layer mirrors this: atomic memories are the fast
+store; a consolidation pass fuses three usage signals — explicit relations,
+text similarity, and *which memories get retrieved together* — into one
+weighted graph, finds communities in it, and a **value gate** accepts only
+clusters that are cohesive and either heavily used (`salient`) or dense but
+neglected (`cold_dense`). Each accepted cluster is synthesized into a
+higher-level `insight` memory — always as a human-gated proposal. The
+[consolidation](/docs/how-it-works/consolidation) page holds the full
+mechanism and citations.
+
+## Prep (5 min)
+
+For the hands-on variant each student needs a sandbox:
+`./classroom/seed.sh <name>` with writes enabled. For the teacher-driven
+variant, one shared project on the projector is enough. A terminal with the
+`memory` CLI (or `docker compose exec memory memory …`).
+
+## Guided activity
+
+**1. The hidden structure (10 min).** Run the read-only structure view:
+
+```bash
+memory structure --project classroom
+```
+
+It prints the clusters the deterministic scan discovers *right now*, with
+their value-gate metrics (size, density, co-access, activation mass) —
+plus the insight tree, which is empty on a fresh corpus. Ask students what
+the members of a discovered group have in common, and which of the three
+signals (linked, similar, used-together) most plausibly grouped them.
+Nice detail: two lessons of class queries have been feeding the co-access
+signal — the class has been *creating* today's input all week.
+
+**2. The value gate (8 min).** Not every cluster deserves an insight —
+consolidating noise adds noise. On the board, list the gate's checks:
+big enough, cohesive enough, and *worth it* — either salient (heavily
+used) or cold-but-dense (compressible). Map to human sleep: the day's
+rehearsed and the day's coherent-but-unprocessed both consolidate.
+
+**3. Dry run, then the real thing (12 min).**
+
+```bash
+memory consolidate --project classroom --dry-run
+```
+
+shows exactly what would be proposed, no LLM involved. With a configured
+LLM (teacher machine), run it for real: the accepted cluster becomes a
+**pending proposal** — a draft insight naming the unifying concept, the
+tensions between members, and the open gaps. Show the proposal queue:
+
+```bash
+memory loops memory-proposals --project classroom --status pending
+```
+
+**4. The human gate debate (10 min).** The system will *never* write an
+insight without approval. Split the class: one side argues the gate is
+essential (hallucination risk, provenance, accountability), the other that
+it can't scale (who reviews ten thousand insights?). Land on the design's
+actual position: every durable state change is a reviewable, revertible
+proposal — the seeded corpus itself contains an `insight` memory saying
+exactly that. Have students find it in the Memories tab.
+
+**5. Tiers (5 min).** Insights are themselves memories: later passes can
+consolidate insights into higher-tier insights — a schema tree that grows
+with the project (the reflection-tree idea from Park et al., 2023). Show
+`memory structure` again on a mature project if one is available.
+
+## Exit ticket
+
+*"Describe one 'insight memory' your brain has consolidated — the general
+lesson, plus two of the specific episodes it was built from."*
+
+## References
+
+- McClelland, J. L., McNaughton, B. L. & O'Reilly, R. C. (1995). Why there are complementary learning systems in the hippocampus and neocortex. *Psychological Review*, 102(3).
+- Tse, D. et al. (2007). Schemas and memory consolidation. *Science*, 316(5821).
+- Park, J. S. et al. (2023). Generative Agents: Interactive Simulacra of Human Behavior. arXiv:2304.03442 — reflection trees.
+- Raghavan, U. N., Albert, R. & Kumara, S. (2007). Near linear time algorithm to detect community structures. arXiv:0709.2938 — the clustering used here.

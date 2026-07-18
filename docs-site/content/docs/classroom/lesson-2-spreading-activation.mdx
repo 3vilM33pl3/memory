@@ -1,0 +1,76 @@
+---
+title: "Lesson 2 · Spreading activation"
+description: "Recalling one memory warms up its neighbors. Students trigger pulses on the live graph and trace how activation flows along links, halving per hop."
+---
+
+# Lesson 2 — Spreading activation
+
+**Duration:** ~45 min · **Mode:** shared read-only project (`classroom`) ·
+**Instrument:** the Graph tab's pulse animation and link structure
+
+## Learning objectives
+
+1. Explain spreading activation: recall propagates along associative links.
+2. Predict which "neighbor" concepts a retrieval will warm up.
+3. Connect priming effects in humans to graph-based retrieval in machines.
+
+## The science in one paragraph
+
+Hearing *doctor* makes you faster to recognize *nurse* — that's priming,
+and Collins & Loftus (1975) explained it with a semantic network where
+activating one node sends activation flowing outward along links, weaker
+with distance. Anderson (1983) built the same mechanism into ACT-R. Memory
+Layer's graph is a real semantic network: when a memory is used, a boost
+also flows to memories linked to it — **halving per hop and split across a
+hub's links**, so tight clusters warm together but a heavily connected hub
+cannot inflate everything it touches. Retrieval itself is graph-aware:
+results can include memories reached through links, not just direct text
+matches.
+
+## Prep (2 min)
+
+Same setup as lesson 1. The graph already carries some heat from the
+previous lesson — useful, mention it.
+
+## Guided activity
+
+**1. See the network (5 min).** On the projector, click any memory node.
+Watch the pulse particles travel outward along its links — that animation
+is the spreading-activation mechanism drawn literally. The links exist
+because curation recorded real relations (same topic, same evidence,
+supersedes, summarizes).
+
+**2. Predict, then fire (15 min).** Pick a well-connected node (the
+consolidation memory works well). Students write down which two neighbors
+they predict will warm up if the class queries about it. Then everyone
+asks variations of *"What does the value gate decide?"* / *"When does
+consolidation trigger?"*. Refresh: check predictions against the graph.
+The neighbors warmed **without being cited** — activation reached them
+through links alone.
+
+**3. Hops and halving (8 min).** Use the graph's depth stepper to expand
+one and then two hops from the hot node. Board math: a boost of 1.0
+becomes 0.5 one hop out, 0.25 two hops out — and is *also divided across
+the hub's links*. Ask: why divide? (Otherwise a hub with fifty links would
+smear activation everywhere and destroy the ranking signal.)
+
+**4. Human priming tie-back (10 min).** Classic word-pair demos
+(*bread → butter*; *ocean → ?*). The class experiences priming, then maps
+it onto what they just watched: cue = query, node = memory, link =
+association, warmth = readiness to recall.
+
+**5. Where it pays off (5 min).** Show one query whose answer includes a
+memory that doesn't share the question's words. Graph-aware retrieval
+found it through the network — the machine equivalent of "that reminds
+me of…".
+
+## Exit ticket
+
+*"Give one example from your life where remembering A made you remember B,
+and name the link between them."*
+
+## References
+
+- Collins, A. M. & Loftus, E. F. (1975). A spreading-activation theory of semantic processing. *Psychological Review*, 82(6).
+- Anderson, J. R. (1983). A spreading activation theory of memory. *Journal of Verbal Learning and Verbal Behavior*, 22(3).
+- Meyer, D. E. & Schvaneveldt, R. W. (1971). Facilitation in recognizing pairs of words. *Journal of Experimental Psychology*, 90(2) — the priming effect.

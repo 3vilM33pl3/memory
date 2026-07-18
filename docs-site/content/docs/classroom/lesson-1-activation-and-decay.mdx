@@ -1,0 +1,82 @@
+---
+title: "Lesson 1 · Activation and decay"
+description: "Memories strengthen with use and fade without it. Students watch a live forgetting curve: querying heats nodes up, time cools them down."
+---
+
+# Lesson 1 — Activation and decay
+
+**Duration:** ~45 min · **Mode:** shared read-only project (`classroom`) ·
+**Instrument:** the web UI Graph and Query tabs
+
+## Learning objectives
+
+By the end, students can:
+
+1. Explain *activation* as a use-dependent strength score on a memory.
+2. Describe exponential decay and connect it to human forgetting curves.
+3. Predict which memories a system (or a person) will recall fastest, and why.
+
+## The science in one paragraph
+
+Human memory retrieval is use-dependent: the more often and more recently
+something was needed, the faster it comes back. Ebbinghaus measured the
+forgetting curve in 1885; a century later, Anderson & Schooler (1991) showed
+retrieval odds track the statistics of the environment, and ACT-R
+(Anderson et al., 2004) formalized it: each memory chunk carries an
+*activation* value that grows with use and decays with time. Memory Layer
+implements exactly this — every query result boosts a memory's activation
+(citations in an answer boost more), and between uses the score decays
+exponentially with a 30-day half-life. The [self-maintaining
+memory](/docs/how-it-works/reinforcement) page documents the mechanism.
+
+## Prep (2 min)
+
+Stack up, `classroom` seeded, student mode on. Projector on the **Graph**
+tab with the Code and Provenance layers toggled off, Memory layer on.
+
+## Guided activity
+
+**1. Read the instrument (5 min).** Node size and warmth encode decayed
+activation. Freshly seeded, the corpus is nearly uniform — this is the
+"before" picture. Ask students to nominate which memory *should* become
+hottest if the class spends an hour asking about reinforcement.
+
+**2. Heat something up (10 min).** Every student, on their own machine,
+opens the **Query** tab and asks three questions of their choice about how
+the system remembers, e.g.:
+
+- *"How does reinforcement work?"*
+- *"What happens to memories that are never used?"*
+- *"What does a good memory look like?"*
+
+Each answer cites its evidence. Point out that every citation just boosted
+that memory's activation — the class is collectively rehearsing.
+
+**3. Observe (5 min).** Refresh the Graph tab on the projector. The cited
+memories are now visibly larger and warmer than the rest. Click one and
+read its activation value; compare with an unqueried memory near zero.
+
+**4. Decay thought experiment (10 min).** The system's half-life is 30
+days: an untouched memory keeps half its activation after a month, a
+quarter after two. Sketch the curve on the board and have students plot
+where "yesterday's password" and "your childhood phone number" sit on
+their own curves — rehearsal count vs. recency.
+
+**5. Why forget at all? (10 min discussion).** Storage is cheap; the
+system could keep everything equally strong. Ask why it deliberately lets
+things fade. Target insight: *retrieval is a ranking problem* — forgetting
+is how both brains and this system keep the relevant things on top
+(Anderson & Schooler's "rational analysis" argument). Note the saturation
+rule: activation breaks ties but is capped so popularity can never beat
+relevance.
+
+## Exit ticket
+
+One sentence: *"Name something you remember effortlessly and explain its
+activation in terms of use and recency."*
+
+## References
+
+- Ebbinghaus, H. (1885). *Über das Gedächtnis* — the original forgetting curves.
+- Anderson, J. R. & Schooler, L. J. (1991). Reflections of the environment in memory. *Psychological Science*, 2(6).
+- Anderson, J. R. et al. (2004). An integrated theory of the mind. *Psychological Review*, 111(4) — ACT-R.

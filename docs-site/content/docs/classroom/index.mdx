@@ -1,0 +1,69 @@
+---
+title: "Classroom"
+description: "Teach real cognitive science with a live memory system: a keyless single-machine pack and three lessons where the graph visualization is the lab instrument."
+---
+
+# Memory Layer in the classroom
+
+Memory Layer implements ideas lifted directly from the cognitive science of
+memory — ACT-R activation, exponential forgetting, spreading activation,
+complementary learning systems. That makes it an unusual teaching asset: the
+software is a **working model of the theory**, and the live graph
+visualization is the lab instrument. Students don't read about forgetting
+curves; they watch nodes cool down.
+
+Three lessons, each ~45 minutes, each built around observable behavior:
+
+<CardGroup cols={3}>
+  <Card title="Lesson 1 · Activation & decay" href="/docs/classroom/lesson-1-activation-and-decay">
+    Memories strengthen with use and fade without it — watch it happen.
+  </Card>
+  <Card title="Lesson 2 · Spreading activation" href="/docs/classroom/lesson-2-spreading-activation">
+    Recalling one thing warms up its neighbors — pulses on a real graph.
+  </Card>
+  <Card title="Lesson 3 · Consolidation" href="/docs/classroom/lesson-3-consolidation">
+    Many episodes become one insight — clusters, value gates, human approval.
+  </Card>
+</CardGroup>
+
+## The classroom pack
+
+Everything runs on **one machine with Docker, no cloud, no API keys, and no
+per-student accounts**. The pack lives in the repository under
+[`classroom/`](https://github.com/3vilM33pl3/memory/tree/main/classroom):
+a compose overlay, a seed script for the shared exercise project, a teacher
+README, and a printable student worksheet.
+
+```bash
+docker compose -f compose.yaml -f classroom/compose.classroom.yaml up -d
+./classroom/seed.sh
+# students open http://localhost:4040, project "classroom"
+```
+
+Two class modes:
+
+- **Shared read-only set** (lessons 1–2): start the stack with
+  `CLASSROOM_READ_ONLY=true` and the service enters *student mode* — every
+  write is rejected with a clear message, the web UI shows a banner, and
+  nobody can break the exercise set. Queries still reinforce activation,
+  deliberately: the class collectively heats up the graph, which is the
+  observable at the heart of lesson 1.
+- **Per-student sandboxes** (lesson 3): writes on, one project per student
+  (`./classroom/seed.sh alice`). Projects are isolated namespaces.
+
+## Why keyless matters here
+
+In keyless mode retrieval is lexical and answers are extractive with
+citations and honest refusals. Nothing needs an account, no student data
+leaves the machine, and the behavior is deterministic — the same query
+produces the same evidence, which is what you want in a lesson. LLM
+synthesis is an optional upgrade, not a prerequisite.
+
+## Prep checklist
+
+- [ ] Docker installed, repository cloned, pack seeded (10 minutes).
+- [ ] Projector showing the web UI Graph tab, project `classroom`.
+- [ ] `worksheet.md` printed, one per student or pair.
+- [ ] Skim the [reinforcement](/docs/how-it-works/reinforcement) and
+      [consolidation](/docs/how-it-works/consolidation) pages — every
+      mechanism the lessons use is documented there with its citations.
