@@ -1,0 +1,11 @@
+# Classroom overlay for the bundled stack. Use together with the root compose:
+#
+#   docker compose -f compose.yaml -f classroom/compose.classroom.yaml up -d
+#
+# CLASSROOM_READ_ONLY=true locks the service into student mode: every
+# mutating endpoint returns 403 while queries, briefings, and the web UI
+# keep working. Seed the exercise project BEFORE enabling it (see seed.sh).
+services:
+  memory:
+    environment:
+      MEMORY_LAYER__SERVICE__READ_ONLY: ${CLASSROOM_READ_ONLY:-false}
