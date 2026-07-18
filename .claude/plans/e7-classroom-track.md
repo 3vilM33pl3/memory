@@ -73,13 +73,13 @@ ticket; Linear In Progress → Done with closing comments; epic 3VI-788 Done at
 the end; push; `memory remember`.
 
 ## Checklist
-- [ ] 3VI-821: ServiceConfig.read_only + read_only_guard middleware + allowlist unit tests
-- [ ] 3VI-821: read_only on /v1/web/auth-token + web student-mode banner
-- [ ] 3VI-821: live dev-stack verification (write blocked 403, query/resume allowed)
-- [ ] 3VI-820: classroom/ pack (README, compose overlay, seed.sh, worksheet)
-- [ ] 3VI-820: seed script verified against a running stack
-- [ ] 3VI-822: docs-site classroom section (index + 3 lessons) + meta.json, build green
-- [ ] 3VI-823: ADR 0006 shared-classroom spike decision doc
-- [ ] Workspace fmt/clippy/tests green; one commit per ticket; push
-- [ ] Linear: 820–823 Done with closing comments; epic 3VI-788 Done
-- [ ] memory remember
+- [x] 3VI-821: ServiceConfig.read_only + read_only_guard middleware + allowlist unit tests
+- [x] 3VI-821: read_only on /v1/web/auth-token + web student-mode banner
+- [x] 3VI-821: live dev-stack verification (write blocked 403, query/resume allowed)
+- [x] 3VI-820: classroom/ pack (README, compose overlay, seed.sh, worksheet)
+- [x] 3VI-820: seed script verified against a running stack
+- [x] 3VI-822: docs-site classroom section (index + 3 lessons) + meta.json, build green
+- [x] 3VI-823: ADR 0006 shared-classroom spike decision doc
+- [x] Workspace fmt/clippy/tests green; one commit per ticket; push
+- [x] Linear: 820–823 Done with closing comments; epic 3VI-788 Done
+- [x] memory remember
