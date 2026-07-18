@@ -36,12 +36,16 @@ pub(crate) async fn offline_pending(
 pub(crate) struct WebAuthTokenResponse {
     pub(crate) api_token: String,
     pub(crate) header: &'static str,
+    /// True when the service runs in read-only (student) mode, so the web UI
+    /// can surface the mode instead of surfacing 403s on write attempts.
+    pub(crate) read_only: bool,
 }
 
 pub(crate) async fn web_auth_token(
     State(state): State<AppState>,
 ) -> Result<Json<WebAuthTokenResponse>, ApiError> {
     Ok(Json(WebAuthTokenResponse {
+        read_only: state.config.service.read_only,
         api_token: state.api_token,
         header: "x-api-token",
     }))

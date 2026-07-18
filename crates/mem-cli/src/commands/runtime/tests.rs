@@ -2386,6 +2386,7 @@ fn test_app_config() -> AppConfig {
             web_root: None,
             api_token: "ml_testtoken".to_string(),
             request_timeout: Duration::from_secs(30),
+            read_only: false,
         },
         mcp: mem_api::McpConfig::default(),
         database: mem_api::DatabaseConfig {

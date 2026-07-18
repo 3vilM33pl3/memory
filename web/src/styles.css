@@ -61,6 +61,15 @@ select {
   padding: 0.55rem;
 }
 
+.read-only-banner {
+  margin-bottom: 0.45rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--accent-2);
+  border-radius: 4px;
+  color: var(--accent-2);
+  font-size: 0.85rem;
+}
+
 .topbar,
 .status-strip,
 .tabs,

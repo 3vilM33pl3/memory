@@ -4540,6 +4540,38 @@ pub struct ServiceConfig {
     #[serde(default = "default_request_timeout")]
     #[serde(with = "humantime_serde")]
     pub request_timeout: Duration,
+    /// Student / kiosk mode: reject every mutating HTTP endpoint while
+    /// keeping reads, queries, and briefings available. Activation still
+    /// evolves with use (reinforcement is internal); only content writes are
+    /// blocked. Env override: `MEMORY_LAYER__SERVICE__READ_ONLY=true`.
+    #[serde(default, deserialize_with = "deserialize_env_bool")]
+    pub read_only: bool,
+}
+
+/// Bool that also accepts the string forms the env config source produces
+/// (`MEMORY_LAYER__…=true` arrives as the string "true", not a boolean).
+fn deserialize_env_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum FlexibleBool {
+        Bool(bool),
+        Int(i64),
+        Text(String),
+    }
+    match FlexibleBool::deserialize(deserializer)? {
+        FlexibleBool::Bool(value) => Ok(value),
+        FlexibleBool::Int(value) => Ok(value != 0),
+        FlexibleBool::Text(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Ok(true),
+            "false" | "0" | "no" | "off" | "" => Ok(false),
+            other => Err(serde::de::Error::custom(format!(
+                "invalid boolean value: {other:?}"
+            ))),
+        },
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

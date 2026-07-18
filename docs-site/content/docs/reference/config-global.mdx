@@ -24,7 +24,7 @@ The env file is loaded next to the config file and is the right place for genera
 
 | Section | Purpose |
 | --- | --- |
-| `[service]` | HTTP bind address, Cap'n Proto endpoints, API token, request timeout, optional web root. |
+| `[service]` | HTTP bind address, Cap'n Proto endpoints, API token, request timeout, optional web root, and `read_only` (student mode: every mutating endpoint returns 403 while queries, briefings, and exports keep working — see the [classroom pack](/docs/classroom)). |
 | `[mcp]` | Built-in MCP enablement, HTTP path, token requirement, read-only mode. |
 | `[database]` | PostgreSQL URL. The database must already exist and have `vector` enabled. |
 | `[cluster]` | Local-network primary/relay discovery and service identity. |

@@ -225,6 +225,10 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
             "/v1/agents/workspaces/{workspace_id}/finish",
             post(finish_agent_workspace),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::read_only_guard,
+        ))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 

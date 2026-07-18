@@ -51,9 +51,22 @@ import type {
 interface WebAuthTokenResponse {
   api_token: string;
   header: "x-api-token";
+  read_only?: boolean;
 }
 
 let webAuthTokenPromise: Promise<string> | null = null;
+let serviceReadOnly = false;
+
+/** True when the service reported read-only (student) mode on token bootstrap. */
+export function isServiceReadOnly(): boolean {
+  return serviceReadOnly;
+}
+
+/** Resolves the read-only flag after the auth-token bootstrap completes. */
+export async function fetchServiceReadOnly(): Promise<boolean> {
+  await getWebAuthToken();
+  return serviceReadOnly;
+}
 
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -65,7 +78,10 @@ async function parseJson<T>(response: Response): Promise<T> {
 async function getWebAuthToken(): Promise<string> {
   if (!webAuthTokenPromise) {
     webAuthTokenPromise = parseJson<WebAuthTokenResponse>(await fetch("/v1/web/auth-token"))
-      .then((payload) => payload.api_token)
+      .then((payload) => {
+        serviceReadOnly = payload.read_only === true;
+        return payload.api_token;
+      })
       .catch((error) => {
         webAuthTokenPromise = null;
         throw error;

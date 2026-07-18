@@ -911,6 +911,7 @@ mod tests {
                 web_root: None,
                 api_token: "ml_testtoken".to_string(),
                 request_timeout: std::time::Duration::from_secs(30),
+                read_only: false,
             },
             mcp: mem_api::McpConfig::default(),
             database: mem_api::DatabaseConfig {

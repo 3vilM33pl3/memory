@@ -1,4 +1,6 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
+
+import { fetchServiceReadOnly } from "./api";
 
 import { HelpPanel } from "./components/HelpPanel";
 import { RuntimeSkillsStatus } from "./components/RuntimeSkillsStatus";
@@ -191,8 +193,27 @@ export default function App() {
     statusMessage,
   } = useAppShell();
 
+  const [serviceReadOnly, setServiceReadOnly] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetchServiceReadOnly()
+      .then((readOnly) => {
+        if (!cancelled) setServiceReadOnly(readOnly);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="app-shell">
+      {serviceReadOnly && (
+        <div className="read-only-banner" role="status">
+          Student mode — this Memory Layer is read-only. Explore and query freely; nothing you do
+          can change the memory set.
+        </div>
+      )}
       <header className="topbar">
         <div>
           <h1>Memory Layer Web</h1>

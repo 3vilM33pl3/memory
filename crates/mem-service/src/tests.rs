@@ -944,11 +944,13 @@ fn web_auth_token_response_names_x_api_token_header() {
     let response = WebAuthTokenResponse {
         api_token: "service-token".to_string(),
         header: "x-api-token",
+        read_only: false,
     };
 
     let json = serde_json::to_value(&response).expect("serialize response");
     assert_eq!(json["api_token"], "service-token");
     assert_eq!(json["header"], "x-api-token");
+    assert_eq!(json["read_only"], false);
 }
 
 #[test]
