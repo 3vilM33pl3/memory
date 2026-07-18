@@ -1031,6 +1031,13 @@ fn rank_candidate(
     };
 
     let term_overlap = lexical_overlap_ratio(&combined_text, &intent.lexical_terms);
+    let content_terms: Vec<String> = intent
+        .lexical_terms
+        .iter()
+        .filter(|term| !is_stopword(term))
+        .cloned()
+        .collect();
+    let content_term_overlap = lexical_overlap_ratio(&combined_text, &content_terms);
     let tag_match_count = candidate
         .tags
         .iter()
@@ -1214,6 +1221,7 @@ fn rank_candidate(
             semantic_similarity: candidate.semantic_similarity,
             exact_phrase_matches,
             term_overlap,
+            content_term_overlap,
             tag_match_count,
             path_match_count,
             relation_boost,
@@ -1272,16 +1280,24 @@ struct QueryAnswerSynthesis {
     answer_citations: Vec<QueryAnswerCitation>,
 }
 
+/// Tokens that carry no topical content: articles, copulas, prepositions,
+/// and the question words natural-language queries are built from.
+const STOPWORDS: &[&str] = &[
+    "the", "a", "an", "is", "are", "was", "were", "be", "for", "of", "on", "in", "to", "and", "or",
+    "as", "at", "by", "with", "since", "after", "before", "it", "its", "that", "this", "not", "no",
+    "how", "what", "when", "where", "why", "who", "which", "do", "does", "did", "can", "could",
+    "should", "would", "will", "we", "you", "your", "our", "my", "me",
+];
+
+fn is_stopword(term: &str) -> bool {
+    STOPWORDS.contains(&term)
+}
+
 /// Content-bearing tokens of a summary, for topic comparison between results.
 fn topic_tokens(text: &str) -> HashSet<String> {
-    const STOPWORDS: &[&str] = &[
-        "the", "a", "an", "is", "are", "was", "were", "be", "for", "of", "on", "in", "to", "and",
-        "or", "as", "at", "by", "with", "since", "after", "before", "it", "its", "that", "this",
-        "not", "no",
-    ];
     text.to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
-        .filter(|token| token.len() >= 2 && !STOPWORDS.contains(token))
+        .filter(|token| token.len() >= 2 && !is_stopword(token))
         .map(str::to_string)
         .collect()
 }
@@ -1337,8 +1353,13 @@ fn synthesize_answer(results: &[QueryResult]) -> QueryAnswerSynthesis {
     // are deliberately not an anchor: they use substring matching and misfire
     // on short question terms. Thresholds tuned against memory-quality-v1:
     // legitimate answers sit at overlap >= 0.55 or similarity >= 0.60;
-    // off-topic tops sit below both.
+    // off-topic tops sit below both. Content-term overlap is the keyless
+    // anchor: natural questions ("how does X work?") are mostly stopwords,
+    // so raw overlap understates anchorage exactly where semantic similarity
+    // is unavailable; matching at least half of the content-bearing terms
+    // anchors the result.
     let weakly_matched = top.debug.term_overlap < 0.55
+        && top.debug.content_term_overlap < 0.5
         && top.debug.semantic_similarity < 0.60
         && top.debug.exact_phrase_matches == 0;
 
@@ -1966,11 +1987,48 @@ mod tests {
         // phrase or tag anchor.
         let mut result = synthesis_result("The bridge gateway listens on port 7420.", 8.0, 0.95);
         result.debug.term_overlap = 0.28;
+        result.debug.content_term_overlap = 0.0;
         result.debug.semantic_similarity = 0.4;
         result.score_explanation = vec!["term overlap 28%".to_string()];
 
         let synthesis = synthesize_answer(&[result]);
         assert!(synthesis.insufficient_evidence);
+    }
+
+    #[test]
+    fn synthesize_answer_accepts_content_anchored_keyless_match() {
+        // Keyless natural-language question: "How does reinforcement work?"
+        // Raw overlap is dragged down by stopwords (how/does) and semantic
+        // similarity is 0 without embeddings, but the content terms anchor
+        // the result — this must answer, not refuse.
+        let mut result = synthesis_result(
+            "Reinforcement raises activation on use, spreads to links, and decays over time.",
+            5.8,
+            0.9,
+        );
+        result.debug.term_overlap = 0.25;
+        result.debug.content_term_overlap = 0.5;
+        result.debug.semantic_similarity = 0.0;
+        result.debug.exact_phrase_matches = 0;
+        result.score_explanation = vec!["term overlap 25%".to_string()];
+
+        let synthesis = synthesize_answer(&[result]);
+        assert!(!synthesis.insufficient_evidence);
+        assert!(synthesis.answer.contains("Reinforcement raises activation"));
+        assert_eq!(synthesis.answer_citations.len(), 1);
+    }
+
+    #[test]
+    fn content_term_overlap_ignores_question_stopwords() {
+        let terms = extract_lexical_terms("how does reinforcement work");
+        let content: Vec<String> = terms
+            .iter()
+            .filter(|term| !is_stopword(term))
+            .cloned()
+            .collect();
+        assert_eq!(content, vec!["reinforcement", "work"]);
+        let text = "retrieval strengthens memories: act-r-grounded reinforcement decays over time";
+        assert!(lexical_overlap_ratio(text, &content) >= 0.5);
     }
 
     #[test]

@@ -1022,6 +1022,11 @@ pub struct QueryResultDebug {
     pub exact_phrase_matches: usize,
     #[serde(default)]
     pub term_overlap: f64,
+    /// Overlap over content-bearing query terms only (stopwords removed).
+    /// Natural-language questions are mostly stopwords, so this is the
+    /// anchor signal `term_overlap` understates.
+    #[serde(default)]
+    pub content_term_overlap: f64,
     #[serde(default)]
     pub tag_match_count: usize,
     #[serde(default)]
