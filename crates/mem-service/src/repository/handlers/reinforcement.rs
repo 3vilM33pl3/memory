@@ -147,7 +147,7 @@ async fn validate_candidate(
     let provider = crate::reinforcement::ServiceVerdictProvider {
         state: state.clone(),
     };
-    let outcome = mem_reinforce::run_validation(
+    let outcome = mem_reinforce::run_validation_with_scope(
         pool,
         candidate,
         &provider,
@@ -389,7 +389,7 @@ pub(crate) async fn validate_memory(
     let provider = crate::reinforcement::ServiceVerdictProvider {
         state: state.clone(),
     };
-    let outcome = mem_reinforce::run_validation(
+    let outcome = mem_reinforce::run_validation_with_scope(
         &pool,
         &candidate,
         &provider,

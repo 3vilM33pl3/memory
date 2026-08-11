@@ -80,6 +80,24 @@ pub async fn run_validation(
     provider: &dyn VerdictProvider,
     policy: &ValidationPolicy,
     trigger: ValidationTrigger,
+) -> Result<ValidationOutcome> {
+    run_validation_with_scope(
+        pool,
+        candidate,
+        provider,
+        policy,
+        trigger,
+        mem_api::ValidationProofScope::SourceFilesFirst,
+    )
+    .await
+}
+
+pub async fn run_validation_with_scope(
+    pool: &PgPool,
+    candidate: &ValidationCandidate,
+    provider: &dyn VerdictProvider,
+    policy: &ValidationPolicy,
+    trigger: ValidationTrigger,
     proof_scope: mem_api::ValidationProofScope,
 ) -> Result<ValidationOutcome> {
     let run_id = insert_validation_run(
@@ -92,8 +110,7 @@ pub async fn run_validation(
     )
     .await?;
 
-    let outcome =
-        execute_validation(pool, candidate, provider, policy, run_id, proof_scope).await;
+    let outcome = execute_validation(pool, candidate, provider, policy, run_id, proof_scope).await;
     if let Err(error) = &outcome {
         fail_validation_run(pool, run_id, &format!("{error:#}")).await?;
         set_validation_cooldown(

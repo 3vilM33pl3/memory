@@ -17,6 +17,10 @@ memory validate <memory-id> --execute  # allow policy actions to apply
 memory validate <memory-id> --execute --json
 ```
 
+The TUI Memories tab uses the same endpoint in preview mode. Press `v` on a
+selected memory to run a dry-run proof search, inspect evidence, and see any
+suggested replacement as a diff before applying it.
+
 ## Outcomes
 
 - `revalidated` — the memory is accurate and clearly worded; its
@@ -30,6 +34,19 @@ memory validate <memory-id> --execute --json
   the memory is flagged and rank-penalized, and content is never modified.
 
 Dry runs report the same outcomes as `would_*` actions.
+
+## Proof Scope
+
+API callers can pass `proof_scope`:
+
+- `source_files_first` checks recorded provenance files, related memories, and
+  git history.
+- `whole_repo_scan` performs a bounded scan across tracked repository files.
+- `hybrid_fallback` starts with recorded sources and scans the repository only
+  if the first verdict is ambiguous or unsupported.
+
+The validation response includes stance-tagged evidence rows and whether the
+fallback scan was used.
 
 Validation requires `reinforcement.validation_enabled = true` for the
 background scheduler; the manual command works whenever reinforcement is

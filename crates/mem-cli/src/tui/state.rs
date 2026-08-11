@@ -13,6 +13,7 @@ use mem_api::{
     MemoryStatus, MemoryType, Profile, ProjectMemoriesResponse, ProjectMemoryListItem,
     ProjectOverviewResponse, QueryRequest, QueryResponse, ReplacementPolicy,
     ReplacementProposalListResponse, ReplacementProposalRecord, ResumeResponse, UpToSpeedResponse,
+    ValidationRunInfo,
 };
 use ratatui::widgets::TableState;
 use serde::Deserialize;
@@ -87,6 +88,16 @@ pub(super) struct MemoriesTabState {
     pub(in crate::tui) table_state: TableState,
     pub(in crate::tui) memories_focus: MemoriesFocus,
     pub(in crate::tui) memory_detail_scroll: u16,
+    pub(in crate::tui) validation: MemoryValidationState,
+}
+
+#[derive(Clone, Default)]
+pub(super) struct MemoryValidationState {
+    pub(in crate::tui) memory_id: Option<uuid::Uuid>,
+    pub(in crate::tui) run: Option<ValidationRunInfo>,
+    pub(in crate::tui) loading: bool,
+    pub(in crate::tui) applying: bool,
+    pub(in crate::tui) error: Option<String>,
 }
 
 pub(super) struct QueryTabState {
@@ -450,6 +461,10 @@ pub(super) enum BackgroundEvent {
         request_id: u64,
         memory_id: String,
         detail: Box<Result<MemoryEntryResponse, String>>,
+    },
+    MemoryValidationCompleted {
+        memory_id: uuid::Uuid,
+        result: Box<Result<ValidationRunInfo, String>>,
     },
 }
 

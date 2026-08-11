@@ -452,6 +452,7 @@ impl App {
                 table_state,
                 memories_focus: MemoriesFocus::List,
                 memory_detail_scroll: 0,
+                validation: MemoryValidationState::default(),
             },
             query: QueryTabState {
                 query_text: String::new(),
@@ -615,6 +616,7 @@ impl App {
             UiStatus::Busy
         };
         self.memories.selected_detail = None;
+        self.memories.validation = MemoryValidationState::default();
         self.review.replacement_policy =
             load_repo_replacement_policy(&self.repo_root).unwrap_or_default();
     }
@@ -1411,6 +1413,9 @@ impl App {
                 memory_id,
                 detail,
             } => self.apply_query_detail_loaded(request_id, memory_id, *detail),
+            BackgroundEvent::MemoryValidationCompleted { memory_id, result } => {
+                self.apply_memory_validation_completed(memory_id, *result)
+            }
         }
     }
 
@@ -1802,6 +1807,21 @@ impl App {
             KeyCode::End if self.active_tab == TabKind::Memories => {
                 self.scroll_memory_detail_end();
             }
+            KeyCode::Char('v')
+                if key.modifiers.is_empty() && self.active_tab == TabKind::Memories =>
+            {
+                self.start_selected_memory_validation(api);
+            }
+            KeyCode::Char('y')
+                if key.modifiers.is_empty() && self.active_tab == TabKind::Memories =>
+            {
+                self.apply_selected_validation_preview(api).await?;
+            }
+            KeyCode::Char('n')
+                if key.modifiers.is_empty() && self.active_tab == TabKind::Memories =>
+            {
+                self.dismiss_selected_validation_preview();
+            }
             KeyCode::Enter if self.active_tab == TabKind::Memories => {
                 self.toggle_memories_focus();
             }
@@ -2072,6 +2092,119 @@ impl App {
                 self.chrome.status_message = format!("History unavailable: {error}");
             }
         }
+    }
+
+    fn start_selected_memory_validation(&mut self, api: &ApiClient) {
+        let Some(memory_id) = self.selected_memory_id() else {
+            self.chrome.status_message = "No memory selected to validate.".to_string();
+            return;
+        };
+        if self.memories.validation.loading || self.memories.validation.applying {
+            self.chrome.status_message =
+                "Memory validation is already running for this selection.".to_string();
+            return;
+        }
+        self.memories.selected_history = None;
+        self.memories.validation = MemoryValidationState {
+            memory_id: Some(memory_id),
+            run: None,
+            loading: true,
+            applying: false,
+            error: None,
+        };
+        self.memories.memories_focus = MemoriesFocus::Detail;
+        self.memories.memory_detail_scroll = 0;
+        self.chrome.status_message =
+            "Searching for proof and validating the selected memory...".to_string();
+        self.chrome.ui_status = UiStatus::Busy;
+        self.chrome.needs_redraw = true;
+        let api = api.clone();
+        let tx = self.background_tx.clone();
+        tokio::spawn(async move {
+            let result = api
+                .validate_memory(
+                    memory_id,
+                    Some(true),
+                    Some(mem_api::ValidationProofScope::HybridFallback),
+                )
+                .await
+                .map_err(|error| error.to_string());
+            let _ = tx.send(BackgroundEvent::MemoryValidationCompleted {
+                memory_id,
+                result: Box::new(result),
+            });
+        });
+    }
+
+    fn apply_memory_validation_completed(
+        &mut self,
+        memory_id: uuid::Uuid,
+        result: Result<mem_api::ValidationRunInfo, String>,
+    ) {
+        if Some(memory_id) != self.selected_memory_id() {
+            return;
+        }
+        self.memories.validation.loading = false;
+        self.memories.validation.memory_id = Some(memory_id);
+        match result {
+            Ok(run) => {
+                let verdict = run.verdict.clone().unwrap_or_else(|| "unknown".to_string());
+                let action = run
+                    .action
+                    .clone()
+                    .unwrap_or_else(|| "no action".to_string());
+                self.memories.validation.error = None;
+                self.memories.validation.run = Some(run);
+                self.memories.memories_focus = MemoriesFocus::Detail;
+                self.chrome.status_message =
+                    format!("Validation preview ready: {verdict} ({action}).");
+                self.chrome.ui_status = UiStatus::Ready;
+            }
+            Err(error) => {
+                self.memories.validation.run = None;
+                self.memories.validation.error = Some(error.clone());
+                self.chrome.status_message = format!("Validation failed: {error}");
+                self.chrome.ui_status = UiStatus::Error;
+            }
+        }
+    }
+
+    async fn apply_selected_validation_preview(&mut self, api: &ApiClient) -> Result<()> {
+        let Some(run) = self.memories.validation.run.clone() else {
+            self.chrome.status_message = "No validation preview to apply.".to_string();
+            return Ok(());
+        };
+        if !run.dry_run {
+            self.chrome.status_message =
+                "Only dry-run validation previews can be applied from this view.".to_string();
+            return Ok(());
+        }
+        self.memories.validation.applying = true;
+        self.chrome.status_message = "Applying validation preview...".to_string();
+        self.chrome.ui_status = UiStatus::Busy;
+        let response = api.review_validation_run(run.id, "apply_preview").await?;
+        self.memories.validation.applying = false;
+        self.memories.validation.run = None;
+        self.memories.validation.error = None;
+        self.chrome.status_message = match response.new_memory_id {
+            Some(new_id) => format!("Applied validation preview as new memory version {new_id}."),
+            None => "Applied validation preview.".to_string(),
+        };
+        self.refresh(api, RefreshMode::Full).await;
+        Ok(())
+    }
+
+    fn dismiss_selected_validation_preview(&mut self) {
+        if self.memories.validation.run.is_none()
+            && self.memories.validation.error.is_none()
+            && !self.memories.validation.loading
+        {
+            self.chrome.status_message = "No validation preview to dismiss.".to_string();
+            return;
+        }
+        self.memories.validation = MemoryValidationState::default();
+        self.memories.memory_detail_scroll = 0;
+        self.chrome.status_message = "Dismissed validation preview.".to_string();
     }
 
     async fn handle_text_input(
@@ -2364,6 +2497,7 @@ impl App {
     ) {
         self.memories.selected_detail = None;
         self.memories.selected_history = None;
+        self.memories.validation = MemoryValidationState::default();
         self.memories.memory_detail_scroll = 0;
         self.memories.memories_focus = MemoriesFocus::List;
         if let Some(item) = self
@@ -2414,6 +2548,7 @@ impl App {
             self.memories.table_state.select(None);
             self.memories.selected_detail = None;
             self.memories.selected_history = None;
+            self.memories.validation = MemoryValidationState::default();
             self.memories.memories_focus = MemoriesFocus::List;
             self.memories.memory_detail_scroll = 0;
             previous_detail_id.is_some()
@@ -2429,6 +2564,7 @@ impl App {
             if previous_detail_id.is_some() && previous_detail_id != selected_id {
                 self.memories.selected_detail = None;
                 self.memories.selected_history = None;
+                self.memories.validation = MemoryValidationState::default();
                 self.memories.memory_detail_scroll = 0;
                 self.memories.memories_focus = MemoriesFocus::List;
                 true

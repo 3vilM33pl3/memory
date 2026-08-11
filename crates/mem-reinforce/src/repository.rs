@@ -1218,10 +1218,7 @@ pub async fn fetch_validation_run(pool: &PgPool, run_id: Uuid) -> Result<Option<
         .context("fetch validation run")
 }
 
-pub async fn fetch_validation_evidence(
-    pool: &PgPool,
-    run_id: Uuid,
-) -> Result<Vec<EvidenceRow>> {
+pub async fn fetch_validation_evidence(pool: &PgPool, run_id: Uuid) -> Result<Vec<EvidenceRow>> {
     sqlx::query_as::<_, (String, String, String, Option<String>)>(
         r#"
         SELECT kind, evidence_ref, stance, excerpt

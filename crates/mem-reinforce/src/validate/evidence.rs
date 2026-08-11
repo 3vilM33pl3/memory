@@ -373,4 +373,42 @@ mod tests {
         assert!(!is_safe_repo_relative_path("../outside.rs"));
         assert!(!is_safe_repo_relative_path("src/../../outside.rs"));
     }
+
+    #[test]
+    fn proof_snippets_use_citable_line_refs() {
+        let snippets = snippets_for_file(
+            "src/lib.rs",
+            "pub fn unrelated() {}\n\npub fn validate_memory() {}\n",
+            &["validate_memory".to_string()],
+            true,
+            4,
+        );
+
+        assert_eq!(snippets.len(), 1);
+        assert_eq!(snippets[0].evidence_ref(), "src/lib.rs:L2-L3");
+        assert!(snippets[0].fallback);
+        assert!(snippets[0].text.contains("validate_memory"));
+    }
+
+    #[test]
+    fn proof_search_skips_generated_binary_and_secret_paths() {
+        assert!(should_skip_proof_path("target/debug/memory"));
+        assert!(should_skip_proof_path("docs/img/screenshot.png"));
+        assert!(should_skip_proof_path("config/service-token.txt"));
+        assert!(!should_skip_proof_path("crates/mem-service/src/routes.rs"));
+    }
+
+    #[test]
+    fn proof_tokens_drop_short_and_common_words() {
+        let tokens = proof_tokens(
+            "The service owns validation",
+            "Memory should use recorded source evidence.",
+        );
+
+        assert!(tokens.contains(&"service".to_string()));
+        assert!(tokens.contains(&"validation".to_string()));
+        assert!(tokens.contains(&"recorded".to_string()));
+        assert!(!tokens.contains(&"the".to_string()));
+        assert!(!tokens.contains(&"should".to_string()));
+    }
 }

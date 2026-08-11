@@ -8,9 +8,27 @@ The `Memories` tab is the main browsing view for canonical project memory.
 
 - a filterable memory list on the left
 - the selected memory entry in detail on the right
-- summary, canonical text, type, confidence, tags, sources, and related memories
+- summary, validation proof, suggested replacement diff, canonical text, type, confidence, tags, sources, and related memories
 
 This is the best tab for reading what Memory Layer already knows about a project.
+
+## Validation Proof
+
+Press `v` on a selected memory to search for proof and run a dry-run validation.
+The TUI starts from the memory's recorded source files, related memories, and git
+history. If that evidence is weak, it falls back to a bounded repository scan.
+
+The result appears in the detail pane and shows:
+
+- verdict, confidence, action, proof scope, and whether fallback was used
+- supporting, contradicting, and neutral evidence
+- reasons from the validator
+- a diff-style suggested replacement when the memory should be reworded or corrected
+
+Validation from the Memories tab is preview-first: pressing `v` does not rewrite
+the memory text. If the visible preview looks right, press `y` to apply that
+exact preview as a new immutable memory version. Press `n` to dismiss the
+preview locally.
 
 ## Related Memories
 
@@ -29,6 +47,9 @@ Those links are computed automatically during curation from strong text overlap,
 - `t` cycle memory-type filters
 - `x` clear all active filters
 - `c` run curation
+- `v` validate the selected memory with proof search
+- `y` apply the visible validation preview
+- `n` dismiss the visible validation preview
 - `i` reindex memory chunks
 - `e` re-embed the active embedding space
 - `a` archive low-value memories

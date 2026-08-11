@@ -4,9 +4,9 @@ use crossterm::event::{Event, KeyCode, KeyEvent};
 #[cfg_attr(target_os = "macos", allow(unused_imports))]
 use super::{
     AgentSnapshot, App, AutomationSnapshot, BackendConnectionState, BackgroundEvent, ManagerState,
-    MemoriesFocus, ProjectRefreshResult, QueryHistoryEntry, QueryRoundtripTiming, RefreshMode,
-    TabKind, Theme, ToolVersions, UiStatus, activity_duration, activity_tokens,
-    backend_activity_detail_lines, build_memory_detail_lines, collect_error_items,
+    MemoriesFocus, MemoryValidationState, ProjectRefreshResult, QueryHistoryEntry,
+    QueryRoundtripTiming, RefreshMode, TabKind, Theme, ToolVersions, UiStatus, activity_duration,
+    activity_tokens, backend_activity_detail_lines, build_memory_detail_lines, collect_error_items,
     context_gradient_color, current_query_display, derive_manager_state, empty_overview,
     filled_bar_cells, format_context_percent, format_epoch_reset_time,
     format_query_citation_numbers, format_query_timing_with_percent, format_timestamp,
@@ -28,7 +28,7 @@ use mem_api::{
     MemoryStatus, MemoryType, Profile, ProjectMemoriesResponse, QueryAnswerGeneration,
     QueryAnswerMethod, QueryDiagnostics, QueryFilters, QueryMatchKind, QueryRequest, QueryResponse,
     QueryResult, QueryResultDebug, ReplacementProposalListResponse, StreamResponse, TokenUsage,
-    WatcherPresenceSummary,
+    ValidationEvidenceInfo, ValidationProofScope, ValidationRunInfo, WatcherPresenceSummary,
 };
 use mem_skills::{
     SkillBundleStatus, SkillInventoryReport, SkillSourceKind, SkillUpgradeAction, SkillVersionInfo,
@@ -1746,6 +1746,76 @@ fn build_memory_detail_lines_includes_rendered_canonical_text() {
     assert!(rendered.contains("Canonical"));
     assert!(rendered.contains("[ ] readable"));
     assert!(rendered.contains("block"));
+}
+
+#[test]
+fn build_memory_detail_lines_includes_validation_proof_and_diff() {
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = App::new(
+        "memory".to_string(),
+        PathBuf::from("/tmp/memory"),
+        ToolVersions {
+            mem_cli: "1.0.1".to_string(),
+            mem_service: "1.0.1".to_string(),
+            watch_manager: "1.0.1".to_string(),
+            memory_watch: "1.0.1".to_string(),
+        },
+        false,
+        Profile::Prod,
+        tx,
+    );
+    let detail = test_memory_detail("The service owns query.");
+    let memory_id = detail.id;
+    app.memories.validation = MemoryValidationState {
+        memory_id: Some(memory_id),
+        run: Some(ValidationRunInfo {
+            id: Uuid::new_v4(),
+            canonical_id: Uuid::new_v4(),
+            memory_id,
+            summary: detail.summary.clone(),
+            trigger: "manual".to_string(),
+            status: "completed".to_string(),
+            verdict: Some("partially_valid".to_string()),
+            confidence: Some(0.82),
+            dry_run: true,
+            action: Some("would_queue_correction".to_string()),
+            review_status: None,
+            reasons: vec!["source file shows updated owner".to_string()],
+            evidence: vec![ValidationEvidenceInfo {
+                kind: "file".to_string(),
+                evidence_ref: "crates/mem-service/src/routes.rs:L10-L12".to_string(),
+                stance: "supports".to_string(),
+                excerpt: Some("route query handler".to_string()),
+            }],
+            proof_scope: Some(ValidationProofScope::HybridFallback),
+            proof_fallback_used: true,
+            proposed_summary: Some("Service owns query routing".to_string()),
+            proposed_text: Some(
+                "The service owns query routing and delegates retrieval.".to_string(),
+            ),
+            model: Some("test-model".to_string()),
+            error: None,
+            started_at: Utc::now(),
+            finished_at: Some(Utc::now()),
+        }),
+        loading: false,
+        applying: false,
+        error: None,
+    };
+    app.memories.selected_detail = Some(detail);
+
+    let rendered = build_memory_detail_lines(&app)
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(rendered.contains("Validation Proof"));
+    assert!(rendered.contains("partially_valid"));
+    assert!(rendered.contains("crates/mem-service/src/routes.rs:L10-L12"));
+    assert!(rendered.contains("Suggested Replacement"));
+    assert!(rendered.contains("- The service owns query."));
+    assert!(rendered.contains("+ The service owns query routing and delegates retrieval."));
 }
 
 #[test]

@@ -18,6 +18,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Tabs, Wrap},
 };
+use similar::{ChangeTag, TextDiff};
 
 use crate::commands::memory_ops::SourceKindString;
 use mem_skills::SkillBundleStatus;
@@ -161,8 +162,9 @@ pub(super) fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
                 ),
             ]),
             Line::from(""),
-            Line::from(vec![section_span("Embeddings")]),
         ];
+        lines.extend(build_memory_validation_lines(app, detail));
+        lines.extend([Line::from(vec![section_span("Embeddings")])]);
         if detail.embedding_spaces.is_empty() {
             lines.push(Line::from(Span::styled(
                 "No embeddings for this memory yet. Run Re-embed for this project to populate the active embedding space.",
@@ -317,6 +319,158 @@ pub(super) fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
             Style::default().fg(Theme::MUTED),
         ))]
     }
+}
+
+pub(super) fn build_memory_validation_lines(
+    app: &App,
+    detail: &mem_api::MemoryEntryResponse,
+) -> Vec<Line<'static>> {
+    let validation = &app.memories.validation;
+    if validation.memory_id != Some(detail.id)
+        && !validation.loading
+        && validation.run.is_none()
+        && validation.error.is_none()
+    {
+        return Vec::new();
+    }
+
+    let mut lines = vec![Line::from(vec![section_span("Validation Proof")])];
+    if validation.loading {
+        lines.push(Line::from(Span::styled(
+            "Searching recorded sources first, then falling back to a bounded repo scan if proof is weak.",
+            Style::default().fg(Theme::MUTED),
+        )));
+    }
+    if validation.applying {
+        lines.push(Line::from(Span::styled(
+            "Applying preview...",
+            Style::default().fg(Theme::WARNING),
+        )));
+    }
+    if let Some(error) = &validation.error {
+        lines.push(Line::from(vec![
+            label_span("Error: "),
+            Span::styled(error.clone(), Style::default().fg(Theme::DANGER)),
+        ]));
+    }
+    if let Some(run) = &validation.run {
+        let confidence = run
+            .confidence
+            .map(|value| format!("{value:.2}"))
+            .unwrap_or_else(|| "-".to_string());
+        lines.push(Line::from(vec![
+            label_span("Verdict: "),
+            Span::styled(
+                run.verdict.clone().unwrap_or_else(|| "-".to_string()),
+                Style::default().fg(Theme::ACCENT_STRONG),
+            ),
+            Span::raw("   "),
+            label_span("Confidence: "),
+            Span::styled(confidence, Style::default().fg(Theme::TEXT)),
+        ]));
+        lines.push(Line::from(vec![
+            label_span("Action: "),
+            Span::styled(
+                run.action.clone().unwrap_or_else(|| "-".to_string()),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Scope: "),
+            Span::styled(
+                run.proof_scope
+                    .map(|scope| scope.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                Style::default().fg(Theme::TEXT),
+            ),
+            Span::raw("   "),
+            label_span("Fallback: "),
+            Span::styled(
+                if run.proof_fallback_used { "yes" } else { "no" },
+                Style::default().fg(if run.proof_fallback_used {
+                    Theme::WARNING
+                } else {
+                    Theme::MUTED
+                }),
+            ),
+        ]));
+        if !run.reasons.is_empty() {
+            lines.push(Line::from(vec![
+                label_span("Reasons: "),
+                Span::styled(run.reasons.join("; "), Style::default().fg(Theme::MUTED)),
+            ]));
+        }
+        if !run.evidence.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Evidence")]));
+            for evidence in &run.evidence {
+                let color = match evidence.stance.as_str() {
+                    "supports" => Theme::SUCCESS,
+                    "contradicts" => Theme::DANGER,
+                    _ => Theme::MUTED,
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{} ", evidence.stance),
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("{} {}", evidence.kind, evidence.evidence_ref),
+                        Style::default().fg(Theme::TEXT),
+                    ),
+                ]));
+                if let Some(excerpt) = &evidence.excerpt {
+                    for line in excerpt.lines().take(4) {
+                        lines.push(Line::from(Span::styled(
+                            format!("  {line}"),
+                            Style::default().fg(Theme::MUTED),
+                        )));
+                    }
+                }
+            }
+        }
+        if run.proposed_summary.is_some() || run.proposed_text.is_some() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![section_span("Suggested Replacement")]));
+            lines.push(Line::from(Span::styled(
+                "Press y to apply this preview, n to dismiss it.",
+                Style::default().fg(Theme::MUTED),
+            )));
+            if let Some(summary) = &run.proposed_summary
+                && summary != &detail.summary
+            {
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![label_span("Summary diff")]));
+                lines.extend(diff_lines(&detail.summary, summary));
+            }
+            if let Some(text) = &run.proposed_text
+                && text != &detail.canonical_text
+            {
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![label_span("Canonical text diff")]));
+                lines.extend(diff_lines(&detail.canonical_text, text));
+            }
+        }
+    }
+    lines.push(Line::from(""));
+    lines
+}
+
+fn diff_lines(old: &str, new: &str) -> Vec<Line<'static>> {
+    let diff = TextDiff::from_lines(old, new);
+    let mut lines = Vec::new();
+    for change in diff.iter_all_changes() {
+        let (prefix, color) = match change.tag() {
+            ChangeTag::Delete => ("- ", Theme::DANGER),
+            ChangeTag::Insert => ("+ ", Theme::SUCCESS),
+            ChangeTag::Equal => ("  ", Theme::MUTED),
+        };
+        let value = change.value().trim_end_matches('\n');
+        lines.push(Line::from(Span::styled(
+            format!("{prefix}{value}"),
+            Style::default().fg(color),
+        )));
+    }
+    lines
 }
 
 pub(super) fn review_detail_lines(app: &App) -> Vec<Line<'static>> {
@@ -2651,7 +2805,7 @@ Browse canonical project memory, inspect one entry in detail, and maintain durab
 
 ## Layout
 - Left table: filtered memories with summary, type, status, confidence, and update time.
-- Right detail: canonical text, embeddings, tags, sources, history, and related memories.
+- Right detail: validation proof, replacement diff, canonical text, embeddings, tags, sources, history, and related memories.
 - Focus indicator: shows whether movement keys select memories or scroll detail.
 
 ## Controls
@@ -2659,11 +2813,12 @@ Browse canonical project memory, inspect one entry in detail, and maintain durab
 - `Enter`: toggle list/detail focus. `Esc`: return to list focus.
 - `PgUp/PgDn`, `Home`, `End`: scroll or jump detail.
 - `/`: text filter. `g`: tag filter. `s`: status filter. `t`: type filter. `x`: clear filters.
+- `v`: validate selected memory with proof search. `y`: apply the visible validation preview. `n`: dismiss it.
 - `c`: curate. `i`: reindex chunks. `e`: re-embed active space. `a`: archive low-value memories. `Shift+D`: delete. `Shift+H`: history.
 
 ## Workflows
 - Filter by type or text, select a memory, then read canonical text and sources.
-- Verify provenance before relying on a memory in implementation work.
+- Use `v` to search for codebase proof; suggested replacements appear as a diff and do not apply until `y`.
 - Use curation and Review rather than creating duplicate memories.
 
 ## Troubleshooting
