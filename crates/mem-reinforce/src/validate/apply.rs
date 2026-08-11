@@ -73,6 +73,7 @@ pub struct Decision {
 
 pub fn decide(verdict: &ValidatedVerdict, policy: &ValidationPolicy) -> Decision {
     let has_proposal = verdict.proposed_summary.is_some() || verdict.proposed_text.is_some();
+    let has_citable_evidence = !verdict.evidence.is_empty();
 
     // Weak evidence beats everything: never act on a low-confidence or
     // inherently uncertain verdict.
@@ -87,7 +88,7 @@ pub fn decide(verdict: &ValidatedVerdict, policy: &ValidationPolicy) -> Decision
                 verdict.confidence
             )),
             invalidated: false,
-            store_proposal: has_proposal,
+            store_proposal: false,
         };
     }
 
@@ -97,6 +98,15 @@ pub fn decide(verdict: &ValidatedVerdict, policy: &ValidationPolicy) -> Decision
                 Decision {
                     action: ValidationAction::Revalidated,
                     needs_review_reason: None,
+                    invalidated: false,
+                    store_proposal: false,
+                }
+            } else if !has_citable_evidence {
+                Decision {
+                    action: ValidationAction::FlaggedNeedsReview,
+                    needs_review_reason: Some(
+                        "proposed rewording without citable evidence".to_string(),
+                    ),
                     invalidated: false,
                     store_proposal: false,
                 }
@@ -120,7 +130,7 @@ pub fn decide(verdict: &ValidatedVerdict, policy: &ValidationPolicy) -> Decision
             }
         }
         Verdict::Outdated | Verdict::PartiallyValid => {
-            if has_proposal {
+            if has_proposal && has_citable_evidence {
                 // Corrections are always human-gated, regardless of
                 // confidence: the memory stays active until review.
                 Decision {
@@ -130,12 +140,20 @@ pub fn decide(verdict: &ValidatedVerdict, policy: &ValidationPolicy) -> Decision
                     store_proposal: true,
                 }
             } else {
-                Decision {
-                    action: ValidationAction::FlaggedNeedsReview,
-                    needs_review_reason: Some(format!(
+                let reason = if has_proposal {
+                    format!(
+                        "verdict {} proposed a correction without citable evidence",
+                        verdict.verdict.as_str()
+                    )
+                } else {
+                    format!(
                         "verdict {} without a proposed correction",
                         verdict.verdict.as_str()
-                    )),
+                    )
+                };
+                Decision {
+                    action: ValidationAction::FlaggedNeedsReview,
+                    needs_review_reason: Some(reason),
                     invalidated: true,
                     store_proposal: false,
                 }
@@ -148,7 +166,7 @@ pub fn decide(verdict: &ValidatedVerdict, policy: &ValidationPolicy) -> Decision
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::validate::verdict::ValidatedVerdict;
+    use crate::validate::verdict::{EvidenceKind, EvidenceStance, RawEvidence, ValidatedVerdict};
 
     fn verdict(kind: Verdict, confidence: f32) -> ValidatedVerdict {
         ValidatedVerdict {
@@ -170,6 +188,15 @@ mod tests {
             needs_review_min_confidence: 0.5,
             cooldown: chrono::Duration::days(7),
         }
+    }
+
+    fn add_supporting_evidence(verdict: &mut ValidatedVerdict) {
+        verdict.evidence.push(RawEvidence {
+            kind: EvidenceKind::File,
+            evidence_ref: "docs/release.md".to_string(),
+            stance: EvidenceStance::Supports,
+            excerpt: Some("release tag pushed".to_string()),
+        });
     }
 
     #[test]
@@ -206,10 +233,24 @@ mod tests {
     }
 
     #[test]
+    fn ambiguous_and_unsupported_do_not_store_provider_proposals() {
+        for kind in [Verdict::Ambiguous, Verdict::Unsupported] {
+            let mut weak = verdict(kind, 0.95);
+            weak.proposed_text = Some("Unrelated replacement".to_string());
+
+            let decision = decide(&weak, &policy());
+
+            assert_eq!(decision.action, ValidationAction::FlaggedNeedsReview);
+            assert!(!decision.store_proposal);
+        }
+    }
+
+    #[test]
     fn unclear_wording_rewrites_only_with_high_confidence_and_flag_enabled() {
         let mut unclear = verdict(Verdict::Valid, 0.9);
         unclear.clarity_ok = false;
         unclear.proposed_summary = Some("Clearer summary".to_string());
+        add_supporting_evidence(&mut unclear);
 
         let decision = decide(&unclear, &policy());
         assert_eq!(decision.action, ValidationAction::Reworded);
@@ -244,6 +285,19 @@ mod tests {
     }
 
     #[test]
+    fn unclear_wording_without_evidence_flags_and_drops_proposal() {
+        let mut unclear = verdict(Verdict::Valid, 0.9);
+        unclear.clarity_ok = false;
+        unclear.proposed_summary = Some("Unrelated wording".to_string());
+
+        let decision = decide(&unclear, &policy());
+
+        assert_eq!(decision.action, ValidationAction::FlaggedNeedsReview);
+        assert!(!decision.invalidated);
+        assert!(!decision.store_proposal);
+    }
+
+    #[test]
     fn unclear_wording_without_proposal_still_revalidates() {
         let mut unclear = verdict(Verdict::Valid, 0.9);
         unclear.clarity_ok = false;
@@ -256,11 +310,24 @@ mod tests {
     #[test]
     fn outdated_with_correction_queues_review_and_invalidates() {
         let mut outdated = verdict(Verdict::Outdated, 0.9);
+        add_supporting_evidence(&mut outdated);
         outdated.proposed_text = Some("Corrected fact".to_string());
         let decision = decide(&outdated, &policy());
         assert_eq!(decision.action, ValidationAction::CorrectionPending);
         assert!(decision.invalidated);
         assert!(decision.store_proposal);
+    }
+
+    #[test]
+    fn partially_valid_with_correction_without_evidence_flags_and_drops_proposal() {
+        let mut partial = verdict(Verdict::PartiallyValid, 0.9);
+        partial.proposed_text = Some("Unrelated replacement".to_string());
+
+        let decision = decide(&partial, &policy());
+
+        assert_eq!(decision.action, ValidationAction::FlaggedNeedsReview);
+        assert!(decision.invalidated);
+        assert!(!decision.store_proposal);
     }
 
     #[test]
