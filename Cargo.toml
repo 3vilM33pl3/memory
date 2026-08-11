@@ -63,6 +63,7 @@ tree-sitter-python = "0.23.6"
 tree-sitter-javascript = "0.23.1"
 tree-sitter-typescript = "0.23.2"
 regex = "1.12.2"
+similar = "2.7.0"
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
 toml = "0.8.23"
 urlencoding = "2.1.3"

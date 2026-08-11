@@ -80,6 +80,7 @@ pub async fn run_validation(
     provider: &dyn VerdictProvider,
     policy: &ValidationPolicy,
     trigger: ValidationTrigger,
+    proof_scope: mem_api::ValidationProofScope,
 ) -> Result<ValidationOutcome> {
     let run_id = insert_validation_run(
         pool,
@@ -91,7 +92,8 @@ pub async fn run_validation(
     )
     .await?;
 
-    let outcome = execute_validation(pool, candidate, provider, policy, run_id).await;
+    let outcome =
+        execute_validation(pool, candidate, provider, policy, run_id, proof_scope).await;
     if let Err(error) = &outcome {
         fail_validation_run(pool, run_id, &format!("{error:#}")).await?;
         set_validation_cooldown(
@@ -110,14 +112,28 @@ async fn execute_validation(
     provider: &dyn VerdictProvider,
     policy: &ValidationPolicy,
     run_id: Uuid,
+    proof_scope: mem_api::ValidationProofScope,
 ) -> Result<ValidationOutcome> {
     let started = std::time::Instant::now();
-    let context = gather_context(pool, candidate.memory_id).await?;
+    let mut context = gather_context(pool, candidate.memory_id, proof_scope, false).await?;
     let raw = provider
         .assess(&context)
         .await
         .context("verdict provider failed")?;
-    let verdict = validate_verdict(raw, &context).context("verdict failed validation")?;
+    let mut verdict = validate_verdict(raw, &context).context("verdict failed validation")?;
+    if proof_scope == mem_api::ValidationProofScope::HybridFallback
+        && matches!(
+            verdict.verdict,
+            verdict::Verdict::Ambiguous | verdict::Verdict::Unsupported
+        )
+    {
+        context = gather_context(pool, candidate.memory_id, proof_scope, true).await?;
+        let raw = provider
+            .assess(&context)
+            .await
+            .context("verdict provider failed during fallback proof search")?;
+        verdict = validate_verdict(raw, &context).context("fallback verdict failed validation")?;
+    }
     let decision = decide(&verdict, policy);
 
     let evidence_rows: Vec<EvidenceRow> = verdict
@@ -244,6 +260,9 @@ async fn execute_validation(
                 "volatility": candidate.volatility,
                 "evidence_count": evidence_rows.len(),
                 "git_log_lines": context.git_log.len(),
+                "proof_scope": context.proof_scope,
+                "proof_fallback_used": context.proof_fallback_used,
+                "proof_snippet_count": context.proof_snippets.len(),
                 "duration_ms": started.elapsed().as_millis() as u64,
                 "new_memory_id": new_memory_id,
             }),
@@ -388,6 +407,110 @@ pub async fn resolve_review(
     })
 }
 
+/// Applies the exact result of a completed dry-run validation preview without
+/// rerunning the verdict provider.
+pub async fn apply_preview(pool: &PgPool, run_id: Uuid) -> Result<ReviewResolution> {
+    use crate::repository::{
+        fetch_memory_snapshot, fetch_validation_run, mark_needs_review, set_review_status,
+    };
+
+    let run = fetch_validation_run(pool, run_id)
+        .await?
+        .with_context(|| format!("validation run {run_id} not found"))?;
+    if run.status != "completed" {
+        anyhow::bail!("validation run {run_id} is not completed");
+    }
+    if !run.dry_run {
+        anyhow::bail!("validation run {run_id} is not a preview dry run");
+    }
+    if run.review_status.as_deref() == Some("applied_preview") {
+        anyhow::bail!("validation run {run_id} was already applied from preview");
+    }
+
+    let cooldown_until = Utc::now() + chrono::Duration::days(7);
+    let action = run.action.as_deref().unwrap_or_default();
+    let mut new_memory_id = None;
+    match action {
+        "would_revalidate" => {
+            mark_validated(
+                pool,
+                run.canonical_id,
+                run.confidence.unwrap_or(1.0),
+                run_id,
+                cooldown_until,
+            )
+            .await?;
+        }
+        "would_reword" | "would_queue_correction" => {
+            let proposal = run
+                .proposed_candidate_json
+                .as_ref()
+                .context("preview has no proposed candidate")?;
+            let previous_memory_id: Uuid = proposal
+                .get("previous_memory_id")
+                .and_then(|value| value.as_str())
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(run.memory_id);
+            let current = fetch_memory_snapshot(pool, previous_memory_id)
+                .await?
+                .with_context(|| format!("memory {previous_memory_id} not found"))?;
+            let summary = proposal
+                .get("proposed_summary")
+                .and_then(|value| value.as_str())
+                .unwrap_or(&current.summary);
+            let text = proposal
+                .get("proposed_text")
+                .and_then(|value| value.as_str())
+                .unwrap_or(&current.canonical_text);
+            let applied =
+                mem_curate::apply_validation_revision(pool, previous_memory_id, summary, text)
+                    .await
+                    .context("apply previewed validation correction")?;
+            new_memory_id = Some(applied);
+            mark_validated(
+                pool,
+                run.canonical_id,
+                run.confidence.unwrap_or(1.0),
+                run_id,
+                cooldown_until,
+            )
+            .await?;
+        }
+        "would_flag_needs_review" => {
+            let reason = run
+                .reasons_json
+                .as_array()
+                .and_then(|values| values.iter().find_map(|value| value.as_str()))
+                .unwrap_or("weak or contradictory evidence");
+            mark_needs_review(pool, run.canonical_id, reason, run_id, cooldown_until).await?;
+        }
+        other => anyhow::bail!("validation run action `{other}` cannot be applied from preview"),
+    }
+    set_review_status(pool, run_id, "applied_preview").await?;
+    insert_score_audit(
+        pool,
+        run.canonical_id,
+        run.project_id,
+        "validation_completed",
+        None,
+        None,
+        serde_json::json!({
+            "run_id": run_id,
+            "review": "applied_preview",
+            "new_memory_id": new_memory_id,
+        }),
+    )
+    .await?;
+
+    Ok(ReviewResolution {
+        run_id,
+        applied: true,
+        canonical_id: run.canonical_id,
+        project_id: run.project_id,
+        new_memory_id,
+    })
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
     use super::evidence::ValidationContext;
@@ -415,10 +538,13 @@ pub mod test_support {
             },
             tags: Vec::new(),
             sources: Vec::new(),
+            proof_snippets: Vec::new(),
             related: Vec::new(),
             prior_runs: Vec::new(),
             git_log: Vec::new(),
             allowed_refs: Default::default(),
+            proof_scope: mem_api::ValidationProofScope::SourceFilesFirst,
+            proof_fallback_used: false,
         };
         for path in allowed_paths {
             context.insert_allowed_reference(path);

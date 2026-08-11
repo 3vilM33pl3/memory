@@ -114,6 +114,7 @@ impl ApiClient {
         &self,
         memory_id: Uuid,
         dry_run: Option<bool>,
+        proof_scope: Option<mem_api::ValidationProofScope>,
     ) -> Result<mem_api::ValidationRunInfo> {
         get_json(
             self.client
@@ -122,7 +123,10 @@ impl ApiClient {
                     &format!("/v1/memory/{memory_id}/validate"),
                 ))
                 .headers(write_headers(&self.config)?)
-                .json(&mem_api::ValidateMemoryRequest { dry_run })
+                .json(&mem_api::ValidateMemoryRequest {
+                    dry_run,
+                    proof_scope,
+                })
                 .send()
                 .await?,
         )

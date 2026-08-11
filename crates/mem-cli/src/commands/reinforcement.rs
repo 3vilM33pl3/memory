@@ -52,7 +52,7 @@ pub(super) async fn handle_validate(args: ValidateMemoryArgs, api: &ApiClient) -
     } else {
         None
     };
-    let run = api.validate_memory(args.id, dry_run).await?;
+    let run = api.validate_memory(args.id, dry_run, None).await?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&run)?);
         return Ok(());

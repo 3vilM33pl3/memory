@@ -153,6 +153,7 @@ async fn validate_candidate(
         &provider,
         &policy,
         mem_reinforce::ValidationTrigger::Scheduled,
+        mem_api::ValidationProofScope::SourceFilesFirst,
     )
     .await?;
     tracing::info!(
@@ -341,6 +342,7 @@ pub(crate) async fn validate_memory(
         .map_err(ApiError::io)?
         .ok_or_else(|| ApiError::not_found("memory entry not found"))?;
     let dry_run = request.dry_run.unwrap_or(config.validation_dry_run);
+    let proof_scope = request.proof_scope.unwrap_or_default();
 
     // Manual triggers bypass the threshold but respect the daily budget.
     if !dry_run {
@@ -393,6 +395,7 @@ pub(crate) async fn validate_memory(
         &provider,
         &policy,
         mem_reinforce::ValidationTrigger::Manual,
+        proof_scope,
     )
     .await
     .map_err(ApiError::io)?;
@@ -416,7 +419,10 @@ pub(crate) async fn validate_memory(
         .await
         .map_err(ApiError::io)?
         .ok_or_else(|| ApiError::io(anyhow::anyhow!("validation run vanished")))?;
-    Ok(Json(validation_run_to_info(run)))
+    let evidence = mem_reinforce::repository::fetch_validation_evidence(&pool, outcome.run_id)
+        .await
+        .map_err(ApiError::io)?;
+    Ok(Json(validation_run_to_info(run, evidence)))
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -449,7 +455,10 @@ pub(crate) async fn validation_runs(
     .map_err(ApiError::io)?;
     Ok(Json(mem_api::ValidationRunsResponse {
         project,
-        runs: runs.into_iter().map(validation_run_to_info).collect(),
+        runs: runs
+            .into_iter()
+            .map(|run| validation_run_to_info(run, Vec::new()))
+            .collect(),
     }))
 }
 
@@ -468,10 +477,36 @@ pub(crate) async fn review_validation_run(
     let approve = match request.action.as_str() {
         "apply" => true,
         "reject" => false,
+        "apply_preview" => {
+            let pool = state.pool()?;
+            let resolution = mem_reinforce::apply_preview(&pool, run_id)
+                .await
+                .map_err(ApiError::io)?;
+            if let Some(slug) = project_slug_for_id(&pool, resolution.project_id).await? {
+                notify_project_changed(
+                    &state,
+                    slug,
+                    resolution
+                        .new_memory_id
+                        .or(Some(Uuid::nil()))
+                        .filter(|id| !id.is_nil()),
+                    ActivityKind::MemoryValidation,
+                    "Validation preview applied".to_string(),
+                    None,
+                );
+            }
+            return Ok(Json(mem_api::ReviewValidationResponse {
+                run_id,
+                action: request.action,
+                new_memory_id: resolution.new_memory_id,
+            }));
+        }
         other => {
             return Err(ApiError::status_message(
                 StatusCode::BAD_REQUEST,
-                format!("unknown review action `{other}`; expected `apply` or `reject`"),
+                format!(
+                    "unknown review action `{other}`; expected `apply`, `reject`, or `apply_preview`"
+                ),
             ));
         }
     };
@@ -541,6 +576,7 @@ fn score_listing_to_info(
 
 fn validation_run_to_info(
     run: mem_reinforce::repository::ValidationRunRow,
+    evidence_rows: Vec<mem_reinforce::repository::EvidenceRow>,
 ) -> mem_api::ValidationRunInfo {
     let reasons = run
         .reasons_json
@@ -553,6 +589,16 @@ fn validation_run_to_info(
         })
         .unwrap_or_default();
     let proposed = run.proposed_candidate_json.as_ref();
+    let proof_scope = run
+        .details_json
+        .get("proof_scope")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok());
+    let proof_fallback_used = run
+        .details_json
+        .get("proof_fallback_used")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     mem_api::ValidationRunInfo {
         id: run.id,
         canonical_id: run.canonical_id,
@@ -566,6 +612,17 @@ fn validation_run_to_info(
         action: run.action,
         review_status: run.review_status,
         reasons,
+        evidence: evidence_rows
+            .into_iter()
+            .map(|row| mem_api::ValidationEvidenceInfo {
+                kind: row.kind,
+                evidence_ref: row.evidence_ref,
+                stance: row.stance,
+                excerpt: row.excerpt,
+            })
+            .collect(),
+        proof_scope,
+        proof_fallback_used,
         proposed_summary: proposed
             .and_then(|value| value.get("proposed_summary"))
             .and_then(|value| value.as_str())

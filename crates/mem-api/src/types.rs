@@ -313,6 +313,26 @@ impl fmt::Display for ReplacementPolicy {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationProofScope {
+    #[default]
+    SourceFilesFirst,
+    WholeRepoScan,
+    HybridFallback,
+}
+
+impl fmt::Display for ValidationProofScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::SourceFilesFirst => "source_files_first",
+            Self::WholeRepoScan => "whole_repo_scan",
+            Self::HybridFallback => "hybrid_fallback",
+        };
+        f.write_str(value)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryRelationType {
@@ -1357,6 +1377,18 @@ pub struct ValidateMemoryRequest {
     /// Overrides the configured `reinforcement.validation_dry_run`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dry_run: Option<bool>,
+    /// Controls how broadly validation searches for codebase proof.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_scope: Option<ValidationProofScope>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationEvidenceInfo {
+    pub kind: String,
+    pub evidence_ref: String,
+    pub stance: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1378,6 +1410,12 @@ pub struct ValidationRunInfo {
     pub review_status: Option<String>,
     #[serde(default)]
     pub reasons: Vec<String>,
+    #[serde(default)]
+    pub evidence: Vec<ValidationEvidenceInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_scope: Option<ValidationProofScope>,
+    #[serde(default)]
+    pub proof_fallback_used: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposed_summary: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1399,7 +1437,7 @@ pub struct ValidationRunsResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewValidationRequest {
-    /// `apply` or `reject`.
+    /// `apply`, `reject`, or `apply_preview`.
     pub action: String,
 }
 

@@ -1167,6 +1167,7 @@ pub struct ValidationRunRow {
     pub review_status: Option<String>,
     pub reasons_json: serde_json::Value,
     pub proposed_candidate_json: Option<serde_json::Value>,
+    pub details_json: serde_json::Value,
     pub model: Option<String>,
     pub error: Option<String>,
     pub started_at: DateTime<Utc>,
@@ -1177,7 +1178,7 @@ pub struct ValidationRunRow {
 const VALIDATION_RUN_COLUMNS: &str = r#"
     r.id, r.canonical_id, r.memory_id, r.project_id, r.trigger_kind, r.status,
     r.verdict, r.confidence, r.dry_run, r.action, r.review_status,
-    r.reasons_json, r.proposed_candidate_json, r.model, r.error,
+    r.reasons_json, r.proposed_candidate_json, r.details_json, r.model, r.error,
     r.started_at, r.finished_at,
     COALESCE((SELECT summary FROM memory_entries WHERE id = r.memory_id), '') AS summary
 "#;
@@ -1215,6 +1216,34 @@ pub async fn fetch_validation_run(pool: &PgPool, run_id: Uuid) -> Result<Option<
         .fetch_optional(pool)
         .await
         .context("fetch validation run")
+}
+
+pub async fn fetch_validation_evidence(
+    pool: &PgPool,
+    run_id: Uuid,
+) -> Result<Vec<EvidenceRow>> {
+    sqlx::query_as::<_, (String, String, String, Option<String>)>(
+        r#"
+        SELECT kind, evidence_ref, stance, excerpt
+        FROM memory_validation_evidence
+        WHERE validation_run_id = $1
+        ORDER BY created_at, id
+        "#,
+    )
+    .bind(run_id)
+    .fetch_all(pool)
+    .await
+    .context("fetch validation evidence")
+    .map(|rows| {
+        rows.into_iter()
+            .map(|(kind, evidence_ref, stance, excerpt)| EvidenceRow {
+                kind,
+                evidence_ref,
+                stance,
+                excerpt,
+            })
+            .collect()
+    })
 }
 
 pub async fn set_review_status(pool: &PgPool, run_id: Uuid, review_status: &str) -> Result<()> {

@@ -303,6 +303,21 @@ pub(crate) fn build_validation_prompt(context: &mem_reinforce::ValidationContext
             }
         }
     }
+    if !context.proof_snippets.is_empty() {
+        lines.push(String::new());
+        lines.push(format!(
+            "Codebase proof snippets (scope={}, fallback_used={}):",
+            context.proof_scope, context.proof_fallback_used
+        ));
+        for snippet in &context.proof_snippets {
+            lines.push(format!(
+                "- citable: {}{}",
+                snippet.evidence_ref(),
+                if snippet.fallback { " fallback" } else { "" }
+            ));
+            lines.push(format!("  excerpt:\n{}", snippet.text));
+        }
+    }
     if !context.related.is_empty() {
         lines.push(String::new());
         lines.push("Related memories:".to_string());
