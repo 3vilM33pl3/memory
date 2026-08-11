@@ -163,6 +163,10 @@ pub fn validate_verdict(raw: RawVerdict, context: &ValidationContext) -> Result<
             item.evidence_ref = fallback_ref.to_string();
             continue;
         }
+        if let Some(proof_ref) = normalize_overlapping_proof_reference(context, evidence_ref) {
+            item.evidence_ref = proof_ref;
+            continue;
+        }
         // Providers sometimes copy a citable line's trailing annotation
         // ("<sha> (2026-06-15 subject)"); accept and normalize to the bare
         // token when that token alone is in the allowlist.
@@ -194,6 +198,50 @@ pub fn validate_verdict(raw: RawVerdict, context: &ValidationContext) -> Result<
     })
 }
 
+fn normalize_overlapping_proof_reference(
+    context: &ValidationContext,
+    evidence_ref: &str,
+) -> Option<String> {
+    let cited = parse_line_reference(evidence_ref)?;
+    context.proof_snippets.iter().find_map(|snippet| {
+        let proof_ref = snippet.evidence_ref();
+        let shown = parse_line_reference(&proof_ref)?;
+        (cited.file_path == shown.file_path && cited.overlaps(&shown)).then_some(proof_ref)
+    })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct LineReference<'a> {
+    file_path: &'a str,
+    line_start: usize,
+    line_end: usize,
+}
+
+impl LineReference<'_> {
+    fn overlaps(&self, other: &Self) -> bool {
+        self.line_start <= other.line_end && other.line_start <= self.line_end
+    }
+}
+
+fn parse_line_reference(reference: &str) -> Option<LineReference<'_>> {
+    let (file_path, range) = reference.rsplit_once(":L")?;
+    if file_path.is_empty() {
+        return None;
+    }
+    let (start, end) = match range.split_once("-L") {
+        Some((start, end)) => (start.parse().ok()?, end.parse().ok()?),
+        None => {
+            let line = range.parse().ok()?;
+            (line, line)
+        }
+    };
+    (start > 0 && end >= start).then_some(LineReference {
+        file_path,
+        line_start: start,
+        line_end: end,
+    })
+}
+
 /// Parses provider content (optionally fenced in ```json blocks) into a
 /// [`RawVerdict`].
 pub fn parse_verdict_content(content: &str) -> Result<RawVerdict> {
@@ -213,6 +261,7 @@ pub fn parse_verdict_content(content: &str) -> Result<RawVerdict> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::evidence::ProofSnippet;
     use super::super::test_support::minimal_context;
     use super::*;
 
@@ -270,6 +319,61 @@ mod tests {
         assert_eq!(
             validated.evidence[0].evidence_ref,
             ".agents/memory-layer/references/architecture.md:L1-L2"
+        );
+    }
+
+    #[test]
+    fn normalizes_overlapping_proof_line_reference() {
+        let mut context = minimal_context(&[]);
+        context.proof_snippets.push(ProofSnippet {
+            file_path: ".agents/memory-layer/references/architecture.md".to_string(),
+            line_start: 1,
+            line_end: 2,
+            text: "Memory consolidation\nInsight meta-memories".to_string(),
+            fallback: true,
+        });
+        context.insert_allowed_reference(".agents/memory-layer/references/architecture.md:L1-L2");
+        let mut verdict = raw(Verdict::Valid, 0.9);
+        verdict.evidence.push(RawEvidence {
+            kind: EvidenceKind::File,
+            evidence_ref: ".agents/memory-layer/references/architecture.md:L2-L3".to_string(),
+            stance: EvidenceStance::Supports,
+            excerpt: None,
+        });
+
+        let validated = validate_verdict(verdict, &context).expect("overlap accepted");
+
+        assert_eq!(
+            validated.evidence[0].evidence_ref,
+            ".agents/memory-layer/references/architecture.md:L1-L2"
+        );
+    }
+
+    #[test]
+    fn rejects_non_overlapping_proof_line_reference() {
+        let mut context = minimal_context(&[]);
+        context.proof_snippets.push(ProofSnippet {
+            file_path: ".agents/memory-layer/references/architecture.md".to_string(),
+            line_start: 1,
+            line_end: 2,
+            text: "Memory consolidation\nInsight meta-memories".to_string(),
+            fallback: true,
+        });
+        context.insert_allowed_reference(".agents/memory-layer/references/architecture.md:L1-L2");
+        let mut verdict = raw(Verdict::Valid, 0.9);
+        verdict.evidence.push(RawEvidence {
+            kind: EvidenceKind::File,
+            evidence_ref: ".agents/memory-layer/references/architecture.md:L5-L6".to_string(),
+            stance: EvidenceStance::Supports,
+            excerpt: None,
+        });
+
+        let error = validate_verdict(verdict, &context).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("not present in gathered context")
         );
     }
 
