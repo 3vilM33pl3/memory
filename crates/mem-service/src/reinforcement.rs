@@ -310,11 +310,10 @@ pub(crate) fn build_validation_prompt(context: &mem_reinforce::ValidationContext
             context.proof_scope, context.proof_fallback_used
         ));
         for snippet in &context.proof_snippets {
-            lines.push(format!(
-                "- citable: {}{}",
-                snippet.evidence_ref(),
-                if snippet.fallback { " fallback" } else { "" }
-            ));
+            lines.push(format!("- citable: {}", snippet.evidence_ref()));
+            if snippet.fallback {
+                lines.push("  fallback: yes".to_string());
+            }
             lines.push(format!("  excerpt:\n{}", snippet.text));
         }
     }

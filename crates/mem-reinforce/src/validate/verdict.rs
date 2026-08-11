@@ -155,6 +155,14 @@ pub fn validate_verdict(raw: RawVerdict, context: &ValidationContext) -> Result<
             item.evidence_ref = evidence_ref.to_string();
             continue;
         }
+        let fallback_ref = evidence_ref
+            .strip_suffix(" fallback")
+            .map(str::trim)
+            .unwrap_or_default();
+        if !fallback_ref.is_empty() && context.allows_reference(fallback_ref) {
+            item.evidence_ref = fallback_ref.to_string();
+            continue;
+        }
         // Providers sometimes copy a citable line's trailing annotation
         // ("<sha> (2026-06-15 subject)"); accept and normalize to the bare
         // token when that token alone is in the allowlist.
@@ -245,6 +253,24 @@ mod tests {
         });
         let validated = validate_verdict(verdict, &context).expect("token match accepted");
         assert_eq!(validated.evidence[0].evidence_ref, "abc1234");
+    }
+
+    #[test]
+    fn normalizes_fallback_suffix_on_line_reference() {
+        let context = minimal_context(&[".agents/memory-layer/references/architecture.md:L1-L2"]);
+        let mut verdict = raw(Verdict::Valid, 0.9);
+        verdict.evidence.push(RawEvidence {
+            kind: EvidenceKind::File,
+            evidence_ref: ".agents/memory-layer/references/architecture.md:L1-L2 fallback"
+                .to_string(),
+            stance: EvidenceStance::Supports,
+            excerpt: None,
+        });
+        let validated = validate_verdict(verdict, &context).expect("fallback suffix accepted");
+        assert_eq!(
+            validated.evidence[0].evidence_ref,
+            ".agents/memory-layer/references/architecture.md:L1-L2"
+        );
     }
 
     #[test]
