@@ -199,7 +199,9 @@ pub(crate) struct ServiceVerdictProvider {
     pub(crate) state: AppState,
 }
 
-const VALIDATION_SYSTEM_PROMPT: &str = "You are auditing one stored project memory against the evidence supplied by the user. Decide whether the memory is still accurate. Return strict JSON with keys: verdict (one of valid, partially_valid, outdated, ambiguous, unsupported), confidence (0..1), reasons (array of short strings), evidence (array of {kind, ref, stance, excerpt} where kind is one of file, code_symbol, doc, commit, test, issue, memory, search_hit and stance is supports, contradicts or neutral), clarity_ok (boolean, false when the memory is correct but its wording could be clearer or easier to retrieve), proposed_summary (string, optional), proposed_text (string, optional). Rules: every evidence ref MUST be copied verbatim from a line marked 'citable:' in the supplied context; if nothing citable supports a point, omit the evidence entry and explain in reasons instead. Background sources without a citable ref must not be cited. Never invent files, commits or ids. Propose new wording only when it preserves the memory's meaning. If the memory is outdated, propose a corrected text when the evidence clearly supports one. If evidence is weak, missing, or contradictory, use verdict ambiguous or unsupported with low confidence rather than guessing.";
+const VALIDATION_MAX_OUTPUT_TOKENS_CAP: u32 = 6000;
+
+const VALIDATION_SYSTEM_PROMPT: &str = "You are auditing one stored project memory against the evidence supplied by the user. Decide whether the memory is still accurate. Return strict compact JSON with keys: verdict (one of valid, partially_valid, outdated, ambiguous, unsupported), confidence (0..1), reasons (array of short strings), evidence (array of {kind, ref, stance, excerpt} where kind is one of file, code_symbol, doc, commit, test, issue, memory, search_hit and stance is supports, contradicts or neutral), clarity_ok (boolean, false when the memory is correct but its wording could be clearer or easier to retrieve), proposed_summary (string, optional), proposed_text (string, optional). Keep the response small: at most 4 reasons, at most 6 evidence entries, excerpts under 160 characters, and omit proposed_summary/proposed_text unless the memory is outdated or clarity_ok is false. Rules: every evidence ref MUST be copied verbatim from a line marked 'citable:' in the supplied context; if nothing citable supports a point, omit the evidence entry and explain in reasons instead. Background sources without a citable ref must not be cited. Never invent files, commits or ids. Propose new wording only when it preserves the memory's meaning. If the memory is outdated, propose a corrected text when the evidence clearly supports one. If evidence is weak, missing, or contradictory, use verdict ambiguous or unsupported with low confidence rather than guessing.";
 
 #[async_trait::async_trait]
 impl mem_reinforce::VerdictProvider for ServiceVerdictProvider {
@@ -219,7 +221,7 @@ impl mem_reinforce::VerdictProvider for ServiceVerdictProvider {
                 subject: subject.clone(),
                 system_prompt: VALIDATION_SYSTEM_PROMPT,
                 user_prompt: build_validation_prompt(context),
-                max_output_tokens_cap: 1200,
+                max_output_tokens_cap: VALIDATION_MAX_OUTPUT_TOKENS_CAP,
             },
         )
         .await?;
@@ -407,5 +409,12 @@ mod tests {
         // and parseable as a UUID (no longer the literal "query").
         assert_ne!(first, second);
         assert!(Uuid::parse_str(&first).is_ok());
+    }
+
+    #[test]
+    fn validation_output_cap_does_not_clamp_below_default_llm_budget() {
+        assert!(
+            VALIDATION_MAX_OUTPUT_TOKENS_CAP >= mem_api::LlmConfig::default().max_output_tokens
+        );
     }
 }
