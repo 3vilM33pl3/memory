@@ -3,6 +3,15 @@ use crate::*;
 
 const HTTP_SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(2);
 
+fn format_error_chain(error: &anyhow::Error) -> String {
+    error
+        .chain()
+        .enumerate()
+        .map(|(index, cause)| format!("{index}: {cause}"))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
 pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env())
@@ -149,8 +158,10 @@ pub(crate) async fn build_state(
     let (role, pool) = match pool_attempt {
         Ok(pool) => (ServiceRole::Primary, Some(pool)),
         Err(error) if offline.is_some() => {
+            let error_chain = format_error_chain(&error);
             tracing::warn!(
                 error = %error,
+                error_chain = %error_chain,
                 "postgres unavailable; starting in offline degraded mode"
             );
             (ServiceRole::Primary, None)
@@ -262,11 +273,17 @@ fn start_offline_sync_task(state: AppState) {
             if let Err(error) = sync_offline_once(&state).await
                 && let Some(offline) = &state.offline
             {
+                let error_chain = format_error_chain(&error);
+                tracing::warn!(
+                    error = %error,
+                    error_chain = %error_chain,
+                    "offline sync/reconnect attempt failed"
+                );
                 offline
                     .state
                     .lock()
                     .expect("offline sync state lock poisoned")
-                    .last_error = Some(error.to_string());
+                    .last_error = Some(error_chain);
             }
             tokio::time::sleep(state.config.offline.reconnect_interval).await;
         }
