@@ -52,7 +52,7 @@ Restart active services after an install or upgrade:
 memory service restart-all --mark-tui-restart --json
 ```
 
-`restart-all` restarts only services that are already active or loaded. It does not start services that the user intentionally stopped. On Linux it checks the system backend service and active user watcher services. When run as root during a package install, it also checks logged-in user systemd sessions under `/run/user/*`. On macOS it checks loaded Memory Layer LaunchAgents.
+`restart-all` restarts only services that are already active or loaded. It does not start services that the user intentionally stopped. On Linux it checks the system backend service and active user watcher services. When run as root during a package install, it also checks logged-in user systemd sessions under `/run/user/*`. On macOS it restarts the backend only when the detached backend PID file points at a live process, and it still checks loaded Memory Layer LaunchAgents for watcher services.
 
 Installers pass `--mark-tui-restart` so a TUI that is already open can show `restart` in red in the bottom status bar. Restarting the TUI is still a user action; the installer does not kill the running terminal UI.
 
@@ -69,7 +69,7 @@ The HTTP API does not trust `Origin` or `Referer` headers as authentication, eve
 
 ## Platform Notes
 
-On macOS, `memory service enable` manages the LaunchAgent.
+On macOS, `memory service enable` starts the backend as a detached user process and writes a PID file under `~/Library/Application Support/memory-layer/run/`. This avoids a launchd-specific startup failure observed on some laptops where the backend comes up but cannot reach PostgreSQL. Watcher services still use LaunchAgents.
 
 On Linux, the packaged service is usually managed with:
 

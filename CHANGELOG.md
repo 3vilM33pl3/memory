@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.0.2 - 2026-08-16
+
+### Fixed
+
+- macOS backend service management no longer relies on a LaunchAgent for the
+  shared backend process. `memory service enable` now starts the backend as a
+  detached user process with a PID file and log files, while watcher services
+  remain launchd-managed. This avoids a startup mode where the backend stayed
+  online but could not reach PostgreSQL when launched by `launchd`.
+
 ## 1.0.1 - 2026-07-17
 
 ### Added

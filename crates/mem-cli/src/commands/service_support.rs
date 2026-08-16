@@ -1,28 +1,33 @@
-#[cfg(not(target_os = "macos"))]
 use std::process::Command as ProcessCommand;
 use std::{
     env, fs,
+    fs::File,
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
+    process::Stdio,
+    thread,
     time::Duration,
 };
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+#[cfg(target_os = "macos")]
+use libc::{EPERM, ESRCH, SIGKILL, SIGTERM, kill};
 use mem_api::{AppConfig, Profile, discover_global_config_path};
 use mem_platform as platform;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
+#[cfg(target_os = "macos")]
+use std::os::unix::process::CommandExt;
 
 #[cfg(not(target_os = "macos"))]
 use crate::commands::runtime::{packaged_service_available, run_systemctl_system};
 #[cfg(target_os = "macos")]
 use crate::commands::watch_support::{
     backend_launch_agent_label, backend_launch_agent_path, bootout_launch_agent,
-    bootstrap_launch_agent, launch_agent_status, launchctl_domain_target,
-    render_backend_launch_agent, run_launchctl, user_memory_layer_log_dir,
-    watch_manager_launch_agent_label, write_launch_agent,
+    launch_agent_status, launchctl_domain_target, run_launchctl,
+    user_memory_layer_log_dir, watch_manager_launch_agent_label,
 };
 #[cfg(not(target_os = "macos"))]
 use crate::commands::watch_support::{run_systemctl_user, run_systemctl_user_for};
@@ -82,23 +87,62 @@ pub(crate) fn start_backend_service_once(config_path: &Path) -> Result<String> {
     {
         let plist_path = backend_launch_agent_path()?;
         let label = backend_launch_agent_label();
+        let _ = bootout_launch_agent(&plist_path, label);
+        if plist_path.exists() {
+            let _ = fs::remove_file(&plist_path);
+        }
+        stop_macos_backend_process()?;
+        let pid_path = macos_backend_pid_path()?;
+        if let Some(parent) = pid_path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        let working_directory = platform::macos_app_support_dir()
+            .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
         let stdout_path = user_memory_layer_log_dir()?.join("mem-service.stdout.log");
         let stderr_path = user_memory_layer_log_dir()?.join("mem-service.stderr.log");
-        write_launch_agent(
-            &plist_path,
-            render_backend_launch_agent(config_path)?,
-            label,
-        )?;
-        bootstrap_launch_agent(&plist_path, label)?;
+        if let Some(parent) = stdout_path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        let stdout = File::create(&stdout_path)
+            .with_context(|| format!("create {}", stdout_path.display()))?;
+        let stderr = File::create(&stderr_path)
+            .with_context(|| format!("create {}", stderr_path.display()))?;
+        let binary = memory_binary_path()?;
+        let env_vars = crate::commands::watch_support::launch_agent_environment_variables()?;
+        let mut command = ProcessCommand::new(&binary);
+        command
+            .arg("--config")
+            .arg(config_path)
+            .arg("service")
+            .arg("run")
+            .current_dir(&working_directory)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        for (key, value) in env_vars {
+            command.env(key, value);
+        }
+        // macOS launchd repeatedly left the backend unable to reach PostgreSQL on
+        // this machine. Start the service as a detached user process instead.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = command
+            .spawn()
+            .with_context(|| format!("spawn {}", binary.display()))?;
+        fs::write(&pid_path, format!("{}\n", child.id()))
+            .with_context(|| format!("write {}", pid_path.display()))?;
         Ok(format!(
-            "Installed and started backend LaunchAgent {}.\nPlist: {}\nConfig: {}\nLogs:\n- {}\n- {}\n\nManage it with:\n- memory service status\n- memory service disable\n- launchctl kickstart -k {}/{}",
-            label,
-            plist_path.display(),
+            "Started backend process on macOS.\nPID file: {}\nConfig: {}\nLogs:\n- {}\n- {}\n\nManage it with:\n- memory service status\n- memory service disable",
+            pid_path.display(),
             config_path.display(),
             stdout_path.display(),
             stderr_path.display(),
-            launchctl_domain_target()?,
-            label,
         ))
     }
 
@@ -113,15 +157,14 @@ pub(crate) fn start_backend_service_once(config_path: &Path) -> Result<String> {
 pub(crate) fn preview_enable_backend_service(config_path: &Path) -> String {
     #[cfg(target_os = "macos")]
     {
-        match backend_launch_agent_path() {
-            Ok(plist_path) => format!(
-                "Dry run: would install and start backend LaunchAgent {}.\nPlist: {}\nConfig: {}",
-                backend_launch_agent_label(),
-                plist_path.display(),
+        match macos_backend_pid_path() {
+            Ok(pid_path) => format!(
+                "Dry run: would start the macOS backend as a detached user process.\nPID file: {}\nConfig: {}",
+                pid_path.display(),
                 config_path.display()
             ),
             Err(_) => format!(
-                "Dry run: would install and start the backend LaunchAgent with config {}",
+                "Dry run: would start the macOS backend as a detached user process using config {}",
                 config_path.display()
             ),
         }
@@ -153,10 +196,12 @@ pub(crate) fn disable_backend_service() -> Result<String> {
             fs::remove_file(&plist_path)
                 .with_context(|| format!("remove {}", plist_path.display()))?;
         }
+        stop_macos_backend_process()?;
+        let pid_path = macos_backend_pid_path()?;
         Ok(format!(
-            "Disabled backend LaunchAgent {}.\nRemoved plist: {}",
-            label,
-            plist_path.display()
+            "Disabled backend service.\nRemoved legacy plist: {}\nRemoved PID file: {}",
+            plist_path.display(),
+            pid_path.display()
         ))
     }
 
@@ -170,15 +215,14 @@ pub(crate) fn disable_backend_service() -> Result<String> {
 pub(crate) fn preview_disable_backend_service(config_path: &Path) -> String {
     #[cfg(target_os = "macos")]
     {
-        match backend_launch_agent_path() {
-            Ok(plist_path) => format!(
-                "Dry run: would disable backend LaunchAgent {} and remove {}\nConfig: {}",
-                backend_launch_agent_label(),
-                plist_path.display(),
+        match macos_backend_pid_path() {
+            Ok(pid_path) => format!(
+                "Dry run: would stop the macOS backend process and remove {}\nConfig: {}",
+                pid_path.display(),
                 config_path.display()
             ),
             Err(_) => format!(
-                "Dry run: would disable the backend LaunchAgent configured by {}",
+                "Dry run: would stop the macOS backend process configured by {}",
                 config_path.display()
             ),
         }
@@ -196,18 +240,18 @@ pub(crate) fn preview_disable_backend_service(config_path: &Path) -> String {
 pub(crate) fn backend_service_status(config_path: &Path) -> Result<String> {
     #[cfg(target_os = "macos")]
     {
-        let plist_path = backend_launch_agent_path()?;
-        let label = backend_launch_agent_label();
-        let status = launch_agent_status(label)?;
+        let pid_path = macos_backend_pid_path()?;
+        let process = macos_backend_process_status()?;
         Ok(format!(
-            "Backend service:\n- label: {}\n- plist: {}\n- config: {}\n- installed: {}\n- running: {}\n\nInspect with:\n- launchctl print {}/{}\n- tail -f {}",
-            label,
-            plist_path.display(),
+            "Backend service:\n- manager: detached-process\n- pid file: {}\n- pid: {}\n- config: {}\n- installed: {}\n- running: {}\n\nInspect with:\n- tail -f {}",
+            pid_path.display(),
+            process
+                .pid
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "none".to_string()),
             config_path.display(),
-            yes_no(plist_path.exists() || status.loaded),
-            yes_no(status.running),
-            launchctl_domain_target()?,
-            label,
+            yes_no(pid_path.exists()),
+            yes_no(process.running),
             user_memory_layer_log_dir()?
                 .join("mem-service.stderr.log")
                 .display(),
@@ -352,6 +396,7 @@ pub(crate) fn restart_platform_services(
     dry_run: bool,
     operations: &mut Vec<ServiceRestartOperation>,
 ) -> Result<()> {
+    restart_macos_backend_process_if_active(dry_run, operations)?;
     for label in active_launch_agent_labels()? {
         restart_launch_agent_if_loaded(&label, dry_run, operations);
     }
@@ -571,10 +616,7 @@ pub(crate) fn restart_systemd_user_unit_if_active(
 
 #[cfg(target_os = "macos")]
 pub(crate) fn active_launch_agent_labels() -> Result<Vec<String>> {
-    let mut labels = vec![
-        backend_launch_agent_label().to_string(),
-        watch_manager_launch_agent_label().to_string(),
-    ];
+    let mut labels = vec![watch_manager_launch_agent_label().to_string()];
     if let Some(dir) = platform::user_launch_agents_dir() {
         if dir.is_dir() {
             for entry in fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))? {
@@ -593,6 +635,133 @@ pub(crate) fn active_launch_agent_labels() -> Result<Vec<String>> {
     labels.sort();
     labels.dedup();
     Ok(labels)
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct MacosBackendProcessStatus {
+    pub(crate) pid: Option<u32>,
+    pub(crate) running: bool,
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_backend_pid_path() -> Result<PathBuf> {
+    let state_dir =
+        platform::preferred_user_state_dir().ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
+    Ok(state_dir.join("run").join("mem-service.pid"))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_backend_process_status() -> Result<MacosBackendProcessStatus> {
+    let pid_path = macos_backend_pid_path()?;
+    if !pid_path.exists() {
+        return Ok(MacosBackendProcessStatus::default());
+    }
+    let content =
+        fs::read_to_string(&pid_path).with_context(|| format!("read {}", pid_path.display()))?;
+    let pid = content
+        .trim()
+        .parse::<u32>()
+        .with_context(|| format!("parse pid from {}", pid_path.display()))?;
+    let running = macos_pid_is_running(pid);
+    if !running {
+        let _ = fs::remove_file(&pid_path);
+    }
+    Ok(MacosBackendProcessStatus {
+        pid: Some(pid),
+        running,
+    })
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_pid_is_running(pid: u32) -> bool {
+    let result = unsafe { kill(pid as i32, 0) };
+    if result == 0 {
+        return true;
+    }
+    let errno = nix_errno();
+    errno == EPERM && errno != ESRCH
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn nix_errno() -> i32 {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    unsafe {
+        *libc::__error()
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn stop_macos_backend_process() -> Result<()> {
+    let pid_path = macos_backend_pid_path()?;
+    let status = macos_backend_process_status()?;
+    let Some(pid) = status.pid else {
+        let _ = fs::remove_file(&pid_path);
+        return Ok(());
+    };
+    if status.running {
+        unsafe {
+            kill(pid as i32, SIGTERM);
+        }
+        for _ in 0..20 {
+            if !macos_pid_is_running(pid) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        if macos_pid_is_running(pid) {
+            unsafe {
+                kill(pid as i32, SIGKILL);
+            }
+        }
+    }
+    let _ = fs::remove_file(&pid_path);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn restart_macos_backend_process_if_active(
+    dry_run: bool,
+    operations: &mut Vec<ServiceRestartOperation>,
+) -> Result<()> {
+    let status = macos_backend_process_status()?;
+    if !status.running {
+        operations.push(ServiceRestartOperation {
+            name: "memory-backend".to_string(),
+            manager: "process".to_string(),
+            active: false,
+            action: "skip-inactive".to_string(),
+            success: true,
+            message: None,
+        });
+        return Ok(());
+    }
+    if dry_run {
+        operations.push(ServiceRestartOperation {
+            name: "memory-backend".to_string(),
+            manager: "process".to_string(),
+            active: true,
+            action: "would-restart".to_string(),
+            success: true,
+            message: None,
+        });
+        return Ok(());
+    }
+    let config_path = discover_global_config_path().unwrap_or_else(default_global_config_path);
+    let result = (|| -> Result<()> {
+        stop_macos_backend_process()?;
+        let _ = start_backend_service_once(&config_path)?;
+        Ok(())
+    })();
+    operations.push(ServiceRestartOperation {
+        name: "memory-backend".to_string(),
+        manager: "process".to_string(),
+        active: true,
+        action: "restart".to_string(),
+        success: result.is_ok(),
+        message: result.err().map(|error| error.to_string()),
+    });
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
