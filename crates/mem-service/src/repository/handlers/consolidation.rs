@@ -618,7 +618,7 @@ fn build_insight_tree(edges: &[SummarizesEdge]) -> Vec<mem_api::StructureInsight
     // its smallest id.
     if roots.is_empty() && !members.is_empty() {
         let mut visited: BTreeSet<Uuid> = BTreeSet::new();
-        for (&id, _) in members.iter() {
+        for &id in members.keys() {
             if visited.contains(&id) {
                 continue;
             }
