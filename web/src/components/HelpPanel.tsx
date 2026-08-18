@@ -105,6 +105,13 @@ const WEB_HELP: Record<Tab, { title: string; purpose: string; layout: string[]; 
     controls: ["Choose export options before preview or download.", "Choose a bundle file before preview or import.", ...SHARED_CONTROLS],
     workflows: ["Preview before exporting or importing.", "Include provenance fields only when the bundle audience should see them."],
   },
+  access: {
+    title: "Access Help",
+    purpose: "Administer Authentik identities, service tokens, and explicit project memberships.",
+    layout: ["Creation controls are followed by principals, service tokens, and membership tables.", "New service-token secrets appear once and are not stored in plaintext."],
+    controls: ["Create or revoke service tokens.", "Grant or revoke explicit project roles.", ...SHARED_CONTROLS],
+    workflows: ["Store a newly issued service token in OpenBao before dismissing it.", "Prefer project-scoped grants and reserve global admin for access administrators.", "Use Authentik group mappings for stable team access and explicit memberships for exceptions."],
+  },
 };
 
 export function HelpPanel({ tab }: { tab: Tab }) {

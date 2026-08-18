@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 
-import { fetchServiceReadOnly } from "./api";
+import { authLoginUrl, fetchServiceReadOnly, getAuthMe, logout } from "./api";
 
 import { HelpPanel } from "./components/HelpPanel";
 import { RuntimeSkillsStatus } from "./components/RuntimeSkillsStatus";
@@ -17,8 +17,10 @@ import { ReviewTab } from "./features/review/ReviewTab";
 import { ResumeTab } from "./features/resume/ResumeTab";
 import { WatchersTab } from "./features/watchers/WatchersTab";
 import { SkillsTab } from "./features/skills/SkillsTab";
+import { AccessTab } from "./features/access/AccessTab";
 import { useAppShell } from "./hooks/useAppShell";
 import { MORE_TABS, PRIMARY_TABS, type Tab } from "./tabs";
+import type { AuthMeResponse } from "./types";
 
 const GraphTab = lazy(() => import("./features/graph/GraphTab").then((module) => ({ default: module.GraphTab })));
 
@@ -194,17 +196,29 @@ export default function App() {
   } = useAppShell();
 
   const [serviceReadOnly, setServiceReadOnly] = useState(false);
+  const [authMe, setAuthMe] = useState<AuthMeResponse | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    fetchServiceReadOnly()
-      .then((readOnly) => {
-        if (!cancelled) setServiceReadOnly(readOnly);
+    Promise.all([fetchServiceReadOnly(), getAuthMe()])
+      .then(([readOnly, auth]) => {
+        if (!cancelled) {
+          setServiceReadOnly(readOnly);
+          setAuthMe(auth);
+          setAuthRequired(false);
+        }
       })
-      .catch(() => {});
+      .catch((error: Error) => {
+        if (!cancelled && error.message.startsWith("401 ")) setAuthRequired(true);
+      });
     return () => {
       cancelled = true;
     };
   }, []);
+  const visibleMoreTabs: readonly (typeof MORE_TABS)[number][] =
+    authMe?.principal.global_role === "admin"
+      ? MORE_TABS
+      : MORE_TABS.filter((name) => name !== "access");
 
   return (
     <div className="app-shell">
@@ -218,6 +232,7 @@ export default function App() {
         <div>
           <h1>Memory Layer Web</h1>
         </div>
+        <div className="topbar-actions">
         <form
           className="project-form"
           onSubmit={(event) => {
@@ -239,6 +254,19 @@ export default function App() {
           </label>
           <button type="submit">Load</button>
         </form>
+        <div className="identity-control">
+          {authRequired ? (
+            <a className="button-link" href={authLoginUrl()}>Sign in</a>
+          ) : authMe ? (
+            <>
+              <span title={authMe.principal.email ?? undefined}>{authMe.principal.display_name}</span>
+              {authMe.mode === "multi_user" ? (
+                <button type="button" onClick={() => void logout().then(() => window.location.assign(authLoginUrl("/")))}>Sign out</button>
+              ) : null}
+            </>
+          ) : <span>Checking identity...</span>}
+        </div>
+        </div>
       </header>
 
       <section className="status-strip" aria-label="Service status">
@@ -273,9 +301,9 @@ export default function App() {
             {name}
           </button>
         ))}
-        <select className="more-select" aria-label="More tabs" value={MORE_TABS.includes(tab as (typeof MORE_TABS)[number]) ? tab : ""} onChange={(event) => event.target.value && setTab(event.target.value as Tab)}>
+        <select className="more-select" aria-label="More tabs" value={visibleMoreTabs.includes(tab as (typeof MORE_TABS)[number]) ? tab : ""} onChange={(event) => event.target.value && setTab(event.target.value as Tab)}>
           <option value="">More</option>
-          {MORE_TABS.map((name) => (
+          {visibleMoreTabs.map((name) => (
             <option key={name} value={name}>{name}</option>
           ))}
         </select>
@@ -516,6 +544,9 @@ export default function App() {
           onPreviewImport={() => void handlePreviewImport()}
           onApplyImport={() => void handleApplyImport()}
         />
+      ) : null}
+      {tab === "access" && authMe?.principal.global_role === "admin" ? (
+        <AccessTab project={project} />
       ) : null}
       <footer className="statusbar">{statusMessage}</footer>
     </div>

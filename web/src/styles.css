@@ -93,6 +93,98 @@ select {
   color: var(--accent);
 }
 
+.topbar-actions,
+.identity-control {
+  display: flex;
+  align-items: end;
+  gap: 0.45rem;
+}
+
+.identity-control {
+  align-items: center;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.button-link {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.38rem 0.55rem;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.button-link:hover {
+  border-color: var(--accent);
+}
+
+.access-heading,
+.one-time-secret,
+.access-form-row {
+  display: grid;
+  align-items: end;
+  gap: 0.55rem;
+}
+
+.access-heading {
+  grid-template-columns: 1fr auto;
+}
+
+.access-heading p,
+.access-form-row p,
+.one-time-secret p {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+}
+
+.access-form-row {
+  grid-template-columns: minmax(18rem, 1fr) repeat(3, minmax(10rem, 0.7fr)) auto;
+}
+
+.access-form-row label {
+  display: grid;
+  gap: 0.2rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.one-time-secret {
+  grid-template-columns: minmax(15rem, 0.8fr) minmax(20rem, 1fr) auto;
+  border-color: var(--accent-2);
+}
+
+.one-time-secret code {
+  overflow-wrap: anywhere;
+  color: var(--accent-2);
+}
+
+.access-table-section {
+  overflow: hidden;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.access-table-section table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.access-table-section th,
+.access-table-section td {
+  padding: 0.38rem 0.45rem;
+  border-top: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.access-table-section th {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .project-form {
   display: grid;
   grid-auto-flow: column;
@@ -937,6 +1029,18 @@ pre {
 
   .project-form {
     grid-auto-flow: row;
+  }
+
+  .topbar-actions,
+  .identity-control {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .access-form-row,
+  .one-time-secret {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .project-form label {

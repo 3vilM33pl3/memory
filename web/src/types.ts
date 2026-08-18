@@ -107,6 +107,59 @@ export interface LoopDefinitionsResponse {
   definitions: LoopDefinitionRecord[];
 }
 
+export type AuthMode = "single_user" | "multi_user";
+export type AuthRole = "reader" | "writer" | "operator" | "admin";
+export type AuthPrincipalKind =
+  | "human_oidc"
+  | "service_token"
+  | "legacy_service_token"
+  | "internal";
+
+export interface AuthProjectAccess {
+  project: string;
+  role: AuthRole;
+  source: string;
+}
+
+export interface AuthPrincipalResponse {
+  id: string;
+  kind: AuthPrincipalKind;
+  display_name: string;
+  email?: string | null;
+  groups: string[];
+  global_role?: AuthRole | null;
+  projects: AuthProjectAccess[];
+}
+
+export interface AuthMeResponse {
+  authenticated: boolean;
+  mode: AuthMode;
+  read_only: boolean;
+  principal: AuthPrincipalResponse;
+}
+
+export interface AuthServiceTokenResponse {
+  id: string;
+  principal_id: string;
+  name: string;
+  token_prefix: string;
+  created_at: string;
+  expires_at?: string | null;
+  revoked_at?: string | null;
+  last_used_at?: string | null;
+  token?: string | null;
+  projects: AuthProjectAccess[];
+}
+
+export interface AuthMembershipResponse {
+  id: string;
+  principal_id: string;
+  project: string;
+  role: AuthRole;
+  source: string;
+  created_at: string;
+}
+
 export interface EffectiveLoopSettings {
   loop_id: string;
   enabled: boolean;

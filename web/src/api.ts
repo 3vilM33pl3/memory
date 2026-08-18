@@ -46,6 +46,11 @@ import type {
   SkillUpgradeReport,
   UpToSpeedRequest,
   UpToSpeedResponse,
+  AuthMeResponse,
+  AuthMembershipResponse,
+  AuthPrincipalResponse,
+  AuthRole,
+  AuthServiceTokenResponse,
 } from "./types";
 
 interface WebAuthTokenResponse {
@@ -55,6 +60,7 @@ interface WebAuthTokenResponse {
 }
 
 let webAuthTokenPromise: Promise<string> | null = null;
+let authMePromise: Promise<AuthMeResponse> | null = null;
 let serviceReadOnly = false;
 
 /** True when the service reported read-only (student) mode on token bootstrap. */
@@ -64,7 +70,7 @@ export function isServiceReadOnly(): boolean {
 
 /** Resolves the read-only flag after the auth-token bootstrap completes. */
 export async function fetchServiceReadOnly(): Promise<boolean> {
-  await getWebAuthToken();
+  await getAuthMe();
   return serviceReadOnly;
 }
 
@@ -77,7 +83,9 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 async function getWebAuthToken(): Promise<string> {
   if (!webAuthTokenPromise) {
-    webAuthTokenPromise = parseJson<WebAuthTokenResponse>(await fetch("/v1/web/auth-token"))
+    webAuthTokenPromise = parseJson<WebAuthTokenResponse>(
+      await fetch("/v1/web/auth-token", { credentials: "same-origin" }),
+    )
       .then((payload) => {
         serviceReadOnly = payload.read_only === true;
         return payload.api_token;
@@ -90,15 +98,107 @@ async function getWebAuthToken(): Promise<string> {
   return webAuthTokenPromise;
 }
 
-function withAuthHeader(headers: HeadersInit | undefined, token: string): Headers {
-  const merged = new Headers(headers);
-  merged.set("x-api-token", token);
-  return merged;
+export async function getAuthMe(refresh = false): Promise<AuthMeResponse> {
+  if (refresh) authMePromise = null;
+  if (!authMePromise) {
+    authMePromise = parseJson<AuthMeResponse>(
+      await fetch("/v1/auth/me", { credentials: "same-origin" }),
+    )
+      .then((payload) => {
+        serviceReadOnly = payload.read_only;
+        return payload;
+      })
+      .catch((error) => {
+        authMePromise = null;
+        throw error;
+      });
+  }
+  return authMePromise;
 }
 
 async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  const token = await getWebAuthToken();
-  return fetch(input, { ...init, headers: withAuthHeader(init.headers, token) });
+  const auth = await getAuthMe();
+  const headers = new Headers(init.headers);
+  if (auth.mode === "single_user") {
+    const token = await getWebAuthToken();
+    headers.set("x-api-token", token);
+  } else if (init.method && !["GET", "HEAD", "OPTIONS"].includes(init.method.toUpperCase())) {
+    const csrf = readCookie("memory_csrf");
+    if (csrf) headers.set("x-csrf-token", csrf);
+  }
+  return fetch(input, { ...init, credentials: "same-origin", headers });
+}
+
+function readCookie(name: string): string | null {
+  const prefix = `${encodeURIComponent(name)}=`;
+  for (const part of document.cookie.split(";")) {
+    const value = part.trim();
+    if (value.startsWith(prefix)) return decodeURIComponent(value.slice(prefix.length));
+  }
+  return null;
+}
+
+export function authLoginUrl(returnTo = window.location.pathname + window.location.search): string {
+  return `/v1/auth/login?return_to=${encodeURIComponent(returnTo)}`;
+}
+
+export async function logout(): Promise<void> {
+  await parseJson(await apiFetch("/v1/auth/logout", { method: "POST" }));
+  authMePromise = null;
+  webAuthTokenPromise = null;
+}
+
+export async function listAuthPrincipals(): Promise<AuthPrincipalResponse[]> {
+  return parseJson(await apiFetch("/v1/auth/principals"));
+}
+
+export async function listAuthTokens(): Promise<AuthServiceTokenResponse[]> {
+  return parseJson(await apiFetch("/v1/auth/tokens"));
+}
+
+export async function createAuthToken(request: {
+  name: string;
+  project: string;
+  role: AuthRole;
+  expires_in_seconds?: number | null;
+}): Promise<AuthServiceTokenResponse> {
+  return parseJson(
+    await apiFetch("/v1/auth/tokens", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+}
+
+export async function revokeAuthToken(selector: string): Promise<AuthServiceTokenResponse> {
+  return parseJson(
+    await apiFetch(`/v1/auth/tokens/${encodeURIComponent(selector)}/revoke`, { method: "POST" }),
+  );
+}
+
+export async function listAuthMemberships(): Promise<AuthMembershipResponse[]> {
+  return parseJson(await apiFetch("/v1/auth/memberships"));
+}
+
+export async function grantAuthMembership(request: {
+  principal_id: string;
+  project: string;
+  role: AuthRole;
+}): Promise<AuthMembershipResponse> {
+  return parseJson(
+    await apiFetch("/v1/auth/memberships", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+}
+
+export async function revokeAuthMembership(id: string): Promise<AuthMembershipResponse> {
+  return parseJson(
+    await apiFetch(`/v1/auth/memberships/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  );
 }
 
 export async function getHealth(): Promise<Record<string, unknown>> {
