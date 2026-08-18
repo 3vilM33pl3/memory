@@ -198,6 +198,38 @@ fn init_rejects_print_flag() {
     assert!(result.is_err());
 }
 
+#[test]
+fn auth_token_create_parses_scoped_role_and_ttl() {
+    let cli = Cli::parse_from([
+        "memory",
+        "auth",
+        "token",
+        "create",
+        "--name",
+        "hermes",
+        "--project",
+        "memory",
+        "--role",
+        "writer",
+        "--ttl",
+        "30d",
+        "--json",
+    ]);
+    let super::Command::Auth(args) = cli.command else {
+        panic!("expected auth command");
+    };
+    let super::AuthCommand::Token(args) = args.command else {
+        panic!("expected auth token command");
+    };
+    let super::AuthTokenCommand::Create(args) = args.command else {
+        panic!("expected auth token create command");
+    };
+    assert_eq!(args.name, "hermes");
+    assert_eq!(args.project, "memory");
+    assert_eq!(args.ttl, Duration::from_secs(30 * 24 * 60 * 60));
+    assert!(args.json);
+}
+
 fn rendered_help(args: &[&str]) -> String {
     let err = Cli::try_parse_from(args).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::DisplayHelp);
@@ -2458,6 +2490,25 @@ fn write_headers_sends_token_for_non_loopback_service() {
 }
 
 #[test]
+fn write_headers_prefers_scoped_client_token_environment_variable() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let previous = std::env::var("MEMORY_LAYER_CLIENT_TOKEN").ok();
+    unsafe {
+        std::env::set_var("MEMORY_LAYER_CLIENT_TOKEN", "mlt_scoped-client-token");
+    }
+    let config = test_app_config();
+    let headers = write_headers(&config).unwrap();
+    restore_env_var("MEMORY_LAYER_CLIENT_TOKEN", previous);
+
+    assert_eq!(
+        headers
+            .get("x-api-token")
+            .and_then(|value| value.to_str().ok()),
+        Some("mlt_scoped-client-token")
+    );
+}
+
+#[test]
 fn direct_llm_eval_accepts_ollama_without_api_key() {
     let mut config = test_app_config();
     config.llm = mem_api::LlmConfig {
@@ -2506,6 +2557,7 @@ fn test_app_config() -> AppConfig {
             request_timeout: Duration::from_secs(30),
             read_only: false,
         },
+        auth: mem_api::AuthConfig::default(),
         mcp: mem_api::McpConfig::default(),
         database: mem_api::DatabaseConfig {
             url: "postgresql://memory:test@localhost:5432/memory".to_string(),

@@ -630,7 +630,11 @@ pub(crate) fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
 
 pub(crate) fn write_headers(config: &AppConfig) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
-    headers.insert("x-api-token", config.service.api_token.parse()?);
+    let token = std::env::var("MEMORY_LAYER_CLIENT_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| config.service.api_token.clone());
+    headers.insert("x-api-token", token.parse()?);
     Ok(headers)
 }
 

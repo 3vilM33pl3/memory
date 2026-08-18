@@ -8,7 +8,7 @@ use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use mem_api::{AppConfig, Profile};
 use mem_platform as platform;
@@ -16,7 +16,9 @@ use reqwest::Client;
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::commands::{api::ApiClient, skill_support::set_private_file_permissions};
+use crate::commands::{
+    api::ApiClient, output::write_headers, skill_support::set_private_file_permissions,
+};
 
 const ROOT_AFTER_HELP: &str = "\
 New here? Run `memory setup`, load a demo project with `memory demo` (or take
@@ -29,7 +31,7 @@ Command groups:
   Reinforcement scores, validate
   History       history, prune-history, verify-provenance, bundle
   Workflow      checkpoint, activities, up-to-speed
-  Service       service, watcher, agent, loops, automation, mcp, embeddings
+  Service       service, auth, watcher, agent, loops, automation, mcp, embeddings
   Repository    commits, repo, graph
   Maintenance   eval, upgrade
 
@@ -218,6 +220,21 @@ Examples:
 
 See also:
   docs/user/cli/mcp.md";
+
+const AUTH_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Browser users sign in through Authentik. CLI, TUI, watcher, and MCP clients use service tokens.
+  Set MEMORY_LAYER_CLIENT_TOKEN to the issued token; it takes precedence over service.api_token.
+  Newly created token secrets are printed once and are never stored in Memory Layer config.
+
+Examples:
+  memory auth whoami --json
+  memory auth token create --name hermes --project memory --role writer --ttl 30d
+  memory auth token list
+  memory auth membership grant --principal <uuid> --project memory --role reader
+
+See also:
+  docs/user/cli/auth.md";
 
 const EVAL_GROUP_AFTER_HELP: &str = "\
 Agent notes:
@@ -1354,6 +1371,8 @@ pub(in crate::commands) enum Command {
     // --- Service and automation ---
     #[command(about = "Manage the Memory Layer backend service.", after_help = SERVICE_GROUP_AFTER_HELP)]
     Service(ServiceArgs),
+    #[command(about = "Inspect identity and administer scoped service access.", after_help = AUTH_GROUP_AFTER_HELP)]
+    Auth(AuthArgs),
     #[command(about = "Manage project watchers and watcher daemons.", after_help = WATCHER_GROUP_AFTER_HELP)]
     Watcher(WatcherArgs),
     #[command(about = "Coordinate concurrent agent workspaces.", after_help = AGENT_GROUP_AFTER_HELP)]
@@ -1416,6 +1435,117 @@ pub(in crate::commands) enum DevCommand {
     /// Create the user-local project dev overlay and dev runtime directory.
     #[command(after_help = DEV_INIT_AFTER_HELP)]
     Init(DevInitArgs),
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct AuthArgs {
+    #[command(subcommand)]
+    pub(crate) command: AuthCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(in crate::commands) enum AuthCommand {
+    /// Show the principal resolved for the current client credential.
+    Whoami(AuthOutputArgs),
+    /// Create, list, and revoke service tokens.
+    Token(AuthTokenArgs),
+    /// Grant, list, and revoke project memberships.
+    Membership(AuthMembershipArgs),
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct AuthOutputArgs {
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct AuthTokenArgs {
+    #[command(subcommand)]
+    pub(crate) command: AuthTokenCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(in crate::commands) enum AuthTokenCommand {
+    /// Create a service principal and display its secret once.
+    Create(AuthTokenCreateArgs),
+    /// List token metadata without secrets or hashes.
+    List(AuthOutputArgs),
+    /// Revoke a token by UUID or unambiguous displayed prefix.
+    Revoke(AuthTokenRevokeArgs),
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct AuthTokenCreateArgs {
+    #[arg(long)]
+    pub(crate) name: String,
+    #[arg(long)]
+    pub(crate) project: String,
+    #[arg(long, value_enum)]
+    pub(crate) role: ServiceAuthRole,
+    #[arg(long, value_parser = humantime::parse_duration)]
+    pub(crate) ttl: std::time::Duration,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct AuthTokenRevokeArgs {
+    pub(crate) selector: String,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct AuthMembershipArgs {
+    #[command(subcommand)]
+    pub(crate) command: AuthMembershipCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub(in crate::commands) enum AuthMembershipCommand {
+    /// Add or update a project role for a principal.
+    Grant(AuthMembershipGrantArgs),
+    /// List direct and bootstrap memberships.
+    List(AuthOutputArgs),
+    /// Remove a project membership by UUID.
+    Revoke(AuthMembershipRevokeArgs),
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct AuthMembershipGrantArgs {
+    #[arg(long)]
+    pub(crate) principal: Uuid,
+    #[arg(long)]
+    pub(crate) project: String,
+    #[arg(long, value_enum)]
+    pub(crate) role: ServiceAuthRole,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(in crate::commands) struct AuthMembershipRevokeArgs {
+    pub(crate) id: Uuid,
+    #[arg(long)]
+    pub(crate) json: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(in crate::commands) enum ServiceAuthRole {
+    Reader,
+    Writer,
+    Operator,
+}
+
+impl From<ServiceAuthRole> for mem_api::AuthRole {
+    fn from(value: ServiceAuthRole) -> Self {
+        match value {
+            ServiceAuthRole::Reader => Self::Reader,
+            ServiceAuthRole::Writer => Self::Writer,
+            ServiceAuthRole::Operator => Self::Operator,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -3428,6 +3558,7 @@ pub(super) async fn run() -> Result<()> {
     let config = AppConfig::load_from_path(cli_config).context("load config")?;
     let client = Client::builder()
         .timeout(config.service.request_timeout)
+        .default_headers(write_headers(&config)?)
         .build()
         .context("build http client")?;
 
@@ -3442,6 +3573,7 @@ pub(super) async fn run() -> Result<()> {
             command: ServiceCommand::Run,
         }) => unreachable!("service run is handled before config loading"),
         Command::Service(_) => unreachable!("service management is handled before config loading"),
+        Command::Auth(args) => crate::commands::auth::handle(args, client, config).await?,
         Command::Mcp(args) => crate::commands::mcp::handle(args, config).await?,
         Command::Watcher(WatcherArgs {
             command:

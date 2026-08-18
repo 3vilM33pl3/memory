@@ -937,6 +937,7 @@ mod tests {
                 request_timeout: std::time::Duration::from_secs(30),
                 read_only: false,
             },
+            auth: mem_api::AuthConfig::default(),
             mcp: mem_api::McpConfig::default(),
             database: mem_api::DatabaseConfig {
                 url: "postgresql://memory:test@localhost:5432/memory".to_string(),
