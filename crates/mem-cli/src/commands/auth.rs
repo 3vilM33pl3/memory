@@ -39,8 +39,7 @@ pub(super) async fn handle(args: AuthArgs, client: Client, config: AppConfig) ->
         }
         AuthCommand::Token(args) => match args.command {
             AuthTokenCommand::Create(args) => {
-                let ttl = u64::try_from(args.ttl.as_secs())
-                    .context("token ttl does not fit in seconds")?;
+                let ttl = args.ttl.as_secs();
                 let token: AuthServiceTokenResponse = get_json(
                     client
                         .post(service_url(&config, "/v1/auth/tokens"))
