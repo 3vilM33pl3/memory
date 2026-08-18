@@ -21,11 +21,13 @@ Use this map to find the right PR boundary before opening the large files.
 - `web/src/App.tsx`: web UI shell, project selection, polling, and feature composition.
 - `web/src/features/`: extracted browser feature tabs.
 - `web/src/api.ts`: browser API boundary. Keep fetch details here instead of scattering endpoint strings.
+- `web/src/features/access/`: Authentik identity, service-token, and project-membership administration.
 
 ## Common Change Paths
 
 - Add a CLI command: update `crates/mem-cli/src/main.rs` or `crates/mem-cli/src/commands/`, add help metadata, add a `docs/user/cli/*.md` page, and extend command-help tests.
 - Add a service endpoint: add types in `mem-api`, route/service logic in `mem-service`, tests in the touched crate, and client wiring where needed.
+- Change authentication: update shared contracts in `mem-api`, central policy and stores under `mem-service/src/auth/`, the OpenAPI spec, and transport-specific credential propagation. Never authorize independently in a leaf handler.
 - Change query ranking: update `mem-search`, preserve diagnostics, and add tests for result ordering or explanation fields.
 - Change memory curation: update `mem-curate`, replacement proposal behavior, memory type docs, and database tests when persistence changes.
 - Change the TUI: keep tab behavior localized; extract pure rendering helpers before moving state.

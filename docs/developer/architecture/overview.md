@@ -69,6 +69,8 @@ flowchart LR
     subgraph External["Optional external providers"]
         LLM["LLM provider<br/>answer and scan support"]
         Embeddings["Embedding provider<br/>OpenAI, Voyage, Ollama, etc."]
+        Authentik["Authentik<br/>browser OIDC identity"]
+        SecretStore["OpenBao or secret store<br/>service-token delivery"]
     end
 
     Skills --> CLI
@@ -88,6 +90,8 @@ flowchart LR
     Search --> LLM
     Search --> Embeddings
     Curate --> LLM
+    Authentik --> Service
+    SecretStore --> CLI
 ```
 
 ## Main Components
@@ -142,6 +146,11 @@ The backend owns:
 - retrieval and ranking
 - provenance
 - stats and operational reporting
+- centralized principal resolution, project authorization, and Authentik OIDC browser sessions
+
+See [Authentication And Authorization](authentication.md) for the single-user
+compatibility mode, multi-user principal model, transport behavior, and threat
+boundaries.
 
 ### Loop Automation
 

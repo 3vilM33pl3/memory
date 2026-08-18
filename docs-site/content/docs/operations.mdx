@@ -114,7 +114,10 @@ Memory Layer can be local-first, but external embedding or LLM providers may rec
 - Are logs redacted before sharing?
 
 <Warning>
-Do not expose the MCP HTTP server to the public internet unless you have added an authentication and network control layer.
+Do not expose the service or MCP HTTP route directly to the public internet.
+For remote multi-user access, enable Authentik mode, terminate HTTPS at a
+trusted reverse proxy, keep service-token clients scoped, and add network
+controls. HTTP MCP remains cookie-blind and needs its own service token.
 </Warning>
 
 ## Multi-project use
@@ -125,7 +128,9 @@ One backend serves multiple projects. Each project has its own slug, config, wat
 
 The [Web UI](/docs/web-ui) is served by the same local service. Use it when you need a wider inspection surface for memories, query evidence, activities, review proposals, errors, embeddings, and resume briefings.
 
-Keep the service bound to local interfaces unless you have added an explicit authentication and network control layer.
+Keep the service bound to local interfaces unless you have explicitly
+configured [Authentication and access](/docs/reference/authentication), HTTPS,
+trusted proxy behavior, and network controls.
 
 ## Automations
 

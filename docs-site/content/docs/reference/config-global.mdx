@@ -25,6 +25,7 @@ The env file is loaded next to the config file and is the right place for genera
 | Section | Purpose |
 | --- | --- |
 | `[service]` | HTTP bind address, Cap'n Proto endpoints, API token, request timeout, optional web root, and `read_only` (student mode: every mutating endpoint returns 403 while queries, briefings, and exports keep working — see the [classroom pack](/docs/classroom)). |
+| `[auth]`, `[auth.oidc]`, `[[auth.group_mappings.rules]]` | Single-user compatibility or Authentik multi-user mode, browser session lifetime, OIDC client, and global/project group roles. |
 | `[mcp]` | Built-in MCP enablement, HTTP path, token requirement, read-only mode. |
 | `[database]` | PostgreSQL URL. The database must already exist and have `vector` enabled. |
 | `[cluster]` | Local-network primary/relay discovery and service identity. |
@@ -47,6 +48,9 @@ request_timeout = "30s"
 [database]
 url = "postgres://memory_layer:<password>@127.0.0.1:5432/memory_layer"
 
+[auth]
+mode = "single_user"
+
 [mcp]
 enabled = true
 http_enabled = true
@@ -60,6 +64,11 @@ The service API token is normally provisioned automatically into `memory-layer.e
 ```bash
 memory service ensure-api-token --rotate-placeholder
 ```
+
+For multi-user browser login and scoped workload credentials, read
+[Authentication and access](/docs/reference/authentication). The legacy service
+token is disabled in multi-user mode unless the temporary bootstrap flag is
+explicitly enabled.
 
 ## Embedding provider example
 

@@ -1,0 +1,141 @@
+---
+title: "Authentication and access"
+description: "Configure Authentik browser login, scoped service tokens, roles, and project memberships."
+---
+
+# Authentication and access
+
+Memory Layer defaults to `single_user`, preserving existing local installs. Set
+`auth.mode = "multi_user"` to use Authentik for browser identity and scoped
+Memory Layer service tokens for CLI, TUI, watchers, relays, and HTTP MCP.
+
+## Identity split
+
+| Actor | Authentication | Secret location |
+|---|---|---|
+| Browser user | Authentik OIDC Authorization Code + PKCE | HttpOnly Memory Layer session cookie |
+| CLI, TUI, watcher, agent | Memory Layer `mlt_...` service token | Process environment or secret manager |
+| HTTP MCP | Memory Layer service token; cookies ignored | MCP client secret configuration |
+| Relay | Original caller credential forwarded to primary | No privilege substitution |
+
+Authentik authenticates people. OpenBao is recommended for distributing machine
+secrets, but Memory Layer does not call OpenBao at runtime.
+
+## Roles
+
+Roles are cumulative: `reader < writer < operator < admin`.
+
+| Role | Typical capability |
+|---|---|
+| `reader` | Query, inspect memories, resources, status, and project data. |
+| `writer` | Reader access plus capture and workspace activity. |
+| `operator` | Writer access plus curation, validation, and loop operations. |
+| `admin` | Access administration and installation-wide controls. |
+
+A global role applies to every project. Explicit memberships and Authentik
+group mappings apply to named projects.
+
+## Authentik setup
+
+1. In Authentik, create an application with an OAuth2/OIDC provider.
+2. Use a confidential client and select a signing key.
+3. Add the strict redirect URI
+   `https://memory.example.com/v1/auth/callback`.
+4. Include the `openid`, `profile`, and `email` scope mappings. Authentik's
+   default profile scope includes group membership.
+5. Record the application slug, issuer URL, client ID, and client secret.
+
+Authentik documents the current provider workflow in [Create an OAuth2
+provider](https://docs.goauthentik.io/add-secure-apps/providers/oauth2/create-oauth2-provider/)
+and the issuer/scope behavior in [OAuth 2.0
+provider](https://docs.goauthentik.io/add-secure-apps/providers/oauth2/).
+
+## Service configuration
+
+```toml
+[auth]
+mode = "multi_user"
+public_base_url = "https://memory.example.com"
+session_ttl = "12h"
+multi_user_legacy_token_enabled = false
+
+[auth.oidc]
+issuer_url = "https://auth.example.com/application/o/memory/"
+client_id = "memory-layer"
+client_secret_env = "MEMORY_LAYER_OIDC_CLIENT_SECRET"
+scopes = ["openid", "profile", "email"]
+groups_claim = "groups"
+
+[[auth.group_mappings.rules]]
+group = "memory-admins"
+role = "admin"
+global = true
+
+[[auth.group_mappings.rules]]
+group = "memory-writers"
+role = "writer"
+project = "memory"
+```
+
+Put the client secret in the adjacent environment file:
+
+```dotenv
+MEMORY_LAYER_OIDC_CLIENT_SECRET=replace-with-authentik-client-secret
+```
+
+`public_base_url` must be the browser-visible URL, including the HTTPS scheme.
+Memory Layer uses it for the callback URI and exact Origin checks.
+
+## Service principals
+
+```bash
+memory auth whoami
+
+memory auth token create \
+  --name hermes \
+  --project memory \
+  --role writer \
+  --ttl 30d
+
+export MEMORY_LAYER_CLIENT_TOKEN='mlt_...'
+memory auth whoami --json
+```
+
+The raw token is displayed once. Memory Layer stores only its SHA-256 hash.
+Store it in OpenBao or another secret manager before closing the output.
+
+Grant the same principal another project:
+
+```bash
+memory auth membership grant \
+  --principal <principal-uuid> \
+  --project another-project \
+  --role reader
+```
+
+Global admins can perform the same work from the web UI's **Access** tab.
+
+## Migration
+
+1. Configure Authentik and at least one global-admin group while still in
+   `single_user` mode.
+2. Set the OIDC secret environment variable and restart the service.
+3. Switch to `multi_user` and verify a browser admin can sign in.
+4. Issue project-scoped service tokens for every non-browser workload.
+5. Disable `multi_user_legacy_token_enabled` after migration.
+
+Returning to `single_user` is a config rollback. Do not reverse the auth
+migration; retaining the rows preserves the audit trail.
+
+## Troubleshooting
+
+| Symptom | Meaning | Action |
+|---|---|---|
+| `401` | Credential missing, invalid, expired, or revoked | Set `MEMORY_LAYER_CLIENT_TOKEN`, sign in again, or rotate the token. |
+| `403` | Identity is valid but role/project access is insufficient | Check group mapping or explicit membership. |
+| Login returns `503` | Authentik discovery or client secret unavailable | Check issuer URL, provider health, and `client_secret_env`. |
+| Browser write returns `403` | Origin or CSRF check failed | Verify `public_base_url`, HTTPS proxy headers, and cookies. |
+| MCP rejects browser session | Expected: HTTP MCP is cookie-blind | Configure a scoped service token in the MCP client. |
+
+Existing browser sessions and service tokens keep working during an Authentik
+outage; only new browser logins depend on provider discovery.

@@ -9,7 +9,12 @@ The crate is a protocol adapter over the existing `mem-service` HTTP API. It doe
 - **stdio:** `memory mcp run` constructs the adapter in the CLI process and serves it through the official Rust MCP SDK stdio transport.
 - **Streamable HTTP:** `memory service run` mounts the official Rust MCP SDK `StreamableHttpService` at `[mcp].http_path`, `/mcp` by default.
 
-The HTTP mount validates `Origin` when present and requires either `Authorization: Bearer <service.api_token>` or `x-api-token: <service.api_token>` when `[mcp].require_token` is true.
+The HTTP mount validates `Origin` when present and accepts either
+`Authorization: Bearer <token>` or `x-api-token: <token>`. In multi-user mode it
+always requires a scoped service token and deliberately ignores browser session
+cookies. Each MCP request forwards that credential to the backing HTTP API so
+tool authorization cannot exceed the caller's project roles. Relays preserve
+the same credential when forwarding to the primary.
 
 ## Read-Only Surface
 
@@ -29,7 +34,7 @@ Write-capable Memory operations remain absent from MCP v1 by design.
 The search crate owns the scoped/global distinction through a shared query execution model:
 
 - project query binds a project slug and keeps the old `/v1/query` behavior
-- global query leaves the project scope unset, so lexical, semantic, graph, provenance, and reranking logic run across all active projects
+- global query leaves the project scope unset, so lexical, semantic, graph, provenance, and reranking logic run across projects the principal can read
 
 Global query is still read-only. It should not infer write targets by cwd. Agents that need follow-up action must choose the repository from returned `repo_root` metadata, then use project-scoped tools or local repository actions.
 

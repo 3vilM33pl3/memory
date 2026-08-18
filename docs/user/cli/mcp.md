@@ -81,10 +81,15 @@ The status report checks service reachability, the selected project overview, th
 
 `memory service run` mounts Streamable HTTP MCP at `[mcp].http_path`, `/mcp` by default, when both `[mcp].enabled` and `[mcp].http_enabled` are true.
 
-HTTP MCP is advanced/local-only by default. Clients must send either:
+HTTP MCP is advanced/local-only by default. In multi-user mode, create a scoped
+service token with `memory auth token create`; browser session cookies are
+deliberately ignored. Clients must send either:
 
-- `Authorization: Bearer <service.api_token>`
-- `x-api-token: <service.api_token>`
+- `Authorization: Bearer <service-token>`
+- `x-api-token: <service-token>`
+
+The legacy `service.api_token` works in the default single-user mode. It works
+in multi-user mode only during an explicitly enabled bootstrap window.
 
 HTTP tools always require an explicit `project` argument because the service process has no trustworthy client working directory.
 
@@ -94,6 +99,6 @@ HTTP tools always require an explicit `project` argument because the service pro
 
 - **Service down:** start the backend with `memory service run` or `memory service enable`, then run `memory mcp status --project <slug>`.
 - **Missing project:** pass `--project` for stdio or include `project` in each HTTP tool call.
-- **Invalid token:** refresh the service token with `memory service ensure-api-token` and update the MCP client config.
+- **Invalid token:** create or rotate a scoped token with `memory auth token create`, then update the MCP client. In single-user mode, use `memory service ensure-api-token` for the legacy installation token.
 - **Stdout pollution:** stdio clients fail if wrappers print banners or logs to stdout before JSON-RPC frames. Run `memory mcp run` directly.
 - **Unsupported transport:** use stdio unless your client supports MCP Streamable HTTP.

@@ -5,6 +5,7 @@
     "glossary",
     "http-api",
     "cli",
+    "authentication",
     "config-global",
     "config-project",
     "database-schema",

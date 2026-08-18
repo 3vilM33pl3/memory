@@ -15,6 +15,8 @@ Memory Layer reads values from the process environment, from `memory-layer.env` 
 | `MEMORY_LAYER_PROFILE` | Optional | Force `dev` or `prod`; normally inferred from binary path. |
 | `MEMORY_LAYER_WRITER_ID` | Optional | Same as `--writer-id` / `--agent-id` for write-capable commands. |
 | `MEMORY_LAYER__SERVICE__API_TOKEN` | Usually generated | Service API token when supplied through env instead of TOML. |
+| `MEMORY_LAYER_CLIENT_TOKEN` | Multi-user non-browser clients | Scoped `mlt_...` token used by CLI, TUI, watcher, and stdio MCP; takes precedence over the legacy service token. |
+| `MEMORY_LAYER_OIDC_CLIENT_SECRET` | Multi-user browser login | Default environment variable containing the Authentik confidential-client secret. The name is configurable with `auth.oidc.client_secret_env`. |
 | `MEMORY_LAYER__DATABASE__URL` | Sometimes | PostgreSQL URL override. |
 | `OPENAI_API_KEY` | When configured | OpenAI or OpenAI-compatible LLM/embedding provider key. |
 | `VOYAGE_API_KEY` | When configured | Voyage embedding provider key. |
@@ -49,6 +51,7 @@ For local Ollama, `api_key_env = ""` is normally correct.
 MEMORY_LAYER_PROFILE=dev cargo run --bin memory -- status --project memory
 MEMORY_LAYER__DATABASE__URL='postgres://memory_layer:secret@127.0.0.1:5432/memory_layer' memory doctor
 MEMORY_LAYER_WRITER_ID=codex-docs memory remember --project memory --note "Updated reference docs"
+MEMORY_LAYER_CLIENT_TOKEN='mlt_...' memory auth whoami
 ```
 
 ## Diagnostics

@@ -76,6 +76,156 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+  /v1/auth/login:
+    get:
+      operationId: get_v1_auth_login
+      summary: "Start Authentik OIDC Authorization Code login with PKCE."
+      tags: ["Authentication"]
+      x-stability: core
+      security: []
+      parameters:
+        - name: return_to
+          in: query
+          schema: { type: string, default: / }
+          description: Local absolute browser path used after a successful callback.
+      responses:
+        "307": { description: Redirect to the configured Authentik authorization endpoint. }
+        "404": { description: OIDC login is disabled in single-user mode. }
+        "503": { description: OIDC configuration or provider discovery is unavailable. }
+  /v1/auth/callback:
+    get:
+      operationId: get_v1_auth_callback
+      summary: "Validate the Authentik callback and create a browser session."
+      tags: ["Authentication"]
+      x-stability: core
+      security: []
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string } }
+        - { name: error_description, in: query, schema: { type: string } }
+      responses:
+        "303": { description: Session cookies created; redirect to the validated local return path. }
+        "400": { description: Missing, invalid, expired, or provider-rejected callback. }
+        "401": { description: ID token signature, issuer, audience, or nonce validation failed. }
+  /v1/auth/me:
+    get:
+      operationId: get_v1_auth_me
+      summary: "Return the authenticated principal and effective project access."
+      tags: ["Authentication"]
+      x-stability: core
+      responses:
+        "200":
+          description: Current identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthMeResponse' }
+        "401": { description: No valid browser session or service token. }
+  /v1/auth/logout:
+    post:
+      operationId: post_v1_auth_logout
+      summary: "Revoke the current browser session and expire its cookies."
+      tags: ["Authentication"]
+      x-stability: core
+      responses:
+        "200": { description: Session revoked. }
+        "403": { description: Browser CSRF or Origin validation failed. }
+  /v1/auth/tokens:
+    get:
+      operationId: get_v1_auth_tokens
+      summary: "List service-token metadata without secret values."
+      tags: ["Access administration"]
+      x-stability: core
+      responses:
+        "200":
+          description: Service-token inventory.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/AuthServiceTokenResponse' } }
+    post:
+      operationId: post_v1_auth_tokens
+      summary: "Create a project-scoped service token; the raw token is returned once."
+      tags: ["Access administration"]
+      x-stability: core
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthServiceTokenCreateRequest' }
+      responses:
+        "201":
+          description: Token created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthServiceTokenResponse' }
+  /v1/auth/tokens/{selector}/revoke:
+    parameters:
+      - { name: selector, in: path, required: true, schema: { type: string }, description: Token UUID or unique prefix. }
+    post:
+      operationId: post_v1_auth_tokens_selector_revoke
+      summary: "Revoke a service token."
+      tags: ["Access administration"]
+      x-stability: core
+      responses:
+        "200":
+          description: Revoked token metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthServiceTokenResponse' }
+  /v1/auth/principals:
+    get:
+      operationId: get_v1_auth_principals
+      summary: "List human and service principals with effective access."
+      tags: ["Access administration"]
+      x-stability: core
+      responses:
+        "200":
+          description: Principal inventory.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/AuthPrincipal' } }
+  /v1/auth/memberships:
+    get:
+      operationId: get_v1_auth_memberships
+      summary: "List explicit project memberships."
+      tags: ["Access administration"]
+      x-stability: core
+      responses:
+        "200":
+          description: Membership inventory.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/AuthMembership' } }
+    post:
+      operationId: post_v1_auth_memberships
+      summary: "Grant or update an explicit project role."
+      tags: ["Access administration"]
+      x-stability: core
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthMembershipGrantRequest' }
+      responses:
+        "200":
+          description: Granted membership.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthMembership' }
+  /v1/auth/memberships/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      operationId: delete_v1_auth_memberships_id
+      summary: "Revoke an explicit project membership."
+      tags: ["Access administration"]
+      x-stability: core
+      responses:
+        "200":
+          description: Revoked membership.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthMembership' }
   /v1/admin/shutdown:
     post:
       operationId: post_v1_admin_shutdown
@@ -1652,11 +1802,76 @@ components:
       type: http
       scheme: bearer
       description: |
-        The service API token from the machine configuration
-        ([service].api_token). Loopback requests from the bundled web UI use a
-        trusted-origin path instead. Read-only GETs from loopback may be
-        accepted without a token depending on configuration.
+        A Memory Layer service token in multi-user mode, or the legacy
+        [service].api_token in single-user mode. Browser clients use an
+        HttpOnly OIDC session cookie instead; browser mutations additionally
+        require the session CSRF value and the configured public Origin.
   schemas:
+    AuthProjectAccess:
+      type: object
+      required: [project, role, source]
+      properties:
+        project: { type: string }
+        role: { type: string, enum: [reader, writer, operator, admin] }
+        source: { type: string, description: explicit or authentik_group. }
+    AuthPrincipal:
+      type: object
+      required: [id, kind, display_name, groups, projects]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [human_oidc, service_token, legacy_service_token, internal] }
+        display_name: { type: string }
+        email: { type: [string, "null"] }
+        groups: { type: array, items: { type: string } }
+        global_role: { type: [string, "null"], enum: [reader, writer, operator, admin, null] }
+        projects: { type: array, items: { $ref: '#/components/schemas/AuthProjectAccess' } }
+    AuthMeResponse:
+      type: object
+      required: [authenticated, mode, read_only, principal]
+      properties:
+        authenticated: { type: boolean }
+        mode: { type: string, enum: [single_user, multi_user] }
+        read_only: { type: boolean }
+        principal: { $ref: '#/components/schemas/AuthPrincipal' }
+    AuthServiceTokenCreateRequest:
+      type: object
+      required: [name, project, role]
+      properties:
+        name: { type: string }
+        project: { type: string }
+        role: { type: string, enum: [reader, writer, operator] }
+        expires_in_seconds: { type: [integer, "null"], minimum: 1 }
+    AuthServiceTokenResponse:
+      type: object
+      required: [id, principal_id, name, token_prefix, created_at, projects]
+      properties:
+        id: { type: string, format: uuid }
+        principal_id: { type: string, format: uuid }
+        name: { type: string }
+        token_prefix: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+        token: { type: [string, "null"], writeOnly: true, description: Present only in the create response. }
+        projects: { type: array, items: { $ref: '#/components/schemas/AuthProjectAccess' } }
+    AuthMembershipGrantRequest:
+      type: object
+      required: [principal_id, project, role]
+      properties:
+        principal_id: { type: string, format: uuid }
+        project: { type: string }
+        role: { type: string, enum: [reader, writer, operator, admin] }
+    AuthMembership:
+      type: object
+      required: [id, principal_id, project, role, source, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        principal_id: { type: string, format: uuid }
+        project: { type: string }
+        role: { type: string, enum: [reader, writer, operator, admin] }
+        source: { type: string }
+        created_at: { type: string, format: date-time }
     QueryRequest:
       type: object
       required: [project, query]
@@ -1851,4 +2066,3 @@ components:
         version: { type: string }
         database: { type: string }
       additionalProperties: true
-

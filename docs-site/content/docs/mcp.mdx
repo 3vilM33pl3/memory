@@ -20,7 +20,10 @@ Stdio mode writes only MCP JSON-RPC messages to stdout; diagnostics go to stderr
 
 ## Streamable HTTP server
 
-The service can expose MCP over a local HTTP route, typically `/mcp`. Use this only for local, token-bearing clients unless you add your own network and authentication controls.
+The service can expose MCP over a local HTTP route, typically `/mcp`. Use this
+only for local, token-bearing clients unless you add your own network and
+authentication controls. In multi-user mode, HTTP MCP accepts a scoped service
+token and deliberately ignores browser session cookies.
 
 ## Tools
 
@@ -52,6 +55,7 @@ follow-up actions should happen.
 - Prefer stdio for local desktop or CLI clients.
 - Keep Streamable HTTP bound to local interfaces unless you add network controls.
 - Require token-bearing clients for HTTP MCP.
+- Create the token with `memory auth token create`; store it in the MCP client's secret configuration.
 - Scope tools to explicit projects.
 - Do not expose MCP HTTP to the public internet.
 
@@ -60,3 +64,4 @@ follow-up actions should happen.
 ## Next
 
 Read [Agents](/docs/agents), [Watchers](/docs/watchers), or [Operations](/docs/operations).
+For Authentik, roles, and service-token setup, read [Authentication and access](/docs/reference/authentication).

@@ -14,16 +14,23 @@ A contract test keeps the specification's path inventory in sync with the router
 
 ## Base URL and authentication
 
-The service listens on localhost only by default (`127.0.0.1:4040` native, `localhost:4040` in the Docker stack). Write endpoints require the service API token from your machine configuration as a bearer token:
+The service listens on localhost only by default (`127.0.0.1:4040` native,
+`localhost:4040` in the Docker stack). In the default `single_user` mode,
+clients use the installation token. In `multi_user` mode, non-browser clients
+use a scoped Memory Layer service token:
 
 ```bash
 curl -s http://127.0.0.1:4040/v1/query \
-  -H "Authorization: Bearer $MEMORY_API_TOKEN" \
+  -H "Authorization: Bearer $MEMORY_LAYER_CLIENT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"project": "demo", "query": "How does reinforcement work?"}'
 ```
 
-The token lives in the global config written by `memory setup` (`[service].api_token`). Loopback requests from the bundled web UI use a trusted-origin path instead.
+The bundled browser UI uses an Authentik-backed HttpOnly session plus CSRF
+protection in multi-user mode. `401` means authentication failed; `403` means
+the principal is valid but lacks the required role or project. Read
+[Authentication and access](/docs/reference/authentication) for configuration,
+roles, token lifecycle, and migration.
 
 ## The v1 stability contract
 
@@ -56,7 +63,7 @@ Every operation in the spec carries an `x-stability` marker:
 ```python
 import requests
 
-BASE, TOKEN = "http://127.0.0.1:4040", "<your [service].api_token>"
+BASE, TOKEN = "http://127.0.0.1:4040", "<your Memory Layer service token>"
 r = requests.post(f"{BASE}/v1/query", json={"project": "demo", "query": "How does auth work?"},
                   headers={"Authorization": f"Bearer {TOKEN}"})
 print(r.json()["answer"], r.json()["answer_citations"])
@@ -66,6 +73,6 @@ Typed Python and TypeScript clients generated from the spec are on the [roadmap]
 
 ## Related
 
-- [Environment variables](/docs/reference/environment-variables) · [Global config](/docs/reference/config-global)
+- [Authentication and access](/docs/reference/authentication) · [Environment variables](/docs/reference/environment-variables) · [Global config](/docs/reference/config-global)
 - [MCP server](/docs/mcp) — the same read surface over the Model Context Protocol.
 - [Glossary](/docs/reference/glossary) — the concepts the API speaks in.

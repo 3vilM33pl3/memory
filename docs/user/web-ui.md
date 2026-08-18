@@ -35,10 +35,17 @@ The main tabs match the TUI order:
 | Embeddings | Configured embedding backends, active search backend, automatic creation, coverage, re-embed, and reindex controls. |
 | Resume | Re-entry briefing with checkpoint, current thread, next steps, recent changes, context memories, timeline, warnings, and commits. |
 | Automations | Loop-engineering approval queue, automation cards, effective mode, scope, risk, last run, next trigger, daily budget, outputs, and controls. |
+| Access | Global-admin view of Authentik users, service tokens, explicit project memberships, and one-time token creation. |
 
 The web-only `Bundles` tool remains under the More menu for memory export/import
 previews and transfer. `Automations` is a primary browser tab and also has a
 read-oriented TUI tab.
+
+In multi-user mode, the top bar shows the Authentik identity. The browser keeps
+the opaque session in an HttpOnly cookie and sends a separate CSRF value on
+writes; it never downloads a service token. The Access tab appears only for a
+global admin. Newly created service-token secrets are shown once and should be
+stored in OpenBao or another secret manager before dismissal.
 
 ## Automations
 
