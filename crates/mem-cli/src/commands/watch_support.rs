@@ -46,7 +46,39 @@ pub(crate) fn enable_watch_service(repo_root: &Path, project: &str) -> Result<St
         ))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = platform::windows_watch_task_name(project);
+        platform::register_windows_task(&platform::WindowsTaskSpec {
+            name: task_name.clone(),
+            description: format!("Memory Layer watcher for {project}"),
+            executable: memory_binary_path()?,
+            arguments: vec![
+                "--config".to_string(),
+                default_global_config_path().display().to_string(),
+                "watcher".to_string(),
+                "run".to_string(),
+                "--project".to_string(),
+                project.to_string(),
+                "--repo-root".to_string(),
+                repo_root.display().to_string(),
+                "--service-managed".to_string(),
+            ],
+            working_directory: repo_root.to_path_buf(),
+            start_at_logon: true,
+            restart_on_failure: true,
+        })?;
+        platform::run_windows_task(&task_name)?;
+        Ok(format!(
+            "Installed and started Windows scheduled task {task_name}.\nRepo: {}\nProject: {}\n\nManage it with:\n- memory watcher status --project {}\n- memory watcher disable --project {}\n- schtasks /Query /TN {task_name}",
+            repo_root.display(),
+            project,
+            project,
+            project
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let unit_name = watch_unit_name(project);
         let unit_dir = user_systemd_unit_dir()?;
@@ -81,7 +113,17 @@ pub(crate) fn preview_enable_watch_service(repo_root: &Path, project: &str) -> R
         ))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        Ok(format!(
+            "Dry run: would register and start Windows scheduled task {}.\nRepo: {}\nProject: {}",
+            platform::windows_watch_task_name(project),
+            repo_root.display(),
+            project,
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let unit_name = watch_unit_name(project);
         let unit_path = user_systemd_unit_dir()?.join(&unit_name);
@@ -112,7 +154,14 @@ pub(crate) fn disable_watch_service(project: &str) -> Result<String> {
         ))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = platform::windows_watch_task_name(project);
+        platform::delete_windows_task(&task_name)?;
+        Ok(format!("Disabled Windows scheduled task {task_name}"))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let unit_name = watch_unit_name(project);
         let unit_path = user_systemd_unit_dir()?.join(&unit_name);
@@ -140,7 +189,15 @@ pub(crate) fn preview_disable_watch_service(project: &str) -> Result<String> {
         ))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        Ok(format!(
+            "Dry run: would stop and delete Windows scheduled task {}",
+            platform::windows_watch_task_name(project),
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let unit_name = watch_unit_name(project);
         let unit_path = user_systemd_unit_dir()?.join(&unit_name);
@@ -172,7 +229,19 @@ pub(crate) fn watch_service_status(repo_root: &Path, project: &str) -> Result<St
         ))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = platform::windows_watch_task_name(project);
+        let running = platform::windows_task_is_running(&task_name);
+        Ok(format!(
+            "Watcher service for project {project}:\n- task: {task_name}\n- repo: {}\n- installed: {}\n- running: {}\n\nInspect with:\n- schtasks /Query /TN {task_name} /V /FO LIST",
+            repo_root.display(),
+            yes_no(platform::windows_task_exists(&task_name)),
+            yes_no(running),
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let unit_name = watch_unit_name(project);
         let unit_path = user_systemd_unit_dir()?.join(&unit_name);
@@ -191,7 +260,7 @@ pub(crate) fn watch_service_status(repo_root: &Path, project: &str) -> Result<St
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) const WATCH_MANAGER_UNIT_NAME: &str = "memory-watch-manager.service";
 const WATCH_MANAGER_EVENT_DEBOUNCE_MS: u64 = 500;
 const WATCH_MANAGER_FALLBACK_SCAN_SECONDS: u64 = 30;
@@ -442,6 +511,29 @@ pub(crate) async fn reconcile_watcher_manager(
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        let profile_name = match config.profile {
+            Profile::Prod => "prod",
+            Profile::Dev => "dev",
+        };
+        let prefix = format!("MemoryLayer-ManagedWatch-{profile_name}-");
+        let expected = seen
+            .iter()
+            .map(|session_id| managed_watch_service_name(config.profile, session_id))
+            .collect::<std::collections::BTreeSet<_>>();
+        for task_name in platform::windows_memory_task_names()
+            .into_iter()
+            .filter(|name| name.starts_with(&prefix) && !expected.contains(name))
+        {
+            if let Err(error) = platform::delete_windows_task(&task_name) {
+                state.warnings.push(format!(
+                    "Could not remove stale scheduled task {task_name}: {error}"
+                ));
+            }
+        }
+    }
+
     state.updated_at = Some(Utc::now());
     state.mode = "event-driven".to_string();
     state.last_reconcile_reason = reason.to_string();
@@ -464,7 +556,7 @@ pub(crate) fn resolve_agent_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
         .output()
         .with_context(|| format!("run git rev-parse in {cwd}"))?;
     if !output.status.success() {
-        return Ok(None);
+        return resolve_single_initialized_child_repo(Path::new(cwd));
     }
     let repo_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if repo_root.is_empty() {
@@ -490,6 +582,36 @@ pub(crate) fn resolve_agent_repo_root(cwd: &str) -> Result<Option<PathBuf>> {
         }
     }
     Ok(Some(PathBuf::from(repo_root)))
+}
+
+fn resolve_single_initialized_child_repo(workspace_root: &Path) -> Result<Option<PathBuf>> {
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(workspace_root)
+        .with_context(|| format!("read workspace {}", workspace_root.display()))?
+        .flatten()
+    {
+        let path = entry.path();
+        if !path.is_dir()
+            || (!path.join(".mem").join("project.toml").is_file()
+                && !path.join(".agents").join("memory-layer.toml").is_file())
+        {
+            continue;
+        }
+        let output = ProcessCommand::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(&path)
+            .output()
+            .with_context(|| format!("run git rev-parse in {}", path.display()))?;
+        if output.status.success() {
+            let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !root.is_empty() {
+                candidates.push(PathBuf::from(root));
+            }
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
+    Ok((candidates.len() == 1).then(|| candidates.remove(0)))
 }
 
 pub(crate) fn repo_agent_watch_enabled(repo_root: &Path) -> Result<bool> {
@@ -564,7 +686,13 @@ pub(crate) fn legacy_watch_service_is_active(project: &str) -> bool {
             .unwrap_or(false)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let task = platform::windows_watch_task_name(project);
+        platform::windows_task_exists(&task) && platform::windows_task_is_running(&task)
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         unit_is_active(&watch_unit_name(project))
     }
@@ -576,7 +704,12 @@ pub(crate) fn legacy_watch_service_name(project: &str) -> String {
         watch_launch_agent_label(project)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        platform::windows_watch_task_name(project)
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         watch_unit_name(project)
     }
@@ -588,7 +721,18 @@ pub(crate) fn managed_watch_service_name(profile: Profile, session_id: &str) -> 
         managed_watch_launch_agent_label(profile, session_id)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        platform::windows_managed_watch_task_name(
+            match profile {
+                Profile::Prod => "prod",
+                Profile::Dev => "dev",
+            },
+            session_id,
+        )
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let profile_prefix = match profile {
             Profile::Prod => String::new(),
@@ -609,7 +753,12 @@ pub(crate) fn managed_watch_service_loaded(profile: Profile, session_id: &str) -
             .unwrap_or(false)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        platform::windows_task_exists(&managed_watch_service_name(profile, session_id))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         unit_is_loaded(&managed_watch_service_name(profile, session_id))
     }
@@ -623,7 +772,12 @@ pub(crate) fn managed_watch_service_running(profile: Profile, session_id: &str) 
             .unwrap_or(false)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        platform::windows_task_is_running(&managed_watch_service_name(profile, session_id))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         unit_is_active(&managed_watch_service_name(profile, session_id))
     }
@@ -657,18 +811,59 @@ pub(crate) fn start_managed_agent_watcher(
             &label,
         )?;
         bootstrap_launch_agent(&plist_path, &label)?;
-        return Ok(());
+        Ok(())
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = managed_watch_service_name(profile, &session.session_id);
+        let mut arguments = Vec::new();
+        if let Some(path) = config_path {
+            arguments.push("--config".to_string());
+            arguments.push(path.display().to_string());
+        }
+        arguments.extend([
+            "watcher".to_string(),
+            "run".to_string(),
+            "--project".to_string(),
+            project.to_string(),
+            "--repo-root".to_string(),
+            repo_root.display().to_string(),
+            "--agent-cli".to_string(),
+            session.agent_cli.to_string(),
+            "--agent-session-id".to_string(),
+            session.session_id.clone(),
+            "--agent-pid".to_string(),
+            session.pid.to_string(),
+            "--agent-started-at".to_string(),
+            started_at,
+            "--service-managed".to_string(),
+        ]);
+        platform::register_windows_task(&platform::WindowsTaskSpec {
+            name: task_name.clone(),
+            description: format!(
+                "Memory Layer watcher for agent session {}",
+                session.session_id
+            ),
+            executable: memory_binary_path()?,
+            arguments,
+            working_directory: repo_root.to_path_buf(),
+            start_at_logon: false,
+            restart_on_failure: false,
+        })?;
+        platform::run_windows_task(&task_name)?;
+        Ok(())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     let memory_binary = memory_binary_path()?;
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     let unit_name = managed_watch_service_name(profile, &session.session_id);
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     let mut cmd = ProcessCommand::new("systemd-run");
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     cmd.args([
         "--user",
         "--unit",
@@ -680,17 +875,17 @@ pub(crate) fn start_managed_agent_watcher(
         "--setenv=MEMORY_LAYER_WATCH_SERVICE_MANAGED=1",
         "--collect",
     ]);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     cmd.arg(memory_binary);
     // Prefer the resolved project config so the watcher talks to the same
     // service instance the TUI and CLI use for this project.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         if let Some(path) = config_path {
             cmd.arg("--config").arg(path);
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     let output = cmd
         .arg("watcher")
         .arg("run")
@@ -708,15 +903,15 @@ pub(crate) fn start_managed_agent_watcher(
         .arg(started_at)
         .output()
         .with_context(|| format!("run systemd-run for {}", session.session_id))?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     if output.status.success() {
         return Ok(());
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     if unit_is_loaded(&unit_name) {
         return Ok(());
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     anyhow::bail!(
         "systemd-run failed for {}: {}",
         unit_name,
@@ -730,7 +925,16 @@ pub(crate) fn load_watcher_manager_state(profile: Profile) -> Result<WatcherMana
         return Ok(WatcherManagerState::default());
     }
     let content = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))
+    match serde_json::from_str(&content) {
+        Ok(state) => Ok(state),
+        Err(error) => {
+            eprintln!(
+                "watcher manager state is unreadable; rebuilding it from live sessions: {}: {error}",
+                path.display()
+            );
+            Ok(WatcherManagerState::default())
+        }
+    }
 }
 
 pub(crate) fn save_watcher_manager_state(
@@ -741,8 +945,14 @@ pub(crate) fn save_watcher_manager_state(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    fs::write(&path, serde_json::to_vec_pretty(state)?)
-        .with_context(|| format!("write {}", path.display()))
+    let temp_path = path.with_extension(format!("json.tmp-{}", std::process::id()));
+    fs::write(&temp_path, serde_json::to_vec_pretty(state)?)
+        .with_context(|| format!("write {}", temp_path.display()))?;
+    if path.exists() {
+        fs::remove_file(&path).with_context(|| format!("replace {}", path.display()))?;
+    }
+    fs::rename(&temp_path, &path)
+        .with_context(|| format!("move {} to {}", temp_path.display(), path.display()))
 }
 
 pub(crate) fn save_watcher_manager_state_if_changed(
@@ -839,6 +1049,12 @@ impl Drop for WatcherManagerLock {
 }
 
 pub(crate) fn process_is_alive(pid: u32) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        platform::process_is_alive(pid)
+    }
+
+    #[cfg(unix)]
     ProcessCommand::new("kill")
         .args(["-0", &pid.to_string()])
         .status()
@@ -868,7 +1084,7 @@ pub(crate) fn start_watcher_manager_event_source()
 }
 
 pub(crate) fn watcher_manager_session_dirs() -> Vec<PathBuf> {
-    let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = platform::user_home_dir().unwrap_or_default();
     let mut dirs = vec![home.join(".codex").join("sessions")];
     let claude_base = env::var("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
@@ -898,7 +1114,36 @@ pub(crate) fn enable_watch_manager_service(config_path: &Path) -> Result<String>
         ));
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = platform::windows_watch_manager_task_name();
+        let working_directory = platform::windows_data_dir()
+            .ok_or_else(|| anyhow::anyhow!("LOCALAPPDATA and APPDATA are not set"))?;
+        fs::create_dir_all(&working_directory)
+            .with_context(|| format!("create {}", working_directory.display()))?;
+        platform::register_windows_task(&platform::WindowsTaskSpec {
+            name: task_name.to_string(),
+            description: "Memory Layer watcher manager".to_string(),
+            executable: memory_binary_path()?,
+            arguments: vec![
+                "--config".to_string(),
+                config_path.display().to_string(),
+                "watcher".to_string(),
+                "manager".to_string(),
+                "run".to_string(),
+            ],
+            working_directory,
+            start_at_logon: true,
+            restart_on_failure: true,
+        })?;
+        platform::run_windows_task(task_name)?;
+        Ok(format!(
+            "Installed and started Windows scheduled task {task_name}.\nConfig: {}\n\nManage it with:\n- memory watcher manager status\n- memory watcher manager disable\n- schtasks /Query /TN {task_name}",
+            config_path.display()
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let unit_dir = user_systemd_unit_dir()?;
         let unit_path = unit_dir.join(WATCH_MANAGER_UNIT_NAME);
@@ -927,7 +1172,15 @@ pub(crate) fn preview_enable_watch_manager_service() -> Result<String> {
         ));
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        Ok(format!(
+            "Dry run: would register and start Windows scheduled task {}",
+            platform::windows_watch_manager_task_name()
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
         Ok(format!(
@@ -966,7 +1219,20 @@ pub(crate) fn disable_watch_manager_service(profile: Profile) -> Result<String> 
         ));
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = platform::windows_watch_manager_task_name();
+        platform::delete_windows_task(task_name)?;
+        if let Ok(state) = load_watcher_manager_state(profile) {
+            for session_id in state.sessions.keys() {
+                let _ = stop_managed_watch_service(profile, session_id);
+            }
+        }
+        clear_watcher_manager_state(profile)?;
+        Ok(format!("Disabled Windows scheduled task {task_name}"))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
         let _ = run_systemctl_user(["disable", "--now", WATCH_MANAGER_UNIT_NAME]);
@@ -999,7 +1265,15 @@ pub(crate) fn preview_disable_watch_manager_service() -> Result<String> {
         ));
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        Ok(format!(
+            "Dry run: would stop and delete Windows scheduled task {}",
+            platform::windows_watch_manager_task_name()
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
         Ok(format!(
@@ -1062,7 +1336,26 @@ pub(crate) fn watch_manager_service_status(profile: Profile) -> Result<String> {
         ));
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = platform::windows_watch_manager_task_name();
+        let is_running = state.lock_owner_pid.is_some_and(platform::process_is_alive)
+            || platform::windows_task_is_running(task_name);
+        Ok(format!(
+            "Watcher manager service:\n- task: {task_name}\n- installed: {}\n- running: {}\n- tracked sessions: {}\n- last reconcile: {}\n{}\n{}\n\nInspect with:\n- schtasks /Query /TN {task_name} /V /FO LIST\n- memory watcher manager status",
+            yes_no(platform::windows_task_exists(task_name)),
+            yes_no(is_running),
+            state.sessions.len(),
+            state
+                .updated_at
+                .map(|value| value.to_rfc3339())
+                .unwrap_or_else(|| "n/a".to_string()),
+            runtime_lines,
+            warning_lines,
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
         let is_enabled = run_systemctl_user(["is-enabled", WATCH_MANAGER_UNIT_NAME]).is_ok();
@@ -1085,7 +1378,7 @@ pub(crate) fn watch_manager_service_status(profile: Profile) -> Result<String> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn render_watch_manager_unit(config_path: &Path) -> Result<String> {
     let memory_binary = memory_binary_path()?;
     let home = env::var("HOME").unwrap_or_else(|_| "/".to_string());
@@ -1122,12 +1415,12 @@ pub(crate) fn render_watch_manager_launch_agent(config_path: &Path) -> Result<St
     )
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn unit_is_active(unit_name: &str) -> bool {
     run_systemctl_user(["is-active", unit_name]).is_ok()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn unit_is_loaded(unit_name: &str) -> bool {
     let output = ProcessCommand::new("systemctl")
         .args([
@@ -1166,14 +1459,19 @@ pub(crate) fn stop_managed_watch_service(profile: Profile, session_id: &str) -> 
         Ok(())
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        platform::delete_windows_task(&managed_watch_service_name(profile, session_id))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let unit_name = managed_watch_service_name(profile, session_id);
         stop_unit_if_present(&unit_name)
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn stop_unit_if_present(unit_name: &str) -> Result<()> {
     if unit_is_loaded(unit_name) {
         let _ = run_systemctl_user(["stop", unit_name]);
@@ -1182,7 +1480,7 @@ pub(crate) fn stop_unit_if_present(unit_name: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn render_watch_unit(repo_root: &Path, project: &str) -> Result<String> {
     let memory_binary = memory_binary_path()?;
     let env_file = user_memory_layer_env_file()?;
@@ -1199,7 +1497,7 @@ pub(crate) fn render_watch_unit(repo_root: &Path, project: &str) -> Result<Strin
     ))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn user_systemd_unit_dir() -> Result<PathBuf> {
     if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
         return Ok(PathBuf::from(config_home).join("systemd").join("user"));
@@ -1211,6 +1509,7 @@ pub(crate) fn user_systemd_unit_dir() -> Result<PathBuf> {
         .join("user"))
 }
 
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn user_memory_layer_env_file() -> Result<PathBuf> {
     platform::preferred_user_env_path().ok_or_else(|| anyhow::anyhow!("HOME is not set"))
 }
@@ -1221,7 +1520,7 @@ pub(crate) fn memory_binary_path() -> Result<PathBuf> {
         .unwrap_or_else(|| PathBuf::from("memory")))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn watch_unit_name(project: &str) -> String {
     platform::watch_service_unit_name(project)
 }
@@ -1674,7 +1973,7 @@ pub(crate) fn shell_quote_sh(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn run_systemctl_user<const N: usize>(args: [&str; N]) -> Result<()> {
     let output = ProcessCommand::new("systemctl")
         .arg("--user")
@@ -1699,7 +1998,7 @@ pub(crate) fn run_systemctl_user<const N: usize>(args: [&str; N]) -> Result<()> 
     )
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn run_systemctl_user_for<const N: usize>(
     username: &str,
     runtime_dir: &Path,
@@ -1732,12 +2031,12 @@ pub(crate) fn run_systemctl_user_for<const N: usize>(
     )
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn shell_escape_path(value: &Path) -> String {
     shell_escape_str(&value.display().to_string())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn shell_escape_str(value: &str) -> String {
     if value
         .chars()

@@ -13,6 +13,7 @@ pub(crate) struct OfflineRuntime {
 #[derive(Clone, Debug)]
 pub(crate) struct OfflineStore {
     path: Arc<PathBuf>,
+    connection: Arc<Mutex<Connection>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -122,46 +123,43 @@ impl OfflineRuntime {
 
 impl OfflineStore {
     pub(crate) async fn open(path: PathBuf) -> Result<Self> {
-        let store = Self {
+        let connection = open_initialized(&path)?;
+        Ok(Self {
             path: Arc::new(path),
-        };
-        store.initialize().await?;
-        Ok(store)
+            connection: Arc::new(Mutex::new(connection)),
+        })
     }
 
     pub(crate) fn path(&self) -> &StdPath {
         self.path.as_ref().as_path()
     }
 
-    async fn initialize(&self) -> Result<()> {
-        let path = Arc::clone(&self.path);
-        tokio::task::spawn_blocking(move || initialize_db(&path))
-            .await
-            .context("join offline db initialization")?
-    }
-
     pub(crate) async fn queue_capture(
         &self,
         request: &CaptureTaskRequest,
     ) -> Result<CaptureTaskResponse> {
-        let path = Arc::clone(&self.path);
+        let connection = Arc::clone(&self.connection);
         let request = request.clone();
-        tokio::task::spawn_blocking(move || queue_capture_sync(&path, &request))
-            .await
-            .context("join offline capture queue")?
+        tokio::task::spawn_blocking(move || {
+            with_connection(&connection, |conn| queue_capture_sync(conn, &request))
+        })
+        .await
+        .context("join offline capture queue")?
     }
 
     pub(crate) async fn queue_activity(&self, event: &QueuedActivityEvent) -> Result<Uuid> {
-        let path = Arc::clone(&self.path);
+        let connection = Arc::clone(&self.connection);
         let event = event.clone();
-        tokio::task::spawn_blocking(move || queue_activity_sync(&path, &event))
-            .await
-            .context("join offline activity queue")?
+        tokio::task::spawn_blocking(move || {
+            with_connection(&connection, |conn| queue_activity_sync(conn, &event))
+        })
+        .await
+        .context("join offline activity queue")?
     }
 
     pub(crate) async fn pending_count(&self) -> Result<u64> {
-        let path = Arc::clone(&self.path);
-        tokio::task::spawn_blocking(move || pending_count_sync(&path))
+        let connection = Arc::clone(&self.connection);
+        tokio::task::spawn_blocking(move || with_connection(&connection, pending_count_sync))
             .await
             .context("join offline pending count")?
     }
@@ -172,35 +170,46 @@ impl OfflineStore {
         limit: usize,
     ) -> Result<OfflinePendingResponse> {
         let path = Arc::clone(&self.path);
+        let connection = Arc::clone(&self.connection);
         let project = project.map(ToOwned::to_owned);
-        tokio::task::spawn_blocking(move || pending_response_sync(&path, project.as_deref(), limit))
-            .await
-            .context("join offline pending list")?
+        tokio::task::spawn_blocking(move || {
+            with_connection(&connection, |conn| {
+                pending_response_sync(conn, &path, project.as_deref(), limit)
+            })
+        })
+        .await
+        .context("join offline pending list")?
     }
 
     pub(crate) async fn pending_batch(&self, limit: usize) -> Result<Vec<QueuedOutboxItem>> {
-        let path = Arc::clone(&self.path);
-        tokio::task::spawn_blocking(move || pending_batch_sync(&path, limit))
-            .await
-            .context("join offline pending batch")?
+        let connection = Arc::clone(&self.connection);
+        tokio::task::spawn_blocking(move || {
+            with_connection(&connection, |conn| pending_batch_sync(conn, limit))
+        })
+        .await
+        .context("join offline pending batch")?
     }
 
     pub(crate) async fn mark_synced(&self, queue_id: Uuid) -> Result<()> {
-        let path = Arc::clone(&self.path);
-        tokio::task::spawn_blocking(move || mark_synced_sync(&path, queue_id))
-            .await
-            .context("join offline mark synced")?
+        let connection = Arc::clone(&self.connection);
+        tokio::task::spawn_blocking(move || {
+            with_connection(&connection, |conn| mark_synced_sync(conn, queue_id))
+        })
+        .await
+        .context("join offline mark synced")?
     }
 
     pub(crate) async fn mark_failed(&self, queue_id: Uuid, error: String) -> Result<()> {
-        let path = Arc::clone(&self.path);
-        tokio::task::spawn_blocking(move || mark_failed_sync(&path, queue_id, &error))
-            .await
-            .context("join offline mark failed")?
+        let connection = Arc::clone(&self.connection);
+        tokio::task::spawn_blocking(move || {
+            with_connection(&connection, |conn| mark_failed_sync(conn, queue_id, &error))
+        })
+        .await
+        .context("join offline mark failed")?
     }
 }
 
-fn initialize_db(path: &StdPath) -> Result<()> {
+fn open_initialized(path: &StdPath) -> Result<Connection> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
@@ -227,18 +236,25 @@ fn initialize_db(path: &StdPath) -> Result<()> {
             ON offline_outbox(project, status);
         "#,
     )?;
-    Ok(())
+    Ok(conn)
 }
 
-fn open_initialized(path: &StdPath) -> Result<Connection> {
-    initialize_db(path)?;
-    Connection::open(path).with_context(|| format!("open {}", path.display()))
+fn with_connection<T>(
+    connection: &Mutex<Connection>,
+    operation: impl FnOnce(&Connection) -> Result<T>,
+) -> Result<T> {
+    let connection = connection
+        .lock()
+        .map_err(|_| anyhow::anyhow!("offline database connection lock poisoned"))?;
+    operation(&connection)
 }
 
-fn queue_capture_sync(path: &StdPath, request: &CaptureTaskRequest) -> Result<CaptureTaskResponse> {
-    let conn = open_initialized(path)?;
+fn queue_capture_sync(
+    conn: &Connection,
+    request: &CaptureTaskRequest,
+) -> Result<CaptureTaskResponse> {
     let idempotency_key = mem_ingest::idempotency_key(request);
-    if let Some(existing) = queued_capture_response(&conn, &idempotency_key)? {
+    if let Some(existing) = queued_capture_response(conn, &idempotency_key)? {
         return Ok(existing);
     }
 
@@ -300,8 +316,7 @@ fn queued_capture_response(
     Ok(Some(serde_json::from_str(&response_json)?))
 }
 
-fn queue_activity_sync(path: &StdPath, event: &QueuedActivityEvent) -> Result<Uuid> {
-    let conn = open_initialized(path)?;
+fn queue_activity_sync(conn: &Connection, event: &QueuedActivityEvent) -> Result<Uuid> {
     let queue_id = Uuid::new_v4();
     let payload_json = serde_json::to_string(event)?;
     conn.execute(
@@ -322,8 +337,7 @@ fn queue_activity_sync(path: &StdPath, event: &QueuedActivityEvent) -> Result<Uu
     Ok(queue_id)
 }
 
-fn pending_count_sync(path: &StdPath) -> Result<u64> {
-    let conn = open_initialized(path)?;
+fn pending_count_sync(conn: &Connection) -> Result<u64> {
     let count: u64 = conn.query_row(
         "SELECT COUNT(*) FROM offline_outbox WHERE status = 'pending'",
         [],
@@ -333,12 +347,12 @@ fn pending_count_sync(path: &StdPath) -> Result<u64> {
 }
 
 fn pending_response_sync(
+    conn: &Connection,
     path: &StdPath,
     project: Option<&str>,
     limit: usize,
 ) -> Result<OfflinePendingResponse> {
-    let conn = open_initialized(path)?;
-    let pending_count = pending_count_sync(path)?;
+    let pending_count = pending_count_sync(conn)?;
     let sql = if project.is_some() {
         r#"
         SELECT queue_id, item_kind, project, summary, idempotency_key, created_at,
@@ -395,8 +409,7 @@ fn row_to_pending_item(row: &duckdb::Row<'_>) -> Result<OfflinePendingItem> {
     })
 }
 
-fn pending_batch_sync(path: &StdPath, limit: usize) -> Result<Vec<QueuedOutboxItem>> {
-    let conn = open_initialized(path)?;
+fn pending_batch_sync(conn: &Connection, limit: usize) -> Result<Vec<QueuedOutboxItem>> {
     let mut stmt = conn.prepare(
         r#"
         SELECT queue_id, item_kind, payload_json
@@ -419,8 +432,7 @@ fn pending_batch_sync(path: &StdPath, limit: usize) -> Result<Vec<QueuedOutboxIt
     Ok(items)
 }
 
-fn mark_synced_sync(path: &StdPath, queue_id: Uuid) -> Result<()> {
-    let conn = open_initialized(path)?;
+fn mark_synced_sync(conn: &Connection, queue_id: Uuid) -> Result<()> {
     conn.execute(
         r#"
         UPDATE offline_outbox
@@ -432,8 +444,7 @@ fn mark_synced_sync(path: &StdPath, queue_id: Uuid) -> Result<()> {
     Ok(())
 }
 
-fn mark_failed_sync(path: &StdPath, queue_id: Uuid, error: &str) -> Result<()> {
-    let conn = open_initialized(path)?;
+fn mark_failed_sync(conn: &Connection, queue_id: Uuid, error: &str) -> Result<()> {
     conn.execute(
         r#"
         UPDATE offline_outbox
@@ -450,7 +461,14 @@ mod tests {
     use super::*;
 
     fn temp_db_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("memory-{name}-{}.duckdb", Uuid::new_v4()))
+        #[cfg(target_os = "windows")]
+        let temp_root = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("Temp");
+        #[cfg(not(target_os = "windows"))]
+        let temp_root = std::env::temp_dir();
+        temp_root.join(format!("memory-{name}-{}.duckdb", Uuid::new_v4()))
     }
 
     fn capture_request() -> CaptureTaskRequest {
@@ -492,6 +510,7 @@ mod tests {
             Some("offline-capture-key")
         );
 
+        drop(store);
         let _ = fs::remove_file(path);
     }
 
@@ -517,6 +536,7 @@ mod tests {
         store.mark_synced(queue_id).await.unwrap();
         assert_eq!(store.pending_count().await.unwrap(), 0);
 
+        drop(store);
         let _ = fs::remove_file(path);
     }
 }

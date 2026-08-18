@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, Result};
@@ -1759,6 +1759,9 @@ pub(in crate::commands) struct WatcherRunCliArgs {
     /// Owning agent started-at timestamp for agent-linked watcher mode.
     #[arg(long)]
     pub(crate) agent_started_at: Option<DateTime<Utc>>,
+    /// Mark this watcher as owned by an operating-system service manager.
+    #[arg(long, hide = true)]
+    pub(crate) service_managed: bool,
 }
 
 #[derive(Debug, Args)]
@@ -3736,12 +3739,12 @@ pub(crate) fn backend_service_available() -> bool {
     platform::backend_service_available()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(in crate::commands) fn packaged_service_available() -> bool {
     platform::packaged_system_service_available()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(in crate::commands) fn run_systemctl_system<const N: usize>(args: [&str; N]) -> Result<()> {
     let output = ProcessCommand::new("systemctl")
         .args(args)

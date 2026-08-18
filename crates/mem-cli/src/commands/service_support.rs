@@ -1,4 +1,4 @@
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 use std::process::Command as ProcessCommand;
 use std::{
     env, fs,
@@ -15,7 +15,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 use crate::commands::runtime::{packaged_service_available, run_systemctl_system};
 #[cfg(target_os = "macos")]
 use crate::commands::watch_support::{
@@ -24,7 +24,7 @@ use crate::commands::watch_support::{
     render_backend_launch_agent, run_launchctl, user_memory_layer_log_dir,
     watch_manager_launch_agent_label, write_launch_agent,
 };
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 use crate::commands::watch_support::{run_systemctl_user, run_systemctl_user_for};
 use crate::commands::{
     output::service_url,
@@ -75,7 +75,7 @@ pub(crate) async fn enable_backend_service(config_path: &Path) -> Result<String>
 }
 
 pub(crate) fn start_backend_service_once(config_path: &Path) -> Result<String> {
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     let _ = config_path;
 
     #[cfg(target_os = "macos")]
@@ -102,7 +102,36 @@ pub(crate) fn start_backend_service_once(config_path: &Path) -> Result<String> {
         ))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = platform::windows_backend_task_name();
+        let binary = memory_binary_path()?;
+        let working_directory = platform::windows_data_dir()
+            .ok_or_else(|| anyhow::anyhow!("LOCALAPPDATA and APPDATA are not set"))?;
+        fs::create_dir_all(&working_directory)
+            .with_context(|| format!("create {}", working_directory.display()))?;
+        platform::register_windows_task(&platform::WindowsTaskSpec {
+            name: task_name.to_string(),
+            description: "Memory Layer backend service".to_string(),
+            executable: binary,
+            arguments: vec![
+                "--config".to_string(),
+                config_path.display().to_string(),
+                "service".to_string(),
+                "run".to_string(),
+            ],
+            working_directory,
+            start_at_logon: true,
+            restart_on_failure: true,
+        })?;
+        platform::run_windows_task(task_name)?;
+        Ok(format!(
+            "Installed and started Windows scheduled task {task_name}.\nConfig: {}\n\nManage it with:\n- memory service status\n- memory service disable\n- schtasks /Query /TN {task_name}",
+            config_path.display()
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         run_systemctl_system(["daemon-reload"])?;
         run_systemctl_system(["enable", "--now", "memory-layer.service"])?;
@@ -127,7 +156,16 @@ pub(crate) fn preview_enable_backend_service(config_path: &Path) -> String {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        format!(
+            "Dry run: would register and start Windows scheduled task {} using config {}",
+            platform::windows_backend_task_name(),
+            config_path.display()
+        )
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         format!(
             "Dry run: would run `systemctl enable --now memory-layer.service` using config {}",
@@ -160,7 +198,14 @@ pub(crate) fn disable_backend_service() -> Result<String> {
         ))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = platform::windows_backend_task_name();
+        platform::delete_windows_task(task_name)?;
+        Ok(format!("Disabled Windows scheduled task {task_name}"))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         run_systemctl_system(["disable", "--now", "memory-layer.service"])?;
         Ok("Disabled memory-layer.service".to_string())
@@ -184,7 +229,16 @@ pub(crate) fn preview_disable_backend_service(config_path: &Path) -> String {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        format!(
+            "Dry run: would stop and delete Windows scheduled task {} using config {}",
+            platform::windows_backend_task_name(),
+            config_path.display()
+        )
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         format!(
             "Dry run: would run `systemctl disable --now memory-layer.service` using config {}",
@@ -214,7 +268,20 @@ pub(crate) fn backend_service_status(config_path: &Path) -> Result<String> {
         ))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = platform::windows_backend_task_name();
+        let installed = platform::windows_task_exists(task_name);
+        let running = platform::windows_task_is_running(task_name);
+        Ok(format!(
+            "Backend service:\n- task: {task_name}\n- config: {}\n- installed: {}\n- running: {}\n\nInspect with:\n- schtasks /Query /TN {task_name} /V /FO LIST",
+            config_path.display(),
+            yes_no(installed),
+            yes_no(running),
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let is_installed = packaged_service_available();
         let is_enabled = run_systemctl_system(["is-enabled", "memory-layer.service"]).is_ok();
@@ -230,7 +297,7 @@ pub(crate) fn backend_service_status(config_path: &Path) -> Result<String> {
 }
 
 const TUI_RESTART_MARKER_FILE: &str = "tui-restart-required.json";
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 const LINUX_GLOBAL_TUI_RESTART_MARKER: &str = "/var/lib/memory-layer/tui-restart-required.json";
 #[cfg(target_os = "macos")]
 const MACOS_GLOBAL_TUI_RESTART_MARKER: &str =
@@ -331,7 +398,50 @@ pub(crate) fn restart_all_memory_services(
     })
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub(crate) fn restart_platform_services(
+    dry_run: bool,
+    operations: &mut Vec<ServiceRestartOperation>,
+) -> Result<()> {
+    for task in platform::windows_memory_task_names() {
+        let active = platform::windows_task_is_running(&task);
+        if !active {
+            operations.push(ServiceRestartOperation {
+                name: task,
+                manager: "windows-task-scheduler".to_string(),
+                active: false,
+                action: "skip-inactive".to_string(),
+                success: true,
+                message: None,
+            });
+            continue;
+        }
+        if dry_run {
+            operations.push(ServiceRestartOperation {
+                name: task,
+                manager: "windows-task-scheduler".to_string(),
+                active,
+                action: "would-restart".to_string(),
+                success: true,
+                message: None,
+            });
+            continue;
+        }
+        let stopped = platform::stop_windows_task(&task);
+        let started = stopped.and_then(|_| platform::run_windows_task(&task));
+        operations.push(ServiceRestartOperation {
+            name: task,
+            manager: "windows-task-scheduler".to_string(),
+            active,
+            action: "restart".to_string(),
+            success: started.is_ok(),
+            message: started.err().map(|error| error.to_string()),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn restart_platform_services(
     dry_run: bool,
     operations: &mut Vec<ServiceRestartOperation>,
@@ -358,7 +468,7 @@ pub(crate) fn restart_platform_services(
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn restart_systemd_system_unit_if_active(
     unit: &str,
     dry_run: bool,
@@ -398,7 +508,7 @@ pub(crate) fn restart_systemd_system_unit_if_active(
     });
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Debug, Clone)]
 pub(crate) struct SystemdUserScope {
     pub(crate) manager_label: String,
@@ -407,7 +517,7 @@ pub(crate) struct SystemdUserScope {
     pub(crate) units: Vec<String>,
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn active_memory_user_unit_scopes() -> Vec<SystemdUserScope> {
     if running_as_root() {
         let scopes = active_logged_in_user_memory_unit_scopes();
@@ -428,7 +538,7 @@ pub(crate) fn active_memory_user_unit_scopes() -> Vec<SystemdUserScope> {
         .collect()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn running_as_root() -> bool {
     ProcessCommand::new("id")
         .arg("-u")
@@ -439,7 +549,7 @@ pub(crate) fn running_as_root() -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn active_logged_in_user_memory_unit_scopes() -> Vec<SystemdUserScope> {
     let Ok(entries) = fs::read_dir("/run/user") else {
         return Vec::new();
@@ -461,7 +571,7 @@ pub(crate) fn active_logged_in_user_memory_unit_scopes() -> Vec<SystemdUserScope
         .collect()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn username_for_uid(uid: &str) -> Option<String> {
     let output = ProcessCommand::new("getent")
         .args(["passwd", uid])
@@ -477,13 +587,13 @@ pub(crate) fn username_for_uid(uid: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn active_current_user_memory_units() -> Option<Vec<String>> {
     let units = active_user_memory_units_for("", None);
     (!units.is_empty()).then_some(units)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn active_user_memory_units_for(
     username: &str,
     runtime_dir: Option<&Path>,
@@ -525,7 +635,7 @@ pub(crate) fn active_user_memory_units_for(
     parse_systemd_unit_names(&String::from_utf8_lossy(&output.stdout))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn parse_systemd_unit_names(output: &str) -> Vec<String> {
     output
         .lines()
@@ -535,7 +645,7 @@ pub(crate) fn parse_systemd_unit_names(output: &str) -> Vec<String> {
         .collect()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn restart_systemd_user_unit_if_active(
     scope: &SystemdUserScope,
     unit: &str,
@@ -645,7 +755,7 @@ pub(crate) fn tui_restart_marker_paths() -> Vec<PathBuf> {
     if let Some(dir) = platform::preferred_user_state_dir() {
         paths.push(dir.join(TUI_RESTART_MARKER_FILE));
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     paths.push(PathBuf::from(LINUX_GLOBAL_TUI_RESTART_MARKER));
     #[cfg(target_os = "macos")]
     paths.push(PathBuf::from(MACOS_GLOBAL_TUI_RESTART_MARKER));

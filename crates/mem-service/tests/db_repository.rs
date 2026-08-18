@@ -1870,9 +1870,17 @@ async fn enable_loop_for_project_mode(
 }
 
 fn init_git_repo(name: &str) -> PathBuf {
-    let repo = std::env::temp_dir().join(format!("mem-service-loop-{name}-{}", Uuid::new_v4()));
+    #[cfg(target_os = "windows")]
+    let temp_root = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Temp");
+    #[cfg(not(target_os = "windows"))]
+    let temp_root = std::env::temp_dir();
+    let repo = temp_root.join(format!("mem-service-loop-{name}-{}", Uuid::new_v4()));
     fs::create_dir_all(&repo).expect("create temp repo");
-    git(&repo, &["init", "-b", "main"]);
+    git(&repo, &["init"]);
+    git(&repo, &["checkout", "-b", "main"]);
     fs::write(repo.join("README.md"), "initial\n").expect("write readme");
     git(&repo, &["add", "README.md"]);
     git(
@@ -1882,6 +1890,8 @@ fn init_git_repo(name: &str) -> PathBuf {
             "user.email=test@example.com",
             "-c",
             "user.name=Test User",
+            "-c",
+            "commit.gpgSign=false",
             "commit",
             "-m",
             "initial",

@@ -28,7 +28,7 @@ pub(in crate::tui) fn draw_watchers_tab(
         metric_line(
             "Guidance",
             Span::styled(
-                "Use `memory watcher manager enable` on Linux, or `memory watcher enable --project <slug>` / `memory watcher run --project <slug>` for manual mode.",
+                "Use `memory watcher manager enable`, or `memory watcher enable --project <slug>` / `memory watcher run --project <slug>` for manual mode.",
                 Style::default().fg(Theme::MUTED),
             ),
         ),

@@ -46,7 +46,7 @@ use crate::commands::watch_support::{
     launch_agent_status, watch_manager_launch_agent_label, watch_manager_launch_agent_path,
 };
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 use crate::commands::watch_support::{
     WATCH_MANAGER_UNIT_NAME, run_systemctl_user, user_systemd_unit_dir,
 };
@@ -138,6 +138,31 @@ pub(crate) enum DoctorStatus {
     Warn,
     Fail,
     Skipped,
+}
+
+pub(crate) fn llm_doctor_statuses(
+    llm_curation_enabled: bool,
+    model_configured: bool,
+    api_key_required: bool,
+    api_key_present: bool,
+) -> (DoctorStatus, DoctorStatus) {
+    if !llm_curation_enabled {
+        return (DoctorStatus::Skipped, DoctorStatus::Skipped);
+    }
+
+    let model = if model_configured {
+        DoctorStatus::Ok
+    } else {
+        DoctorStatus::Fail
+    };
+    let api_key = if !api_key_required {
+        DoctorStatus::Skipped
+    } else if api_key_present {
+        DoctorStatus::Ok
+    } else {
+        DoctorStatus::Fail
+    };
+    (model, api_key)
 }
 
 impl DoctorReport {
@@ -428,7 +453,11 @@ fn cli_path_check() -> DoctorCheckResult {
         .as_ref()
         .and_then(|path| path.parent())
         .map(Path::to_path_buf);
-    let binary_name = "memory";
+    let binary_name = if cfg!(target_os = "windows") {
+        "memory.exe"
+    } else {
+        "memory"
+    };
 
     let resolved = std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
@@ -1005,14 +1034,23 @@ pub(crate) async fn run_doctor(
             false,
         ));
 
+        let llm_curation_enabled = config.features.llm_curation;
+        let repo_env_path = discover_repo_env_path();
+        let llm_api_key_value = resolve_llm_api_key(&config.llm).unwrap_or_default();
+        let llm_api_key_required = llm_requires_api_key(&config.llm);
+        let (llm_model_status, llm_api_key_status) = llm_doctor_statuses(
+            llm_curation_enabled,
+            !config.llm.model.trim().is_empty(),
+            llm_api_key_required,
+            !llm_api_key_value.trim().is_empty(),
+        );
+
         report.push(doctor_check(
             "config.llm_model",
-            if config.llm.model.trim().is_empty() {
-                DoctorStatus::Fail
-            } else {
-                DoctorStatus::Ok
-            },
-            if config.llm.model.trim().is_empty() {
+            llm_model_status,
+            if !llm_curation_enabled {
+                "LLM curation is disabled; no model is required."
+            } else if config.llm.model.trim().is_empty() {
                 "LLM model is not configured."
             } else {
                 "LLM model is configured."
@@ -1022,7 +1060,7 @@ pub(crate) async fn run_doctor(
                 config.llm.provider,
                 effective_llm_base_url(&config.llm)
             )),
-            if config.llm.model.trim().is_empty() {
+            if llm_curation_enabled && config.llm.model.trim().is_empty() {
                 Some(format!(
                     "Set [llm].model in {}",
                     global_config_path
@@ -1036,19 +1074,12 @@ pub(crate) async fn run_doctor(
             false,
         ));
 
-        let repo_env_path = discover_repo_env_path();
-        let llm_api_key_value = resolve_llm_api_key(&config.llm).unwrap_or_default();
-        let llm_api_key_required = llm_requires_api_key(&config.llm);
         report.push(doctor_check(
             "config.llm_api_key",
-            if !llm_api_key_required {
-                DoctorStatus::Skipped
-            } else if llm_api_key_value.trim().is_empty() {
-                DoctorStatus::Fail
-            } else {
-                DoctorStatus::Ok
-            },
-            if !llm_api_key_required {
+            llm_api_key_status,
+            if !llm_curation_enabled {
+                "LLM curation is disabled; no API key is required."
+            } else if !llm_api_key_required {
                 "LLM API key is optional for this provider."
             } else if llm_api_key_value.trim().is_empty() {
                 "LLM API key environment variable is missing."
@@ -1056,7 +1087,7 @@ pub(crate) async fn run_doctor(
                 "LLM API key environment variable is present."
             },
             Some(config.llm.api_key_env.clone()),
-            if llm_api_key_value.trim().is_empty() {
+            if llm_curation_enabled && llm_api_key_required && llm_api_key_value.trim().is_empty() {
                 Some({
                     let mut locations = Vec::new();
                     if let Some(path) = repo_env_path.as_ref() {
@@ -1084,7 +1115,7 @@ pub(crate) async fn run_doctor(
             false,
         ));
 
-        if is_ollama_provider(&config.llm.provider) {
+        if llm_curation_enabled && is_ollama_provider(&config.llm.provider) {
             let models_url = format!("{}/models", effective_llm_base_url(&config.llm));
             let ollama_check = match Client::new().get(&models_url).send().await {
                 Ok(response) if response.status().is_success() => {
@@ -1149,6 +1180,18 @@ pub(crate) async fn run_doctor(
             report.push(ollama_check);
         }
 
+        #[cfg(target_os = "windows")]
+        let service_endpoint_details = format!(
+            "http={} capnp_tcp={}",
+            config.service.bind_addr, config.service.capnp_tcp_addr
+        );
+        #[cfg(not(target_os = "windows"))]
+        let service_endpoint_details = format!(
+            "http={} capnp_tcp={} capnp_unix={}",
+            config.service.bind_addr,
+            config.service.capnp_tcp_addr,
+            config.service.capnp_unix_socket
+        );
         report.push(doctor_check(
             "config.service_endpoints",
             DoctorStatus::Ok,
@@ -1157,12 +1200,7 @@ pub(crate) async fn run_doctor(
             } else {
                 "Using shared/global service endpoints."
             },
-            Some(format!(
-                "http={} capnp_tcp={} capnp_unix={}",
-                config.service.bind_addr,
-                config.service.capnp_tcp_addr,
-                config.service.capnp_unix_socket
-            )),
+            Some(service_endpoint_details),
             None,
             false,
         ));
@@ -1294,7 +1332,40 @@ pub(crate) async fn run_doctor(
             ));
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        {
+            let task_name = mem_platform::windows_watch_manager_task_name();
+            let manager_installed = mem_platform::windows_task_exists(task_name);
+            let manager_active = mem_platform::windows_task_is_running(task_name);
+            report.push(doctor_check(
+                "watcher.manager_service",
+                if manager_active {
+                    DoctorStatus::Ok
+                } else {
+                    DoctorStatus::Warn
+                },
+                if manager_active {
+                    "Agent-linked watcher manager task is active."
+                } else if manager_installed {
+                    "Agent-linked watcher manager task is installed but not active."
+                } else {
+                    "Agent-linked watcher manager task is not installed."
+                },
+                Some(format!(
+                    "installed={} active={} task={task_name}",
+                    yes_no(manager_installed),
+                    yes_no(manager_active),
+                )),
+                if manager_active {
+                    None
+                } else {
+                    Some("memory watcher manager enable".to_string())
+                },
+                false,
+            ));
+        }
+
+        #[cfg(all(unix, not(target_os = "macos")))]
         {
             let manager_unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
             let manager_installed = manager_unit_path.exists();
@@ -1505,20 +1576,23 @@ pub(crate) async fn run_doctor(
                     false,
                 ));
 
-                let (unix_status, unix_details) =
-                    unix_socket_status(&config.service.capnp_unix_socket);
-                report.push(doctor_check(
-                    "backend.capnp_unix_socket",
-                    if matches!(unix_status, DoctorStatus::Fail) {
-                        DoctorStatus::Fail
-                    } else {
-                        DoctorStatus::Ok
-                    },
-                    "Configured Cap'n Proto Unix socket path is active.",
-                    Some(unix_details),
-                    None,
-                    false,
-                ));
+                #[cfg(unix)]
+                {
+                    let (unix_status, unix_details) =
+                        unix_socket_status(&config.service.capnp_unix_socket);
+                    report.push(doctor_check(
+                        "backend.capnp_unix_socket",
+                        if matches!(unix_status, DoctorStatus::Fail) {
+                            DoctorStatus::Fail
+                        } else {
+                            DoctorStatus::Ok
+                        },
+                        "Configured Cap'n Proto Unix socket path is active.",
+                        Some(unix_details),
+                        None,
+                        false,
+                    ));
+                }
             }
             Err(error) => {
                 report.push(doctor_check(
@@ -1583,19 +1657,22 @@ pub(crate) async fn run_doctor(
                     false,
                 ));
 
-                let (unix_status, unix_details) =
-                    unix_socket_status(&config.service.capnp_unix_socket);
-                report.push(doctor_check(
-                    "backend.capnp_unix_socket",
-                    unix_status,
-                    "Configured Cap'n Proto Unix socket is not confirmed healthy.",
-                    Some(unix_details),
-                    Some(format!(
-                        "Start the intended backend for {} or change [service].capnp_unix_socket",
-                        project
-                    )),
-                    false,
-                ));
+                #[cfg(unix)]
+                {
+                    let (unix_status, unix_details) =
+                        unix_socket_status(&config.service.capnp_unix_socket);
+                    report.push(doctor_check(
+                        "backend.capnp_unix_socket",
+                        unix_status,
+                        "Configured Cap'n Proto Unix socket is not confirmed healthy.",
+                        Some(unix_details),
+                        Some(format!(
+                            "Start the intended backend for {} or change [service].capnp_unix_socket",
+                            project
+                        )),
+                        false,
+                    ));
+                }
             }
         }
 
@@ -1979,33 +2056,22 @@ pub(crate) fn tcp_endpoint_status(addr: &str) -> (DoctorStatus, String) {
     }
 }
 
+#[cfg(unix)]
 pub(crate) fn unix_socket_status(path: &str) -> (DoctorStatus, String) {
-    #[cfg(unix)]
-    {
-        let socket_path = Path::new(path);
-        if !socket_path.exists() {
-            return (DoctorStatus::Ok, "socket path is free".to_string());
-        }
-
-        match UnixStream::connect(socket_path) {
-            Ok(_) => (
-                DoctorStatus::Warn,
-                format!("listener detected on {}", socket_path.display()),
-            ),
-            Err(error) => (
-                DoctorStatus::Warn,
-                format!("path exists but is not accepting connections: {error}"),
-            ),
-        }
+    let socket_path = Path::new(path);
+    if !socket_path.exists() {
+        return (DoctorStatus::Ok, "socket path is free".to_string());
     }
 
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        (
-            DoctorStatus::Skipped,
-            "unix socket checks are not available on this platform".to_string(),
-        )
+    match UnixStream::connect(socket_path) {
+        Ok(_) => (
+            DoctorStatus::Warn,
+            format!("listener detected on {}", socket_path.display()),
+        ),
+        Err(error) => (
+            DoctorStatus::Warn,
+            format!("path exists but is not accepting connections: {error}"),
+        ),
     }
 }
 

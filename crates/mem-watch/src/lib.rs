@@ -474,19 +474,43 @@ pub fn build_watcher_unregister_request(
 }
 
 pub fn detect_hostname() -> String {
-    std::env::var("HOSTNAME")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            std::fs::read_to_string("/etc/hostname")
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-        })
-        .unwrap_or_else(|| "unknown-host".to_string())
+    let hostname = std::env::var(if cfg!(target_os = "windows") {
+        "COMPUTERNAME"
+    } else {
+        "HOSTNAME"
+    })
+    .ok()
+    .filter(|value| !value.trim().is_empty());
+    #[cfg(unix)]
+    let hostname = hostname.or_else(|| {
+        std::fs::read_to_string("/etc/hostname")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    });
+    hostname.unwrap_or_else(|| "unknown-host".to_string())
 }
 
 pub fn owner_session_is_alive(owner: &WatcherAgentOwner) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let Some(pid) = owner.agent_pid else {
+            return true;
+        };
+        let process = mem_platform::process_snapshots()
+            .into_iter()
+            .find(|process| process.pid == pid);
+        process.is_some_and(|process| {
+            owner.agent_started_at.is_none_or(|started_at| {
+                process
+                    .started_at_ms
+                    .abs_diff(started_at.timestamp_millis().max(0) as u64)
+                    <= 5_000
+            })
+        })
+    }
+
+    #[cfg(not(target_os = "windows"))]
     match owner.agent_pid {
         Some(pid) => is_pid_alive(pid),
         None => true, // no PID to check; keep running
@@ -505,9 +529,9 @@ fn is_pid_alive(pid: u32) -> bool {
     err.raw_os_error() == Some(libc::EPERM)
 }
 
-#[cfg(not(unix))]
+#[cfg(all(not(unix), not(target_os = "windows")))]
 fn is_pid_alive(_pid: u32) -> bool {
-    true // no cheap check available; keep running
+    true
 }
 
 pub fn build_capture_request(

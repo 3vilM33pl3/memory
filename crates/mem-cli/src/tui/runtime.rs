@@ -140,42 +140,53 @@ pub(super) fn derive_manager_state(
 }
 
 pub(super) fn foreground_manager_process_running(profile: Profile) -> bool {
-    #[cfg(target_os = "macos")]
-    let output = ProcessCommand::new("ps")
-        .args(["-ww", "-axo", "pid=,command="])
-        .output();
-
-    #[cfg(not(target_os = "macos"))]
-    let output = ProcessCommand::new("ps")
-        .args(["-ww", "-eo", "pid=,command="])
-        .output();
-
-    let Ok(output) = output else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
+    #[cfg(target_os = "windows")]
+    {
+        mem_platform::process_snapshots().iter().any(|process| {
+            process.pid != std::process::id()
+                && command_is_manager_for_profile(&process.command, profile)
+        })
     }
-    let current_pid = std::process::id().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let mut parts = trimmed.split_whitespace();
-        let Some(pid) = parts.next() else {
-            continue;
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        #[cfg(target_os = "macos")]
+        let output = ProcessCommand::new("ps")
+            .args(["-ww", "-axo", "pid=,command="])
+            .output();
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let output = ProcessCommand::new("ps")
+            .args(["-ww", "-eo", "pid=,command="])
+            .output();
+
+        let Ok(output) = output else {
+            return false;
         };
-        if pid == current_pid {
-            continue;
+        if !output.status.success() {
+            return false;
         }
-        let command = parts.collect::<Vec<_>>().join(" ");
-        if command_is_manager_for_profile(&command, profile) {
-            return true;
+        let current_pid = std::process::id().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let mut parts = trimmed.split_whitespace();
+            let Some(pid) = parts.next() else {
+                continue;
+            };
+            if pid == current_pid {
+                continue;
+            }
+            let command = parts.collect::<Vec<_>>().join(" ");
+            if command_is_manager_for_profile(&command, profile) {
+                return true;
+            }
         }
+        false
     }
-    false
 }
 
 pub(super) fn command_is_manager_for_profile(command: &str, profile: Profile) -> bool {
@@ -201,7 +212,7 @@ pub(super) fn command_looks_dev_stack(command: &str) -> bool {
         || command.contains("/.mem/runtime/dev/")
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(super) fn linux_manager_unit_path() -> Option<PathBuf> {
     let config_home = std::env::var("XDG_CONFIG_HOME")
         .ok()
@@ -229,7 +240,12 @@ pub(super) fn manager_unit_path(profile: Profile) -> Option<PathBuf> {
         mem_platform::watch_manager_launch_agent_path()
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        None
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         linux_manager_unit_path()
     }
@@ -245,7 +261,7 @@ pub(super) fn load_manager_state_file(profile: Profile) -> Option<ManagerStateFi
     serde_json::from_str(&content).ok()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(super) fn systemctl_user_check(action: &str, unit: &str) -> bool {
     ProcessCommand::new("systemctl")
         .args(["--user", action, unit])
@@ -267,7 +283,12 @@ pub(super) fn manager_service_enabled(profile: Profile) -> bool {
         path.exists()
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        mem_platform::windows_task_exists(mem_platform::windows_watch_manager_task_name())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         systemctl_user_check("is-enabled", "memory-watch-manager.service")
     }
@@ -286,7 +307,12 @@ pub(super) fn manager_service_running(profile: Profile) -> bool {
         launchctl_print_succeeds(label)
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        mem_platform::windows_task_is_running(mem_platform::windows_watch_manager_task_name())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         systemctl_user_check("is-active", "memory-watch-manager.service")
     }

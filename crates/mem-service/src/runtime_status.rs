@@ -139,7 +139,7 @@ pub(crate) struct RestartMarker {
 }
 
 pub(crate) const TUI_RESTART_MARKER_FILE: &str = "tui-restart-required.json";
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) const GLOBAL_TUI_RESTART_MARKER: &str =
     "/var/lib/memory-layer/tui-restart-required.json";
 #[cfg(target_os = "macos")]
@@ -598,39 +598,50 @@ pub(crate) fn load_manager_state_file(
 }
 
 pub(crate) fn foreground_manager_process_running(profile: &mem_api::Profile) -> bool {
-    #[cfg(target_os = "macos")]
-    let output = ProcessCommand::new("ps")
-        .args(["-ww", "-axo", "pid=,command="])
-        .output();
-
-    #[cfg(not(target_os = "macos"))]
-    let output = ProcessCommand::new("ps")
-        .args(["-ww", "-eo", "pid=,command="])
-        .output();
-
-    let Ok(output) = output else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
+    #[cfg(target_os = "windows")]
+    {
+        mem_platform::process_snapshots().iter().any(|process| {
+            process.pid != std::process::id()
+                && command_is_manager_for_profile(&process.command, profile)
+        })
     }
-    let current_pid = std::process::id().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.lines().any(|line| {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            return false;
-        }
-        let mut parts = trimmed.split_whitespace();
-        let Some(pid) = parts.next() else {
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        #[cfg(target_os = "macos")]
+        let output = ProcessCommand::new("ps")
+            .args(["-ww", "-axo", "pid=,command="])
+            .output();
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let output = ProcessCommand::new("ps")
+            .args(["-ww", "-eo", "pid=,command="])
+            .output();
+
+        let Ok(output) = output else {
             return false;
         };
-        if pid == current_pid {
+        if !output.status.success() {
             return false;
         }
-        let command = parts.collect::<Vec<_>>().join(" ");
-        command_is_manager_for_profile(&command, profile)
-    })
+        let current_pid = std::process::id().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout.lines().any(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return false;
+            }
+            let mut parts = trimmed.split_whitespace();
+            let Some(pid) = parts.next() else {
+                return false;
+            };
+            if pid == current_pid {
+                return false;
+            }
+            let command = parts.collect::<Vec<_>>().join(" ");
+            command_is_manager_for_profile(&command, profile)
+        })
+    }
 }
 
 pub(crate) fn command_is_manager_for_profile(command: &str, profile: &mem_api::Profile) -> bool {
@@ -656,7 +667,7 @@ pub(crate) fn command_looks_dev_stack(command: &str) -> bool {
         || command.contains("/.mem/runtime/dev/")
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn linux_manager_unit_path() -> Option<PathBuf> {
     let config_home = std::env::var("XDG_CONFIG_HOME")
         .ok()
@@ -684,7 +695,12 @@ pub(crate) fn manager_unit_path(profile: &mem_api::Profile) -> Option<PathBuf> {
         mem_platform::watch_manager_launch_agent_path()
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        None
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         linux_manager_unit_path()
     }
@@ -700,7 +716,12 @@ pub(crate) fn manager_service_enabled(profile: &mem_api::Profile) -> bool {
         mem_platform::watch_manager_launch_agent_path().is_some_and(|path| path.exists())
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        mem_platform::windows_task_exists(mem_platform::windows_watch_manager_task_name())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         systemctl_user_check("is-enabled", "memory-watch-manager.service")
     }
@@ -716,13 +737,18 @@ pub(crate) fn manager_service_running(profile: &mem_api::Profile) -> bool {
         launchctl_print_succeeds(mem_platform::watch_manager_launch_agent_label())
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        mem_platform::windows_task_is_running(mem_platform::windows_watch_manager_task_name())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         systemctl_user_check("is-active", "memory-watch-manager.service")
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn systemctl_user_check(action: &str, unit: &str) -> bool {
     ProcessCommand::new("systemctl")
         .args(["--user", action, unit])
@@ -929,6 +955,7 @@ pub(crate) fn tui_restart_marker_paths() -> Vec<PathBuf> {
     if let Some(dir) = preferred_user_state_dir() {
         paths.push(dir.join(TUI_RESTART_MARKER_FILE));
     }
+    #[cfg(not(target_os = "windows"))]
     paths.push(PathBuf::from(GLOBAL_TUI_RESTART_MARKER));
     paths.sort();
     paths.dedup();

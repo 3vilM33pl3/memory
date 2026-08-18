@@ -365,13 +365,21 @@ mod tests {
     use uuid::Uuid;
 
     fn temp_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("mem-loop-runner-{name}-{}", Uuid::new_v4()))
+        #[cfg(target_os = "windows")]
+        let temp_root = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("Temp");
+        #[cfg(not(target_os = "windows"))]
+        let temp_root = std::env::temp_dir();
+        temp_root.join(format!("mem-loop-runner-{name}-{}", Uuid::new_v4()))
     }
 
     fn init_repo(name: &str) -> PathBuf {
         let repo = temp_path(name);
         fs::create_dir_all(&repo).unwrap();
-        git(&repo, &["init", "-b", "main"]);
+        git(&repo, &["init"]);
+        git(&repo, &["checkout", "-b", "main"]);
         fs::write(repo.join("README.md"), "initial\n").unwrap();
         git(&repo, &["add", "README.md"]);
         git(
@@ -381,6 +389,8 @@ mod tests {
                 "user.email=test@example.com",
                 "-c",
                 "user.name=Test User",
+                "-c",
+                "commit.gpgSign=false",
                 "commit",
                 "-m",
                 "initial",
@@ -433,7 +443,11 @@ mod tests {
                 can_write_repo: true,
                 can_run_commands: true,
                 can_propose_memory: true,
-                allowed_commands: vec!["sh".to_string()],
+                allowed_commands: vec![if cfg!(target_os = "windows") {
+                    "powershell.exe".to_string()
+                } else {
+                    "sh".to_string()
+                }],
             },
             workspace: RunnerWorkspaceRef {
                 repo_root: repo.display().to_string(),
@@ -467,11 +481,22 @@ mod tests {
         let runner = AgentCliRunner::new(AgentRunnerConfig {
             kind: AgentRunnerKind::Codex,
             enabled: true,
-            command_template: vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "printf '\\nadapter' >> README.md && printf done".to_string(),
-            ],
+            command_template: if cfg!(target_os = "windows") {
+                vec![
+                    "powershell.exe".to_string(),
+                    "-NoProfile".to_string(),
+                    "-NonInteractive".to_string(),
+                    "-Command".to_string(),
+                    "Add-Content -LiteralPath README.md -Value 'adapter'; [Console]::Write('done')"
+                        .to_string(),
+                ]
+            } else {
+                vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    "printf '\\nadapter' >> README.md && printf done".to_string(),
+                ]
+            },
         });
         let result = invoke_runner_with_policy(&runner, invocation(&repo, LoopMode::DraftOutput));
 

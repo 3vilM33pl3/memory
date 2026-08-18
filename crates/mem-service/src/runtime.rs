@@ -83,13 +83,22 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
         if let Some(offline) = &state.offline {
             eprintln!("  offline db: {}", offline.store.path().display());
         }
+        #[cfg(unix)]
         eprintln!("  capnp unix: {}", config.service.capnp_unix_socket);
         eprintln!("  capnp tcp: {}", config.service.capnp_tcp_addr);
 
+        #[cfg(unix)]
         tracing::info!(
             %addr,
             role = %state.role_name(),
             unix_socket = %config.service.capnp_unix_socket,
+            tcp_addr = %config.service.capnp_tcp_addr,
+            "memory-layer listening"
+        );
+        #[cfg(not(unix))]
+        tracing::info!(
+            %addr,
+            role = %state.role_name(),
             tcp_addr = %config.service.capnp_tcp_addr,
             "memory-layer listening"
         );
@@ -212,7 +221,7 @@ pub(crate) async fn connect_primary_pool(config: &AppConfig) -> Result<PgPool> {
         .connect(&config.database.url)
         .await
         .context("connect postgres")?;
-    let mut migrator = sqlx::migrate!("../../migrations");
+    let mut migrator = compatible_migrator();
     if config.profile == mem_api::Profile::Dev {
         migrator.set_ignore_missing(true);
     }
@@ -224,6 +233,62 @@ pub(crate) async fn connect_primary_pool(config: &AppConfig) -> Result<PgPool> {
         .await
         .context("register builtin loop definitions")?;
     Ok(pool)
+}
+
+fn compatible_migrator() -> sqlx::migrate::Migrator {
+    const PGVECTOR_MIGRATION_WITHOUT_LEGACY_HNSW: &str = r#"
+CREATE EXTENSION IF NOT EXISTS vector;
+
+DROP INDEX IF EXISTS idx_memory_chunks_embedding_hnsw;
+
+ALTER TABLE memory_chunks
+    DROP COLUMN IF EXISTS embedding;
+
+ALTER TABLE memory_chunks
+    ADD COLUMN IF NOT EXISTS embedding vector;
+"#;
+
+    let mut migrator = sqlx::migrate!("../../migrations");
+    migrator.migrations = std::borrow::Cow::Owned(
+        migrator
+            .migrations
+            .iter()
+            .cloned()
+            .map(|mut migration| {
+                if migration.version == 4 {
+                    // pgvector rejects HNSW indexes on dimensionless vector columns.
+                    // Migration 16 removes this obsolete index, so fresh databases can
+                    // safely omit its creation. Keep migration 4's original checksum so
+                    // databases that already applied it remain migration-compatible.
+                    migration.sql =
+                        std::borrow::Cow::Borrowed(PGVECTOR_MIGRATION_WITHOUT_LEGACY_HNSW);
+                }
+                migration
+            })
+            .collect(),
+    );
+    migrator
+}
+
+#[cfg(test)]
+mod migration_compat_tests {
+    #[test]
+    fn pending_pgvector_migration_omits_invalid_dimensionless_hnsw_index() {
+        let original = sqlx::migrate!("../../migrations");
+        let compatible = super::compatible_migrator();
+        let original_migration = original
+            .iter()
+            .find(|migration| migration.version == 4)
+            .unwrap();
+        let compatible_migration = compatible
+            .iter()
+            .find(|migration| migration.version == 4)
+            .unwrap();
+
+        assert!(original_migration.sql.contains("CREATE INDEX"));
+        assert!(!compatible_migration.sql.contains("CREATE INDEX"));
+        assert_eq!(compatible_migration.checksum, original_migration.checksum);
+    }
 }
 
 async fn build_offline_runtime(config: &AppConfig) -> Result<Option<OfflineRuntime>> {

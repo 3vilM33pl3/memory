@@ -477,7 +477,10 @@ fn runtime_skill_status_reports_memory_layer_skill_by_default() {
     assert_eq!(status.details[0].name, "test");
     assert_eq!(status.details[0].version.as_deref(), Some("0.8.6"));
     assert_eq!(status.details[0].status, "ok");
-    assert!(status.details[0].path.ends_with("memory-layer/SKILL.md"));
+    assert!(
+        std::path::Path::new(&status.details[0].path)
+            .ends_with(std::path::Path::new("memory-layer").join("SKILL.md"))
+    );
 
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -558,7 +561,10 @@ fn runtime_skill_status_can_show_full_skill_bundle() {
         .find(|skill| skill.id == "memory-direct-task-start")
         .expect("outdated skill detail");
     assert_eq!(outdated.status, "outdated");
-    assert!(outdated.path.ends_with("memory-direct-task-start/SKILL.md"));
+    assert!(
+        std::path::Path::new(&outdated.path)
+            .ends_with(std::path::Path::new("memory-direct-task-start").join("SKILL.md"))
+    );
 
     fs::remove_dir_all(root).expect("cleanup");
 }
@@ -577,7 +583,10 @@ fn runtime_skill_status_reports_missing_skill_detail_path() {
     assert_eq!(status.details[0].name, "memory-layer");
     assert_eq!(status.details[0].status, "missing");
     assert_eq!(status.details[0].version, None);
-    assert!(status.details[0].path.ends_with("memory-layer/SKILL.md"));
+    assert!(
+        std::path::Path::new(&status.details[0].path)
+            .ends_with(std::path::Path::new("memory-layer").join("SKILL.md"))
+    );
 
     fs::remove_dir_all(root).expect("cleanup");
 }

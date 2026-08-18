@@ -105,6 +105,7 @@ pub(super) async fn handle(
                     agent_session_id: args.agent_session_id,
                     agent_pid: args.agent_pid,
                     agent_started_at: args.agent_started_at,
+                    service_managed: args.service_managed,
                 },
                 writer.id,
                 writer.name,

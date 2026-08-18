@@ -253,8 +253,8 @@ pub fn visible_skill_inventory_with_template(
         template_root.as_deref(),
     );
 
-    if let Ok(home) = env::var("HOME") {
-        let home_skill_root = PathBuf::from(&home).join(".agents").join("skills");
+    if let Some(home) = mem_platform::user_home_dir() {
+        let home_skill_root = home.join(".agents").join("skills");
         add_skill_dirs(
             &mut report.skills,
             &mut seen,
@@ -523,11 +523,7 @@ fn codex_home_dir() -> PathBuf {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
-        .or_else(|| {
-            env::var("HOME")
-                .ok()
-                .map(|home| PathBuf::from(home).join(".codex"))
-        })
+        .or_else(|| mem_platform::user_home_dir().map(|home| home.join(".codex")))
         .unwrap_or_else(|| PathBuf::from(".codex"))
 }
 
@@ -672,10 +668,9 @@ pub fn discover_skill_template_dir() -> Option<PathBuf> {
     if let Some(state_dir) = mem_platform::preferred_user_state_dir() {
         candidates.push(state_dir.join("skill-template"));
     }
-    if let Ok(home) = env::var("HOME") {
+    if let Some(home) = mem_platform::user_home_dir() {
         candidates.push(
-            PathBuf::from(home)
-                .join(".local")
+            home.join(".local")
                 .join("share")
                 .join("memory-layer")
                 .join("skill-template"),

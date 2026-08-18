@@ -5,13 +5,15 @@ pub(crate) use std::{
     io::Read,
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
-    process::Command as ProcessCommand,
     sync::{
         Arc, Mutex, RwLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration as StdDuration, SystemTime},
 };
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) use std::process::Command as ProcessCommand;
 
 #[cfg(target_vendor = "apple")]
 pub(crate) use std::os::fd::AsRawFd;

@@ -32,7 +32,11 @@ impl ClaudeCollector {
     pub fn new() -> Self {
         let base = std::env::var("CLAUDE_CONFIG_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join(".claude"));
+            .unwrap_or_else(|_| {
+                mem_platform::user_home_dir()
+                    .unwrap_or_default()
+                    .join(".claude")
+            });
         Self {
             sessions_dir: base.join("sessions"),
             projects_dir: base.join("projects"),
@@ -131,7 +135,7 @@ impl ClaudeCollector {
             return None;
         }
 
-        let project_name = sf.cwd.rsplit('/').next().unwrap_or("?").to_string();
+        let project_name = process::path_tail(&sf.cwd).to_string();
 
         let proc = process_info.get(&sf.pid);
         let mem_mb = proc.map(|p| p.rss_kb / 1024).unwrap_or(0);
@@ -491,7 +495,11 @@ pub fn collect_lightweight_sessions(
 ) -> Vec<LightweightAgentSession> {
     let base = std::env::var("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join(".claude"));
+        .unwrap_or_else(|_| {
+            mem_platform::user_home_dir()
+                .unwrap_or_default()
+                .join(".claude")
+        });
     let sessions_dir = base.join("sessions");
     let Ok(entries) = fs::read_dir(&sessions_dir) else {
         return Vec::new();
@@ -784,11 +792,11 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
 /// Extract a short summary from the first user message content.
 /// Handles both string content and array-of-blocks content.
 /// Encode a cwd path to match Claude Code's project directory naming.
-/// Claude Code replaces '/', '_', and '.' with '-'.
+/// Claude Code replaces path separators and punctuation with '-'.
 fn encode_cwd_path(cwd: &str) -> String {
     cwd.chars()
         .map(|c| match c {
-            '/' | '_' | '.' => '-',
+            '/' | '\\' | ':' | '_' | '.' => '-',
             _ => c,
         })
         .collect()
@@ -869,7 +877,7 @@ fn extract_tool_arg(tool_use: &Value) -> String {
 }
 
 fn shorten_path(path: &str) -> String {
-    let parts: Vec<&str> = path.rsplit('/').collect();
+    let parts: Vec<&str> = path.rsplit(['/', '\\']).collect();
     if parts.len() <= 2 {
         path.to_string()
     } else {
@@ -1023,6 +1031,10 @@ mod tests {
         assert_eq!(
             encode_cwd_path("/home/user/my_project.v2"),
             "-home-user-my-project-v2"
+        );
+        assert_eq!(
+            encode_cwd_path(r"C:\Users\Test User\memory"),
+            "C--Users-Test User-memory"
         );
     }
 

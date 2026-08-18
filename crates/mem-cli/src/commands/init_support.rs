@@ -12,7 +12,8 @@ use crate::commands::{
     service_support::prompt_yes_no,
     skill_support::{
         discover_skill_template_dir, ensure_claude_md_memory_section, render_agent_project_config,
-        render_init_summary, render_project_metadata, render_repo_config, sync_memory_skill_bundle,
+        render_init_summary, render_project_metadata, render_repo_config, render_toml_string,
+        sync_memory_skill_bundle,
     },
     status_support::migrate_legacy_env_or_create_token,
 };
@@ -144,6 +145,11 @@ pub(in crate::commands) fn initialize_dev_overlay(
     let capnp_unix_socket = dev_capnp_unix_socket_path(&project_paths);
     let state_file_path = runtime_dev_dir.join("automation-state.json");
     let audit_log_path = runtime_dev_dir.join("automation.log");
+    let bind_addr = render_toml_string(&args.bind_addr);
+    let capnp_tcp_addr = render_toml_string(&args.capnp_tcp_addr);
+    let capnp_unix_socket_toml = render_toml_string(&capnp_unix_socket.display().to_string());
+    let state_file_path_toml = render_toml_string(&state_file_path.display().to_string());
+    let audit_log_path_toml = render_toml_string(&audit_log_path.display().to_string());
 
     let shared_snippet = resolve_shared_global_snippet(args)?;
 
@@ -154,21 +160,16 @@ pub(in crate::commands) fn initialize_dev_overlay(
          # LLM endpoints) lives here. Re-run `memory dev init --copy-from-global` to refresh.\n\
          \n\
          [service]\n\
-         bind_addr = \"{bind_addr}\"\n\
-         capnp_tcp_addr = \"{capnp_tcp_addr}\"\n\
-         capnp_unix_socket = \"{capnp_unix_socket}\"\n\
+         bind_addr = {bind_addr}\n\
+         capnp_tcp_addr = {capnp_tcp_addr}\n\
+         capnp_unix_socket = {capnp_unix_socket_toml}\n\
          \n\
          [automation]\n\
-         state_file_path = \"{state_file_path}\"\n\
-         audit_log_path = \"{audit_log_path}\"\n\
+         state_file_path = {state_file_path_toml}\n\
+         audit_log_path = {audit_log_path_toml}\n\
          \n\
          [cluster]\n\
          service_id = \"memory-layer-dev\"\n",
-        bind_addr = args.bind_addr,
-        capnp_tcp_addr = args.capnp_tcp_addr,
-        capnp_unix_socket = capnp_unix_socket.display(),
-        state_file_path = state_file_path.display(),
-        audit_log_path = audit_log_path.display(),
     );
     if !shared_snippet.is_empty() {
         contents.push('\n');

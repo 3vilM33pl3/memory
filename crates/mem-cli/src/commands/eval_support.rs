@@ -1075,10 +1075,15 @@ pub(crate) fn run_external_retriever(
         .ok_or_else(|| anyhow::anyhow!("external retriever command is empty"))?;
     let request_json =
         serde_json::to_vec(&request).context("serialize external retriever request")?;
+    #[cfg(not(target_os = "windows"))]
     let mut command_builder = ProcessCommand::new("sh");
+    #[cfg(target_os = "windows")]
+    let mut command_builder = ProcessCommand::new("cmd.exe");
+    #[cfg(not(target_os = "windows"))]
+    command_builder.arg("-c").arg(command);
+    #[cfg(target_os = "windows")]
+    command_builder.args(["/D", "/S", "/C"]).arg(command);
     command_builder
-        .arg("-c")
-        .arg(command)
         .current_dir(&context.command_cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -489,21 +489,52 @@ fn run_git_text(repo_root: &Path, args: &[&str]) -> io::Result<String> {
 }
 
 fn path_arg(path: &Path) -> String {
-    path.display().to_string()
+    let value = path.to_string_lossy();
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(path) = value.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{path}");
+        }
+        if let Some(path) = value.strip_prefix(r"\\?\") {
+            return path.to_string();
+        }
+    }
+    value.into_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn git_path_args_remove_windows_extended_length_prefixes() {
+        assert_eq!(
+            path_arg(Path::new(r"\\?\C:\Temp\memory")),
+            r"C:\Temp\memory"
+        );
+        assert_eq!(
+            path_arg(Path::new(r"\\?\UNC\server\share\memory")),
+            r"\\server\share\memory"
+        );
+    }
+
     fn temp_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("mem-loop-sandbox-{name}-{}", Uuid::new_v4()))
+        #[cfg(target_os = "windows")]
+        let temp_root = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("Temp");
+        #[cfg(not(target_os = "windows"))]
+        let temp_root = std::env::temp_dir();
+        temp_root.join(format!("mem-loop-sandbox-{name}-{}", Uuid::new_v4()))
     }
 
     fn init_repo(name: &str) -> PathBuf {
         let repo = temp_path(name);
         fs::create_dir_all(&repo).unwrap();
-        run_git_checked(&repo, &["init", "-b", "main"]).unwrap();
+        run_git_checked(&repo, &["init"]).unwrap();
+        run_git_checked(&repo, &["checkout", "-b", "main"]).unwrap();
         fs::write(repo.join("README.md"), "initial\n").unwrap();
         run_git_checked(&repo, &["add", "README.md"]).unwrap();
         run_git_checked(
@@ -513,6 +544,8 @@ mod tests {
                 "user.email=test@example.com",
                 "-c",
                 "user.name=Test User",
+                "-c",
+                "commit.gpgSign=false",
                 "commit",
                 "-m",
                 "initial",
@@ -538,16 +571,27 @@ mod tests {
         assert_ne!(workspace.branch, "main");
 
         let limits = SandboxLimits {
-            allowed_commands: vec!["sh".to_string()],
+            allowed_commands: vec![if cfg!(target_os = "windows") {
+                "powershell.exe".to_string()
+            } else {
+                "sh".to_string()
+            }],
             ..SandboxLimits::default()
         };
-        let log = manager
-            .run_command(
-                &workspace,
-                &SandboxCommandRequest::new("sh", ["-c", "printf changed >> README.md"]),
-                &limits,
+        let request = if cfg!(target_os = "windows") {
+            SandboxCommandRequest::new(
+                "powershell.exe",
+                [
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Add-Content -LiteralPath README.md -Value 'changed' -NoNewline",
+                ],
             )
-            .unwrap();
+        } else {
+            SandboxCommandRequest::new("sh", ["-c", "printf changed >> README.md"])
+        };
+        let log = manager.run_command(&workspace, &request, &limits).unwrap();
         assert_eq!(log.exit_code, 0);
 
         let capture = manager

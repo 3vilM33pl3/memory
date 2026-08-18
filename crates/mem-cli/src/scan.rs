@@ -1316,6 +1316,7 @@ mod tests {
         let old_config_home = std::env::var("XDG_CONFIG_HOME").ok();
         let old_state_home = std::env::var("XDG_STATE_HOME").ok();
         let old_cache_home = std::env::var("XDG_CACHE_HOME").ok();
+        let old_local_app_data = std::env::var("LOCALAPPDATA").ok();
         fs::create_dir_all(repo_root.join(".mem")).unwrap();
         fs::create_dir_all(&home).unwrap();
         fs::write(
@@ -1328,6 +1329,7 @@ mod tests {
             std::env::set_var("XDG_CONFIG_HOME", &config_home);
             std::env::set_var("XDG_STATE_HOME", &state_home);
             std::env::set_var("XDG_CACHE_HOME", &cache_home);
+            std::env::set_var("LOCALAPPDATA", temp_dir.join("local-app-data"));
         }
 
         let index_path = repo_index_path(&repo_root, "demo");
@@ -1353,10 +1355,16 @@ mod tests {
             );
         }
 
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(unix, not(target_os = "macos")))]
         {
             assert!(index_path.starts_with(cache_home.join("memory-layer").join("projects")));
             assert!(report_dir.starts_with(state_home.join("memory-layer").join("projects")));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let local_root = temp_dir.join("local-app-data").join("memory-layer");
+            assert!(index_path.starts_with(local_root.join("cache").join("projects")));
+            assert!(report_dir.starts_with(local_root.join("projects")));
         }
         assert!(!index_path.starts_with(repo_root.join(".mem")));
         assert!(!report_dir.starts_with(repo_root.join(".mem")));
@@ -1365,6 +1373,7 @@ mod tests {
         restore_env_var("XDG_CONFIG_HOME", old_config_home);
         restore_env_var("XDG_STATE_HOME", old_state_home);
         restore_env_var("XDG_CACHE_HOME", old_cache_home);
+        restore_env_var("LOCALAPPDATA", old_local_app_data);
         let _ = fs::remove_dir_all(temp_dir);
     }
 

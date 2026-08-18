@@ -6598,6 +6598,7 @@ mod tests {
         let _ = fs::remove_dir_all(temp_dir);
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn prefers_xdg_global_config_path_when_present() {
         let _guard = env_lock().lock().unwrap();
@@ -6640,10 +6641,17 @@ mod tests {
         let temp_dir = unique_temp_dir("mem-api-project-home");
         let repo_dir = temp_dir.join("repo");
         let config_home = temp_dir.join("config-home");
+        #[cfg(not(target_os = "windows"))]
         let state_home = temp_dir.join("state-home");
+        #[cfg(not(target_os = "windows"))]
         let cache_home = temp_dir.join("cache-home");
+        #[cfg(target_os = "windows")]
+        let old_local_app_data = env::var("LOCALAPPDATA").ok();
+        #[cfg(not(target_os = "windows"))]
         let old_config_home = env::var("XDG_CONFIG_HOME").ok();
+        #[cfg(not(target_os = "windows"))]
         let old_state_home = env::var("XDG_STATE_HOME").ok();
+        #[cfg(not(target_os = "windows"))]
         let old_cache_home = env::var("XDG_CACHE_HOME").ok();
         fs::create_dir_all(repo_dir.join(".mem")).unwrap();
         fs::write(
@@ -6658,9 +6666,14 @@ mod tests {
         .unwrap();
 
         unsafe {
-            env::set_var("XDG_CONFIG_HOME", &config_home);
-            env::set_var("XDG_STATE_HOME", &state_home);
-            env::set_var("XDG_CACHE_HOME", &cache_home);
+            #[cfg(target_os = "windows")]
+            env::set_var("LOCALAPPDATA", &config_home);
+            #[cfg(not(target_os = "windows"))]
+            {
+                env::set_var("XDG_CONFIG_HOME", &config_home);
+                env::set_var("XDG_STATE_HOME", &state_home);
+                env::set_var("XDG_CACHE_HOME", &cache_home);
+            }
         }
         let paths = project_paths_for_repo(&repo_dir).unwrap();
         fs::create_dir_all(&paths.config_dir).unwrap();
@@ -6672,20 +6685,29 @@ mod tests {
         );
 
         unsafe {
-            if let Some(value) = old_config_home {
-                env::set_var("XDG_CONFIG_HOME", value);
+            #[cfg(target_os = "windows")]
+            if let Some(value) = old_local_app_data {
+                env::set_var("LOCALAPPDATA", value);
             } else {
-                env::remove_var("XDG_CONFIG_HOME");
+                env::remove_var("LOCALAPPDATA");
             }
-            if let Some(value) = old_state_home {
-                env::set_var("XDG_STATE_HOME", value);
-            } else {
-                env::remove_var("XDG_STATE_HOME");
-            }
-            if let Some(value) = old_cache_home {
-                env::set_var("XDG_CACHE_HOME", value);
-            } else {
-                env::remove_var("XDG_CACHE_HOME");
+            #[cfg(not(target_os = "windows"))]
+            {
+                if let Some(value) = old_config_home {
+                    env::set_var("XDG_CONFIG_HOME", value);
+                } else {
+                    env::remove_var("XDG_CONFIG_HOME");
+                }
+                if let Some(value) = old_state_home {
+                    env::set_var("XDG_STATE_HOME", value);
+                } else {
+                    env::remove_var("XDG_STATE_HOME");
+                }
+                if let Some(value) = old_cache_home {
+                    env::set_var("XDG_CACHE_HOME", value);
+                } else {
+                    env::remove_var("XDG_CACHE_HOME");
+                }
             }
         }
         let _ = fs::remove_dir_all(temp_dir);

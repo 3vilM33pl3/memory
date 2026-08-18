@@ -60,6 +60,8 @@ pub struct RunArgs {
     pub agent_pid: Option<u32>,
     #[arg(long)]
     pub agent_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[arg(long, hide = true)]
+    pub service_managed: bool,
 }
 
 #[derive(Debug, Args)]
@@ -118,7 +120,7 @@ pub async fn run_loop(
     let watcher_id = Uuid::new_v4().to_string();
     let hostname = detect_hostname();
     let host_service_id = config.cluster.service_id.clone();
-    let managed_by_service = watcher_is_service_managed();
+    let managed_by_service = args.service_managed || watcher_is_service_managed();
     let pid = std::process::id();
     let started_at = chrono::Utc::now();
     let owner = WatcherAgentOwner {

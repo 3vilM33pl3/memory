@@ -33,15 +33,23 @@ use crate::commands::{
         MEMORY_SKILL_NAMES, SkillBundleStatus, SkillUpgradeAction, SkillVersionStatus,
         download_github_skill_template, github_skill_version_report,
         project_skill_inventory_with_template, read_skill_version, render_agent_project_config,
-        render_claude_md_memory_section, resolve_repo_root, upgrade_project_skills_with_template,
+        render_claude_md_memory_section, render_toml_string, resolve_repo_root,
+        upgrade_project_skills_with_template,
     },
     status_support::{
-        is_placeholder_database_url, mask_database_url, repair_repo_bootstrap,
-        root_gitignore_contains_mem,
+        DoctorStatus, is_placeholder_database_url, llm_doctor_statuses, mask_database_url,
+        repair_repo_bootstrap, root_gitignore_contains_mem,
     },
     watch_support::{
-        should_start_agent_watcher, watcher_command_requires_config_load, write_file_if_changed,
+        resolve_agent_repo_root, should_start_agent_watcher, watcher_command_requires_config_load,
+        write_file_if_changed,
     },
+};
+
+#[cfg(target_os = "windows")]
+use crate::commands::{
+    service_support::{preview_disable_backend_service, preview_enable_backend_service},
+    watch_support::{preview_disable_watch_service, preview_enable_watch_service},
 };
 
 use crate::plan_execution::{
@@ -54,7 +62,9 @@ use super::{
     Cli, DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, WatcherCommand,
     WatcherManagerArgs, WatcherManagerCommand, ensure_shared_service_api_token, shared_env_lookup,
 };
-use mem_api::{AppConfig, Profile};
+use mem_api::AppConfig;
+#[cfg(unix)]
+use mem_api::Profile;
 use mem_skills::{
     SkillSourceKind as SharedSkillSourceKind, SkillUpgradeAction as SharedSkillUpgradeAction,
     SkillVersionStatus as SharedSkillVersionStatus,
@@ -79,10 +89,10 @@ use crate::commands::watch_support::{
     watch_manager_launch_agent_label,
 };
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 use crate::commands::service_support::parse_systemd_unit_names;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 use crate::commands::watch_support::{
     managed_watch_service_name, render_watch_manager_unit, render_watch_unit, watch_unit_name,
 };
@@ -99,6 +109,18 @@ fn restore_env_var(key: &str, value: Option<String>) {
 }
 
 #[test]
+fn doctor_skips_llm_requirements_when_curation_is_disabled() {
+    assert_eq!(
+        llm_doctor_statuses(false, false, true, false),
+        (DoctorStatus::Skipped, DoctorStatus::Skipped)
+    );
+    assert_eq!(
+        llm_doctor_statuses(true, false, true, false),
+        (DoctorStatus::Fail, DoctorStatus::Fail)
+    );
+}
+
+#[test]
 fn project_flag_wins() {
     let cwd = PathBuf::from("/tmp/example");
     assert_eq!(
@@ -111,6 +133,34 @@ fn project_flag_wins() {
 fn project_defaults_to_cwd_name() {
     let cwd = PathBuf::from("/tmp/memory");
     assert_eq!(resolve_project_slug(None, &cwd).unwrap(), "memory");
+}
+
+fn redirect_test_local_app_data(root: &Path) -> Option<String> {
+    let previous = std::env::var("LOCALAPPDATA").ok();
+    unsafe {
+        std::env::set_var("LOCALAPPDATA", root.join("local-app-data"));
+    }
+    previous
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_service_dry_runs_describe_task_scheduler_actions() {
+    let config = Path::new(r"C:\Users\tester\AppData\Local\memory-layer\memory-layer.toml");
+    assert!(preview_enable_backend_service(config).contains("MemoryLayer-Backend"));
+    assert!(preview_disable_backend_service(config).contains("stop and delete"));
+
+    let repo = Path::new(r"C:\src\memory");
+    assert!(
+        preview_enable_watch_service(repo, "memory")
+            .unwrap()
+            .contains("MemoryLayer-Watch-memory")
+    );
+    assert!(
+        preview_disable_watch_service("memory")
+            .unwrap()
+            .contains("stop and delete")
+    );
 }
 
 #[test]
@@ -533,12 +583,24 @@ fn external_retriever_response_normalizes_to_query_response() {
 fn external_retriever_fake_script_scores_with_existing_retrieval_scorer() {
     let dir = unique_temp_dir("mem-external-retriever");
     fs::create_dir_all(&dir).unwrap();
+    #[cfg(not(target_os = "windows"))]
     let script = dir.join("retriever.sh");
+    #[cfg(target_os = "windows")]
+    let script = dir.join("retriever.ps1");
+    #[cfg(not(target_os = "windows"))]
     fs::write(
         &script,
         r#"#!/usr/bin/env sh
 cat > request.json
 printf '%s\n' '{"schema_version":1,"results":[{"id":"external-release-rule","score":0.92,"text":"The release rule requires a green gate and paired benchmark.","tags":["mi-release"],"citations":["docs/release-gate.md"]}],"diagnostics":{"latency_ms":12,"tokens_in":3,"tokens_out":4}}'
+"#,
+    )
+    .unwrap();
+    #[cfg(target_os = "windows")]
+    fs::write(
+        &script,
+        r#"$input | Set-Content -NoNewline request.json
+Write-Output '{"schema_version":1,"results":[{"id":"external-release-rule","score":0.92,"text":"The release rule requires a green gate and paired benchmark.","tags":["mi-release"],"citations":["docs/release-gate.md"]}],"diagnostics":{"latency_ms":12,"tokens_in":3,"tokens_out":4}}'
 "#,
     )
     .unwrap();
@@ -580,7 +642,13 @@ printf '%s\n' '{"schema_version":1,"results":[{"id":"external-release-rule","sco
         memory_base_url: "http://127.0.0.1:4250".to_string(),
         memory_config_path: None,
         llm_judge: false,
+        #[cfg(not(target_os = "windows"))]
         retriever_cmd: Some(format!("sh {}", script.display())),
+        #[cfg(target_os = "windows")]
+        retriever_cmd: Some(format!(
+            "powershell.exe -NoProfile -NonInteractive -File {}",
+            script.display()
+        )),
         command_cwd: dir.clone(),
     };
 
@@ -742,7 +810,7 @@ fn loops_run_parses_dry_run_and_trigger_payload() {
     );
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn systemd_unit_parser_finds_memory_watch_services() {
     let units = parse_systemd_unit_names(
@@ -1634,12 +1702,13 @@ fn writer_identity_falls_back_to_derived_value() {
 fn init_print_describes_repo_layout() {
     let repo_root = PathBuf::from("/tmp/memory");
     let summary = initialize_repo(&repo_root, "memory", false, true).unwrap();
+    let normalized_summary = summary.replace('\\', "/");
 
-    assert!(summary.contains("user-local project config"));
-    assert!(summary.contains(".mem/project.toml"));
-    assert!(summary.contains(".agents/memory-layer.toml"));
-    assert!(summary.contains(".agents/skills"));
-    assert!(summary.contains("bundled memory skills"));
+    assert!(normalized_summary.contains("user-local project config"));
+    assert!(normalized_summary.contains(".mem/project.toml"));
+    assert!(normalized_summary.contains(".agents/memory-layer.toml"));
+    assert!(normalized_summary.contains(".agents/skills"));
+    assert!(normalized_summary.contains("bundled memory skills"));
     if cfg!(target_os = "macos") {
         assert!(summary.contains("memory watcher enable --project memory"));
     } else {
@@ -1656,6 +1725,7 @@ fn init_creates_repo_files_and_gitignore_entry() {
     let old_config = std::env::var("XDG_CONFIG_HOME").ok();
     let old_state = std::env::var("XDG_STATE_HOME").ok();
     let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+    let old_local_app_data = redirect_test_local_app_data(&xdg_root);
     unsafe {
         std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
         std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
@@ -1735,6 +1805,7 @@ fn init_creates_repo_files_and_gitignore_entry() {
     restore_env_var("XDG_CONFIG_HOME", old_config);
     restore_env_var("XDG_STATE_HOME", old_state);
     restore_env_var("XDG_CACHE_HOME", old_cache);
+    restore_env_var("LOCALAPPDATA", old_local_app_data);
     let _ = fs::remove_dir_all(repo_root);
     let _ = fs::remove_dir_all(xdg_root);
 }
@@ -1747,6 +1818,7 @@ fn init_migrates_legacy_mem_gitignore() {
     let old_config = std::env::var("XDG_CONFIG_HOME").ok();
     let old_state = std::env::var("XDG_STATE_HOME").ok();
     let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+    let old_local_app_data = redirect_test_local_app_data(&xdg_root);
     unsafe {
         std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
         std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
@@ -1765,6 +1837,7 @@ fn init_migrates_legacy_mem_gitignore() {
     restore_env_var("XDG_CONFIG_HOME", old_config);
     restore_env_var("XDG_STATE_HOME", old_state);
     restore_env_var("XDG_CACHE_HOME", old_cache);
+    restore_env_var("LOCALAPPDATA", old_local_app_data);
     let _ = fs::remove_dir_all(repo_root);
     let _ = fs::remove_dir_all(xdg_root);
 }
@@ -1777,6 +1850,7 @@ fn dev_init_uses_short_capnp_unix_socket_path() {
     let old_config = std::env::var("XDG_CONFIG_HOME").ok();
     let old_state = std::env::var("XDG_STATE_HOME").ok();
     let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+    let old_local_app_data = redirect_test_local_app_data(&xdg_root);
     unsafe {
         std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
         std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
@@ -1821,6 +1895,7 @@ fn dev_init_uses_short_capnp_unix_socket_path() {
     restore_env_var("XDG_CONFIG_HOME", old_config);
     restore_env_var("XDG_STATE_HOME", old_state);
     restore_env_var("XDG_CACHE_HOME", old_cache);
+    restore_env_var("LOCALAPPDATA", old_local_app_data);
     let _ = fs::remove_dir_all(repo_root);
     let _ = fs::remove_dir_all(xdg_root);
 }
@@ -1858,6 +1933,7 @@ fn repair_repo_bootstrap_creates_missing_files() {
     let old_config = std::env::var("XDG_CONFIG_HOME").ok();
     let old_state = std::env::var("XDG_STATE_HOME").ok();
     let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+    let old_local_app_data = redirect_test_local_app_data(&xdg_root);
     let old_archive = std::env::var("MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_ARCHIVE_URL").ok();
     write_test_skill_archive(&archive_path, "0.4.0");
     unsafe {
@@ -1919,6 +1995,7 @@ fn repair_repo_bootstrap_creates_missing_files() {
     restore_env_var("XDG_CONFIG_HOME", old_config);
     restore_env_var("XDG_STATE_HOME", old_state);
     restore_env_var("XDG_CACHE_HOME", old_cache);
+    restore_env_var("LOCALAPPDATA", old_local_app_data);
     restore_env_var(
         "MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_ARCHIVE_URL",
         old_archive,
@@ -1935,6 +2012,7 @@ fn init_preserves_existing_memory_skills_without_force() {
     let old_config = std::env::var("XDG_CONFIG_HOME").ok();
     let old_state = std::env::var("XDG_STATE_HOME").ok();
     let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+    let old_local_app_data = redirect_test_local_app_data(&xdg_root);
     unsafe {
         std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
         std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
@@ -1987,6 +2065,7 @@ fn init_preserves_existing_memory_skills_without_force() {
     restore_env_var("XDG_CONFIG_HOME", old_config);
     restore_env_var("XDG_STATE_HOME", old_state);
     restore_env_var("XDG_CACHE_HOME", old_cache);
+    restore_env_var("LOCALAPPDATA", old_local_app_data);
     let _ = fs::remove_dir_all(repo_root);
     let _ = fs::remove_dir_all(xdg_root);
 }
@@ -1999,6 +2078,18 @@ fn agent_project_config_mentions_project_customization() {
     assert!(content.contains("[capture]"));
     assert!(content.contains("include_paths"));
     assert!(content.contains("graph_enabled = false"));
+}
+
+#[test]
+fn generated_toml_escapes_windows_paths() {
+    let windows_path = r"C:\Users\Test User\AppData\Local\memory-layer";
+    let rendered = format!("path = {}", render_toml_string(windows_path));
+    let parsed: toml::Value = toml::from_str(&rendered).unwrap();
+    assert_eq!(parsed["path"].as_str(), Some(windows_path));
+
+    let agent_config =
+        render_agent_project_config("memory", &PathBuf::from(r"C:\Users\Test User\memory"));
+    toml::from_str::<toml::Value>(&agent_config).unwrap();
 }
 
 #[test]
@@ -2042,7 +2133,7 @@ fn init_copies_code_explanation_memory_rule_to_skills() {
     let _ = fs::remove_dir_all(repo_root);
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn watch_unit_name_is_project_scoped() {
     assert_eq!(watch_unit_name("homelab"), "memory-watch-homelab.service");
@@ -2052,7 +2143,7 @@ fn watch_unit_name_is_project_scoped() {
     );
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn managed_watch_unit_name_is_profile_scoped() {
     assert_eq!(
@@ -2065,7 +2156,7 @@ fn managed_watch_unit_name_is_profile_scoped() {
     );
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn watch_unit_uses_repo_root_and_project() {
     let repo_root = unique_temp_dir("mem-watch-unit");
@@ -2080,7 +2171,7 @@ fn watch_unit_uses_repo_root_and_project() {
     let _ = fs::remove_dir_all(repo_root);
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn watch_manager_unit_uses_manager_subcommand() {
     let unit = render_watch_manager_unit(Path::new("/tmp/memory-layer.toml")).unwrap();
@@ -2088,13 +2179,40 @@ fn watch_manager_unit_uses_manager_subcommand() {
     assert!(unit.contains("Restart=always"));
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn agent_watcher_start_logic_reuses_loaded_active_units() {
     assert!(!should_start_agent_watcher(true, true, true));
     assert!(should_start_agent_watcher(true, true, false));
     assert!(should_start_agent_watcher(true, false, false));
     assert!(should_start_agent_watcher(false, true, true));
+}
+
+#[test]
+fn watcher_manager_resolves_one_initialized_repo_beneath_a_workspace() {
+    let workspace = unique_temp_dir("mem-watch-workspace");
+    let repo = workspace.join("memory");
+    fs::create_dir_all(repo.join(".mem")).unwrap();
+    fs::write(
+        repo.join(".mem").join("project.toml"),
+        "project = \"memory\"\n",
+    )
+    .unwrap();
+    let status = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&repo)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let resolved = resolve_agent_repo_root(workspace.to_str().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        resolved.canonicalize().unwrap(),
+        repo.canonicalize().unwrap()
+    );
+    let _ = fs::remove_dir_all(workspace);
 }
 
 #[cfg(target_os = "macos")]
@@ -2480,10 +2598,15 @@ fn visible_skill_inventory_classifies_repo_home_codex_and_plugin_skills() {
     let repo = unique_temp_dir("mem-visible-skill-inventory");
     let home = unique_temp_dir("mem-visible-skill-home");
     let codex_home = unique_temp_dir("mem-visible-skill-codex");
-    let old_home = std::env::var("HOME").ok();
+    let home_env = if cfg!(target_os = "windows") {
+        "USERPROFILE"
+    } else {
+        "HOME"
+    };
+    let old_home = std::env::var(home_env).ok();
     let old_codex_home = std::env::var("CODEX_HOME").ok();
     unsafe {
-        std::env::set_var("HOME", &home);
+        std::env::set_var(home_env, &home);
         std::env::set_var("CODEX_HOME", &codex_home);
     }
 
@@ -2552,7 +2675,7 @@ fn visible_skill_inventory_classifies_repo_home_codex_and_plugin_skills() {
         skill.name == "gh-fix-ci" && skill.source_kind == SharedSkillSourceKind::Plugin
     }));
 
-    restore_env_var("HOME", old_home);
+    restore_env_var(home_env, old_home);
     restore_env_var("CODEX_HOME", old_codex_home);
     let _ = fs::remove_dir_all(repo);
     let _ = fs::remove_dir_all(home);
@@ -2595,6 +2718,7 @@ fn skill_upgrade_replaces_outdated_skill_and_creates_backup() {
     let old_config = std::env::var("XDG_CONFIG_HOME").ok();
     let old_state = std::env::var("XDG_STATE_HOME").ok();
     let old_cache = std::env::var("XDG_CACHE_HOME").ok();
+    let old_local_app_data = redirect_test_local_app_data(&xdg_root);
     unsafe {
         std::env::set_var("XDG_CONFIG_HOME", xdg_root.join("config"));
         std::env::set_var("XDG_STATE_HOME", xdg_root.join("state"));
@@ -2633,6 +2757,7 @@ fn skill_upgrade_replaces_outdated_skill_and_creates_backup() {
     restore_env_var("XDG_CONFIG_HOME", old_config);
     restore_env_var("XDG_STATE_HOME", old_state);
     restore_env_var("XDG_CACHE_HOME", old_cache);
+    restore_env_var("LOCALAPPDATA", old_local_app_data);
     let _ = fs::remove_dir_all(repo);
     let _ = fs::remove_dir_all(xdg_root);
 }
@@ -2696,6 +2821,7 @@ fn download_github_skill_template_extracts_archive_to_state_cache() {
     let archive_path = repo.join("memory-main.zip");
     let old_archive = std::env::var("MEMORY_LAYER_GITHUB_SKILL_TEMPLATE_ARCHIVE_URL").ok();
     let old_state = std::env::var("XDG_STATE_HOME").ok();
+    let old_local_app_data = redirect_test_local_app_data(&xdg_root);
     write_test_skill_archive(&archive_path, "0.4.0");
     unsafe {
         std::env::set_var(
@@ -2720,6 +2846,7 @@ fn download_github_skill_template_extracts_archive_to_state_cache() {
         old_archive,
     );
     restore_env_var("XDG_STATE_HOME", old_state);
+    restore_env_var("LOCALAPPDATA", old_local_app_data);
     let _ = fs::remove_dir_all(repo);
     let _ = fs::remove_dir_all(xdg_root);
 }

@@ -7,3 +7,4 @@ authors.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+sysinfo.workspace = true

@@ -380,10 +380,9 @@ pub(crate) fn discover_skill_template_dir() -> Option<PathBuf> {
     if let Some(state_dir) = platform::preferred_user_state_dir() {
         candidates.push(state_dir.join("skill-template"));
     }
-    if let Ok(home) = env::var("HOME") {
+    if let Some(home) = platform::user_home_dir() {
         candidates.push(
-            PathBuf::from(home)
-                .join(".local")
+            home.join(".local")
                 .join("share")
                 .join("memory-layer")
                 .join("skill-template"),
@@ -905,11 +904,13 @@ pub(crate) fn render_repo_config(
     repo_root: &Path,
     project_paths: &mem_platform::ProjectPaths,
 ) -> String {
-    let repo_root = repo_root.display();
+    let repo_root = render_toml_string(&repo_root.display().to_string());
     let runtime_dir = project_paths.runtime_dir();
     let socket_path = runtime_dir.join("memory-layer.capnp.sock");
     let audit_log_path = runtime_dir.join("automation.log");
     let state_file_path = runtime_dir.join("automation-state.json");
+    let audit_log_path = render_toml_string(&audit_log_path.display().to_string());
+    let state_file_path = render_toml_string(&state_file_path.display().to_string());
     format!(
         r#"# User-local project overrides for this project.
 # Put shared defaults and secrets in the global config:
@@ -926,40 +927,39 @@ pub(crate) fn render_repo_config(
 [automation]
 enabled = false
 mode = "suggest"
-repo_root = "{repo_root}"
+repo_root = {repo_root}
 file_events = true
 poll_interval = "60s"
 idle_threshold = "5m"
 min_changed_files = 2
 require_passing_test = false
 ignored_paths = [".git/", "target/", ".mem/"]
-audit_log_path = "{}"
-state_file_path = "{}"
+audit_log_path = {audit_log_path}
+state_file_path = {state_file_path}
 "#,
         default_global_config_path_label(),
         socket_path.display(),
-        audit_log_path.display(),
-        state_file_path.display()
     )
 }
 
 pub(crate) fn render_project_metadata(project: &str, repo_root: &Path) -> String {
+    let repo_root = render_toml_string(&repo_root.display().to_string());
     format!(
         r#"slug = "{project}"
-repo_root = "{}"
-"#,
-        repo_root.display()
+repo_root = {repo_root}
+"#
     )
 }
 
 pub(crate) fn render_agent_project_config(project: &str, repo_root: &Path) -> String {
+    let repo_root = render_toml_string(&repo_root.display().to_string());
     format!(
         r#"# Project-owned memory behavior.
 # Less technical users should customize Memory Layer here.
 
 [project]
 slug = "{project}"
-repo_root = "{}"
+repo_root = {repo_root}
 
 [capture]
 include_paths = ["README.md", "docs/", "src/", "crates/", "scripts/", "packaging/"]
@@ -973,9 +973,12 @@ graph_enabled = false
 
 [curation]
 replacement_policy = "balanced"
-"#,
-        repo_root.display()
+"#
     )
+}
+
+pub(crate) fn render_toml_string(value: &str) -> String {
+    toml::Value::String(value.to_string()).to_string()
 }
 
 const CLAUDE_MD_MEMORY_MARKER: &str = "## Memory Layer workflows";
@@ -1119,12 +1122,9 @@ pub(crate) fn render_init_summary(
     } else {
         "Prepared"
     };
-    let watcher_step = if cfg!(target_os = "macos") {
+    let watcher_step =
         "7. Optional: enable the Codex-linked watcher manager:\n   memory watcher manager enable\n   Legacy per-repo watcher service: memory watcher enable --project ".to_string()
-            + project
-    } else {
-        "7. Optional: enable the Linux Codex-linked watcher manager:\n   memory watcher manager enable\n   Legacy per-repo watcher service: memory watcher enable --project ".to_string() + project
-    };
+            + project;
     format!(
         "{action} memory bootstrap for project `{project}` at {}.\n\nFiles:\n- {} (user-local project config)\n- {} (repo-local project marker)\n- {} (agent-visible project behavior)\n- {} (bundled memory skills)\n\nNext steps:\n1. Set shared values like `database.url`, `service.api_token`, and `[llm]` config in {}\n2. Use {} for project runtime overrides\n3. Use {} to customize agent-visible project memory behavior\n4. Start the shared backend if it is not already running:\n   memory service run --config {}\n5. Optional: configure project-local [service] overrides if you want a parallel dev backend for this project\n6. Optional: run a project scan:\n   memory scan --project {}\n{}\n8. Open the TUI:\n   memory tui --project {}\n9. Use the repo-local memory skill bundle from {} (umbrella skill at {}/memory-layer)",
         repo_root.display(),

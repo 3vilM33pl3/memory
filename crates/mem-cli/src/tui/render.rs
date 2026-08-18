@@ -1176,7 +1176,7 @@ pub(super) fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "Start the Linux manager with `memory watcher manager enable`, or use `memory watcher enable --project <slug>` / `memory watcher run --project <slug>` for manual mode.",
+                "Start the manager with `memory watcher manager enable`, or use `memory watcher enable --project <slug>` / `memory watcher run --project <slug>` for manual mode.",
                 Style::default().fg(Theme::MUTED),
             )),
         ];
@@ -1191,7 +1191,7 @@ pub(super) fn watcher_detail_lines(app: &App) -> Vec<Line<'static>> {
                 Style::default().fg(Theme::MUTED),
             )),
             Line::from(Span::styled(
-                "Start the Linux manager with `memory watcher manager enable`, or use `memory watcher enable --project <slug>` / `memory watcher run --project <slug>` for manual mode.",
+                "Start the manager with `memory watcher manager enable`, or use `memory watcher enable --project <slug>` / `memory watcher run --project <slug>` for manual mode.",
                 Style::default().fg(Theme::MUTED),
             )),
         ];

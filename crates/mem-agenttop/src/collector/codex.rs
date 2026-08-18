@@ -7,13 +7,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "windows"))]
 use std::process::Command;
 
 /// Collector for OpenAI Codex CLI sessions.
 ///
 /// Discovery strategy (no PID session file like Claude):
-/// 1. `ps` to find running codex processes
-/// 2. `lsof` to map PID → open rollout-*.jsonl file
+/// 1. Find running Codex processes using the shared process snapshot.
+/// 2. Where available, map PIDs to open rollout-*.jsonl files.
 /// 3. Parse JSONL for session metadata, tokens, tool usage
 ///
 /// JSONL event types:
@@ -29,7 +30,7 @@ pub struct CodexCollector {
 
 impl CodexCollector {
     pub fn new() -> Self {
-        let home = dirs::home_dir().unwrap_or_default();
+        let home = mem_platform::user_home_dir().unwrap_or_default();
         Self {
             sessions_dir: home.join(".codex").join("sessions"),
             last_rate_limit: None,
@@ -171,7 +172,7 @@ impl CodexCollector {
         let mem_mb = proc.map(|p| p.rss_kb / 1024).unwrap_or(0);
         let display_pid = pid.unwrap_or(0);
 
-        let project_name = result.cwd.rsplit('/').next().unwrap_or("?").to_string();
+        let project_name = process::path_tail(&result.cwd).to_string();
 
         // Status detection
         // Note: Codex interactive sessions emit task_complete after every turn,
@@ -289,7 +290,7 @@ impl CodexCollector {
         let proc = process_info.get(&pid)?;
         let cwd = read_proc_cwd(pid)?;
         let (started_at, start_ticks) = read_proc_started_at(pid)?;
-        let project_name = cwd.rsplit('/').next().unwrap_or("?").to_string();
+        let project_name = process::path_tail(&cwd).to_string();
         let since_start = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH + std::time::Duration::from_millis(started_at))
             .unwrap_or_default();
@@ -364,16 +365,7 @@ impl CodexCollector {
             let cmd = &info.command;
             let is_exec = cmd.contains(" exec");
             let is_codex = process::cmd_has_binary(cmd, "codex");
-            let is_node_wrapper = cmd
-                .split_whitespace()
-                .take(2)
-                .collect::<Vec<_>>()
-                .first()
-                .is_some_and(|value| value.rsplit('/').next().unwrap_or(value) == "node")
-                && cmd
-                    .split_whitespace()
-                    .nth(1)
-                    .is_some_and(|value| value.rsplit('/').next().unwrap_or(value) == "codex");
+            let is_node_wrapper = process::cmd_starts_with_binary(cmd, "node") && is_codex;
             if is_codex && !is_node_wrapper && !cmd.contains("app-server") && !cmd.contains("grep")
             {
                 pids.push((*pid, is_exec));
@@ -383,6 +375,7 @@ impl CodexCollector {
     }
 
     /// Map codex PIDs to their open rollout-*.jsonl files via lsof.
+    #[cfg(not(target_os = "windows"))]
     fn map_pid_to_jsonl(pids: &[u32]) -> HashMap<u32, PathBuf> {
         let mut map = HashMap::new();
         if pids.is_empty() {
@@ -415,12 +408,20 @@ impl CodexCollector {
         }
         map
     }
+
+    /// Windows does not expose per-process open files without extra privileges.
+    /// The caller falls back to a PID/start-time session until rollout metadata
+    /// can be correlated normally.
+    #[cfg(target_os = "windows")]
+    fn map_pid_to_jsonl(_pids: &[u32]) -> HashMap<u32, PathBuf> {
+        HashMap::new()
+    }
 }
 
 pub fn collect_lightweight_sessions(
     process_info: &HashMap<u32, ProcInfo>,
 ) -> Vec<LightweightAgentSession> {
-    let sessions_dir = dirs::home_dir()
+    let sessions_dir = mem_platform::user_home_dir()
         .unwrap_or_default()
         .join(".codex")
         .join("sessions");
@@ -457,7 +458,58 @@ pub fn collect_lightweight_sessions(
         }
     }
 
+    // Codex Desktop exposes a long-lived `codex.exe app-server` process rather
+    // than a per-session CLI process. Windows has no unprivileged `lsof`
+    // equivalent, so correlate that host with the most recently updated rollout
+    // file. Use the host's start time for ownership checks: managed watchers
+    // should live for as long as the Desktop app-server that owns the session.
+    #[cfg(target_os = "windows")]
+    if sessions.is_empty()
+        && let Some((pid, _)) = process_info.iter().find(|(_, info)| {
+            process::cmd_has_binary(&info.command, "codex") && info.command.contains("app-server")
+        })
+        && let Some(jsonl_path) = latest_rollout_file(&sessions_dir)
+        && let Some(mut session) = parse_codex_jsonl_lightweight(&jsonl_path)
+    {
+        session.pid = *pid;
+        if let Some((started_at, _)) = read_proc_started_at(*pid) {
+            session.started_at = started_at;
+        }
+        sessions.push(session);
+    }
+
     sessions
+}
+
+#[cfg(target_os = "windows")]
+fn latest_rollout_file(sessions_dir: &Path) -> Option<PathBuf> {
+    let mut pending = vec![sessions_dir.to_path_buf()];
+    let mut latest: Option<(std::time::SystemTime, PathBuf)> = None;
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(dir).ok()?.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().and_then(|value| value.to_str()) != Some("jsonl")
+                || !path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.starts_with("rollout-"))
+            {
+                continue;
+            }
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            if latest
+                .as_ref()
+                .is_none_or(|(latest_modified, _)| modified > *latest_modified)
+            {
+                latest = Some((modified, path));
+            }
+        }
+    }
+    latest.map(|(_, path)| path)
 }
 
 #[cfg(target_os = "linux")]
@@ -484,9 +536,13 @@ fn read_proc_cwd(pid: u32) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn read_proc_cwd(_pid: u32) -> Option<String> {
-    None
+#[cfg(target_os = "windows")]
+fn read_proc_cwd(pid: u32) -> Option<String> {
+    mem_platform::process_snapshots()
+        .into_iter()
+        .find(|process| process.pid == pid)?
+        .cwd
+        .map(|path| path.display().to_string())
 }
 
 #[cfg(target_os = "linux")]
@@ -534,9 +590,13 @@ fn read_proc_started_at(pid: u32) -> Option<(u64, u64)> {
     Some((started_at, 0))
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn read_proc_started_at(_pid: u32) -> Option<(u64, u64)> {
-    None
+#[cfg(target_os = "windows")]
+fn read_proc_started_at(pid: u32) -> Option<(u64, u64)> {
+    let started_at = mem_platform::process_snapshots()
+        .into_iter()
+        .find(|process| process.pid == pid)?
+        .started_at_ms;
+    Some((started_at, started_at))
 }
 
 impl super::AgentCollector for CodexCollector {
@@ -804,7 +864,7 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                         result.current_task = name.to_string();
                     } else {
                         // Shorten path: just filename
-                        let short = arg.rsplit('/').next().unwrap_or(&arg);
+                        let short = process::path_tail(&arg);
                         result.current_task = format!("{} {}", name, short);
                     }
                 }
