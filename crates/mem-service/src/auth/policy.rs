@@ -363,11 +363,7 @@ pub(crate) async fn proxy_relay_request(
         .map_err(|error| ApiError::io(error.into()))?;
     let status = upstream.status();
     let upstream_headers = upstream.headers().clone();
-    let body = upstream
-        .bytes()
-        .await
-        .map_err(|error| ApiError::io(error.into()))?;
-    let mut response = Response::new(Body::from(body));
+    let mut response = Response::new(Body::from_stream(upstream.bytes_stream()));
     *response.status_mut() = status;
     for (name, value) in &upstream_headers {
         if !matches!(
