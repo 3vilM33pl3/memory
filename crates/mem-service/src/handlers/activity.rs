@@ -1,12 +1,18 @@
 use crate::prelude::*;
 use crate::*;
+use axum::Extension;
 
 pub(crate) async fn capture_task(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
-    Json(request): Json<CaptureTaskRequest>,
+    Json(mut request): Json<CaptureTaskRequest>,
 ) -> Result<Json<mem_api::CaptureTaskResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if state.config.auth.mode == mem_api::AuthMode::MultiUser {
+        request.writer_id = principal.id.to_string();
+        request.writer_name = Some(principal.display_name.clone());
+    }
     request.validate().map_err(ApiError::validation)?;
     if !state.is_primary() {
         return Ok(Json(

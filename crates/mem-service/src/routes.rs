@@ -9,27 +9,30 @@ use tower_http::{
 
 use super::{
     AppState, activate_embedding_backend, admin_shutdown, agents_snapshot, approve_loop_approval,
-    approve_loop_memory_proposal, archive, archive_memory, build_loop_context_pack,
-    cancel_loop_run, capture_task, checkpoint_activity, create_loop_memory_proposal, curate_memory,
-    deactivate_embedding_backend, delete_memory, disable_loop, edit_loop_approval,
-    edit_loop_memory_proposal, enable_loop, finish_agent_workspace, get_loop_definition,
-    get_loop_global_state, get_loop_run, get_loop_run_context_pack, get_memory, get_memory_history,
-    graph_activity, healthz, heartbeat_agent_workspace, list_agent_workspaces,
-    list_embedding_backends, list_loop_approvals, list_loop_definitions,
-    list_loop_memory_proposals, list_loop_runs, llm_audit_status, memory_scores, offline_pending,
-    pause_loop, plan_activity, project_activities, project_bundle_export,
-    project_bundle_export_preview, project_bundle_import, project_bundle_import_preview,
-    project_commit_detail, project_commits, project_graph, project_graph_status, project_memories,
-    project_memory_graph, project_overview, project_replacement_policy,
-    project_replacement_policy_update, project_replacement_proposal_approve,
-    project_replacement_proposal_reject, project_replacement_proposals, project_resume,
-    project_structure, project_up_to_speed, prune_embeddings, prune_history, query, query_global,
-    read_skill, reembed, reindex, reject_loop_approval, reject_loop_memory_proposal, repair_skills,
-    review_validation_run, route_loop_trigger, run_loop, runtime_status, scan_activity,
-    set_embedding_creation_enabled, set_llm_audit_enabled, skills, snooze_loop,
-    start_agent_workspace, stats, submit_loop_feedback, sync_commits, update_loop_global_state,
-    validate_memory, validation_runs, verify_provenance, watcher_heartbeat, watcher_restart_local,
-    watcher_unregister, web_auth_token, web_unavailable, websocket,
+    approve_loop_memory_proposal, archive, archive_memory, auth_callback, auth_create_token,
+    auth_grant_membership, auth_list_memberships, auth_list_principals, auth_list_tokens,
+    auth_login, auth_logout, auth_me, auth_revoke_membership, auth_revoke_token,
+    build_loop_context_pack, cancel_loop_run, capture_task, checkpoint_activity,
+    create_loop_memory_proposal, curate_memory, deactivate_embedding_backend, delete_memory,
+    disable_loop, edit_loop_approval, edit_loop_memory_proposal, enable_loop,
+    finish_agent_workspace, get_loop_definition, get_loop_global_state, get_loop_run,
+    get_loop_run_context_pack, get_memory, get_memory_history, graph_activity, healthz,
+    heartbeat_agent_workspace, list_agent_workspaces, list_embedding_backends, list_loop_approvals,
+    list_loop_definitions, list_loop_memory_proposals, list_loop_runs, llm_audit_status,
+    memory_scores, offline_pending, pause_loop, plan_activity, project_activities,
+    project_bundle_export, project_bundle_export_preview, project_bundle_import,
+    project_bundle_import_preview, project_commit_detail, project_commits, project_graph,
+    project_graph_status, project_memories, project_memory_graph, project_overview,
+    project_replacement_policy, project_replacement_policy_update,
+    project_replacement_proposal_approve, project_replacement_proposal_reject,
+    project_replacement_proposals, project_resume, project_structure, project_up_to_speed,
+    prune_embeddings, prune_history, query, query_global, read_skill, reembed, reindex,
+    reject_loop_approval, reject_loop_memory_proposal, repair_skills, review_validation_run,
+    route_loop_trigger, run_loop, runtime_status, scan_activity, set_embedding_creation_enabled,
+    set_llm_audit_enabled, skills, snooze_loop, start_agent_workspace, stats, submit_loop_feedback,
+    sync_commits, update_loop_global_state, validate_memory, validation_runs, verify_provenance,
+    watcher_heartbeat, watcher_restart_local, watcher_unregister, web_auth_token, web_unavailable,
+    websocket,
 };
 
 /// The API specification, embedded at compile time so the running service
@@ -51,6 +54,21 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
         .route("/v1/openapi.yaml", get(openapi_spec))
         .route("/ws", get(websocket))
         .route("/v1/web/auth-token", get(web_auth_token))
+        .route("/v1/auth/login", get(auth_login))
+        .route("/v1/auth/callback", get(auth_callback))
+        .route("/v1/auth/me", get(auth_me))
+        .route("/v1/auth/logout", post(auth_logout))
+        .route(
+            "/v1/auth/tokens",
+            get(auth_list_tokens).post(auth_create_token),
+        )
+        .route("/v1/auth/tokens/{selector}/revoke", post(auth_revoke_token))
+        .route("/v1/auth/principals", get(auth_list_principals))
+        .route(
+            "/v1/auth/memberships",
+            get(auth_list_memberships).post(auth_grant_membership),
+        )
+        .route("/v1/auth/memberships/{id}", delete(auth_revoke_membership))
         .route("/v1/admin/shutdown", post(admin_shutdown))
         .route("/v1/runtime/status", get(runtime_status))
         .route("/v1/offline/pending", get(offline_pending))
@@ -228,6 +246,10 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::auth::read_only_guard,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::authorization_guard,
         ))
         .with_state(state)
         .layer(TraceLayer::new_for_http());

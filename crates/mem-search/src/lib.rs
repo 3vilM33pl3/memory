@@ -34,6 +34,7 @@ const CHUNK_OVERLAP: usize = 80;
 
 pub(crate) struct QueryExecution<'a> {
     project: Option<&'a str>,
+    allowed_projects: Option<&'a [String]>,
     query: &'a str,
     filters: &'a QueryFilters,
     top_k: i64,
@@ -47,6 +48,7 @@ impl<'a> QueryExecution<'a> {
     fn from_project_request(request: &'a QueryRequest) -> Self {
         Self {
             project: Some(request.project.as_str()),
+            allowed_projects: None,
             query: request.query.as_str(),
             filters: &request.filters,
             top_k: request.top_k,
@@ -60,6 +62,7 @@ impl<'a> QueryExecution<'a> {
     fn from_global_request(request: &'a GlobalQueryRequest) -> Self {
         Self {
             project: None,
+            allowed_projects: None,
             query: request.query.as_str(),
             filters: &request.filters,
             top_k: request.top_k,
@@ -351,6 +354,19 @@ pub async fn query_memory_global_with_configs(
     query_memory_execution(pool, &execution, embedder, provenance_config, reinforcement).await
 }
 
+pub async fn query_memory_global_scoped_with_configs(
+    pool: &PgPool,
+    request: &GlobalQueryRequest,
+    allowed_projects: &[String],
+    embedder: Option<&EmbeddingService>,
+    provenance_config: &ProvenanceConfig,
+    reinforcement: &ReinforcementRankParams,
+) -> Result<QueryResponse> {
+    let mut execution = QueryExecution::from_global_request(request);
+    execution.allowed_projects = Some(allowed_projects);
+    query_memory_execution(pool, &execution, embedder, provenance_config, reinforcement).await
+}
+
 async fn query_memory_execution(
     pool: &PgPool,
     request: &QueryExecution<'_>,
@@ -377,17 +393,18 @@ async fn query_memory_execution(
     let relation_boost_enabled = matches!(retrieval_mode, QueryRetrievalMode::FullMemory);
 
     let lexical_started = Instant::now();
-    let lexical_candidates = if lexical_enabled {
+    let mut lexical_candidates = if lexical_enabled {
         repository::fetch_lexical_candidates(pool, request, &normalized, candidate_limit)
             .await
             .context("fetch lexical candidates")?
     } else {
         Vec::new()
     };
+    retain_authorized_candidates(&mut lexical_candidates, request.allowed_projects);
     let lexical_duration_ms = lexical_started.elapsed().as_millis() as u64;
 
     let semantic_started = Instant::now();
-    let (semantic_candidates, semantic_status) = if !semantic_enabled {
+    let (mut semantic_candidates, semantic_status) = if !semantic_enabled {
         (Vec::new(), "disabled_by_mode".to_string())
     } else if let Some(embedder) = embedder {
         let query_text = request.query.to_string();
@@ -431,10 +448,11 @@ async fn query_memory_execution(
     } else {
         (Vec::new(), "disabled".to_string())
     };
+    retain_authorized_candidates(&mut semantic_candidates, request.allowed_projects);
     let semantic_duration_ms = semantic_started.elapsed().as_millis() as u64;
 
     let graph_started = Instant::now();
-    let (graph_candidates, graph_status) = if graph_enabled {
+    let (mut graph_candidates, graph_status) = if graph_enabled {
         // The graph channel is bounded so a slow code-graph scan can never
         // sink the whole query; on timeout it degrades to an empty channel
         // with a diagnostic status, exactly like an error.
@@ -451,6 +469,7 @@ async fn query_memory_execution(
     } else {
         (Vec::new(), "disabled_by_mode".to_string())
     };
+    retain_authorized_candidates(&mut graph_candidates, request.allowed_projects);
     let graph_duration_ms = graph_started.elapsed().as_millis() as u64;
 
     let rerank_started = Instant::now();
@@ -585,6 +604,21 @@ async fn query_memory_execution(
             provenance_warnings,
         },
     })
+}
+
+fn retain_authorized_candidates(
+    candidates: &mut Vec<CandidateRecord>,
+    allowed_projects: Option<&[String]>,
+) {
+    let Some(allowed_projects) = allowed_projects else {
+        return;
+    };
+    candidates.retain(|candidate| {
+        candidate
+            .project
+            .as_ref()
+            .is_some_and(|project| allowed_projects.iter().any(|allowed| allowed == project))
+    });
 }
 
 pub async fn rebuild_chunks(

@@ -4223,6 +4223,8 @@ pub struct AuthPrincipalResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthMeResponse {
     pub authenticated: bool,
+    pub mode: AuthMode,
+    pub read_only: bool,
     pub principal: AuthPrincipalResponse,
 }
 

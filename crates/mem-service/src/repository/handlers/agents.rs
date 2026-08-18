@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use crate::*;
+use axum::Extension;
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct AgentWorkspacesQuery {
@@ -41,10 +42,14 @@ pub(crate) async fn list_agent_workspaces(
 
 pub(crate) async fn start_agent_workspace(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
-    Json(request): Json<AgentWorkspaceStartRequest>,
+    Json(mut request): Json<AgentWorkspaceStartRequest>,
 ) -> Result<Json<AgentWorkspaceRecord>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    if state.config.auth.mode == mem_api::AuthMode::MultiUser {
+        request.writer_id = Some(principal.id.to_string());
+    }
     request.validate().map_err(ApiError::validation)?;
     if !state.is_primary() {
         return Ok(Json(

@@ -40,6 +40,22 @@ impl ApiError {
         }
     }
 
+    pub(crate) fn forbidden(message: &str) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            message: message.to_string(),
+            diagnostic: None,
+        }
+    }
+
+    pub(crate) fn internal(message: &str) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: message.to_string(),
+            diagnostic: None,
+        }
+    }
+
     pub(crate) fn status_message(status: StatusCode, message: impl Into<String>) -> Self {
         Self {
             status,

@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use crate::*;
+use axum::Extension;
 use mem_api::GlobalQueryRequest;
 
 pub(crate) async fn query(
@@ -84,6 +85,7 @@ pub(crate) async fn query(
 
 pub(crate) async fn query_global(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     Json(request): Json<GlobalQueryRequest>,
 ) -> Result<Json<mem_api::QueryResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
@@ -94,23 +96,42 @@ pub(crate) async fn query_global(
     }
     let pool = &state.pool()?;
     let embedders = state.embedders.read().await;
-    mem_search::query_memory_global_with_configs(
-        pool,
-        &request,
-        embedders.active(),
-        &state.config.provenance,
-        &mem_search::ReinforcementRankParams::from(&state.config.reinforcement),
-    )
-    .await
-    .map(|response| {
-        crate::reinforcement::record_query_access(&state, &response);
-        Json(response)
-    })
-    .map_err(|error| {
-        let diagnostic =
-            classify_anyhow_diagnostic(&error, "search", "query_global", DiagnosticSeverity::Error);
-        ApiError::diagnostic(StatusCode::INTERNAL_SERVER_ERROR, diagnostic)
-    })
+    let reinforcement = mem_search::ReinforcementRankParams::from(&state.config.reinforcement);
+    let allowed_projects = principal.authorized_projects(mem_api::AuthRole::Reader);
+    let result = if principal.has_global_role(mem_api::AuthRole::Reader) {
+        mem_search::query_memory_global_with_configs(
+            pool,
+            &request,
+            embedders.active(),
+            &state.config.provenance,
+            &reinforcement,
+        )
+        .await
+    } else {
+        mem_search::query_memory_global_scoped_with_configs(
+            pool,
+            &request,
+            &allowed_projects,
+            embedders.active(),
+            &state.config.provenance,
+            &reinforcement,
+        )
+        .await
+    };
+    result
+        .map(|response| {
+            crate::reinforcement::record_query_access(&state, &response);
+            Json(response)
+        })
+        .map_err(|error| {
+            let diagnostic = classify_anyhow_diagnostic(
+                &error,
+                "search",
+                "query_global",
+                DiagnosticSeverity::Error,
+            );
+            ApiError::diagnostic(StatusCode::INTERNAL_SERVER_ERROR, diagnostic)
+        })
 }
 
 pub(crate) fn should_enrich_query_answer_with_llm(request: &QueryRequest) -> bool {

@@ -21,7 +21,7 @@ pub use runtime::run_service;
 
 pub(crate) use auth::*;
 pub(crate) use error::*;
-pub(crate) use handlers::{activity::*, curation::*, query::*};
+pub(crate) use handlers::{activity::*, authentication::*, curation::*, query::*};
 pub(crate) use offline::*;
 pub(crate) use repository::events::*;
 pub(crate) use repository::handlers::{
