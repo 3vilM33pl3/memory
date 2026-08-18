@@ -414,11 +414,16 @@ select {
 
 .list-item {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.5rem;
   align-items: start;
   text-align: left;
   padding: 0.45rem 0.55rem;
+}
+
+.list-item > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .list-item p,
@@ -1014,9 +1019,16 @@ pre {
 
 @media (max-width: 980px) {
   .topbar,
-  .panel-grid,
   .project-grid {
     grid-template-columns: 1fr;
+  }
+
+  .panel-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panel-grid > .panel {
+    min-width: 0;
   }
 
   .tabs {
