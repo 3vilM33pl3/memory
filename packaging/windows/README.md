@@ -12,4 +12,6 @@ Outputs are written to `target/windows/dist/`:
 - `memory-layer-<version>-windows-x86_64.msi`
 - matching `.sha256` files
 
-The MSI is unsigned and installs `memory.exe` plus the bundled web UI, skill templates, README, example config, and PowerShell completion under `Program Files\Memory Layer`.
+The unsigned per-user MSI installs under `%LOCALAPPDATA%\Programs\Memory Layer`, adds its `bin` directory to the user `PATH`, and bundles the web UI, skill templates, README, example config, PowerShell completion, and a localhost PostgreSQL + pgvector Compose template.
+
+The portable ZIP uses the same `bin`/`share` layout. Add the extracted `bin` directory to `PATH` before running `memory`.

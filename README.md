@@ -134,6 +134,21 @@ memory service enable
 memory tui
 ```
 
+Windows x86_64:
+
+```powershell
+# Install the per-user MSI, then open a new PowerShell window.
+memory wizard --global
+Set-Location C:\path\to\your-project
+memory wizard --dry-run
+memory wizard
+memory service enable
+memory watcher manager enable
+memory tui
+```
+
+The Windows MSI installs under `%LOCALAPPDATA%\Programs\Memory Layer`, adds `bin` to the user `PATH`, and bundles a localhost-only PostgreSQL 16 + pgvector Docker Compose template. Runtime config and state live under `%LOCALAPPDATA%\memory-layer`; background processes use current-user Task Scheduler tasks.
+
 For unreleased changes from `main`:
 
 ```bash
@@ -421,3 +436,4 @@ Unless explicitly agreed otherwise in writing, contributions are accepted under 
 For working on this repository itself, start with [Quick Start (Developers)](#quick-start-developers) above and then [Dev Stack vs Installed Stack](docs/developer/dev-stack.md) for the isolation contract.
 
 Packaging, architecture, and implementation details live under [Developer Documentation](docs/developer/README.md).
+adapter

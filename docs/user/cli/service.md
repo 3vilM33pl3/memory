@@ -52,7 +52,7 @@ Restart active services after an install or upgrade:
 memory service restart-all --mark-tui-restart --json
 ```
 
-`restart-all` restarts only services that are already active or loaded. It does not start services that the user intentionally stopped. On Linux it checks the system backend service and active user watcher services. When run as root during a package install, it also checks logged-in user systemd sessions under `/run/user/*`. On macOS it checks loaded Memory Layer LaunchAgents.
+`restart-all` restarts only services that are already active or loaded. It does not start services that the user intentionally stopped. On Linux it checks the system backend service and active user watcher services. When run as root during a package install, it also checks logged-in user systemd sessions under `/run/user/*`. On macOS it checks loaded Memory Layer LaunchAgents. On Windows it checks the current user's `MemoryLayer-*` scheduled tasks.
 
 Installers pass `--mark-tui-restart` so a TUI that is already open can show `restart` in red in the bottom status bar. Restarting the TUI is still a user action; the installer does not kill the running terminal UI.
 
@@ -70,6 +70,8 @@ The HTTP API does not trust `Origin` or `Referer` headers as authentication, eve
 ## Platform Notes
 
 On macOS, `memory service enable` manages the LaunchAgent.
+
+On Windows, `memory service enable` registers and starts the current-user, least-privilege `MemoryLayer-Backend` Task Scheduler task. It starts at sign-in and is configured to restart after failures. Use the same CLI commands to inspect, restart, or remove it; no administrator shell is required.
 
 On Linux, the packaged service is usually managed with:
 

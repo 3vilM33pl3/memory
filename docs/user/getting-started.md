@@ -10,6 +10,7 @@ This guide is written for someone who just wants Memory Layer working with as li
 - [Agent Repo Memory Init Prompt](#agent-repo-memory-init-prompt)
 - [Fast Install: Debian](#fast-install-debian)
 - [Fast Install: macOS](#fast-install-macos)
+- [Fast Install: Windows](#fast-install-windows)
 - [What The Wizard Will Ask For](#what-the-wizard-will-ask-for)
 - [File Locations](#file-locations)
 - [What To Put Where](#what-to-put-where)
@@ -134,6 +135,20 @@ psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
 psql "$DATABASE_URL" -c "SELECT 1;"
 psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
 ```
+
+### Local Windows PostgreSQL
+
+The Windows MSI includes `share\memory-layer\postgres.compose.yaml`. With Docker Desktop running, copy that file and create a private `.env` beside it:
+
+```powershell
+$postgres = Join-Path $env:LOCALAPPDATA 'memory-layer\postgres'
+New-Item -ItemType Directory -Force $postgres | Out-Null
+Copy-Item "$env:LOCALAPPDATA\Programs\Memory Layer\share\memory-layer\postgres.compose.yaml" "$postgres\compose.yaml"
+# Generate and store a strong MEMORY_LAYER_POSTGRES_PASSWORD in $postgres\.env.
+docker compose --project-directory $postgres -f "$postgres\compose.yaml" up -d
+```
+
+The template runs PostgreSQL 16 with pgvector, binds only to `127.0.0.1:5432`, and keeps data in a named Docker volume. Do not commit the local `.env` file.
 
 After Memory Layer is configured, run:
 
@@ -372,6 +387,26 @@ or in a browser:
 ```text
 http://127.0.0.1:4040/
 ```
+
+## Fast Install: Windows
+
+1. Install the x86_64 MSI. It installs per user under `%LOCALAPPDATA%\Programs\Memory Layer` and adds its `bin` directory to the user `PATH`.
+2. Start the bundled PostgreSQL Compose template using the [Local Windows PostgreSQL](#local-windows-postgresql) instructions.
+3. Open a new PowerShell window and configure Memory Layer:
+
+```powershell
+memory wizard --global
+Set-Location C:\path\to\your-project
+memory wizard --dry-run
+memory wizard
+memory service enable
+memory watcher manager enable
+memory doctor
+memory health
+memory tui
+```
+
+The backend and watcher manager are current-user, least-privilege Task Scheduler tasks named `MemoryLayer-Backend` and `MemoryLayer-WatcherManager`. Their config, state, cache, and task metadata live under `%LOCALAPPDATA%\memory-layer`.
 
 ## What The Wizard Will Ask For
 
