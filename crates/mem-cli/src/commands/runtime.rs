@@ -236,6 +236,103 @@ Examples:
 See also:
   docs/user/cli/auth.md";
 
+const AUTH_WHOAMI_AFTER_HELP: &str = "\
+Agent notes:
+  Resolves the active client credential without changing access. Use --json for automation.
+
+Examples:
+  memory auth whoami
+  memory auth whoami --json
+
+See also:
+  docs/user/cli/auth.md";
+
+const AUTH_TOKEN_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Global administrators use these commands to create, inspect, and revoke scoped service tokens.
+  Token secrets are displayed only when created; list never returns a secret or hash.
+
+Examples:
+  memory auth token create --name hermes --project memory --role writer --ttl 30d
+  memory auth token list --json
+
+See also:
+  docs/user/cli/auth.md";
+
+const AUTH_TOKEN_CREATE_AFTER_HELP: &str = "\
+Agent notes:
+  Creates a service principal with an initial project role. Capture the returned secret immediately.
+
+Examples:
+  memory auth token create --name hermes --project memory --role writer --ttl 30d
+
+See also:
+  docs/user/cli/auth.md";
+
+const AUTH_TOKEN_LIST_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only token metadata listing. Secrets and stored hashes are never returned.
+
+Examples:
+  memory auth token list
+  memory auth token list --json
+
+See also:
+  docs/user/cli/auth.md";
+
+const AUTH_TOKEN_REVOKE_AFTER_HELP: &str = "\
+Agent notes:
+  Revokes a token by UUID or unambiguous displayed prefix. Revocation takes effect on the next request.
+
+Examples:
+  memory auth token revoke <token-uuid>
+
+See also:
+  docs/user/cli/auth.md";
+
+const AUTH_MEMBERSHIP_GROUP_AFTER_HELP: &str = "\
+Agent notes:
+  Global administrators use these commands to manage direct project roles for principals.
+  Authentik group-derived access is configured on the service and is not removed with these commands.
+
+Examples:
+  memory auth membership grant --principal <uuid> --project memory --role reader
+  memory auth membership list --json
+
+See also:
+  docs/user/cli/auth.md";
+
+const AUTH_MEMBERSHIP_GRANT_AFTER_HELP: &str = "\
+Agent notes:
+  Adds or updates a direct project role for an existing principal.
+
+Examples:
+  memory auth membership grant --principal <uuid> --project memory --role reader
+
+See also:
+  docs/user/cli/auth.md";
+
+const AUTH_MEMBERSHIP_LIST_AFTER_HELP: &str = "\
+Agent notes:
+  Read-only listing of direct and bootstrap project memberships.
+
+Examples:
+  memory auth membership list
+  memory auth membership list --json
+
+See also:
+  docs/user/cli/auth.md";
+
+const AUTH_MEMBERSHIP_REVOKE_AFTER_HELP: &str = "\
+Agent notes:
+  Removes one direct project membership by UUID. Other direct or group-derived access is unchanged.
+
+Examples:
+  memory auth membership revoke <membership-uuid>
+
+See also:
+  docs/user/cli/auth.md";
+
 const EVAL_GROUP_AFTER_HELP: &str = "\
 Agent notes:
   Use eval commands to produce reproducible evidence that memory changes retrieval, grounding, cost, or task success.
@@ -1446,10 +1543,13 @@ pub(in crate::commands) struct AuthArgs {
 #[derive(Debug, Subcommand)]
 pub(in crate::commands) enum AuthCommand {
     /// Show the principal resolved for the current client credential.
+    #[command(after_help = AUTH_WHOAMI_AFTER_HELP)]
     Whoami(AuthOutputArgs),
     /// Create, list, and revoke service tokens.
+    #[command(after_help = AUTH_TOKEN_GROUP_AFTER_HELP)]
     Token(AuthTokenArgs),
     /// Grant, list, and revoke project memberships.
+    #[command(after_help = AUTH_MEMBERSHIP_GROUP_AFTER_HELP)]
     Membership(AuthMembershipArgs),
 }
 
@@ -1468,10 +1568,13 @@ pub(in crate::commands) struct AuthTokenArgs {
 #[derive(Debug, Subcommand)]
 pub(in crate::commands) enum AuthTokenCommand {
     /// Create a service principal and display its secret once.
+    #[command(after_help = AUTH_TOKEN_CREATE_AFTER_HELP)]
     Create(AuthTokenCreateArgs),
     /// List token metadata without secrets or hashes.
+    #[command(after_help = AUTH_TOKEN_LIST_AFTER_HELP)]
     List(AuthOutputArgs),
     /// Revoke a token by UUID or unambiguous displayed prefix.
+    #[command(after_help = AUTH_TOKEN_REVOKE_AFTER_HELP)]
     Revoke(AuthTokenRevokeArgs),
 }
 
@@ -1505,10 +1608,13 @@ pub(in crate::commands) struct AuthMembershipArgs {
 #[derive(Debug, Subcommand)]
 pub(in crate::commands) enum AuthMembershipCommand {
     /// Add or update a project role for a principal.
+    #[command(after_help = AUTH_MEMBERSHIP_GRANT_AFTER_HELP)]
     Grant(AuthMembershipGrantArgs),
     /// List direct and bootstrap memberships.
+    #[command(after_help = AUTH_MEMBERSHIP_LIST_AFTER_HELP)]
     List(AuthOutputArgs),
     /// Remove a project membership by UUID.
+    #[command(after_help = AUTH_MEMBERSHIP_REVOKE_AFTER_HELP)]
     Revoke(AuthMembershipRevokeArgs),
 }
 

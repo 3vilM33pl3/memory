@@ -297,6 +297,7 @@ fn root_command_doc_name(command_name: &str) -> Option<&'static str> {
         "upgrade" => Some("upgrade.md"),
         "service" => Some("service.md"),
         "mcp" => Some("mcp.md"),
+        "auth" => Some("auth.md"),
         "doctor" => Some("doctor.md"),
         "status" => Some("status.md"),
         "commits" => Some("commits.md"),
