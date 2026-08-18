@@ -4,14 +4,16 @@ pub use types::*;
 
 pub mod config {
     pub use crate::types::{
-        AppConfig, AutomationConfig, ClusterConfig, DatabaseConfig, EmbeddingBackendConfig,
-        EmbeddingsConfig, FeatureFlags, LlmAuditConfig, LlmConfig, McpConfig, OfflineConfig,
-        Profile, RetentionConfig, ServiceConfig, WriterConfig, dev_overlay_path_for_base,
-        discover_global_config_path, discover_global_env_path, discover_repo_config_path,
-        discover_repo_dev_config_path, discover_repo_env_path, effective_llm_base_url,
-        effective_llm_base_url_for, is_ollama_provider, is_supported_llm_provider,
-        llm_max_output_tokens_field, llm_requires_api_key, load_repo_replacement_policy,
-        resolve_llm_api_key, resolve_secret_value,
+        AppConfig, AuthConfig, AuthGroupMappingRule, AuthGroupMappingsConfig, AuthMode,
+        AuthPrincipalKind, AuthRole, AutomationConfig, ClusterConfig, DatabaseConfig,
+        EmbeddingBackendConfig, EmbeddingsConfig, FeatureFlags, LlmAuditConfig, LlmConfig,
+        McpConfig, OfflineConfig, OidcAuthConfig, Profile, RetentionConfig, ServiceConfig,
+        WriterConfig, dev_overlay_path_for_base, discover_global_config_path,
+        discover_global_env_path, discover_repo_config_path, discover_repo_dev_config_path,
+        discover_repo_env_path, effective_llm_base_url, effective_llm_base_url_for,
+        is_ollama_provider, is_supported_llm_provider, llm_max_output_tokens_field,
+        llm_requires_api_key, load_repo_replacement_policy, resolve_llm_api_key,
+        resolve_secret_value,
     };
 }
 

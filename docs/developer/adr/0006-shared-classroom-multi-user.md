@@ -1,7 +1,7 @@
 # ADR 0006: Shared-classroom / multi-user story — spike decision
 
 Date: 2026-07-18
-Status: accepted (decision doc — spike, no build)
+Status: superseded by [ADR 0007](0007-authentik-multiuser-authentication.md)
 Relates to: 3VI-823 (spike), 3VI-821 (read-only student mode), 3VI-820 (classroom pack)
 
 ## Question
@@ -81,3 +81,6 @@ the first requirement of both.
   should *stamp* it server-side rather than invent a parallel concept.
 - The single-token assumption stays load-bearing in `auth.rs`; nothing new
   hardens around it, keeping Option 3's surface small if it ever happens.
+
+This deferral ended when remote shared deployments became a concrete product
+requirement. ADR 0007 records the implemented identity and authorization model.
