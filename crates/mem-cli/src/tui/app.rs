@@ -27,6 +27,7 @@ use tokio::{net::TcpStream, sync::mpsc};
 use crate::{
     commands::{
         api::ApiClient,
+        output::client_api_token,
         service_support::{enable_relay_discovery_and_restart_backend, load_tui_restart_notice},
     },
     resume,
@@ -286,6 +287,11 @@ pub(super) fn spawn_stream_connect(
     tokio::spawn(async move {
         let result = tokio::time::timeout(STREAM_CONNECT_TIMEOUT, async {
             let mut stream = StreamSession::connect(&api).await?;
+            stream
+                .send(StreamRequest::Authenticate {
+                    token: client_api_token(&api.config),
+                })
+                .await?;
             subscribe_stream_selection(&mut stream, project, memory_id).await?;
             Ok::<_, anyhow::Error>(stream)
         })

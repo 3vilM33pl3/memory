@@ -47,7 +47,6 @@ async fn openapi_spec() -> impl axum::response::IntoResponse {
 
 pub(crate) fn build_http_app(state: AppState) -> Router {
     let web_assets = state.web_root.clone();
-    let config = state.config.clone();
     let mcp_config = state.config.mcp.clone();
     let mut app = Router::new()
         .route("/healthz", get(healthz))
@@ -251,11 +250,11 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
             state.clone(),
             crate::auth::authorization_guard,
         ))
-        .with_state(state)
+        .with_state(state.clone())
         .layer(TraceLayer::new_for_http());
 
     if mcp_config.enabled && mcp_config.http_enabled {
-        app = app.merge(crate::mcp_http::build_mcp_http_router(config));
+        app = app.merge(crate::mcp_http::build_mcp_http_router(state));
     }
 
     if let Some(root) = web_assets {

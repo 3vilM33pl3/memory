@@ -910,13 +910,14 @@ mod tests {
         .await
         .expect("create service token");
         let raw_token = created.token.as_deref().expect("one-time token");
-        let stored: Vec<u8> = sqlx::query("SELECT token_hash FROM auth_service_tokens WHERE id = $1")
-            .bind(created.id)
-            .fetch_one(&pool)
-            .await
-            .expect("read stored token hash")
-            .try_get("token_hash")
-            .expect("token hash column");
+        let stored: Vec<u8> =
+            sqlx::query("SELECT token_hash FROM auth_service_tokens WHERE id = $1")
+                .bind(created.id)
+                .fetch_one(&pool)
+                .await
+                .expect("read stored token hash")
+                .try_get("token_hash")
+                .expect("token hash column");
         assert_eq!(stored, hash_secret(raw_token));
         assert_ne!(stored, raw_token.as_bytes());
 

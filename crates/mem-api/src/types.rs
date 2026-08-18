@@ -1990,6 +1990,7 @@ pub struct StatsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StreamRequest {
+    Authenticate { token: String },
     Health,
     ProjectOverview { project: String },
     ProjectMemories { project: String },

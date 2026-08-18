@@ -8,6 +8,7 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
+http.workspace = true
 mem-api = { path = "../mem-api" }
 mem-platform = { path = "../mem-platform" }
 reqwest.workspace = true
@@ -20,4 +21,3 @@ uuid.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-

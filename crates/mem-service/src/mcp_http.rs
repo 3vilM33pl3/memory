@@ -7,22 +7,16 @@ use axum::{
     middleware::{self, Next},
     response::Response,
 };
-use mem_api::AppConfig;
+use mem_api::{AuthMode, AuthRole};
 use rmcp::transport::{
     StreamableHttpServerConfig, StreamableHttpService,
     streamable_http_server::session::local::LocalSessionManager,
 };
 
-#[derive(Clone)]
-struct McpHttpAuth {
-    require_token: bool,
-    api_token: String,
-    bind_addr: String,
-}
-
-pub(crate) fn build_mcp_http_router(config: AppConfig) -> Router {
-    let service_config = config.service.clone();
-    let mcp_config = config.mcp.clone();
+pub(crate) fn build_mcp_http_router(state: crate::AppState) -> Router {
+    let config = state.config.clone();
+    let service_config = state.config.service.clone();
+    let mcp_config = state.config.mcp.clone();
     let server_config = StreamableHttpServerConfig::default()
         .with_allowed_hosts(mcp_allowed_hosts(&service_config.bind_addr))
         .with_allowed_origins(mcp_allowed_origins(&service_config.bind_addr));
@@ -35,28 +29,43 @@ pub(crate) fn build_mcp_http_router(config: AppConfig) -> Router {
     Router::new()
         .nest_service(&path, service)
         .route_layer(middleware::from_fn_with_state(
-            McpHttpAuth {
-                require_token: mcp_config.require_token,
-                api_token: service_config.api_token,
-                bind_addr: service_config.bind_addr,
-            },
+            state,
             mcp_http_auth_middleware,
         ))
 }
 
 async fn mcp_http_auth_middleware(
-    State(auth): State<McpHttpAuth>,
+    State(state): State<crate::AppState>,
     headers: HeaderMap,
     request: axum::extract::Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    validate_mcp_origin(&headers, &auth.bind_addr)?;
-    if auth.require_token && !mcp_token_matches(&headers, &auth.api_token) {
+    if !state.is_primary() {
+        return crate::auth::proxy_relay_request(&state, request)
+            .await
+            .map_err(|error| error.status);
+    }
+    validate_mcp_origin(&headers, &state.config.service.bind_addr)?;
+    let principal = crate::auth::resolve_request_principal(&state, &headers, false)
+        .await
+        .map_err(|error| error.status)?;
+    let token_required =
+        state.config.mcp.require_token || state.config.auth.mode == AuthMode::MultiUser;
+    let Some(principal) = principal else {
         return Err(StatusCode::UNAUTHORIZED);
+    };
+    if token_required
+        && principal.credential_source == crate::auth::CredentialSource::AnonymousSingleUser
+    {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if !principal.has_any_role(AuthRole::Reader) {
+        return Err(StatusCode::FORBIDDEN);
     }
     Ok(next.run(request).await)
 }
 
+#[cfg(test)]
 pub(crate) fn mcp_token_matches(headers: &HeaderMap, expected: &str) -> bool {
     headers
         .get("x-api-token")

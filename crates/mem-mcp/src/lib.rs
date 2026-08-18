@@ -128,6 +128,27 @@ impl MemoryMcpServer {
     pub fn prompt_definitions() -> Vec<Prompt> {
         prompt_definitions()
     }
+
+    fn for_request_context(&self, context: &RequestContext<RoleServer>) -> Self {
+        let Some(parts) = context.extensions.get::<http::request::Parts>() else {
+            return self.clone();
+        };
+        let token = parts
+            .headers
+            .get(http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .or_else(|| {
+                parts
+                    .headers
+                    .get("x-api-token")
+                    .and_then(|value| value.to_str().ok())
+            });
+        match token {
+            Some(token) => Self::new(self.client.with_token(token), self.mode.clone()),
+            None => self.clone(),
+        }
+    }
 }
 
 impl ServerHandler for MemoryMcpServer {
@@ -155,40 +176,41 @@ impl ServerHandler for MemoryMcpServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        let server = self.for_request_context(&context);
         let arguments = request.arguments.unwrap_or_default();
         match request.name.as_ref() {
-            TOOL_MEMORY_QUERY => self.tool_query(arguments).await,
-            TOOL_MEMORY_SEARCH_ALL => self.tool_search_all(arguments).await,
-            TOOL_MEMORY_RESUME => self.tool_resume(arguments).await,
-            TOOL_MEMORY_UP_TO_SPEED => self.tool_up_to_speed(arguments).await,
-            TOOL_MEMORY_OVERVIEW => self.tool_overview(arguments).await,
-            TOOL_MEMORY_LIST_MEMORIES => self.tool_list_memories(arguments).await,
-            TOOL_MEMORY_GET_MEMORY => self.tool_get_memory(arguments).await,
-            TOOL_MEMORY_MEMORY_HISTORY => self.tool_memory_history(arguments).await,
-            TOOL_MEMORY_LIST_ACTIVITIES => self.tool_list_activities(arguments).await,
+            TOOL_MEMORY_QUERY => server.tool_query(arguments).await,
+            TOOL_MEMORY_SEARCH_ALL => server.tool_search_all(arguments).await,
+            TOOL_MEMORY_RESUME => server.tool_resume(arguments).await,
+            TOOL_MEMORY_UP_TO_SPEED => server.tool_up_to_speed(arguments).await,
+            TOOL_MEMORY_OVERVIEW => server.tool_overview(arguments).await,
+            TOOL_MEMORY_LIST_MEMORIES => server.tool_list_memories(arguments).await,
+            TOOL_MEMORY_GET_MEMORY => server.tool_get_memory(arguments).await,
+            TOOL_MEMORY_MEMORY_HISTORY => server.tool_memory_history(arguments).await,
+            TOOL_MEMORY_LIST_ACTIVITIES => server.tool_list_activities(arguments).await,
             TOOL_MEMORY_LIST_REPLACEMENT_PROPOSALS => {
-                self.tool_list_replacement_proposals(arguments).await
+                server.tool_list_replacement_proposals(arguments).await
             }
-            TOOL_MEMORY_LOOP_LIST => self.tool_loop_list(arguments).await,
-            TOOL_MEMORY_LOOP_GET => self.tool_loop_get(arguments).await,
-            TOOL_MEMORY_LOOP_ENABLE => self.tool_loop_enable(arguments).await,
-            TOOL_MEMORY_LOOP_DISABLE => self.tool_loop_disable(arguments).await,
-            TOOL_MEMORY_LOOP_PAUSE => self.tool_loop_pause(arguments).await,
-            TOOL_MEMORY_LOOP_SNOOZE => self.tool_loop_snooze(arguments).await,
-            TOOL_MEMORY_LOOP_RUN => self.tool_loop_run(arguments).await,
-            TOOL_MEMORY_LOOP_RUNS => self.tool_loop_runs(arguments).await,
-            TOOL_MEMORY_LOOP_INSPECT => self.tool_loop_inspect(arguments).await,
-            TOOL_MEMORY_LOOP_CANCEL => self.tool_loop_cancel(arguments).await,
-            TOOL_MEMORY_LOOP_FEEDBACK => self.tool_loop_feedback(arguments).await,
-            TOOL_MEMORY_LOOP_LIST_APPROVALS => self.tool_loop_list_approvals(arguments).await,
-            TOOL_MEMORY_LOOP_APPROVE => self.tool_loop_approve(arguments).await,
-            TOOL_MEMORY_LOOP_REJECT => self.tool_loop_reject(arguments).await,
-            TOOL_MEMORY_LOOP_EDIT_APPROVAL => self.tool_loop_edit_approval(arguments).await,
-            TOOL_MEMORY_LOOP_GLOBAL_STATE => self.tool_loop_global_state(arguments).await,
+            TOOL_MEMORY_LOOP_LIST => server.tool_loop_list(arguments).await,
+            TOOL_MEMORY_LOOP_GET => server.tool_loop_get(arguments).await,
+            TOOL_MEMORY_LOOP_ENABLE => server.tool_loop_enable(arguments).await,
+            TOOL_MEMORY_LOOP_DISABLE => server.tool_loop_disable(arguments).await,
+            TOOL_MEMORY_LOOP_PAUSE => server.tool_loop_pause(arguments).await,
+            TOOL_MEMORY_LOOP_SNOOZE => server.tool_loop_snooze(arguments).await,
+            TOOL_MEMORY_LOOP_RUN => server.tool_loop_run(arguments).await,
+            TOOL_MEMORY_LOOP_RUNS => server.tool_loop_runs(arguments).await,
+            TOOL_MEMORY_LOOP_INSPECT => server.tool_loop_inspect(arguments).await,
+            TOOL_MEMORY_LOOP_CANCEL => server.tool_loop_cancel(arguments).await,
+            TOOL_MEMORY_LOOP_FEEDBACK => server.tool_loop_feedback(arguments).await,
+            TOOL_MEMORY_LOOP_LIST_APPROVALS => server.tool_loop_list_approvals(arguments).await,
+            TOOL_MEMORY_LOOP_APPROVE => server.tool_loop_approve(arguments).await,
+            TOOL_MEMORY_LOOP_REJECT => server.tool_loop_reject(arguments).await,
+            TOOL_MEMORY_LOOP_EDIT_APPROVAL => server.tool_loop_edit_approval(arguments).await,
+            TOOL_MEMORY_LOOP_GLOBAL_STATE => server.tool_loop_global_state(arguments).await,
             TOOL_MEMORY_LOOP_SET_GLOBAL_KILL_SWITCH => {
-                self.tool_loop_set_global_kill_switch(arguments).await
+                server.tool_loop_set_global_kill_switch(arguments).await
             }
             other => Err(McpError::new(
                 rmcp::model::ErrorCode::METHOD_NOT_FOUND,
@@ -219,12 +241,14 @@ impl ServerHandler for MemoryMcpServer {
     async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, McpError> {
+        let server = self.for_request_context(&context);
         let value = match parse_resource_uri(&request.uri)? {
             MemoryResource::ProjectOverview { project } => {
                 json!(
-                    self.client
+                    server
+                        .client
                         .project_overview(&project)
                         .await
                         .map_err(api_error)?
@@ -232,7 +256,8 @@ impl ServerHandler for MemoryMcpServer {
             }
             MemoryResource::ProjectMemories { project } => {
                 json!(
-                    self.client
+                    server
+                        .client
                         .project_memories(&project, None, 100, 0)
                         .await
                         .map_err(api_error)?
@@ -240,18 +265,20 @@ impl ServerHandler for MemoryMcpServer {
             }
             MemoryResource::ProjectActivities { project } => {
                 json!(
-                    self.client
+                    server
+                        .client
                         .project_activities(&project, 100, None, None, None, true)
                         .await
                         .map_err(api_error)?
                 )
             }
             MemoryResource::Memory { memory_id } => {
-                json!(self.client.memory(&memory_id).await.map_err(api_error)?)
+                json!(server.client.memory(&memory_id).await.map_err(api_error)?)
             }
             MemoryResource::MemoryHistory { memory_id } => {
                 json!(
-                    self.client
+                    server
+                        .client
                         .memory_history(&memory_id)
                         .await
                         .map_err(api_error)?
@@ -955,10 +982,14 @@ pub struct MemoryApiClient {
 
 impl MemoryApiClient {
     pub fn new(config: AppConfig) -> Self {
+        let token = std::env::var("MEMORY_LAYER_CLIENT_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(config.service.api_token);
         Self {
             client: Client::new(),
             base_url: format!("http://{}", config.service.bind_addr),
-            token: config.service.api_token,
+            token,
         }
     }
 
@@ -966,6 +997,14 @@ impl MemoryApiClient {
         Self {
             client: Client::new(),
             base_url: base_url.into().trim_end_matches('/').to_string(),
+            token: token.into(),
+        }
+    }
+
+    pub fn with_token(&self, token: impl Into<String>) -> Self {
+        Self {
+            client: self.client.clone(),
+            base_url: self.base_url.clone(),
             token: token.into(),
         }
     }

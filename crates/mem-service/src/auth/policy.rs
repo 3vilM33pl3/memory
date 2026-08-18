@@ -248,6 +248,18 @@ pub(crate) async fn authorization_guard(
     mut request: Request,
     next: Next,
 ) -> Response {
+    if !state.is_primary() {
+        if request.uri().path() == "/ws" {
+            return next.run(request).await;
+        }
+        if request.uri().path().starts_with("/v1/") {
+            return match proxy_relay_request(&state, request).await {
+                Ok(response) => response,
+                Err(error) => error.into_response(),
+            };
+        }
+    }
+
     let policy = route_policy(request.method(), request.uri().path());
     if policy.scope == ProjectScope::Public {
         return next.run(request).await;
@@ -307,6 +319,62 @@ pub(crate) async fn authorization_guard(
         request.headers_mut().remove(header::AUTHORIZATION);
     }
     next.run(request).await
+}
+
+pub(crate) async fn proxy_relay_request(
+    state: &AppState,
+    request: Request,
+) -> Result<Response, ApiError> {
+    let peer = crate::selected_primary_peer(state).ok_or_else(|| {
+        ApiError::service_unavailable("no primary memory service available on the local network")
+    })?;
+    let (parts, body) = request.into_parts();
+    let path_and_query = parts
+        .uri
+        .path_and_query()
+        .map(|value| value.as_str())
+        .unwrap_or_else(|| parts.uri.path());
+    let body = to_bytes(body, MAX_AUTH_INSPECTION_BODY)
+        .await
+        .map_err(|error| ApiError::io(error.into()))?;
+    let mut headers = parts.headers;
+    for name in [
+        header::HOST,
+        header::CONTENT_LENGTH,
+        header::CONNECTION,
+        header::TRANSFER_ENCODING,
+        header::ACCEPT_ENCODING,
+    ] {
+        headers.remove(name);
+    }
+    let upstream = state
+        .http_client
+        .request(
+            parts.method,
+            format!("http://{}{}", peer.advertise_addr, path_and_query),
+        )
+        .headers(headers)
+        .body(body)
+        .send()
+        .await
+        .map_err(|error| ApiError::io(error.into()))?;
+    let status = upstream.status();
+    let upstream_headers = upstream.headers().clone();
+    let body = upstream
+        .bytes()
+        .await
+        .map_err(|error| ApiError::io(error.into()))?;
+    let mut response = Response::new(Body::from(body));
+    *response.status_mut() = status;
+    for (name, value) in &upstream_headers {
+        if !matches!(
+            name.as_str(),
+            "content-length" | "transfer-encoding" | "content-encoding" | "connection"
+        ) {
+            response.headers_mut().append(name, value.clone());
+        }
+    }
+    Ok(response)
 }
 
 fn is_mutating(method: &Method) -> bool {

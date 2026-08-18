@@ -1,5 +1,7 @@
 use crate::prelude::*;
 use crate::*;
+use axum::Extension;
+use mem_api::{AuthMode, AuthRole};
 
 pub(crate) struct ProtoServers {
     #[cfg(unix)]
@@ -67,17 +69,24 @@ pub(crate) struct ConnectionSubscriptions {
 pub(crate) async fn websocket(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
+    headers: HeaderMap,
+    principal: Option<Extension<crate::auth::AuthenticatedPrincipal>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| async move {
         if state.is_primary() {
-            handle_websocket_connection(socket, state).await;
-        } else if let Err(error) = bridge_relay_websocket(socket, state).await {
+            let principal = principal.map(|Extension(principal)| principal);
+            handle_websocket_connection(socket, state, principal).await;
+        } else if let Err(error) = bridge_relay_websocket(socket, state, headers).await {
             tracing::warn!(error = %error, "relay websocket bridge failed");
         }
     })
 }
 
-pub(crate) async fn handle_websocket_connection(mut socket: WebSocket, state: AppState) {
+pub(crate) async fn handle_websocket_connection(
+    mut socket: WebSocket,
+    state: AppState,
+    mut principal: Option<crate::auth::AuthenticatedPrincipal>,
+) {
     let mut subscriptions = ConnectionSubscriptions::default();
     let mut events = state.events.subscribe();
 
@@ -106,7 +115,14 @@ pub(crate) async fn handle_websocket_connection(mut socket: WebSocket, state: Ap
                                 continue;
                             }
                         };
-                        match process_stream_request(&state, &mut subscriptions, request).await {
+                        match process_stream_request(
+                            &state,
+                            &mut subscriptions,
+                            &mut principal,
+                            request,
+                        )
+                        .await
+                        {
                             Ok(responses) => {
                                 for response in responses {
                                     if send_ws_response(&mut socket, response).await.is_err() {
@@ -143,7 +159,10 @@ pub(crate) async fn handle_websocket_connection(mut socket: WebSocket, state: Ap
                 let Ok(event) = event else {
                     continue;
                 };
-                match render_subscription_updates(&state, &subscriptions, &event).await {
+                let Some(principal) = principal.as_ref() else {
+                    continue;
+                };
+                match render_subscription_updates(&state, &subscriptions, principal, &event).await {
                     Ok(responses) => {
                         for response in responses {
                             if send_ws_response(&mut socket, response).await.is_err() {
@@ -170,17 +189,22 @@ pub(crate) async fn handle_websocket_connection(mut socket: WebSocket, state: Ap
     }
 }
 
-pub(crate) async fn bridge_relay_websocket(socket: WebSocket, state: AppState) -> Result<()> {
+pub(crate) async fn bridge_relay_websocket(
+    socket: WebSocket,
+    state: AppState,
+    headers: HeaderMap,
+) -> Result<()> {
     let upstream = selected_primary_peer(&state)
         .ok_or_else(|| anyhow::anyhow!("no primary available for relay websocket"))?;
     let mut request = format!("ws://{}/ws", upstream.advertise_addr).into_client_request()?;
-    request.headers_mut().insert(
-        "x-api-token",
-        state
-            .api_token
-            .parse()
-            .context("parse relay api token header")?,
-    );
+    for name in [header::AUTHORIZATION, header::COOKIE] {
+        if let Some(value) = headers.get(&name) {
+            request.headers_mut().insert(name, value.clone());
+        }
+    }
+    if let Some(value) = headers.get("x-api-token") {
+        request.headers_mut().insert("x-api-token", value.clone());
+    }
     let (upstream_stream, _) = connect_async(request)
         .await
         .context("connect upstream websocket")?;
@@ -274,6 +298,13 @@ where
     let (mut reader, mut writer) = tokio::io::split(stream);
     let mut subscriptions = ConnectionSubscriptions::default();
     let mut events = state.events.subscribe();
+    let mut principal = if state.config.auth.mode == AuthMode::SingleUser {
+        crate::auth::resolve_request_principal(&state, &HeaderMap::new(), false)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.message))?
+    } else {
+        None
+    };
 
     loop {
         tokio::select! {
@@ -283,7 +314,14 @@ where
                 };
                 let request: StreamRequest = serde_json::from_str(&text)
                     .map_err(|error| anyhow::anyhow!("parse stream request: {error}"))?;
-                for response in process_stream_request(&state, &mut subscriptions, request).await? {
+                for response in process_stream_request(
+                    &state,
+                    &mut subscriptions,
+                    &mut principal,
+                    request,
+                )
+                .await?
+                {
                     let text = serde_json::to_string(&response)?;
                     write_capnp_text_frame(&mut writer, &text).await?;
                 }
@@ -292,7 +330,17 @@ where
                 let Ok(event) = event else {
                     continue;
                 };
-                for response in render_subscription_updates(&state, &subscriptions, &event).await? {
+                let Some(principal) = principal.as_ref() else {
+                    continue;
+                };
+                for response in render_subscription_updates(
+                    &state,
+                    &subscriptions,
+                    principal,
+                    &event,
+                )
+                .await?
+                {
                     let text = serde_json::to_string(&response)?;
                     write_capnp_text_frame(&mut writer, &text).await?;
                 }
@@ -306,32 +354,64 @@ where
 pub(crate) async fn process_stream_request(
     state: &AppState,
     subscriptions: &mut ConnectionSubscriptions,
+    principal: &mut Option<crate::auth::AuthenticatedPrincipal>,
     request: StreamRequest,
 ) -> Result<Vec<StreamResponse>> {
-    let pool = state
-        .pool()
-        .map_err(|error| anyhow::anyhow!(error.message))?;
     let mut responses = Vec::new();
     match request {
+        StreamRequest::Authenticate { token } => {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "x-api-token",
+                token
+                    .parse()
+                    .context("stream authentication token is not a valid header value")?,
+            );
+            let authenticated = crate::auth::resolve_request_principal(state, &headers, false)
+                .await
+                .map_err(|error| anyhow::anyhow!(error.message))?
+                .ok_or_else(|| anyhow::anyhow!("stream authentication required"))?;
+            if !authenticated.has_any_role(AuthRole::Reader) {
+                anyhow::bail!("stream principal does not have reader access");
+            }
+            *principal = Some(authenticated);
+            responses.push(StreamResponse::Ack {
+                message: "stream authenticated".to_string(),
+            });
+        }
         StreamRequest::Health => responses.push(StreamResponse::Health {
             value: health_payload(state).await?,
         }),
         StreamRequest::ProjectOverview { project } => {
+            require_stream_project_role(principal.as_ref(), &project, AuthRole::Reader)?;
             responses.push(StreamResponse::ProjectOverview {
                 value: fetch_project_overview_with_watchers(state, &project).await?,
             });
         }
         StreamRequest::ProjectMemories { project } => {
+            require_stream_project_role(principal.as_ref(), &project, AuthRole::Reader)?;
+            let pool = state
+                .pool()
+                .map_err(|error| anyhow::anyhow!(error.message))?;
             responses.push(StreamResponse::ProjectMemories {
                 value: fetch_project_memories(&pool, &project, None, 500, 0).await?,
             });
         }
         StreamRequest::MemoryDetail { memory_id } => {
-            responses.push(StreamResponse::MemoryDetail {
-                value: fetch_memory_entry(&pool, memory_id).await?,
-            });
+            let pool = state
+                .pool()
+                .map_err(|error| anyhow::anyhow!(error.message))?;
+            let value = fetch_memory_entry(&pool, memory_id).await?;
+            if let Some(memory) = value.as_ref() {
+                require_stream_project_role(principal.as_ref(), &memory.project, AuthRole::Reader)?;
+            }
+            responses.push(StreamResponse::MemoryDetail { value });
         }
         StreamRequest::SubscribeProject { project } => {
+            require_stream_project_role(principal.as_ref(), &project, AuthRole::Reader)?;
+            let pool = state
+                .pool()
+                .map_err(|error| anyhow::anyhow!(error.message))?;
             subscriptions.project = Some(project.clone());
             let overview = fetch_project_overview_with_watchers(state, &project).await?;
             let memories = fetch_project_memories(&pool, &project, None, 500, 0).await?;
@@ -339,8 +419,14 @@ pub(crate) async fn process_stream_request(
             responses.extend(recent_activity_responses(&state.recent_activity, &project).await);
         }
         StreamRequest::SubscribeMemory { memory_id } => {
-            subscriptions.memory_id = Some(memory_id);
+            let pool = state
+                .pool()
+                .map_err(|error| anyhow::anyhow!(error.message))?;
             let detail = fetch_memory_entry(&pool, memory_id).await?;
+            if let Some(memory) = detail.as_ref() {
+                require_stream_project_role(principal.as_ref(), &memory.project, AuthRole::Reader)?;
+            }
+            subscriptions.memory_id = Some(memory_id);
             responses.push(StreamResponse::MemorySnapshot { detail });
         }
         StreamRequest::UnsubscribeMemory => {
@@ -357,6 +443,7 @@ pub(crate) async fn process_stream_request(
 pub(crate) async fn render_subscription_updates(
     state: &AppState,
     subscriptions: &ConnectionSubscriptions,
+    principal: &crate::auth::AuthenticatedPrincipal,
     event: &ServiceEvent,
 ) -> Result<Vec<StreamResponse>> {
     let pool = state
@@ -365,6 +452,9 @@ pub(crate) async fn render_subscription_updates(
     let mut responses = Vec::new();
     if let Some(project) = &subscriptions.project
         && project == &event.project
+        && principal
+            .role_for_project(project)
+            .is_some_and(|role| role >= AuthRole::Reader)
     {
         if event.include_activity {
             responses.push(stream_activity_response(event.clone()));
@@ -378,10 +468,32 @@ pub(crate) async fn render_subscription_updates(
         && event.memory_id == Some(memory_id)
     {
         let detail = fetch_memory_entry(&pool, memory_id).await?;
-        responses.push(StreamResponse::MemoryChanged { detail });
+        if detail.as_ref().is_some_and(|memory| {
+            principal
+                .role_for_project(&memory.project)
+                .is_some_and(|role| role >= AuthRole::Reader)
+        }) {
+            responses.push(StreamResponse::MemoryChanged { detail });
+        }
     }
 
     Ok(responses)
+}
+
+fn require_stream_project_role(
+    principal: Option<&crate::auth::AuthenticatedPrincipal>,
+    project: &str,
+    required: AuthRole,
+) -> Result<()> {
+    let principal = principal.ok_or_else(|| anyhow::anyhow!("stream authentication required"))?;
+    if principal
+        .role_for_project(project)
+        .is_some_and(|role| role >= required)
+    {
+        Ok(())
+    } else {
+        anyhow::bail!("stream principal does not have {required:?} access to project {project}")
+    }
 }
 
 pub(crate) async fn recent_activity_responses(
