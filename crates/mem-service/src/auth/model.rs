@@ -33,6 +33,10 @@ pub(crate) struct ProjectRoleGrant {
 }
 
 impl AuthenticatedPrincipal {
+    pub(crate) fn actor_label(&self) -> String {
+        format!("{} ({})", self.display_name, self.id)
+    }
+
     pub(crate) fn role_for_project(&self, project: &str) -> Option<AuthRole> {
         max_role(
             self.global_role,
@@ -109,5 +113,30 @@ pub(crate) fn max_role(left: Option<AuthRole>, right: Option<AuthRole>) -> Optio
         (Some(left), Some(right)) => Some(left.max(right)),
         (Some(role), None) | (None, Some(role)) => Some(role),
         (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn actor_label_contains_human_name_and_stable_id() {
+        let id = Uuid::new_v4();
+        let principal = AuthenticatedPrincipal {
+            id,
+            kind: AuthPrincipalKind::HumanOidc,
+            display_name: "Memory Admin".to_string(),
+            email: None,
+            groups: Vec::new(),
+            global_role: Some(AuthRole::Admin),
+            project_roles: BTreeMap::new(),
+            credential_source: CredentialSource::BrowserSession,
+            token_id: None,
+            session_id: None,
+            session_csrf_hash: None,
+        };
+
+        assert_eq!(principal.actor_label(), format!("Memory Admin ({id})"));
     }
 }

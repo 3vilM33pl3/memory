@@ -17,6 +17,7 @@ import type {
 } from "../../types";
 
 const ROLES: AuthRole[] = ["reader", "writer", "operator", "admin"];
+const SERVICE_ROLES: AuthRole[] = ["reader", "writer", "operator"];
 
 interface AccessTabProps {
   project: string;
@@ -40,6 +41,9 @@ export function AccessTab({ project }: AccessTabProps) {
   const principalNames = useMemo(
     () => new Map(principals.map((principal) => [principal.id, principal.display_name])),
     [principals],
+  );
+  const selectedMembershipPrincipal = principals.find(
+    (principal) => principal.id === membershipPrincipal,
   );
 
   const refresh = useCallback(async () => {
@@ -65,6 +69,12 @@ export function AccessTab({ project }: AccessTabProps) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (selectedMembershipPrincipal?.kind === "service_token" && membershipRole === "admin") {
+      setMembershipRole("operator");
+    }
+  }, [membershipRole, selectedMembershipPrincipal?.kind]);
 
   async function createToken() {
     if (!tokenName.trim() || !tokenProject.trim()) return;
@@ -159,7 +169,7 @@ export function AccessTab({ project }: AccessTabProps) {
         </div>
         <label>Name<input value={tokenName} onChange={(event) => setTokenName(event.target.value)} /></label>
         <label>Project<input value={tokenProject} onChange={(event) => setTokenProject(event.target.value)} /></label>
-        <RoleSelect value={tokenRole} onChange={setTokenRole} />
+        <RoleSelect value={tokenRole} roles={SERVICE_ROLES} onChange={setTokenRole} />
         <button type="button" disabled={busy || !tokenName.trim() || !tokenProject.trim()} onClick={() => void createToken()}>
           Create
         </button>
@@ -177,7 +187,11 @@ export function AccessTab({ project }: AccessTabProps) {
           </select>
         </label>
         <label>Project<input value={membershipProject} onChange={(event) => setMembershipProject(event.target.value)} /></label>
-        <RoleSelect value={membershipRole} onChange={setMembershipRole} />
+        <RoleSelect
+          value={membershipRole}
+          roles={selectedMembershipPrincipal?.kind === "service_token" ? SERVICE_ROLES : ROLES}
+          onChange={setMembershipRole}
+        />
         <button type="button" disabled={busy || !membershipPrincipal || !membershipProject.trim()} onClick={() => void grantMembership()}>
           Grant
         </button>
@@ -230,7 +244,7 @@ export function AccessTab({ project }: AccessTabProps) {
                 <tr key={membership.id}>
                   <td>{principalNames.get(membership.principal_id) ?? membership.principal_id}</td>
                   <td>{membership.project}</td><td>{membership.role}</td><td>{membership.source}</td>
-                  <td><button type="button" disabled={busy || membership.source !== "explicit"} onClick={() => void revokeMembership(membership.id)}>Revoke</button></td>
+                  <td><button type="button" disabled={busy} onClick={() => void revokeMembership(membership.id)}>Revoke</button></td>
                 </tr>
               ))}
             </tbody>
@@ -241,12 +255,12 @@ export function AccessTab({ project }: AccessTabProps) {
   );
 }
 
-function RoleSelect({ value, onChange }: { value: AuthRole; onChange: (role: AuthRole) => void }) {
+function RoleSelect({ value, roles, onChange }: { value: AuthRole; roles: AuthRole[]; onChange: (role: AuthRole) => void }) {
   return (
     <label>
       Role
       <select value={value} onChange={(event) => onChange(event.target.value as AuthRole)}>
-        {ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
+        {roles.map((role) => <option key={role} value={role}>{role}</option>)}
       </select>
     </label>
   );

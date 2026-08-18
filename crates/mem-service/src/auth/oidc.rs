@@ -7,7 +7,7 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
-use mem_api::{AuthMode, AuthRole};
+use mem_api::AuthMode;
 use openidconnect::{
     AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet, EndpointNotSet,
     EndpointSet, IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
@@ -180,7 +180,6 @@ pub(crate) async fn auth_callback(
         &display_name,
         email.as_deref(),
         &groups,
-        mapped_global_role(&state, &groups),
     )
     .await?;
 
@@ -358,18 +357,6 @@ fn groups_from_id_token(token: &str, claim_name: &str) -> Result<Vec<String>, Ap
     Ok(groups)
 }
 
-fn mapped_global_role(state: &AppState, groups: &[String]) -> Option<AuthRole> {
-    state
-        .config
-        .auth
-        .group_mappings
-        .rules
-        .iter()
-        .filter(|rule| rule.global && groups.iter().any(|group| group == &rule.group))
-        .map(|rule| rule.role)
-        .max()
-}
-
 async fn upsert_human_principal(
     pool: &sqlx::PgPool,
     issuer: &str,
@@ -377,7 +364,6 @@ async fn upsert_human_principal(
     display_name: &str,
     email: Option<&str>,
     groups: &[String],
-    global_role: Option<AuthRole>,
 ) -> Result<Uuid, ApiError> {
     let id = Uuid::new_v4();
     let row = sqlx::query(
@@ -385,11 +371,11 @@ async fn upsert_human_principal(
         INSERT INTO auth_principals
             (id, kind, issuer, subject, display_name, email, groups_json,
              global_role, created_at, updated_at)
-        VALUES ($1, 'human_oidc', $2, $3, $4, $5, $6, $7, now(), now())
+        VALUES ($1, 'human_oidc', $2, $3, $4, $5, $6, NULL, now(), now())
         ON CONFLICT (issuer, subject) WHERE issuer IS NOT NULL AND subject IS NOT NULL
         DO UPDATE SET display_name = EXCLUDED.display_name, email = EXCLUDED.email,
                       groups_json = EXCLUDED.groups_json,
-                      global_role = EXCLUDED.global_role, updated_at = now()
+                      global_role = NULL, updated_at = now()
         RETURNING id
         "#,
     )
@@ -399,7 +385,6 @@ async fn upsert_human_principal(
     .bind(display_name)
     .bind(email)
     .bind(serde_json::json!(groups))
-    .bind(global_role.map(AuthRole::as_str))
     .fetch_one(pool)
     .await
     .map_err(ApiError::sql)?;
@@ -432,6 +417,7 @@ fn append_cookie(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{Router, response::Redirect, routing::get};
 
     #[test]
     fn return_target_rejects_external_redirects() {
@@ -453,5 +439,31 @@ mod tests {
             groups_from_id_token(&token, "custom_groups").unwrap(),
             ["admins", "writers"]
         );
+    }
+
+    #[tokio::test]
+    async fn oidc_http_client_does_not_follow_redirects() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let address = listener.local_addr().expect("test listener address");
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/start", get(|| async { Redirect::temporary("/target") })),
+            )
+            .await
+        });
+
+        let response = oidc_http_client()
+            .expect("OIDC client")
+            .get(format!("http://{address}/start"))
+            .send()
+            .await
+            .expect("redirect response");
+
+        assert_eq!(response.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(response.url().path(), "/start");
+        server.abort();
     }
 }

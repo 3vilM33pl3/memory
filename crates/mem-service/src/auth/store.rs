@@ -262,7 +262,11 @@ async fn principal_from_row(
         .map_err(ApiError::sql)?
         .as_deref()
         .and_then(parse_role);
-    let mut global_role = stored_global_role;
+    let mut global_role = if kind == AuthPrincipalKind::HumanOidc {
+        None
+    } else {
+        stored_global_role
+    };
     let mut project_roles = load_memberships(pool, id).await?;
 
     for rule in &state.config.auth.group_mappings.rules {
@@ -848,6 +852,41 @@ mod tests {
         );
         let credentials = presented_credentials(&headers, false).expect("credentials");
         assert_eq!(credentials.api_token.as_deref(), Some("token"));
+    }
+
+    #[test]
+    fn machine_authentication_ignores_browser_cookies() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("memory_session=browser-secret"),
+        );
+
+        let credentials = presented_credentials(&headers, false).expect("credentials");
+        assert!(credentials.api_token.is_none());
+        assert!(credentials.session_token.is_none());
+    }
+
+    #[tokio::test]
+    async fn service_token_admin_role_is_rejected_before_database_access() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgresql://memory:memory@127.0.0.1:1/memory")
+            .expect("lazy test pool");
+        let actor = legacy_principal();
+        let error = create_service_token(
+            &pool,
+            &actor,
+            AuthServiceTokenCreateRequest {
+                name: "too-powerful".to_string(),
+                project: "memory".to_string(),
+                role: AuthRole::Admin,
+                expires_in_seconds: Some(60),
+            },
+        )
+        .await
+        .expect_err("admin service token must be rejected");
+
+        assert_eq!(error.status, axum::http::StatusCode::BAD_REQUEST);
     }
 
     #[test]

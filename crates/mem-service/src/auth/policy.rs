@@ -158,8 +158,11 @@ pub(crate) fn route_policy(method: &Method, path: &str) -> RoutePolicy {
         };
     }
     if path.starts_with("/v1/loops/") {
-        if *method == Method::GET && !path.ends_with("/context-pack") {
-            return unscoped(AuthRole::Reader);
+        if *method == Method::GET {
+            return RoutePolicy {
+                role: AuthRole::Reader,
+                scope: ProjectScope::QueryProjectOrGlobal,
+            };
         }
         if path.ends_with("/enable")
             || path.ends_with("/disable")
@@ -616,6 +619,14 @@ mod tests {
         assert_eq!(
             route_policy(&Method::GET, "/healthz").scope,
             ProjectScope::Public
+        );
+        assert_eq!(
+            route_policy(&Method::GET, "/v1/loops/context_pack_refresh/context-pack").scope,
+            ProjectScope::QueryProjectOrGlobal
+        );
+        assert_eq!(
+            route_policy(&Method::POST, "/v1/auth/tokens").role,
+            AuthRole::Admin
         );
     }
 

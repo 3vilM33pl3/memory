@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use crate::*;
-use mem_api::{EffectiveLoopSettings, LoopActionKind};
+use axum::Extension;
+use mem_api::{AuthMode, EffectiveLoopSettings, LoopActionKind};
 use mem_loops::{
     ContextPackBuildInput, MockLoopRunner, RunnerBudget, RunnerCapabilityProfile, RunnerInvocation,
     RunnerTaskPack, RunnerWorkspaceRef, TriggerRouteCandidate, WorktreeSandboxManager,
@@ -190,10 +191,12 @@ pub(crate) async fn get_loop_global_state(
 
 pub(crate) async fn update_loop_global_state(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
-    Json(request): Json<LoopGlobalStateUpdateRequest>,
+    Json(mut request): Json<LoopGlobalStateUpdateRequest>,
 ) -> Result<Json<LoopGlobalStateResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    stamp_multiuser_actor(&state, &principal, &mut request.updated_by);
     if !state.is_primary() {
         return Ok(Json(
             proxy_post_json(&state, "/v1/loops/global-kill-switch", &request, true).await?,
@@ -206,11 +209,13 @@ pub(crate) async fn update_loop_global_state(
 
 pub(crate) async fn enable_loop(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
     Path(loop_id): Path<String>,
     Json(mut request): Json<LoopSettingsUpdateRequest>,
 ) -> Result<Json<LoopSettingResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    stamp_multiuser_actor(&state, &principal, &mut request.updated_by);
     request.enabled = Some(true);
     if request.mode.is_none() {
         let definition = fetch_loop_definition(&state.pool()?, &loop_id).await?;
@@ -221,11 +226,13 @@ pub(crate) async fn enable_loop(
 
 pub(crate) async fn disable_loop(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
     Path(loop_id): Path<String>,
     Json(mut request): Json<LoopSettingsUpdateRequest>,
 ) -> Result<Json<LoopSettingResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    stamp_multiuser_actor(&state, &principal, &mut request.updated_by);
     request.enabled = Some(false);
     request.mode = Some(LoopMode::Off);
     mutate_loop_setting(state, loop_id, request, false).await
@@ -233,11 +240,13 @@ pub(crate) async fn disable_loop(
 
 pub(crate) async fn pause_loop(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
     Path(loop_id): Path<String>,
     Json(mut request): Json<LoopSettingsUpdateRequest>,
 ) -> Result<Json<LoopSettingResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    stamp_multiuser_actor(&state, &principal, &mut request.updated_by);
     if request.paused_until.is_none() {
         return Err(ApiError::validation(ValidationError::new(
             "paused_until is required",
@@ -249,11 +258,13 @@ pub(crate) async fn pause_loop(
 
 pub(crate) async fn snooze_loop(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
     Path(loop_id): Path<String>,
     Json(mut request): Json<LoopSettingsUpdateRequest>,
 ) -> Result<Json<LoopSettingResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    stamp_multiuser_actor(&state, &principal, &mut request.updated_by);
     if request.snoozed_until.is_none() {
         return Err(ApiError::validation(ValidationError::new(
             "snoozed_until is required",
@@ -549,11 +560,13 @@ pub(crate) async fn list_loop_approvals(
 
 pub(crate) async fn approve_loop_approval(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
     Path(approval_id): Path<Uuid>,
-    Json(request): Json<LoopApprovalDecisionRequest>,
+    Json(mut request): Json<LoopApprovalDecisionRequest>,
 ) -> Result<Json<LoopApprovalDecisionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
     if !state.is_primary() {
         return Ok(Json(
             proxy_post_json(
@@ -578,11 +591,13 @@ pub(crate) async fn approve_loop_approval(
 
 pub(crate) async fn reject_loop_approval(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
     Path(approval_id): Path<Uuid>,
-    Json(request): Json<LoopApprovalDecisionRequest>,
+    Json(mut request): Json<LoopApprovalDecisionRequest>,
 ) -> Result<Json<LoopApprovalDecisionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
     if !state.is_primary() {
         return Ok(Json(
             proxy_post_json(
@@ -607,11 +622,13 @@ pub(crate) async fn reject_loop_approval(
 
 pub(crate) async fn edit_loop_approval(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
     Path(approval_id): Path<Uuid>,
-    Json(request): Json<LoopApprovalDecisionRequest>,
+    Json(mut request): Json<LoopApprovalDecisionRequest>,
 ) -> Result<Json<LoopApprovalDecisionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
     if request.edited_action.is_none() {
         return Err(ApiError::validation(ValidationError::new(
             "edited_action is required",
@@ -672,11 +689,13 @@ pub(crate) async fn create_loop_memory_proposal(
 
 pub(crate) async fn approve_loop_memory_proposal(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
     Path(proposal_id): Path<Uuid>,
-    Json(request): Json<LoopMemoryProposalDecisionRequest>,
+    Json(mut request): Json<LoopMemoryProposalDecisionRequest>,
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
     if !state.is_primary() {
         return Ok(Json(
             proxy_post_json(
@@ -702,11 +721,13 @@ pub(crate) async fn approve_loop_memory_proposal(
 
 pub(crate) async fn reject_loop_memory_proposal(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
     Path(proposal_id): Path<Uuid>,
-    Json(request): Json<LoopMemoryProposalDecisionRequest>,
+    Json(mut request): Json<LoopMemoryProposalDecisionRequest>,
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
     if !state.is_primary() {
         return Ok(Json(
             proxy_post_json(
@@ -732,11 +753,13 @@ pub(crate) async fn reject_loop_memory_proposal(
 
 pub(crate) async fn edit_loop_memory_proposal(
     State(state): State<AppState>,
+    Extension(principal): Extension<AuthenticatedPrincipal>,
     headers: HeaderMap,
     Path(proposal_id): Path<Uuid>,
-    Json(request): Json<LoopMemoryProposalDecisionRequest>,
+    Json(mut request): Json<LoopMemoryProposalDecisionRequest>,
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
+    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
     if request.edited_candidate.is_none()
         && request.edited_evidence.is_none()
         && request.edited_risk_notes.is_none()
@@ -759,6 +782,16 @@ pub(crate) async fn edit_loop_memory_proposal(
     Ok(Json(
         edit_loop_memory_proposal_record(&state.pool()?, proposal_id, &request).await?,
     ))
+}
+
+fn stamp_multiuser_actor(
+    state: &AppState,
+    principal: &AuthenticatedPrincipal,
+    field: &mut Option<String>,
+) {
+    if state.config.auth.mode == AuthMode::MultiUser {
+        *field = Some(principal.actor_label());
+    }
 }
 
 pub async fn list_registered_loop_definitions(pool: &PgPool) -> Result<Vec<LoopDefinitionRecord>> {
