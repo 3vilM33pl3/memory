@@ -417,7 +417,7 @@ fn append_cookie(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{Router, response::Redirect, routing::get};
+    use axum::{Json, Router, response::Redirect, routing::get};
 
     #[test]
     fn return_target_rejects_external_redirects() {
@@ -464,6 +464,55 @@ mod tests {
 
         assert_eq!(response.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
         assert_eq!(response.url().path(), "/start");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn oidc_discovery_fetches_provider_metadata_and_jwks() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let address = listener.local_addr().expect("test listener address");
+        let issuer = format!("http://{address}");
+        let discovery_issuer = issuer.clone();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route(
+                        "/.well-known/openid-configuration",
+                        get(move || {
+                            let issuer = discovery_issuer.clone();
+                            async move {
+                                Json(serde_json::json!({
+                                    "issuer": issuer,
+                                    "authorization_endpoint": format!("{issuer}/authorize"),
+                                    "token_endpoint": format!("{issuer}/token"),
+                                    "jwks_uri": format!("{issuer}/jwks"),
+                                    "response_types_supported": ["code"],
+                                    "subject_types_supported": ["public"],
+                                    "id_token_signing_alg_values_supported": ["RS256"]
+                                }))
+                            }
+                        }),
+                    )
+                    .route(
+                        "/jwks",
+                        get(|| async { Json(serde_json::json!({ "keys": [] })) }),
+                    ),
+            )
+            .await
+        });
+
+        let metadata = CoreProviderMetadata::discover_async(
+            IssuerUrl::new(issuer.clone()).expect("issuer URL"),
+            &oidc_http_client().expect("OIDC client"),
+        )
+        .await
+        .expect("discover provider metadata");
+
+        assert_eq!(metadata.issuer().as_str(), issuer);
+        assert!(metadata.jwks().keys().is_empty());
         server.abort();
     }
 }
