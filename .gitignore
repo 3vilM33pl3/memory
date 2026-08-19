@@ -12,6 +12,7 @@
 /web/node_modules
 /web/dist
 /web/*.tsbuildinfo
+/docs-site/*.tsbuildinfo
 /docs-site/node_modules
 /docs-site/.next
 /docs-site/.source
