@@ -60,8 +60,8 @@ pub(crate) async fn auth_login(
             Nonce::new_random,
         )
         .set_pkce_challenge(pkce_challenge);
-    for scope in &state.config.auth.oidc.scopes {
-        authorization = authorization.add_scope(Scope::new(scope.clone()));
+    for scope in additional_oidc_scopes(&state.config.auth.oidc.scopes) {
+        authorization = authorization.add_scope(Scope::new(scope));
     }
     let (authorization_url, csrf_state, nonce) = authorization.url();
     let pool = state.pool()?;
@@ -360,6 +360,17 @@ fn groups_from_id_token(token: &str, claim_name: &str) -> Result<Vec<String>, Ap
     Ok(groups)
 }
 
+fn additional_oidc_scopes(configured: &[String]) -> Vec<String> {
+    configured
+        .iter()
+        .map(|scope| scope.trim())
+        .filter(|scope| !scope.is_empty() && !scope.eq_ignore_ascii_case("openid"))
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 async fn upsert_human_principal(
     pool: &sqlx::PgPool,
     issuer: &str,
@@ -427,6 +438,22 @@ mod tests {
         assert_eq!(validate_return_to(Some("/graph")).unwrap(), "/graph");
         assert!(validate_return_to(Some("https://example.test")).is_err());
         assert!(validate_return_to(Some("//example.test/path")).is_err());
+    }
+
+    #[test]
+    fn additional_scopes_omit_openid_blanks_and_duplicates() {
+        let configured = vec![
+            "openid".to_string(),
+            " profile ".to_string(),
+            "email".to_string(),
+            "profile".to_string(),
+            " ".to_string(),
+        ];
+
+        assert_eq!(
+            additional_oidc_scopes(&configured),
+            vec!["email".to_string(), "profile".to_string()]
+        );
     }
 
     #[test]
