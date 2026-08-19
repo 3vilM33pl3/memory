@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! `memory consolidate` — first-class convenience over the
 //! `memory_consolidation` loop: runs the deterministic cluster scan (and,
 //! unless `--dry-run`, the LLM synthesis into human-gated insight proposals)

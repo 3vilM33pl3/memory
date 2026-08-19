@@ -25,7 +25,7 @@ resolver = "2"
 version = "1.0.3"
 edition = "2024"
 license = "AGPL-3.0-or-later"
-authors = ["Codex"]
+authors = ["Olivier Van Acker"]
 
 [workspace.dependencies]
 anyhow = "1.0.100"

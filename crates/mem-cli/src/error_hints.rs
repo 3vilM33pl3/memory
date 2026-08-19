@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Actionable hints appended to top-level CLI errors: every common failure
 //! should name its own fix. Server-side API errors already carry structured
 //! fix hints (see `format_api_error`); this covers what the server cannot —

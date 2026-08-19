@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Background reinforcement scheduler: retention pruning, score compaction,
 //! and the threshold-triggered validation sweep. Modeled on
 //! `run_provenance_reverify_scheduler`. Runs only on the primary node.

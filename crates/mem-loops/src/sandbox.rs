@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use crate::{RunnerArtifact, RunnerChangedFile, RunnerCommandOutput, RunnerWorkspaceRef};
 use serde::{Deserialize, Serialize};
 use std::{

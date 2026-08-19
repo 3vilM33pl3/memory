@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use super::process::{self, ProcInfo};
 use crate::model::{
     AgentSession, ChildProcess, LightweightAgentSession, SessionFile, SessionStatus, SubAgent,

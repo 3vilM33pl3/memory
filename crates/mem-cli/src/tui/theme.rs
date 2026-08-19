@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use ratatui::{
     style::{Color, Modifier, Style},
     text::Line,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Database access for reinforcement scoring. All sqlx queries in this
 //! crate live here, per workspace convention.
 

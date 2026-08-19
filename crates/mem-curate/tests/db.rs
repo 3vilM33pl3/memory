@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use mem_api::{
     CaptureCandidateInput, CaptureCandidateSourceInput, CaptureTaskRequest, CurateRequest,
     MemoryType, ReplacementPolicy, SourceKind,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! ACT-R procedural utility learning: the delta rule
 //! `U_n = U_{n-1} + alpha * (R_n - U_{n-1})` (Rescorla–Wagner / temporal
 //! difference; Fu & Anderson 2006). Pure and deterministic — no database, no

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Spreading activation over pre-fetched memory-relation edges (Collins &
 //! Loftus). Pure graph walk: the edge fetch itself lives in `repository`.
 //!

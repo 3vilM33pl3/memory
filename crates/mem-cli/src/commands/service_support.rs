@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::process::Command as ProcessCommand;
 use std::{

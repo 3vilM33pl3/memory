@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Shared strict-JSON LLM call over the configured OpenAI-compatible
 //! chat-completions endpoint, with the full LLM audit trail. Used by query
 //! answer synthesis and the reinforcement validation verdict provider.

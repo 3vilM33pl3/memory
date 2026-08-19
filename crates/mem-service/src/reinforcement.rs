@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Service-side glue for memory reinforcement: the bounded access channel,
 //! the background worker draining it, and the handler-level hooks that feed
 //! it. Hooks are fire-and-forget (`try_send`, dropping on overflow) so the

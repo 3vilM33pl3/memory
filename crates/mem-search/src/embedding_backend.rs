@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! HTTP backends that turn a batch of strings into vectors. Each provider
 //! speaks its own dialect — the trait is the common denominator the rest of
 //! the crate depends on.

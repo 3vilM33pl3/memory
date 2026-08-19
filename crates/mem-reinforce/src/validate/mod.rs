@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Threshold-triggered validation pipeline: deterministic evidence
 //! gathering, a pluggable verdict provider (LLM in the service; an
 //! agent-CLI/worktree runner can implement the same trait later), and a

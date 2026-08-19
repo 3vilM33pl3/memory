@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use mem_api::{
     AgentWorkspaceFinishRequest, AgentWorkspaceStartRequest, AgentWorkspaceStatus,
     LoopApprovalDecisionRequest, LoopApprovalStatus, LoopMemoryProposalCreateRequest,

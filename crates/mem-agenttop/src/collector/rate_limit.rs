@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use crate::model::RateLimitInfo;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};

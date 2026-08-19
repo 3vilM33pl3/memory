@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 pub(super) mod activity;
 pub(super) mod agents;
 pub(super) mod automations;

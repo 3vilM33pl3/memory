@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Due-for-validation predicate. The SQL scan lives in `repository`; this
 //! module holds the pure decision logic and the candidate type shared by the
 //! curator workflow and the background scheduler.

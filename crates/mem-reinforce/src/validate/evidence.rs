@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Deterministic evidence gathering (stage 1 of validation): everything the
 //! verdict provider is allowed to reason over, plus the reference allowlist
 //! used to reject hallucinated citations. Read-only — nothing here mutates

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use std::collections::BTreeMap;
 
 use axum::http::{HeaderMap, header};

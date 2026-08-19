@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use mem_analyze::{
     AnalysisReport, AnalyzerLanguage, AnalyzerSummary, CallFact, Span, SymbolFact, SymbolKind,
 };

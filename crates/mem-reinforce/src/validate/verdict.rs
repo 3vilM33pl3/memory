@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Verdict types returned by a [`super::VerdictProvider`] and the strict
 //! validation applied to them before anything is persisted. Evidence
 //! references are checked against the deterministic stage-1 context: a

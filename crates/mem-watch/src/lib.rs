@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 extern crate self as mem_watch;
 
 #[allow(dead_code)]

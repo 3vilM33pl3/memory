@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use super::super::app::*;
 use super::super::theme::{Theme, themed_focus_block};
 use super::{TabAction, TabContext, TabRenderContext};

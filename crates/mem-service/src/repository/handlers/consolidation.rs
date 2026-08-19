@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Repository layer for memory consolidation: pulls the three edge channels
 //! and per-memory salience out of PostgreSQL, runs the deterministic
 //! clustering + value gate from `mem_consolidate`, and returns the accepted

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use chrono::{DateTime, Utc};
 use mem_api::{
     EffectiveLoopSettings, LoopActionKind, LoopContextExclusion, LoopContextInstructionRef,

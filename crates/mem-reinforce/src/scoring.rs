@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Pure activation-scoring math. No database access and no clock reads:
 //! every function takes `now` explicitly so behaviour is fully deterministic
 //! under test.

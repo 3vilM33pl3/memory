@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Memory reinforcement: access-driven activation scoring with spreading
 //! activation, time decay, volatility tracking, and threshold-triggered
 //! validation of memories against project evidence.

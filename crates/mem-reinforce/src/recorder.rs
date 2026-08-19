@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Batch access recording: resolves accessed memory versions to canonical
 //! memories, applies decay-then-boost score updates, spreads activation to
 //! linked memories, logs compact access events, and reports threshold

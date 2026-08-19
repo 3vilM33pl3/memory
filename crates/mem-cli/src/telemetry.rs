@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Strictly opt-in usage telemetry. `record_event` is a no-op unless the
 //! global config sets BOTH `[telemetry].enabled = true` AND an endpoint —
 //! there is no default collector. Payloads are counts only: event name,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use anyhow::Result;
 use mem_service as service_runtime;
 use std::path::PathBuf;

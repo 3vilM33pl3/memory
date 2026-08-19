@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 pub(crate) use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     fs,

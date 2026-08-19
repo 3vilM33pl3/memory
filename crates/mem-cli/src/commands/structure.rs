@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! `memory structure` — the meta-memory structure view: the committed insight
 //! tree (`summarizes` relations, recursive across tiers) plus the clusters the
 //! deterministic consolidation scan discovers right now.

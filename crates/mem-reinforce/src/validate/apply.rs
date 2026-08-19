@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Pure apply-policy state machine (stage 3 of validation): maps a
 //! validated verdict and the configured policy to exactly one action.
 //! The cardinal rule: weak or contradictory evidence NEVER modifies memory

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use chrono::{Local, TimeZone, Utc};
 use crossterm::event::{Event, KeyCode, KeyEvent};
 

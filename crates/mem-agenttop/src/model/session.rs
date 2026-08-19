@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use serde::Deserialize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

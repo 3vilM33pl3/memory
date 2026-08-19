@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Memory consolidation orchestration that needs an `AppState`: LLM synthesis
 //! of an `insight` meta-memory from a cluster, and emission of a human-gated
 //! `consolidate` proposal. The deterministic clustering itself lives in

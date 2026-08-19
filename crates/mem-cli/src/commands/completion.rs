@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use anyhow::{Context, Result};
 use clap::CommandFactory;
 use clap_complete::generate;

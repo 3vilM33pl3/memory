@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 use crate::{
     LoopRunner, PolicyDecision, RunnerArtifact, RunnerInvocation, RunnerMemoryUpdateProposal,
     RunnerResult, RunnerStatus, SandboxCommandRequest, SandboxLimits, SandboxWorkspace,

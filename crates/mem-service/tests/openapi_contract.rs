@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Contract test: the OpenAPI specification (docs/api/openapi.yaml) and the
 //! axum router (src/routes.rs) must describe the same path inventory, in both
 //! directions. This is what makes the spec trustworthy without a codegen

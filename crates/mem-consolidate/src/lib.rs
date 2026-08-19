@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Deterministic memory-cluster discovery for the consolidation feature.
 //!
 //! Three retrieval-quality signals (relation edges, embedding similarity, and
