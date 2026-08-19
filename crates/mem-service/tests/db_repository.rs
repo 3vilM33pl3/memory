@@ -362,14 +362,14 @@ async fn loop_repository_registers_definitions_and_records_run() {
             .blocked_reasons
             .contains(&"loop_not_enabled".to_string())
     );
-    assert_eq!(run.traces.len(), 2);
+    assert_eq!(run.traces.len(), 3);
 
     let loaded =
         mem_service::repository::handlers::loops::read_loop_run_detail(&pool, run.summary.id)
             .await
             .expect("read loop run");
     assert_eq!(loaded.summary.id, run.summary.id);
-    assert_eq!(loaded.summary.trace_count, 2);
+    assert_eq!(loaded.summary.trace_count, 3);
     assert_eq!(
         loaded.run_reason.as_deref(),
         Some("db repository integration test")
@@ -419,7 +419,7 @@ async fn loop_repository_routes_trigger_events_and_dedupes() {
         payload: serde_json::json!({"memory_id": "example"}),
         dedupe_key: Some(format!("test:{project}:memory_changed")),
         trust_level: LoopTrustLevel::High,
-        debounce_seconds: Some(60),
+        debounce_seconds: None,
         dry_run: false,
         reason: Some("db repository trigger route test".to_string()),
         candidate_loop_ids: vec![mem_loops::LOOP_CONTEXT_PACK_REFRESH.to_string()],
@@ -1429,7 +1429,7 @@ async fn loop_repository_reviewer_drift_reports_findings_and_memory_proposal() {
             trigger_payload: Some(serde_json::json!({
                 "changed_files": ["crates/mem-service/src/routes.rs", "README.md"],
                 "expected_paths": ["crates/mem-cli"],
-                "diff": "Architecture public API change with TODO and no tests",
+                "diff": "Architecture public API change with TODO and no verification coverage",
                 "architecture_changed": true
             })),
         },
