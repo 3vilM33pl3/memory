@@ -689,6 +689,12 @@ mod validation {
         let (slug, project_id, memory_id) = seed(&pool, "validate-correct").await;
         let mut verdict = raw_verdict(Verdict::Outdated, 0.9);
         verdict.proposed_text = Some("Corrected canonical text.".to_string());
+        verdict.evidence.push(RawEvidence {
+            kind: EvidenceKind::Memory,
+            evidence_ref: memory_id.to_string(),
+            stance: EvidenceStance::Contradicts,
+            excerpt: Some("current behaviour diverges from the memory".to_string()),
+        });
         let provider = FakeProvider { verdict };
         let outcome = run_validation(
             &pool,
@@ -788,6 +794,12 @@ mod validation {
         let (slug, project_id, memory_id) = seed(&pool, "validate-dry").await;
         let mut verdict = raw_verdict(Verdict::Outdated, 0.9);
         verdict.proposed_text = Some("Dry-run correction.".to_string());
+        verdict.evidence.push(RawEvidence {
+            kind: EvidenceKind::Memory,
+            evidence_ref: memory_id.to_string(),
+            stance: EvidenceStance::Contradicts,
+            excerpt: Some("current behaviour diverges from the memory".to_string()),
+        });
         let provider = FakeProvider { verdict };
         let outcome = run_validation(
             &pool,
@@ -843,6 +855,12 @@ mod validation {
         let mut verdict = raw_verdict(Verdict::Outdated, 0.9);
         verdict.proposed_summary = Some("Reviewed corrected summary".to_string());
         verdict.proposed_text = Some("Reviewed corrected text.".to_string());
+        verdict.evidence.push(RawEvidence {
+            kind: EvidenceKind::Memory,
+            evidence_ref: memory_id.to_string(),
+            stance: EvidenceStance::Contradicts,
+            excerpt: Some("current behaviour diverges from the memory".to_string()),
+        });
         let provider = FakeProvider { verdict };
         let outcome = run_validation(
             &pool,

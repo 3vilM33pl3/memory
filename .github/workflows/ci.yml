@@ -129,7 +129,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p mem-test-support -p mem-graph -p mem-curate --locked
+      - run: cargo test -p mem-test-support -p mem-graph -p mem-curate -p mem-reinforce -p mem-search -p mem-service --locked
 
   offline-eval:
     name: Offline Eval Smoke
