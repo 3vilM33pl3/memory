@@ -25,6 +25,7 @@ pub(crate) enum ProjectScope {
     Global,
     PathProject,
     BodyProject,
+    BodyMemoryResource,
     QueryProjectOrGlobal,
     MemoryResource,
     ValidationResource,
@@ -81,7 +82,12 @@ pub(crate) fn route_policy(method: &Method, path: &str) -> RoutePolicy {
         return body(AuthRole::Reader);
     }
     if path == "/v1/memory" && *method == Method::DELETE {
-        return body(AuthRole::Admin);
+        // DeleteMemoryRequest carries no project field; authorize against the
+        // project that owns the referenced memory, not "any admin grant".
+        return RoutePolicy {
+            role: AuthRole::Admin,
+            scope: ProjectScope::BodyMemoryResource,
+        };
     }
     if path.starts_with("/v1/memory/") {
         return RoutePolicy {
@@ -106,8 +112,15 @@ pub(crate) fn route_policy(method: &Method, path: &str) -> RoutePolicy {
     {
         return global(AuthRole::Admin);
     }
+    if path == "/v1/runtime/status" {
+        // Returns per-project watcher and workspace state for ?project=…;
+        // without the parameter it reports service-wide state.
+        return RoutePolicy {
+            role: AuthRole::Reader,
+            scope: ProjectScope::QueryProjectOrGlobal,
+        };
+    }
     if path.starts_with("/v1/skills")
-        || path == "/v1/runtime/status"
         || path == "/ws"
         || path == "/v1/embeddings/backends"
         || (path == "/v1/config/llm-audit" && *method == Method::GET)
@@ -287,23 +300,7 @@ pub(crate) async fn authorization_guard(
         Ok(project) => project,
         Err(error) => return error.into_response(),
     };
-    let authorized = match policy.scope {
-        ProjectScope::Public => true,
-        ProjectScope::Global => principal.has_global_role(policy.role),
-        ProjectScope::Unscoped => principal.has_any_role(policy.role),
-        ProjectScope::QueryProjectOrGlobal => match project.as_deref() {
-            Some(project) => principal
-                .role_for_project(project)
-                .is_some_and(|role| role >= policy.role),
-            None => principal.has_global_role(policy.role),
-        },
-        _ => match project.as_deref() {
-            Some(project) => principal
-                .role_for_project(project)
-                .is_some_and(|role| role >= policy.role),
-            None => principal.has_any_role(policy.role),
-        },
-    };
+    let authorized = is_authorized(&principal, policy, project.as_deref());
     if !authorized {
         return ApiError::forbidden("principal does not have the required role for this resource")
             .into_response();
@@ -322,6 +319,28 @@ pub(crate) async fn authorization_guard(
         request.headers_mut().remove(header::AUTHORIZATION);
     }
     next.run(request).await
+}
+
+/// Pure authorization decision for a resolved (policy, project) pair.
+/// Project-scoped policies whose project could not be resolved require a
+/// GLOBAL grant — never "any grant anywhere", which would let a principal
+/// scoped to one project act on resources it cannot even name.
+fn is_authorized(
+    principal: &AuthenticatedPrincipal,
+    policy: RoutePolicy,
+    project: Option<&str>,
+) -> bool {
+    match policy.scope {
+        ProjectScope::Public => true,
+        ProjectScope::Global => principal.has_global_role(policy.role),
+        ProjectScope::Unscoped => principal.has_any_role(policy.role),
+        _ => match project {
+            Some(project) => principal
+                .role_for_project(project)
+                .is_some_and(|role| role >= policy.role),
+            None => principal.has_global_role(policy.role),
+        },
+    }
 }
 
 pub(crate) async fn proxy_relay_request(
@@ -433,6 +452,10 @@ async fn resolve_request_project(
             .and_then(|value| urlencoding::decode(value).ok())
             .map(|value| value.into_owned())),
         ProjectScope::BodyProject => project_from_body(request).await,
+        ProjectScope::BodyMemoryResource => {
+            let memory_id = memory_id_from_body(request).await?;
+            resource_project(state, memory_id, ResourceKind::Memory).await
+        }
         ProjectScope::QueryProjectOrGlobal => Ok(query_value(request, "project")),
         ProjectScope::MemoryResource => {
             resource_project(state, resource_id(request), ResourceKind::Memory).await
@@ -456,26 +479,31 @@ async fn resolve_request_project(
 }
 
 async fn project_from_body(request: &mut Request) -> Result<Option<String>, ApiError> {
+    body_string_field(request, "project").await
+}
+
+async fn memory_id_from_body(request: &mut Request) -> Result<Option<Uuid>, ApiError> {
+    Ok(body_string_field(request, "memory_id")
+        .await?
+        .and_then(|value| Uuid::parse_str(&value).ok()))
+}
+
+async fn body_string_field(request: &mut Request, field: &str) -> Result<Option<String>, ApiError> {
     let body = std::mem::replace(request.body_mut(), Body::empty());
     let bytes = to_bytes(body, MAX_AUTH_INSPECTION_BODY)
         .await
         .map_err(|_| {
             ApiError::status_message(StatusCode::PAYLOAD_TOO_LARGE, "request body is too large")
         })?;
-    let project = if bytes.is_empty() {
+    let value = if bytes.is_empty() {
         None
     } else {
         serde_json::from_slice::<Value>(&bytes)
             .ok()
-            .and_then(|value| {
-                value
-                    .get("project")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            })
+            .and_then(|value| value.get(field).and_then(Value::as_str).map(str::to_owned))
     };
     *request.body_mut() = Body::from(bytes);
-    Ok(project)
+    Ok(value)
 }
 
 fn query_value(request: &Request, name: &str) -> Option<String> {
@@ -589,10 +617,83 @@ pub(crate) async fn read_only_guard(
 
 #[cfg(test)]
 mod tests {
-    use axum::http::Method;
-    use mem_api::AuthRole;
+    use std::collections::BTreeMap;
 
-    use super::{ProjectScope, read_only_request_allowed, route_policy};
+    use axum::http::Method;
+    use mem_api::{AuthPrincipalKind, AuthRole};
+    use uuid::Uuid;
+
+    use super::{
+        AuthenticatedPrincipal, CredentialSource, ProjectScope, RoutePolicy, is_authorized,
+        read_only_request_allowed, route_policy,
+    };
+    use crate::auth::ProjectRoleGrant;
+
+    fn project_admin(project: &str) -> AuthenticatedPrincipal {
+        let mut project_roles = BTreeMap::new();
+        project_roles.insert(
+            project.to_string(),
+            ProjectRoleGrant {
+                role: AuthRole::Admin,
+                source: "test".to_string(),
+            },
+        );
+        AuthenticatedPrincipal {
+            id: Uuid::new_v4(),
+            kind: AuthPrincipalKind::HumanOidc,
+            display_name: "Project Admin".to_string(),
+            email: None,
+            groups: Vec::new(),
+            global_role: None,
+            project_roles,
+            credential_source: CredentialSource::BrowserSession,
+            token_id: None,
+            session_id: None,
+            session_csrf_hash: None,
+        }
+    }
+
+    #[test]
+    fn delete_memory_resolves_the_owning_project() {
+        assert_eq!(
+            route_policy(&Method::DELETE, "/v1/memory").scope,
+            ProjectScope::BodyMemoryResource
+        );
+    }
+
+    #[test]
+    fn project_scoped_admin_cannot_act_across_projects() {
+        let principal = project_admin("project-a");
+        let delete_policy = RoutePolicy {
+            role: AuthRole::Admin,
+            scope: ProjectScope::BodyMemoryResource,
+        };
+        // Memory resolved to another project: denied.
+        assert!(!is_authorized(&principal, delete_policy, Some("project-b")));
+        // Memory in the granted project: allowed.
+        assert!(is_authorized(&principal, delete_policy, Some("project-a")));
+        // Unresolvable project (unknown memory id, or a body without a
+        // project on a BodyProject route) requires a GLOBAL grant.
+        assert!(!is_authorized(&principal, delete_policy, None));
+        let prune_policy = RoutePolicy {
+            role: AuthRole::Operator,
+            scope: ProjectScope::BodyProject,
+        };
+        assert!(!is_authorized(&principal, prune_policy, None));
+        assert!(is_authorized(&principal, prune_policy, Some("project-a")));
+    }
+
+    #[test]
+    fn global_admin_still_authorized_without_project() {
+        let mut principal = project_admin("project-a");
+        principal.global_role = Some(AuthRole::Admin);
+        let delete_policy = RoutePolicy {
+            role: AuthRole::Admin,
+            scope: ProjectScope::BodyMemoryResource,
+        };
+        assert!(is_authorized(&principal, delete_policy, None));
+        assert!(is_authorized(&principal, delete_policy, Some("project-b")));
+    }
 
     #[test]
     fn route_roles_cover_role_boundaries() {
