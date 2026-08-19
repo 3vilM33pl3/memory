@@ -275,11 +275,14 @@ async fn discover_client(state: &AppState) -> Result<DiscoveredCoreClient, ApiEr
             .expect("validated public base URL")
             .trim_end_matches('/')
     );
-    let client_secret = std::env::var(&oidc.client_secret_env).map_err(|_| {
-        ApiError::service_unavailable(
-            "Authentik OIDC client secret environment variable is missing",
-        )
-    })?;
+    let client_secret = state
+        .config
+        .credential_env_value(&oidc.client_secret_env)
+        .ok_or_else(|| {
+            ApiError::service_unavailable(
+                "Authentik OIDC client secret is missing from the process environment or adjacent memory-layer.env",
+            )
+        })?;
     Ok(CoreClient::from_provider_metadata(
         metadata,
         ClientId::new(oidc.client_id.clone()),

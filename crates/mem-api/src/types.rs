@@ -4419,6 +4419,24 @@ impl AppConfig {
             );
         }
     }
+
+    /// Resolves a named runtime credential without copying secret values into
+    /// the serializable configuration. Process environment values take
+    /// precedence over the env file adjacent to the active config.
+    pub fn credential_env_value(&self, key: &str) -> Option<String> {
+        if let Ok(value) = env::var(key)
+            && !value.trim().is_empty()
+        {
+            return Some(value);
+        }
+
+        let env_path = self
+            .resolved_dev_overlay_path
+            .as_deref()
+            .or(self.resolved_config_path.as_deref())
+            .map(env_path_for_config)?;
+        exact_env_file_value(&env_path, key)
+    }
 }
 
 impl EmbeddingsConfig {
@@ -4543,6 +4561,21 @@ fn memory_layer_env_file_values(path: &Path) -> Result<HashMap<String, String>, 
     }
 
     Ok(values)
+}
+
+fn exact_env_file_value(path: &Path, key: &str) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    content.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+        let (name, value) = trimmed.split_once('=')?;
+        if name.trim() != key || value.trim().is_empty() {
+            return None;
+        }
+        Some(value.trim().to_string())
+    })
 }
 
 fn env_path_for_config(path: &Path) -> PathBuf {
@@ -7116,6 +7149,67 @@ mod tests {
     }
 
     #[test]
+    fn credential_env_value_reads_adjacent_env_file() {
+        let _guard = env_lock().lock().unwrap();
+        let temp_dir = unique_temp_dir("mem-api-credential-env-file");
+        let config_path = temp_dir.join("memory-layer.toml");
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(
+            &config_path,
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("memory-layer.env"),
+            "MEMORY_LAYER_OIDC_CLIENT_SECRET=from-env-file\n",
+        )
+        .unwrap();
+
+        unsafe {
+            env::remove_var("MEMORY_LAYER_OIDC_CLIENT_SECRET");
+        }
+        let config = AppConfig::load_with_profile(Some(config_path), Profile::Prod).unwrap();
+
+        assert_eq!(
+            config
+                .credential_env_value("MEMORY_LAYER_OIDC_CLIENT_SECRET")
+                .as_deref(),
+            Some("from-env-file")
+        );
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn credential_env_value_prefers_process_environment() {
+        let _guard = env_lock().lock().unwrap();
+        let temp_dir = unique_temp_dir("mem-api-credential-process-env");
+        let config_path = temp_dir.join("memory-layer.toml");
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(
+            &config_path,
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.join("memory-layer.env"),
+            "MEMORY_LAYER_OIDC_CLIENT_SECRET=from-env-file\n",
+        )
+        .unwrap();
+
+        unsafe {
+            env::set_var("MEMORY_LAYER_OIDC_CLIENT_SECRET", "from-process-env");
+        }
+        let config = AppConfig::load_with_profile(Some(config_path), Profile::Prod).unwrap();
+        let value = config.credential_env_value("MEMORY_LAYER_OIDC_CLIENT_SECRET");
+        unsafe {
+            env::remove_var("MEMORY_LAYER_OIDC_CLIENT_SECRET");
+        }
+
+        assert_eq!(value.as_deref(), Some("from-process-env"));
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
     fn read_repo_project_slug_uses_project_metadata() {
         let repo_root = unique_temp_dir("mem-api-project-slug");
         fs::create_dir_all(repo_root.join(".mem")).unwrap();
@@ -7185,6 +7279,11 @@ mod tests {
             "[service]\nbind_addr = \"127.0.0.1:4250\"\n",
         )
         .unwrap();
+        fs::write(
+            mem_dir.join("memory-layer.env"),
+            "MEMORY_LAYER_TEST_DEV_CREDENTIAL=from-dev-env-file\n",
+        )
+        .unwrap();
 
         let config =
             AppConfig::load_with_profile(Some(mem_dir.join("config.toml")), Profile::Dev).unwrap();
@@ -7195,6 +7294,12 @@ mod tests {
         assert_eq!(
             config.resolved_dev_overlay_path.as_deref(),
             Some(mem_dir.join("config.dev.toml").as_path())
+        );
+        assert_eq!(
+            config
+                .credential_env_value("MEMORY_LAYER_TEST_DEV_CREDENTIAL")
+                .as_deref(),
+            Some("from-dev-env-file")
         );
         let _ = fs::remove_dir_all(temp_dir);
     }
