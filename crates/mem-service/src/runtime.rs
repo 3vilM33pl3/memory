@@ -204,6 +204,9 @@ pub(crate) async fn connect_primary_pool(config: &AppConfig) -> Result<PgPool> {
     register_builtin_loop_definitions(&pool)
         .await
         .context("register builtin loop definitions")?;
+    crate::auth::ensure_local_owner_principal(&pool)
+        .await
+        .context("bootstrap local-owner principal")?;
     Ok(pool)
 }
 

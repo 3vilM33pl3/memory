@@ -109,10 +109,15 @@ pub(crate) async fn resolve_principal(
 ) -> Result<Option<AuthenticatedPrincipal>, ApiError> {
     match state.config.auth.mode {
         AuthMode::SingleUser => match credential {
-            Credential::BrowserSession(_) => Err(ApiError::unauthorized(
-                "browser sessions are unavailable in single-user mode",
-            )),
-            Credential::ApiToken(token) if token == state.api_token => Ok(Some(legacy_principal())),
+            Credential::BrowserSession(token) => {
+                // Single-user browser sessions exist for the bundled web UI;
+                // they resolve exactly like multi-user sessions.
+                let pool = state.pool()?;
+                load_session_principal(&pool, state, &token).await.map(Some)
+            }
+            Credential::ApiToken(token) if token == state.api_token => {
+                Ok(Some(local_owner_admin()))
+            }
             Credential::ApiToken(_) => Err(ApiError::unauthorized("invalid api token")),
             Credential::None => Ok(Some(single_user_reader())),
         },
@@ -156,11 +161,32 @@ pub(crate) fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(|(_, value)| value.to_string())
 }
 
+/// Stable identity of the machine-local owner in single-user mode. The row
+/// is bootstrapped at startup so single-user actions are attributable.
+pub(crate) fn local_owner_id() -> Uuid {
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, b"memory-layer-local-owner")
+}
+
+/// Ensures the local-owner principal row exists (idempotent).
+pub(crate) async fn ensure_local_owner_principal(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO auth_principals (id, kind, display_name, groups_json, global_role)
+        VALUES ($1, 'internal', 'local owner', '[]'::jsonb, 'admin')
+        ON CONFLICT (id) DO NOTHING
+        "#,
+    )
+    .bind(local_owner_id())
+    .execute(pool)
+    .await
+    .map(drop)
+}
+
 fn single_user_reader() -> AuthenticatedPrincipal {
     AuthenticatedPrincipal {
-        id: Uuid::nil(),
+        id: local_owner_id(),
         kind: AuthPrincipalKind::Internal,
-        display_name: "single-user local reader".to_string(),
+        display_name: "local owner".to_string(),
         email: None,
         issuer: None,
         subject: None,
@@ -188,6 +214,25 @@ fn legacy_principal() -> AuthenticatedPrincipal {
         global: AuthRole::Admin.permissions(),
         project_roles: BTreeMap::new(),
         credential_source: CredentialSource::LegacyServiceToken,
+        token_id: None,
+        session_id: None,
+        session_csrf_hash: None,
+    }
+}
+
+fn local_owner_admin() -> AuthenticatedPrincipal {
+    AuthenticatedPrincipal {
+        id: local_owner_id(),
+        kind: AuthPrincipalKind::Internal,
+        display_name: "local owner".to_string(),
+        email: None,
+        issuer: None,
+        subject: None,
+        groups: Vec::new(),
+        global_role: Some(AuthRole::Admin),
+        global: AuthRole::Admin.permissions(),
+        project_roles: BTreeMap::new(),
+        credential_source: CredentialSource::LocalApiToken,
         token_id: None,
         session_id: None,
         session_csrf_hash: None,
@@ -855,9 +900,11 @@ async fn project_access_for_principal(
 }
 
 fn persisted_actor_id(actor: &AuthenticatedPrincipal) -> Option<Uuid> {
+    // The multi-user legacy token has no principal row; the single-user
+    // local owner does (bootstrapped at startup), so it persists.
     (!matches!(
         actor.credential_source,
-        CredentialSource::LegacyServiceToken | CredentialSource::AnonymousSingleUser
+        CredentialSource::LegacyServiceToken
     ))
     .then_some(actor.id)
 }

@@ -11,6 +11,8 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CredentialSource {
     AnonymousSingleUser,
+    /// The machine-local installation token in single-user mode.
+    LocalApiToken,
     LegacyServiceToken,
     ServiceToken,
     BrowserSession,
