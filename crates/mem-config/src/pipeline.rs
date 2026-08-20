@@ -666,3 +666,27 @@ pub fn default_curate_after_captures() -> usize {
 pub fn default_curate_on_explicit_flush() -> bool {
     true
 }
+
+/// Ranking contribution of an activation value: `weight * ln(1 + a)`, capped.
+/// Logarithmic so the score -> rank -> access feedback loop saturates. Lives
+/// beside `ReinforcementConfig` because it is the interpretation of its
+/// `activation_rank_weight` / `activation_rank_cap` parameters, shared by the
+/// write path (mem-reinforce) and the read path (mem-search).
+pub fn activation_rank_boost(activation: f64, weight: f64, cap: f64) -> f64 {
+    (weight * (1.0 + activation.max(0.0)).ln()).min(cap)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::activation_rank_boost;
+
+    #[test]
+    fn activation_rank_boost_is_logarithmic_and_capped() {
+        let unboosted = activation_rank_boost(0.0, 0.3, 1.2);
+        assert!(unboosted.abs() < 1e-12);
+        let mid = activation_rank_boost(5.0, 0.3, 1.2);
+        assert!(mid > 0.0 && mid < 1.2);
+        assert_eq!(activation_rank_boost(20.0, 1.0, 1.2), 1.2);
+        assert!(activation_rank_boost(-3.0, 0.3, 1.2).abs() < 1e-12);
+    }
+}

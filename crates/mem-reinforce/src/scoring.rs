@@ -125,12 +125,6 @@ pub fn apply_boost(
         .clamp(0.0, params.max_activation)
 }
 
-/// Ranking contribution of an activation value: `weight * ln(1 + a)`, capped.
-/// Logarithmic so the score -> rank -> access feedback loop saturates.
-pub fn activation_rank_boost(activation: f64, weight: f64, cap: f64) -> f64 {
-    (weight * (1.0 + activation.max(0.0)).ln()).min(cap)
-}
-
 /// Exponentially weighted moving average of provenance-file change events,
 /// expressed as events per day (update-risk TTL model).
 pub fn update_volatility(old: f32, change_events: u32, elapsed_days: f64, alpha: f64) -> f32 {
@@ -192,18 +186,6 @@ mod tests {
         assert_eq!(AccessKind::Retrieval.boost(&params), 1.0);
         assert_eq!(AccessKind::Citation.boost(&params), 1.5);
         assert_eq!(AccessKind::DirectRead.boost(&params), 0.25);
-    }
-
-    #[test]
-    fn rank_boost_is_logarithmic_and_capped() {
-        let unboosted = activation_rank_boost(0.0, 0.3, 1.2);
-        assert!(unboosted.abs() < 1e-12);
-        let mid = activation_rank_boost(5.0, 0.3, 1.2);
-        assert!((mid - 0.3 * 6.0_f64.ln()).abs() < 1e-9);
-        // ln(1+20)*0.3 ≈ 0.913 < cap; force cap with a big weight
-        assert_eq!(activation_rank_boost(20.0, 1.0, 1.2), 1.2);
-        // negative activation treated as zero
-        assert!(activation_rank_boost(-3.0, 0.3, 1.2).abs() < 1e-12);
     }
 
     #[test]

@@ -1123,7 +1123,7 @@ fn rank_candidate(
     let recency_score = recency_boost * 0.6;
     let activation = reinforcement_signal.map_or(0.0, |signal| signal.activation);
     let activation_boost = if reinforcement.active() {
-        mem_reinforce::activation_rank_boost(activation, reinforcement.weight, reinforcement.cap)
+        mem_config::activation_rank_boost(activation, reinforcement.weight, reinforcement.cap)
     } else {
         0.0
     };

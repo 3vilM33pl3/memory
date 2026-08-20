@@ -10,7 +10,6 @@ anyhow.workspace = true
 chrono.workspace = true
 mem-config = { path = "../mem-config" }
 mem-record = { path = "../mem-record" }
-mem-reinforce = { path = "../mem-reinforce" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
