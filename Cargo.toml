@@ -4,6 +4,8 @@ members = [
   "crates/mem-analyze",
   "crates/mem-platform",
   "crates/mem-api",
+  "crates/mem-record",
+  "crates/mem-config",
   "crates/mem-watch",
   "crates/mem-cli",
   "crates/mem-curate",

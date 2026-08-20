@@ -1,42 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Tests may unwrap; production code must not (workspace lints deny it).
-#![cfg_attr(test, allow(clippy::unwrap_used))]
+//! Transition facade: re-exports the record and config crates so existing
+//! `mem_api::` imports keep compiling while dependents migrate. Deleted at
+//! the end of the boundary wave - do not add new items here.
 
-mod types;
-
-pub use types::*;
-
-pub mod config {
-    pub use crate::types::{
-        AppConfig, AuthConfig, AuthGroupMappingRule, AuthGroupMappingsConfig, AuthMode,
-        AuthPrincipalKind, AuthRole, AutomationConfig, ClusterConfig, DatabaseConfig,
-        EmbeddingBackendConfig, EmbeddingsConfig, FeatureFlags, LlmAuditConfig, LlmConfig,
-        McpConfig, OfflineConfig, OidcAuthConfig, Profile, RetentionConfig, ServiceConfig,
-        WriterConfig, dev_overlay_path_for_base, discover_global_config_path,
-        discover_global_env_path, discover_repo_config_path, discover_repo_dev_config_path,
-        discover_repo_env_path, effective_llm_base_url, effective_llm_base_url_for,
-        is_ollama_provider, is_supported_llm_provider, llm_max_output_tokens_field,
-        llm_requires_api_key, load_repo_replacement_policy, resolve_llm_api_key,
-        resolve_secret_value,
-    };
-}
-
-pub mod env_file {
-    pub use crate::types::{
-        discover_global_env_path, discover_repo_env_path, resolve_secret_value,
-    };
-}
-
-pub mod repo_config {
-    pub use crate::types::{
-        AgentAnalysisConfig, AgentCaptureConfig, AgentCurationConfig, AgentProjectConfig,
-        AgentRetrievalConfig, find_repo_config_path, load_repo_agent_settings,
-        load_repo_replacement_policy, project_paths_for_repo, project_slug_for_repo,
-        read_repo_project_slug, repo_agent_settings_path,
-    };
-}
-
-pub mod validation {
-    pub use crate::types::ValidationError;
-}
+pub use mem_config::*;
+pub use mem_record::*;
