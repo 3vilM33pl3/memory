@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests may unwrap; production code must not (workspace lints deny it).
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 //! Deterministic memory-cluster discovery for the consolidation feature.
 //!
 //! Three retrieval-quality signals (relation edges, embedding similarity, and

@@ -4527,7 +4527,11 @@ fn env_file_source(
 
     let mut lines = values
         .into_iter()
-        .map(|(key, value)| format!("{key} = {}", serde_json::to_string(&value).unwrap()))
+        .map(|(key, value)| {
+            let quoted = serde_json::to_string(&value)
+                .expect("serializing an owned string to JSON cannot fail");
+            format!("{key} = {quoted}")
+        })
         .collect::<Vec<_>>();
     lines.sort();
     Ok(Some(File::from_str(&lines.join("\n"), FileFormat::Toml)))

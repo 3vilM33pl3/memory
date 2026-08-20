@@ -42,3 +42,6 @@ zip.workspace = true
 [[bin]]
 name = "memory"
 path = "src/main.rs"
+
+[lints]
+workspace = true

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests may unwrap; production code must not (workspace lints deny it).
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 //! Memory reinforcement: access-driven activation scoring with spreading
 //! activation, time decay, volatility tracking, and threshold-triggered
 //! validation of memories against project evidence.

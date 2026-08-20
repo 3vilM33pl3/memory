@@ -52,3 +52,6 @@ libc = "0.2"
 
 [dev-dependencies]
 mem-test-support = { path = "../mem-test-support" }
+
+[lints]
+workspace = true

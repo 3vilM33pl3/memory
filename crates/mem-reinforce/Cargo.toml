@@ -21,3 +21,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 mem-test-support = { path = "../mem-test-support" }
+
+[lints]
+workspace = true

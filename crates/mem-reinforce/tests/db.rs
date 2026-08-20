@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Integration tests may unwrap.
+#![allow(clippy::unwrap_used)]
+
 use mem_reinforce::{AccessBatch, AccessKind, ScoreParams, record_access_batch};
 use sqlx::PgPool;
 use uuid::Uuid;

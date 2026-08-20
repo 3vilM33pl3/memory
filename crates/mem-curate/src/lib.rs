@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+// Tests may unwrap; production code must not (workspace lints deny it).
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 mod repository;
 
 pub use repository::{

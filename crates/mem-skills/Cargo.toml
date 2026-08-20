@@ -14,3 +14,6 @@ reqwest.workspace = true
 semver.workspace = true
 serde.workspace = true
 zip.workspace = true
+
+[lints]
+workspace = true
