@@ -23,4 +23,4 @@ Do not seed demo data into a real project slug.
 
 - [Tour Command](tour.md)
 - [Query Command](query.md)
-- [Setup Command](setup.md)
+- [Wizard Command](wizard.md)

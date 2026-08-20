@@ -46,10 +46,10 @@ You need a PostgreSQL database with the pgvector extension enabled. See [Postgre
 
 ```bash
 cd /path/to/project
-memory setup
+memory wizard
 ```
 
-`memory setup` runs the setup flow once, covering both the shared machine configuration (database URL, service URL and token, optional LLM/embedding providers — all skippable) and, when run inside a repository, the repo-local project setup (`.mem/project.toml` plus the `.agents/` directory with Memory Layer skills). Secrets are written outside your repository so they are never committed. Use `memory setup --dry-run` to preview every file and service action first.
+`memory wizard` runs the setup flow once, covering both the shared machine configuration (database URL, service URL and token, optional LLM/embedding providers — all skippable) and, when run inside a repository, the repo-local project setup (`.mem/project.toml` plus the `.agents/` directory with Memory Layer skills). Secrets are written outside your repository so they are never committed. Use `memory wizard --dry-run` to preview every file and service action first.
 
 The prompts answer, with strong defaults:
 

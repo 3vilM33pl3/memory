@@ -878,23 +878,6 @@ fn token_usage_from_chat_body_reads_openai_compatible_usage() {
 }
 
 #[test]
-fn mcp_http_auth_accepts_bearer_or_x_api_token() {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::AUTHORIZATION,
-        "Bearer service-token".parse().unwrap(),
-    );
-    assert!(mcp_http::mcp_token_matches(&headers, "service-token"));
-
-    headers.clear();
-    headers.insert("x-api-token", "service-token".parse().unwrap());
-    assert!(mcp_http::mcp_token_matches(&headers, "service-token"));
-
-    headers.insert("x-api-token", "wrong".parse().unwrap());
-    assert!(!mcp_http::mcp_token_matches(&headers, "service-token"));
-}
-
-#[test]
 fn mcp_origin_validation_rejects_cross_origin() {
     let mut headers = HeaderMap::new();
     headers.insert(header::ORIGIN, "http://127.0.0.1".parse().unwrap());

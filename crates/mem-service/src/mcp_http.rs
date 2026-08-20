@@ -67,19 +67,6 @@ async fn mcp_http_auth_middleware(
     Ok(next.run(request).await)
 }
 
-#[cfg(test)]
-pub(crate) fn mcp_token_matches(headers: &HeaderMap, expected: &str) -> bool {
-    headers
-        .get("x-api-token")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value == expected)
-        || headers
-            .get(header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
-            .is_some_and(|value| value == expected)
-}
-
 pub(crate) fn validate_mcp_origin(headers: &HeaderMap, bind_addr: &str) -> Result<(), StatusCode> {
     let Some(origin) = headers
         .get(header::ORIGIN)

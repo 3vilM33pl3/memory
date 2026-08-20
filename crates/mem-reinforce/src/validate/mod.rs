@@ -530,7 +530,7 @@ pub async fn apply_preview(pool: &PgPool, run_id: Uuid) -> Result<ReviewResoluti
     })
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 pub mod test_support {
     use super::evidence::ValidationContext;
     use crate::repository::MemorySnapshot;

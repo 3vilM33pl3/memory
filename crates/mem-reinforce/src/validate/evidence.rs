@@ -42,7 +42,7 @@ impl ValidationContext {
         self.allowed_refs.contains(reference)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub fn insert_allowed_reference(&mut self, reference: &str) {
         self.allowed_refs.insert(reference.to_string());
     }

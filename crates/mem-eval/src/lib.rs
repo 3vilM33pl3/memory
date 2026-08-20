@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
-use mem_api::{QueryResponse, ResumeResponse, TokenUsage, UpToSpeedResponse};
+use mem_api::{QueryResponse, TokenUsage, UpToSpeedResponse};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -857,23 +857,6 @@ pub fn no_memory_adversarial_stale_result(
     }
 }
 
-pub fn score_resume_quality(
-    item: &ResumeQualityItem,
-    condition: EvalCondition,
-    response: &ResumeResponse,
-) -> EvalItemResult {
-    score_briefing(BriefingScoreInput {
-        item_id: &item.id,
-        eval_type: "resume_quality",
-        condition,
-        briefing: &response.briefing,
-        required_topics: &item.required_topics,
-        forbidden_topics: &item.forbidden_topics,
-        tokens: None,
-        metadata: item.metadata.clone(),
-    })
-}
-
 pub fn score_up_to_speed_quality(
     item: &ResumeQualityItem,
     condition: EvalCondition,
@@ -1319,13 +1302,6 @@ fn retrieval_success(scores: &BTreeMap<String, f64>) -> bool {
     ["recall_at_k", "tag_recall_at_k", "file_recall_at_k"]
         .iter()
         .all(|name| scores.get(*name).copied().unwrap_or(1.0) >= 1.0)
-}
-
-pub fn compare_runs(baseline: &EvalRun, candidate: &EvalRun) -> EvalComparison {
-    compare_run_sets(
-        std::slice::from_ref(baseline),
-        std::slice::from_ref(candidate),
-    )
 }
 
 pub fn compare_run_sets(baselines: &[EvalRun], candidates: &[EvalRun]) -> EvalComparison {
@@ -1896,7 +1872,10 @@ mod tests {
             results: vec![result("a", true, 1.0), result("b", true, 1.0)],
             ..baseline.clone()
         };
-        let comparison = compare_runs(&baseline, &candidate);
+        let comparison = compare_run_sets(
+            std::slice::from_ref(&baseline),
+            std::slice::from_ref(&candidate),
+        );
         assert_eq!(comparison.paired_items, 2);
         assert_eq!(comparison.mcnemar_b, 1);
         assert_eq!(comparison.mcnemar_c, 0);
@@ -2104,7 +2083,10 @@ mod tests {
             ..baseline.clone()
         };
 
-        let comparison = compare_runs(&baseline, &candidate);
+        let comparison = compare_run_sets(
+            std::slice::from_ref(&baseline),
+            std::slice::from_ref(&candidate),
+        );
 
         assert_eq!(comparison.paired_items, 2);
         let group = comparison

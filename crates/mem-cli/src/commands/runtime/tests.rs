@@ -292,7 +292,6 @@ fn root_command_doc_name(command_name: &str) -> Option<&'static str> {
         "bundle" => Some("bundles.md"),
         "watcher" => Some("watchers.md"),
         "wizard" => Some("wizard.md"),
-        "setup" => Some("setup.md"),
         "demo" => Some("demo.md"),
         "tour" => Some("tour.md"),
         "init" => Some("init.md"),
