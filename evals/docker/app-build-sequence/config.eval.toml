@@ -1,7 +1,5 @@
 [service]
 bind_addr = "memory-service:4250"
-capnp_tcp_addr = "memory-service:4251"
-capnp_unix_socket = "/tmp/memory-layer.capnp.sock"
 api_token = "dev-memory-token"
 request_timeout = "600s"
 

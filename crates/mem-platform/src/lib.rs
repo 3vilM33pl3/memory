@@ -443,32 +443,6 @@ fn path_has_component(path: &Path, needle: &str) -> bool {
     )
 }
 
-pub fn default_shared_capnp_unix_socket() -> String {
-    #[cfg(target_os = "windows")]
-    {
-        windows_data_dir()
-            .unwrap_or_else(|| PathBuf::from(r"C:\Users\Default\AppData\Local\memory-layer"))
-            .join("run")
-            .join("memory-layer.capnp.sock")
-            .display()
-            .to_string()
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        #[cfg(target_os = "macos")]
-        if let Some(path) = macos_app_support_dir() {
-            return path
-                .join("run")
-                .join("memory-layer.capnp.sock")
-                .display()
-                .to_string();
-        }
-
-        "/tmp/memory-layer.capnp.sock".to_string()
-    }
-}
-
 pub fn sanitize_service_fragment(value: &str) -> String {
     value
         .chars()

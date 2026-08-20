@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
 use std::{
     fs,
     io::{self},
@@ -1182,18 +1180,7 @@ pub(crate) async fn run_doctor(
             report.push(ollama_check);
         }
 
-        #[cfg(target_os = "windows")]
-        let service_endpoint_details = format!(
-            "http={} capnp_tcp={}",
-            config.service.bind_addr, config.service.capnp_tcp_addr
-        );
-        #[cfg(not(target_os = "windows"))]
-        let service_endpoint_details = format!(
-            "http={} capnp_tcp={} capnp_unix={}",
-            config.service.bind_addr,
-            config.service.capnp_tcp_addr,
-            config.service.capnp_unix_socket
-        );
+        let service_endpoint_details = format!("http={}", config.service.bind_addr);
         report.push(doctor_check(
             "config.service_endpoints",
             DoctorStatus::Ok,
@@ -1563,38 +1550,6 @@ pub(crate) async fn run_doctor(
                     None,
                     false,
                 ));
-
-                let (tcp_status, tcp_details) = tcp_endpoint_status(&config.service.capnp_tcp_addr);
-                report.push(doctor_check(
-                    "backend.capnp_tcp_endpoint",
-                    if matches!(tcp_status, DoctorStatus::Fail) {
-                        DoctorStatus::Fail
-                    } else {
-                        DoctorStatus::Ok
-                    },
-                    "Configured Cap'n Proto TCP endpoint has a listener.",
-                    Some(tcp_details),
-                    None,
-                    false,
-                ));
-
-                #[cfg(unix)]
-                {
-                    let (unix_status, unix_details) =
-                        unix_socket_status(&config.service.capnp_unix_socket);
-                    report.push(doctor_check(
-                        "backend.capnp_unix_socket",
-                        if matches!(unix_status, DoctorStatus::Fail) {
-                            DoctorStatus::Fail
-                        } else {
-                            DoctorStatus::Ok
-                        },
-                        "Configured Cap'n Proto Unix socket path is active.",
-                        Some(unix_details),
-                        None,
-                        false,
-                    ));
-                }
             }
             Err(error) => {
                 report.push(doctor_check(
@@ -1645,36 +1600,6 @@ pub(crate) async fn run_doctor(
                     )),
                     false,
                 ));
-
-                let (tcp_status, tcp_details) = tcp_endpoint_status(&config.service.capnp_tcp_addr);
-                report.push(doctor_check(
-                    "backend.capnp_tcp_endpoint",
-                    tcp_status,
-                    "Configured Cap'n Proto TCP endpoint is not confirmed healthy.",
-                    Some(tcp_details),
-                    Some(format!(
-                        "Start the intended backend for {} or change [service].capnp_tcp_addr",
-                        project
-                    )),
-                    false,
-                ));
-
-                #[cfg(unix)]
-                {
-                    let (unix_status, unix_details) =
-                        unix_socket_status(&config.service.capnp_unix_socket);
-                    report.push(doctor_check(
-                        "backend.capnp_unix_socket",
-                        unix_status,
-                        "Configured Cap'n Proto Unix socket is not confirmed healthy.",
-                        Some(unix_details),
-                        Some(format!(
-                            "Start the intended backend for {} or change [service].capnp_unix_socket",
-                            project
-                        )),
-                        false,
-                    ));
-                }
             }
         }
 
@@ -1977,31 +1902,17 @@ pub(crate) fn default_automation_runtime_dir(repo_root: &Path) -> PathBuf {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LocalServiceOverrides {
     pub(crate) bind_addr: String,
-    pub(crate) capnp_tcp_addr: String,
-    pub(crate) capnp_unix_socket: String,
 }
 
 impl LocalServiceOverrides {
     fn is_enabled(&self) -> bool {
         !self.bind_addr.trim().is_empty()
-            || !self.capnp_tcp_addr.trim().is_empty()
-            || !self.capnp_unix_socket.trim().is_empty()
     }
 }
 
-pub(crate) fn default_local_service_overrides(repo_root: &Path) -> LocalServiceOverrides {
-    let socket_path = mem_api::project_paths_for_repo(repo_root)
-        .map(|paths| paths.runtime_dir().join("memory-layer.capnp.sock"))
-        .unwrap_or_else(|| {
-            repo_root
-                .join(".mem")
-                .join("runtime")
-                .join("memory-layer.capnp.sock")
-        });
+pub(crate) fn default_local_service_overrides(_repo_root: &Path) -> LocalServiceOverrides {
     LocalServiceOverrides {
         bind_addr: "127.0.0.1:4140".to_string(),
-        capnp_tcp_addr: "127.0.0.1:4141".to_string(),
-        capnp_unix_socket: socket_path.display().to_string(),
     }
 }
 
@@ -2025,10 +1936,6 @@ pub(crate) fn read_local_service_overrides(repo_root: &Path) -> Option<LocalServ
         }
         if let Some(value) = trimmed.strip_prefix("bind_addr = ") {
             overrides.bind_addr = value.trim_matches('"').to_string();
-        } else if let Some(value) = trimmed.strip_prefix("capnp_tcp_addr = ") {
-            overrides.capnp_tcp_addr = value.trim_matches('"').to_string();
-        } else if let Some(value) = trimmed.strip_prefix("capnp_unix_socket = ") {
-            overrides.capnp_unix_socket = value.trim_matches('"').to_string();
         }
     }
 
@@ -2054,25 +1961,6 @@ pub(crate) fn tcp_endpoint_status(addr: &str) -> (DoctorStatus, String) {
         Err(error) => (
             DoctorStatus::Fail,
             format!("invalid socket address: {error}"),
-        ),
-    }
-}
-
-#[cfg(unix)]
-pub(crate) fn unix_socket_status(path: &str) -> (DoctorStatus, String) {
-    let socket_path = Path::new(path);
-    if !socket_path.exists() {
-        return (DoctorStatus::Ok, "socket path is free".to_string());
-    }
-
-    match UnixStream::connect(socket_path) {
-        Ok(_) => (
-            DoctorStatus::Warn,
-            format!("listener detected on {}", socket_path.display()),
-        ),
-        Err(error) => (
-            DoctorStatus::Warn,
-            format!("path exists but is not accepting connections: {error}"),
         ),
     }
 }

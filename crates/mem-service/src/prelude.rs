@@ -77,7 +77,7 @@ pub(crate) use mem_api::{
     WatcherPresenceSummary, WatcherRestartRequest, WatcherRestartResponse,
     WatcherUnregisterRequest, effective_llm_base_url, is_supported_llm_provider,
     llm_max_output_tokens_field, llm_requires_api_key, load_repo_replacement_policy,
-    read_capnp_text_frame, repo_agent_settings_path, resolve_llm_api_key, write_capnp_text_frame,
+    repo_agent_settings_path, resolve_llm_api_key,
 };
 pub(crate) use mem_curate::{
     approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
@@ -100,7 +100,6 @@ pub(crate) use sha2::{Digest, Sha256};
 pub(crate) use socket2::{Domain, Protocol, Socket, Type};
 pub(crate) use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 #[cfg(unix)]
-pub(crate) use tokio::net::UnixListener;
 pub(crate) use tokio::{
     net::{TcpListener, UdpSocket},
     sync::{broadcast, oneshot},

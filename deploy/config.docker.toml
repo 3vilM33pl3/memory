@@ -7,8 +7,6 @@
 
 [service]
 bind_addr = "0.0.0.0:4040"
-capnp_tcp_addr = "0.0.0.0:4041"
-capnp_unix_socket = "/tmp/memory-layer.capnp.sock"
 api_token = "memory-local-token"
 request_timeout = "600s"
 # The image copies the built web UI here; pin it so the browser UI is served

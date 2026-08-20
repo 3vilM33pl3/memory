@@ -1667,9 +1667,6 @@ pub(in crate::commands) struct DevInitArgs {
     /// Address the dev service should bind. Defaults to `127.0.0.1:4250`.
     #[arg(long, default_value = "127.0.0.1:4250")]
     pub(crate) bind_addr: String,
-    /// Cap'n Proto TCP address for the dev service. Defaults to `127.0.0.1:4251`.
-    #[arg(long, default_value = "127.0.0.1:4251")]
-    pub(crate) capnp_tcp_addr: String,
     /// Copy database URL and LLM/embedding endpoints from the global config
     /// into the dev overlay. Without this flag and without a TTY, nothing is
     /// copied. With a TTY, the command asks interactively.
@@ -3961,10 +3958,6 @@ pub(crate) fn shared_env_path_for_config(config_path: &Path) -> PathBuf {
 
 pub(crate) fn default_global_config_path() -> PathBuf {
     platform::preferred_global_config_path()
-}
-
-pub(crate) fn default_shared_capnp_unix_socket() -> String {
-    platform::default_shared_capnp_unix_socket()
 }
 
 pub(in crate::commands) fn backend_start_hint(config_path: &Path) -> String {

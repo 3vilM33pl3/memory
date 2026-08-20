@@ -3,64 +3,7 @@
 use crate::prelude::*;
 use crate::*;
 use axum::Extension;
-use mem_api::{AuthMode, AuthRole};
-
-pub(crate) struct ProtoServers {
-    #[cfg(unix)]
-    pub(crate) unix_listener: UnixListener,
-    pub(crate) tcp_listener: TcpListener,
-}
-
-pub(crate) async fn start_proto_servers(state: AppState) -> Result<ProtoServers> {
-    #[cfg(unix)]
-    let unix_listener = {
-        let unix_path = PathBuf::from(&state.config.service.capnp_unix_socket);
-        if let Some(parent) = unix_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .with_context(|| format!("create {}", parent.display()))?;
-        }
-        if unix_path.exists() {
-            tokio::fs::remove_file(&unix_path)
-                .await
-                .with_context(|| format!("remove stale socket {}", unix_path.display()))?;
-        }
-
-        UnixListener::bind(&unix_path)
-            .with_context(|| format!("bind unix socket {}", unix_path.display()))?
-    };
-
-    let tcp_addr: SocketAddr = state
-        .config
-        .service
-        .capnp_tcp_addr
-        .parse()
-        .context("parse capnp tcp addr")?;
-    let tcp_listener = bind_tcp_listener_with_addr_in_use_wait(tcp_addr, "capnp tcp addr")
-        .await
-        .context("bind capnp tcp addr")?;
-
-    Ok(ProtoServers {
-        #[cfg(unix)]
-        unix_listener,
-        tcp_listener,
-    })
-}
-
-#[cfg(unix)]
-pub(crate) async fn run_proto_unix(listener: UnixListener, state: AppState) -> Result<()> {
-    loop {
-        let (stream, _) = listener.accept().await?;
-        tokio::spawn(handle_proto_connection(stream, state.clone()));
-    }
-}
-
-pub(crate) async fn run_proto_tcp(listener: TcpListener, state: AppState) -> Result<()> {
-    loop {
-        let (stream, _) = listener.accept().await?;
-        tokio::spawn(handle_proto_connection(stream, state.clone()));
-    }
-}
+use mem_api::AuthRole;
 
 #[derive(Default)]
 pub(crate) struct ConnectionSubscriptions {
@@ -290,66 +233,6 @@ pub(crate) async fn send_ws_response(
         .send(Message::Text(serde_json::to_string(&response)?.into()))
         .await
         .context("send websocket response")?;
-    Ok(())
-}
-
-pub(crate) async fn handle_proto_connection<S>(stream: S, state: AppState) -> Result<()>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-{
-    let (mut reader, mut writer) = tokio::io::split(stream);
-    let mut subscriptions = ConnectionSubscriptions::default();
-    let mut events = state.events.subscribe();
-    let mut principal = if state.config.auth.mode == AuthMode::SingleUser {
-        crate::auth::resolve_request_principal(&state, &HeaderMap::new(), false)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.message))?
-    } else {
-        None
-    };
-
-    loop {
-        tokio::select! {
-            incoming = read_capnp_text_frame(&mut reader) => {
-                let Some(text) = incoming? else {
-                    break;
-                };
-                let request: StreamRequest = serde_json::from_str(&text)
-                    .map_err(|error| anyhow::anyhow!("parse stream request: {error}"))?;
-                for response in process_stream_request(
-                    &state,
-                    &mut subscriptions,
-                    &mut principal,
-                    request,
-                )
-                .await?
-                {
-                    let text = serde_json::to_string(&response)?;
-                    write_capnp_text_frame(&mut writer, &text).await?;
-                }
-            }
-            event = events.recv() => {
-                let Ok(event) = event else {
-                    continue;
-                };
-                let Some(principal) = principal.as_ref() else {
-                    continue;
-                };
-                for response in render_subscription_updates(
-                    &state,
-                    &subscriptions,
-                    principal,
-                    &event,
-                )
-                .await?
-                {
-                    let text = serde_json::to_string(&response)?;
-                    write_capnp_text_frame(&mut writer, &text).await?;
-                }
-            }
-        }
-    }
-
     Ok(())
 }
 

@@ -3,8 +3,6 @@
 
 [service]
 bind_addr = "127.0.0.1:4040"
-capnp_unix_socket = "/tmp/memory-layer.capnp.sock"
-capnp_tcp_addr = "127.0.0.1:4041"
 # optional override for bundled web assets
 # web_root = "/usr/share/memory-layer/web"
 # service API token is provisioned automatically into memory-layer.env

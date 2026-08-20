@@ -1878,7 +1878,7 @@ fn init_migrates_legacy_mem_gitignore() {
 }
 
 #[test]
-fn dev_init_uses_short_capnp_unix_socket_path() {
+fn dev_init_writes_service_overlay() {
     let _guard = ENV_LOCK.lock().unwrap();
     let repo_root = unique_temp_dir("mem-dev-init");
     let xdg_root = unique_temp_dir("mem-dev-init-xdg");
@@ -1900,7 +1900,6 @@ fn dev_init_uses_short_capnp_unix_socket_path() {
             force: false,
             dry_run: false,
             bind_addr: "127.0.0.1:4250".to_string(),
-            capnp_tcp_addr: "127.0.0.1:4251".to_string(),
             copy_from_global: false,
             no_copy_from_global: true,
         },
@@ -1909,23 +1908,7 @@ fn dev_init_uses_short_capnp_unix_socket_path() {
 
     let paths = mem_platform::project_paths(&repo_root, "memory").unwrap();
     let dev_config = fs::read_to_string(paths.dev_config_path()).unwrap();
-    let socket_path = dev_config
-        .lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_prefix("capnp_unix_socket = ")
-                .map(|value| value.trim_matches('"').to_string())
-        })
-        .unwrap();
-    let socket_file_name = Path::new(&socket_path)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap();
-    assert!(socket_file_name.starts_with("memory-layer-dev-"));
-    assert!(
-        socket_path.len() < 100,
-        "socket path should fit Unix SUN_LEN: {socket_path}"
-    );
+    assert!(dev_config.contains("bind_addr = \"127.0.0.1:4250\""));
 
     restore_env_var("XDG_CONFIG_HOME", old_config);
     restore_env_var("XDG_STATE_HOME", old_state);
@@ -2553,8 +2536,6 @@ fn test_app_config() -> AppConfig {
     AppConfig {
         service: mem_api::ServiceConfig {
             bind_addr: "127.0.0.1:4040".to_string(),
-            capnp_unix_socket: "/tmp/memory-layer.capnp.sock".to_string(),
-            capnp_tcp_addr: "127.0.0.1:4041".to_string(),
             web_root: None,
             api_token: "ml_testtoken".to_string(),
             request_timeout: Duration::from_secs(30),

@@ -13,18 +13,21 @@ use std::{
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use futures_util::{SinkExt, StreamExt, stream::SplitSink};
 #[cfg(test)]
 pub(in crate::tui) use mem_agenttop::AgentSnapshot;
 use mem_api::{
     ActivityDetails, ActivityEvent, LoopApprovalStatus, MemoryEntryResponse, Profile,
     ProjectMemoriesResponse, QueryFilters, QueryRequest, QueryResponse, QueryResult,
     ReplacementPolicy, ResumeCheckpoint, ResumeRequest, StreamRequest, StreamResponse,
-    UpToSpeedRequest, load_repo_replacement_policy, read_capnp_text_frame, write_capnp_text_frame,
+    UpToSpeedRequest, load_repo_replacement_policy,
 };
 use ratatui::{layout::Rect, widgets::TableState};
-#[cfg(unix)]
-use tokio::net::UnixStream;
 use tokio::{net::TcpStream, sync::mpsc};
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async, tungstenite::client::IntoClientRequest,
+    tungstenite::protocol::Message,
+};
 
 use crate::{
     commands::{
@@ -3357,96 +3360,30 @@ impl App {
 }
 
 pub(super) struct StreamSession {
-    writer: tokio::io::WriteHalf<StreamTransport>,
+    writer: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
     rx: mpsc::UnboundedReceiver<StreamResponse>,
-}
-
-pub(super) enum StreamTransport {
-    #[cfg(unix)]
-    Unix(UnixStream),
-    Tcp(TcpStream),
-}
-
-impl tokio::io::AsyncRead for StreamTransport {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            #[cfg(unix)]
-            StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
-            StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_read(cx, buf),
-        }
-    }
-}
-
-impl tokio::io::AsyncWrite for StreamTransport {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        match self.get_mut() {
-            #[cfg(unix)]
-            StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
-            StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_write(cx, buf),
-        }
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            #[cfg(unix)]
-            StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_flush(cx),
-            StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_flush(cx),
-        }
-    }
-
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        match self.get_mut() {
-            #[cfg(unix)]
-            StreamTransport::Unix(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
-            StreamTransport::Tcp(stream) => std::pin::Pin::new(stream).poll_shutdown(cx),
-        }
-    }
 }
 
 impl StreamSession {
     async fn connect(api: &ApiClient) -> Result<Self> {
-        #[cfg(unix)]
-        let transport = {
-            if std::path::Path::new(&api.config.service.capnp_unix_socket).exists() {
-                match UnixStream::connect(&api.config.service.capnp_unix_socket).await {
-                    Ok(stream) => StreamTransport::Unix(stream),
-                    Err(_) => StreamTransport::Tcp(
-                        TcpStream::connect(&api.config.service.capnp_tcp_addr).await?,
-                    ),
-                }
-            } else {
-                StreamTransport::Tcp(TcpStream::connect(&api.config.service.capnp_tcp_addr).await?)
-            }
-        };
-        #[cfg(not(unix))]
-        let transport =
-            StreamTransport::Tcp(TcpStream::connect(&api.config.service.capnp_tcp_addr).await?);
-        let (mut reader, writer) = tokio::io::split(transport);
+        let url = format!("ws://{}/ws", api.config.service.bind_addr);
+        let mut request = url.into_client_request()?;
+        // The session also authenticates in-stream, but the handshake header
+        // lets the authorization middleware admit the upgrade in multi-user
+        // deployments where anonymous readers are rejected.
+        request.headers_mut().insert(
+            "x-api-token",
+            crate::commands::output::client_api_token(&api.config).parse()?,
+        );
+        let (socket, _) = connect_async(request).await?;
+        let (writer, mut reader) = socket.split();
         let (tx, rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
-            loop {
-                match read_capnp_text_frame(&mut reader).await {
-                    Ok(Some(text)) => {
-                        if let Ok(response) = serde_json::from_str::<StreamResponse>(&text) {
-                            let _ = tx.send(response);
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(_) => break,
+            while let Some(Ok(message)) = reader.next().await {
+                if let Message::Text(text) = message
+                    && let Ok(response) = serde_json::from_str::<StreamResponse>(&text)
+                {
+                    let _ = tx.send(response);
                 }
             }
         });
@@ -3455,7 +3392,7 @@ impl StreamSession {
 
     async fn send(&mut self, request: StreamRequest) -> Result<()> {
         let text = serde_json::to_string(&request)?;
-        write_capnp_text_frame(&mut self.writer, &text).await?;
+        self.writer.send(Message::Text(text)).await?;
         Ok(())
     }
 

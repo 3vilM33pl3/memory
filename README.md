@@ -293,17 +293,17 @@ cargo run --bin memory -- init
 cargo run --bin memory -- dev init --copy-from-global
 
 # Each piece in its own shell, all on the dev stack.
-cargo run --bin memory -- service run            # backend (4250 HTTP, 4251 capnp)
+cargo run --bin memory -- service run            # backend (4250 HTTP)
 cargo run --bin memory -- watcher manager run    # optional
 cargo run --bin memory -- tui                    # header reads [dev]
 ```
 
 `--copy-from-global` lifts the database URL and LLM/embedding endpoints from the installed config into the dev overlay so credentials are not duplicated.
 
-| Stack | HTTP | capnp TCP | capnp Unix socket |
-| --- | --- | --- | --- |
-| Installed (Debian/Homebrew package) | `127.0.0.1:4040` | `127.0.0.1:4041` | `/tmp/memory-layer.capnp.sock` |
-| Dev (cargo-run from repo) | `127.0.0.1:4250` | `127.0.0.1:4251` | user-local project runtime `runtime/dev/memory-layer.capnp.sock` |
+| Stack | HTTP |
+| --- | --- |
+| Installed (Debian/Homebrew package) | `127.0.0.1:4040` |
+| Dev (cargo-run from repo) | `127.0.0.1:4250` |
 
 For the full isolation contract, override flags, troubleshooting, and the verification recipe, see [Dev Stack vs Installed Stack](docs/developer/dev-stack.md).
 

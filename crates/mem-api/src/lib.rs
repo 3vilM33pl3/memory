@@ -34,12 +34,6 @@ pub mod repo_config {
     };
 }
 
-pub mod transport {
-    pub use crate::types::{
-        decode_capnp_text, encode_capnp_text, read_capnp_text_frame, write_capnp_text_frame,
-    };
-}
-
 pub mod validation {
     pub use crate::types::ValidationError;
 }

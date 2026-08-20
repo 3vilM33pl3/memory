@@ -1,7 +1,5 @@
 [service]
 bind_addr = "0.0.0.0:4250"
-capnp_tcp_addr = "0.0.0.0:4251"
-capnp_unix_socket = "/tmp/memory-layer.capnp.sock"
 api_token = "memory-eval-token"
 request_timeout = "600s"
 

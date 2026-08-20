@@ -29,7 +29,7 @@ use reqwest::Client;
 use crate::commands::{
     api::ApiClient,
     runtime::{
-        backend_service_available, default_global_config_path, default_shared_capnp_unix_socket,
+        backend_service_available, default_global_config_path,
         ensure_shared_service_api_token_for_config, preview_shared_service_api_token_for_config,
         shared_env_lookup, shared_env_path_for_config, write_shared_env_file,
     },
@@ -227,8 +227,6 @@ struct WizardDraft {
     local_llm_api_key_value: String,
     local_service_mode: LocalServiceMode,
     local_bind_addr: String,
-    local_capnp_tcp_addr: String,
-    local_capnp_unix_socket: String,
     relay_discovery_enabled: ToggleChoice,
     apply_repo_setup: ToggleChoice,
     automation_enabled: ToggleChoice,
@@ -352,14 +350,6 @@ impl WizardDraft {
                 .as_ref()
                 .map(|overrides| overrides.bind_addr.clone())
                 .unwrap_or_default(),
-            local_capnp_tcp_addr: local_service_overrides
-                .as_ref()
-                .map(|overrides| overrides.capnp_tcp_addr.clone())
-                .unwrap_or_default(),
-            local_capnp_unix_socket: local_service_overrides
-                .as_ref()
-                .map(|overrides| overrides.capnp_unix_socket.clone())
-                .unwrap_or_default(),
             relay_discovery_enabled: global_config
                 .as_ref()
                 .map(|config| toggle_from_bool(config.cluster.enabled))
@@ -456,8 +446,6 @@ enum FieldKey {
     LocalLlmApiKeyValue,
     LocalServiceMode,
     LocalBindAddr,
-    LocalCapnpTcpAddr,
-    LocalCapnpUnixSocket,
     RelayDiscoveryEnabled,
     ApplyRepoSetup,
     AutomationEnabled,
@@ -739,14 +727,10 @@ impl WizardApp {
                 self.draft.local_service_mode.cycle();
                 if self.draft.uses_local_service_overrides()
                     && self.draft.local_bind_addr.trim().is_empty()
-                    && self.draft.local_capnp_tcp_addr.trim().is_empty()
-                    && self.draft.local_capnp_unix_socket.trim().is_empty()
                     && let Some(repo_root) = self.draft.repo_root.as_deref()
                 {
                     let defaults = default_local_service_overrides(repo_root);
                     self.draft.local_bind_addr = defaults.bind_addr;
-                    self.draft.local_capnp_tcp_addr = defaults.capnp_tcp_addr;
-                    self.draft.local_capnp_unix_socket = defaults.capnp_unix_socket;
                 }
             }
             FieldKey::RelayDiscoveryEnabled => self.draft.relay_discovery_enabled.toggle(),
@@ -785,8 +769,6 @@ impl WizardApp {
             FieldKey::LocalDatabaseUrl => self.draft.local_database_url.clone(),
             FieldKey::LocalLlmApiKeyValue => self.draft.local_llm_api_key_value.clone(),
             FieldKey::LocalBindAddr => self.draft.local_bind_addr.clone(),
-            FieldKey::LocalCapnpTcpAddr => self.draft.local_capnp_tcp_addr.clone(),
-            FieldKey::LocalCapnpUnixSocket => self.draft.local_capnp_unix_socket.clone(),
             FieldKey::AutomationPollInterval => self.draft.automation_poll_interval.clone(),
             FieldKey::AutomationCaptureIdleThreshold => {
                 self.draft.automation_capture_idle_threshold.clone()
@@ -820,8 +802,6 @@ impl WizardApp {
             FieldKey::LocalDatabaseUrl => self.draft.local_database_url = value,
             FieldKey::LocalLlmApiKeyValue => self.draft.local_llm_api_key_value = value,
             FieldKey::LocalBindAddr => self.draft.local_bind_addr = value,
-            FieldKey::LocalCapnpTcpAddr => self.draft.local_capnp_tcp_addr = value,
-            FieldKey::LocalCapnpUnixSocket => self.draft.local_capnp_unix_socket = value,
             FieldKey::AutomationPollInterval => self.draft.automation_poll_interval = value,
             FieldKey::AutomationCaptureIdleThreshold => {
                 self.draft.automation_capture_idle_threshold = value
@@ -993,16 +973,6 @@ fn repo_items(draft: &WizardDraft) -> Vec<StepItem> {
             FieldKey::LocalBindAddr,
             "Local HTTP bind",
             &draft.local_bind_addr,
-        ));
-        items.push(text_item(
-            FieldKey::LocalCapnpTcpAddr,
-            "Local Cap'n Proto TCP",
-            &draft.local_capnp_tcp_addr,
-        ));
-        items.push(text_item(
-            FieldKey::LocalCapnpUnixSocket,
-            "Local Unix socket",
-            &draft.local_capnp_unix_socket,
         ));
     }
     items.push(action_item(FieldKey::Back, "Back"));
@@ -1317,10 +1287,8 @@ fn review_lines(
             )));
             if draft.uses_local_service_overrides() {
                 lines.push(Line::from(format!(
-                    "Service endpoints: http={} capnp_tcp={} capnp_unix={}",
-                    draft.local_bind_addr,
-                    draft.local_capnp_tcp_addr,
-                    draft.local_capnp_unix_socket
+                    "Service endpoints: http={}",
+                    draft.local_bind_addr
                 )));
             }
             lines.push(Line::from(format!(
@@ -1716,8 +1684,7 @@ fn write_global_config(draft: &WizardDraft) -> Result<()> {
 
 fn render_global_config(draft: &WizardDraft) -> String {
     format!(
-        "# Shared Memory Layer defaults and secrets.\n# Per-project overrides are written by `memory init` to the user-local project\n# config directory. `.mem/config.toml` is only read as a legacy fallback.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\n# service API token is provisioned automatically into memory-layer.env\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[cluster]\nenabled = {}\n# advertise_addr = \"192.168.1.50:4040\"\n# discovery_multicast_addr = \"239.255.42.99:4042\"\n# announce_interval = \"5s\"\n# peer_ttl = \"15s\"\n# priority = 100\n\n# Optional shared writer label. If omitted, Memory Layer derives a writer id automatically.\n# [writer]\n# id = \"codex-cli-main\"\n# name = \"Codex CLI\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n# Opt-in debug trail for service-side LLM calls. Prompt messages are redacted before persistence.\n[llm_audit]\nenabled = false\nredact = true\nmax_message_chars = 8000\nmax_total_chars = 32000\n\n[embeddings]\nprovider = \"openai\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\nfile_events = true\npoll_interval = \"60s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
-        default_shared_capnp_unix_socket(),
+        "# Shared Memory Layer defaults and secrets.\n# Per-project overrides are written by `memory init` to the user-local project\n# config directory. `.mem/config.toml` is only read as a legacy fallback.\n\n[service]\nbind_addr = \"127.0.0.1:4040\"\n# service API token is provisioned automatically into memory-layer.env\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"{}\"\n\n[cluster]\nenabled = {}\n# advertise_addr = \"192.168.1.50:4040\"\n# discovery_multicast_addr = \"239.255.42.99:4042\"\n# announce_interval = \"5s\"\n# peer_ttl = \"15s\"\n# priority = 100\n\n# Optional shared writer label. If omitted, Memory Layer derives a writer id automatically.\n# [writer]\n# id = \"codex-cli-main\"\n# name = \"Codex CLI\"\n\n[features]\nllm_curation = false\n\n[llm]\nprovider = \"{}\"\nbase_url = \"{}\"\napi_key_env = \"{}\"\nmodel = \"{}\"\ntemperature = 0.0\nmax_input_bytes = 120000\nmax_output_tokens = 3000\n\n# Opt-in debug trail for service-side LLM calls. Prompt messages are redacted before persistence.\n[llm_audit]\nenabled = false\nredact = true\nmax_message_chars = 8000\nmax_total_chars = 32000\n\n[embeddings]\nprovider = \"openai\"\nbase_url = \"https://api.openai.com/v1\"\napi_key_env = \"{}\"\nmodel = \"\"\nbatch_size = 16\n\n[automation]\nenabled = false\nmode = \"suggest\"\nfile_events = true\npoll_interval = \"60s\"\ncapture_idle_threshold = \"10m\"\nmin_changed_files = 2\nrequire_passing_test = false\ncurate_after_captures = 3\ncurate_on_explicit_flush = true\nignored_paths = [\".git/\", \"target/\", \".memory-layer/\"]\n# repo_root = \"/path/to/repo\"\n# audit_log_path = \"/path/to/repo/.memory-layer/automation.log\"\n# state_file_path = \"/path/to/repo/.memory-layer/automation-state.json\"\n",
         draft.database_url,
         draft.relay_discovery_enabled.is_yes(),
         draft.llm_provider,
@@ -1746,10 +1713,8 @@ fn render_local_repo_config(repo_root: &Path, draft: &WizardDraft) -> String {
     }
     if draft.uses_local_service_overrides() {
         content.push_str(&format!(
-            "[service]\nbind_addr = \"{}\"\ncapnp_unix_socket = \"{}\"\ncapnp_tcp_addr = \"{}\"\n\n",
+            "[service]\nbind_addr = \"{}\"\n\n",
             draft.local_bind_addr.trim(),
-            draft.local_capnp_unix_socket.trim(),
-            draft.local_capnp_tcp_addr.trim(),
         ));
     }
     content.push_str(&format!(
@@ -1964,15 +1929,6 @@ fn field_description(field: FieldKey) -> &'static str {
             "HTTP bind address for the repo-local (parallel-dev) \
             service. Typically 127.0.0.1:<port>. Must not collide with the shared service."
         }
-        FieldKey::LocalCapnpTcpAddr => {
-            "Cap'n Proto TCP address for the repo-local service. \
-            Pair it with a port one above the HTTP port by convention."
-        }
-        FieldKey::LocalCapnpUnixSocket => {
-            "Filesystem path for the repo-local Cap'n Proto \
-            Unix socket. Keep it inside the repo (e.g. .mem/runtime/memory-layer.capnp.sock) \
-            so it doesn't clash with other stacks on the host."
-        }
         FieldKey::RelayDiscoveryEnabled => {
             "When Yes, the service advertises itself to \
             cluster peers and can fall back to a peer's database if its own Postgres is \
@@ -2081,8 +2037,6 @@ fn field_label(field: FieldKey) -> &'static str {
         FieldKey::LocalLlmApiKeyValue => "Local LLM API key",
         FieldKey::LocalServiceMode => "Local backend endpoints",
         FieldKey::LocalBindAddr => "Local HTTP bind",
-        FieldKey::LocalCapnpTcpAddr => "Local Cap'n Proto TCP",
-        FieldKey::LocalCapnpUnixSocket => "Local Unix socket",
         FieldKey::RelayDiscoveryEnabled => "Relay discovery fallback",
         FieldKey::ApplyRepoSetup => "Apply repo-local setup",
         FieldKey::AutomationEnabled => "Automation enabled",
@@ -2263,8 +2217,6 @@ mod tests {
             FieldKey::LocalLlmApiKeyValue,
             FieldKey::LocalServiceMode,
             FieldKey::LocalBindAddr,
-            FieldKey::LocalCapnpTcpAddr,
-            FieldKey::LocalCapnpUnixSocket,
             FieldKey::RelayDiscoveryEnabled,
             FieldKey::ApplyRepoSetup,
             FieldKey::AutomationEnabled,
@@ -2355,8 +2307,6 @@ mod tests {
             local_llm_api_key_value: String::new(),
             local_service_mode: super::LocalServiceMode::InheritShared,
             local_bind_addr: "127.0.0.1:4140".to_string(),
-            local_capnp_tcp_addr: "127.0.0.1:4141".to_string(),
-            local_capnp_unix_socket: "/tmp/memory-layer.capnp.sock".to_string(),
             relay_discovery_enabled: super::ToggleChoice::Yes,
             apply_repo_setup: super::ToggleChoice::Yes,
             automation_enabled: super::ToggleChoice::No,
@@ -2397,8 +2347,6 @@ mod tests {
             local_llm_api_key_value: String::new(),
             local_service_mode: super::LocalServiceMode::InheritShared,
             local_bind_addr: String::new(),
-            local_capnp_tcp_addr: String::new(),
-            local_capnp_unix_socket: String::new(),
             relay_discovery_enabled: super::ToggleChoice::Yes,
             apply_repo_setup: super::ToggleChoice::No,
             automation_enabled: super::ToggleChoice::No,
@@ -2434,7 +2382,7 @@ mod tests {
         fs::create_dir_all(repo_root.join(".git")).unwrap();
         fs::write(
             repo_root.join(".mem/config.toml"),
-            "[service]\nbind_addr = \"127.0.0.1:4140\"\ncapnp_unix_socket = \"/tmp/dev.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4141\"\n",
+            "[service]\nbind_addr = \"127.0.0.1:4140\"\n",
         )
         .unwrap();
 
@@ -2444,8 +2392,6 @@ mod tests {
             super::LocalServiceMode::ParallelDev
         );
         assert_eq!(draft.local_bind_addr, "127.0.0.1:4140");
-        assert_eq!(draft.local_capnp_tcp_addr, "127.0.0.1:4141");
-        assert_eq!(draft.local_capnp_unix_socket, "/tmp/dev.sock");
 
         let _ = fs::remove_dir_all(repo_root);
     }
@@ -2470,8 +2416,6 @@ mod tests {
             local_llm_api_key_value: String::new(),
             local_service_mode: super::LocalServiceMode::InheritShared,
             local_bind_addr: String::new(),
-            local_capnp_tcp_addr: String::new(),
-            local_capnp_unix_socket: String::new(),
             apply_repo_setup: super::ToggleChoice::No,
             automation_enabled: super::ToggleChoice::No,
             automation_mode: AutomationMode::Suggest,

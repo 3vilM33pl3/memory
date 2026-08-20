@@ -29,7 +29,7 @@ cargo run --bin memory -- init
 cargo run --bin memory -- dev init --copy-from-global
 
 # 3. Run each piece in its own shell. All three target the dev stack.
-cargo run --bin memory -- service run            # backend (4250 HTTP, 4251 capnp)
+cargo run --bin memory -- service run            # backend (4250 HTTP)
 cargo run --bin memory -- watcher manager run    # optional: project watchers
 cargo run --bin memory -- tui                    # TUI shows [dev] in the header
 ```
@@ -65,8 +65,6 @@ The dev profile reads the user-local project `config.toml` and then layers the u
 | Setting | Installed default | Dev default |
 | --- | --- | --- |
 | `service.bind_addr` | `127.0.0.1:4040` | `127.0.0.1:4250` |
-| `service.capnp_tcp_addr` | `127.0.0.1:4041` | `127.0.0.1:4251` |
-| `service.capnp_unix_socket` | `/tmp/memory-layer.capnp.sock` | user-local project `runtime/dev/memory-layer.capnp.sock` |
 | `automation.state_file_path` | system path | user-local project `runtime/dev/automation-state.json` |
 | `automation.audit_log_path` | system path | user-local project `runtime/dev/automation.log` |
 | `cluster.service_id` | derived from bind addr | `memory-layer-dev` |
@@ -93,17 +91,16 @@ Service endpoint, automation paths, and cluster id are intentionally excluded â€
 
 After `memory dev init` with defaults, ports look like this:
 
-| Stack | HTTP | capnp TCP | capnp Unix socket |
-| --- | --- | --- | --- |
-| Installed (Debian/Homebrew package) | `127.0.0.1:4040` | `127.0.0.1:4041` | `/tmp/memory-layer.capnp.sock` |
-| Dev (cargo-run from repo) | `127.0.0.1:4250` | `127.0.0.1:4251` | user-local project `runtime/dev/memory-layer.capnp.sock` |
+| Stack | HTTP |
+| --- | --- |
+| Installed (Debian/Homebrew package) | `127.0.0.1:4040` |
+| Dev (cargo-run from repo) | `127.0.0.1:4250` |
 
 Override the dev ports at bootstrap time:
 
 ```bash
 cargo run --bin memory -- dev init \
   --bind-addr 127.0.0.1:4260 \
-  --capnp-tcp-addr 127.0.0.1:4261
 ```
 
 ## Verifying Isolation
@@ -130,9 +127,6 @@ cargo run --bin memory -- doctor
 
 ## Common Pitfalls
 
-**`bind capnp tcp addr: timed out waiting for existing backend to release 127.0.0.1:4251`**
-Another dev backend is already running. There is only one dev capnp port per project dev overlay, so two simultaneous `cargo run -- service run` from the same checkout will conflict. Stop the other one or pass `--capnp-tcp-addr` to `dev init` to relocate.
-
 **`dev profile active but <project config>/config.dev.toml is missing`**
 You ran a `target/debug/memory` binary in a checkout that has not been bootstrapped yet. Run `memory init && memory dev init` (or `MEMORY_LAYER_PROFILE=prod` to force the installed stack instead).
 
@@ -140,7 +134,7 @@ You ran a `target/debug/memory` binary in a checkout that has not been bootstrap
 The dev profile does not fall back to the global config. Either rerun `memory dev init --copy-from-global --force` or add `[llm]`/`[embeddings]` blocks directly to the user-local project `config.dev.toml`.
 
 **Two installed services on one machine fighting for `127.0.0.1:4041`**
-This happens when both a system-wide (`/etc/memory-layer/`) and a user-level (`~/.config/memory-layer/`) install are enabled. Pick one or give the user-level install its own `capnp_tcp_addr` and `capnp_unix_socket`. This is unrelated to the dev stack.
+This happens when both a system-wide (`/etc/memory-layer/`) and a user-level (`~/.config/memory-layer/`) install are enabled. Pick one or give the user-level install its own `bind_addr`. This is unrelated to the dev stack.
 
 ## Related Docs
 

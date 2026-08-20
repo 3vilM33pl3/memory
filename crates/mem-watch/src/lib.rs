@@ -932,8 +932,6 @@ mod tests {
         AppConfig {
             service: mem_api::ServiceConfig {
                 bind_addr: "127.0.0.1:4040".to_string(),
-                capnp_unix_socket: "/tmp/memory-layer.capnp.sock".to_string(),
-                capnp_tcp_addr: "127.0.0.1:4041".to_string(),
                 web_root: None,
                 api_token: "ml_testtoken".to_string(),
                 request_timeout: std::time::Duration::from_secs(30),

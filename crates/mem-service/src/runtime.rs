@@ -36,19 +36,6 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
                 })
                 .await
         });
-        let mut proto_tasks = Vec::new();
-        if state.is_primary() {
-            let proto_servers = start_proto_servers(state.clone()).await?;
-            #[cfg(unix)]
-            proto_tasks.push(tokio::spawn(run_proto_unix(
-                proto_servers.unix_listener,
-                state.clone(),
-            )));
-            proto_tasks.push(tokio::spawn(run_proto_tcp(
-                proto_servers.tcp_listener,
-                state.clone(),
-            )));
-        }
         let mut cluster_tasks = start_cluster_tasks(state.clone()).await?;
 
         let version = config.profile.display_version(env!("CARGO_PKG_VERSION"));
@@ -85,23 +72,9 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
         if let Some(offline) = &state.offline {
             eprintln!("  offline db: {}", offline.store.path().display());
         }
-        #[cfg(unix)]
-        eprintln!("  capnp unix: {}", config.service.capnp_unix_socket);
-        eprintln!("  capnp tcp: {}", config.service.capnp_tcp_addr);
-
-        #[cfg(unix)]
         tracing::info!(
             %addr,
             role = %state.role_name(),
-            unix_socket = %config.service.capnp_unix_socket,
-            tcp_addr = %config.service.capnp_tcp_addr,
-            "memory-layer listening"
-        );
-        #[cfg(not(unix))]
-        tracing::info!(
-            %addr,
-            role = %state.role_name(),
-            tcp_addr = %config.service.capnp_tcp_addr,
             "memory-layer listening"
         );
 
@@ -114,7 +87,6 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
                 result = tokio::signal::ctrl_c() => {
                     result.context("listen for ctrl-c")?;
                     shutdown_http_server(&shutdown_handle, &mut http_server, "ctrl-c").await?;
-                    abort_tasks(&mut proto_tasks);
                     abort_tasks(&mut cluster_tasks);
                     break;
                 }
@@ -122,7 +94,6 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
                     config_fingerprint = result.context("watch config file")?;
                     tracing::info!(path = %path.display(), "config changed; restarting backend");
                     shutdown_http_server(&shutdown_handle, &mut http_server, "config-reload").await?;
-                    abort_tasks(&mut proto_tasks);
                     abort_tasks(&mut cluster_tasks);
                 }
             }
@@ -135,7 +106,6 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
                 result = tokio::signal::ctrl_c() => {
                     result.context("listen for ctrl-c")?;
                     shutdown_http_server(&shutdown_handle, &mut http_server, "ctrl-c").await?;
-                    abort_tasks(&mut proto_tasks);
                     abort_tasks(&mut cluster_tasks);
                     break;
                 }

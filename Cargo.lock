@@ -594,15 +594,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
-name = "capnp"
-version = "0.26.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58ddce707ad9fb2ae92770523cd0e17a0cf34e79b66a9ca4db2dd993535fe718"
-dependencies = [
- "embedded-io",
-]
-
-[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1290,12 +1281,6 @@ dependencies = [
  "subtle",
  "zeroize",
 ]
-
-[[package]]
-name = "embedded-io"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
 
 [[package]]
 name = "equivalent"
@@ -2522,7 +2507,6 @@ dependencies = [
 name = "mem-api"
 version = "1.0.3"
 dependencies = [
- "capnp",
  "chrono",
  "config",
  "humantime-serde",
@@ -2530,7 +2514,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
- "tokio",
  "toml 0.8.23",
  "uuid",
 ]
@@ -2540,11 +2523,11 @@ name = "mem-cli"
 version = "1.0.3"
 dependencies = [
  "anyhow",
- "capnp",
  "chrono",
  "clap",
  "clap_complete",
  "crossterm 0.28.1",
+ "futures-util",
  "humantime",
  "mem-agenttop",
  "mem-analyze",
@@ -2566,6 +2549,7 @@ dependencies = [
  "similar",
  "sqlx",
  "tokio",
+ "tokio-tungstenite 0.24.0",
  "toml 0.8.23",
  "uuid",
  "zip 2.4.2",
@@ -2720,7 +2704,6 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
- "capnp",
  "chrono",
  "config",
  "duckdb",

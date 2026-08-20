@@ -3,18 +3,15 @@
 use std::{
     collections::HashMap,
     env, fmt,
-    io::Cursor,
     path::{Path, PathBuf},
     time::Duration,
 };
 
-use capnp::{message::ReaderOptions, serialize};
 use chrono::{DateTime, Utc};
 use config::{Config, ConfigError, Environment, File, FileFormat};
-use mem_platform::{default_shared_capnp_unix_socket, discover_existing_global_config_path};
+use mem_platform::discover_existing_global_config_path;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -4794,10 +4791,6 @@ fn env_lookup(path: &Path, key: &str) -> Option<String> {
 pub struct ServiceConfig {
     #[serde(default = "default_bind_addr")]
     pub bind_addr: String,
-    #[serde(default = "default_capnp_unix_socket")]
-    pub capnp_unix_socket: String,
-    #[serde(default = "default_capnp_tcp_addr")]
-    pub capnp_tcp_addr: String,
     #[serde(default)]
     pub web_root: Option<String>,
     #[serde(default = "default_api_token")]
@@ -5984,14 +5977,6 @@ fn default_mcp_http_path() -> String {
     "/mcp".to_string()
 }
 
-fn default_capnp_unix_socket() -> String {
-    default_shared_capnp_unix_socket()
-}
-
-fn default_capnp_tcp_addr() -> String {
-    "127.0.0.1:4041".to_string()
-}
-
 fn default_request_timeout() -> Duration {
     Duration::from_secs(30)
 }
@@ -6064,52 +6049,6 @@ fn default_curate_on_explicit_flush() -> bool {
 #[error("{message}")]
 pub struct ValidationError {
     message: String,
-}
-
-pub async fn write_capnp_text_frame<W>(writer: &mut W, text: &str) -> Result<(), std::io::Error>
-where
-    W: AsyncWrite + Unpin,
-{
-    let payload = encode_capnp_text(text)?;
-    writer.write_u32_le(payload.len() as u32).await?;
-    writer.write_all(&payload).await?;
-    writer.flush().await
-}
-
-pub async fn read_capnp_text_frame<R>(reader: &mut R) -> Result<Option<String>, std::io::Error>
-where
-    R: AsyncRead + Unpin,
-{
-    let len = match reader.read_u32_le().await {
-        Ok(len) => len,
-        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    let mut buf = vec![0_u8; len as usize];
-    reader.read_exact(&mut buf).await?;
-    decode_capnp_text(&buf).map(Some)
-}
-
-pub fn encode_capnp_text(text: &str) -> Result<Vec<u8>, std::io::Error> {
-    let mut message = capnp::message::Builder::new_default();
-    message
-        .set_root::<capnp::text::Owned>(text)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
-    let mut bytes = Vec::new();
-    serialize::write_message(&mut bytes, &message)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
-    Ok(bytes)
-}
-
-pub fn decode_capnp_text(bytes: &[u8]) -> Result<String, std::io::Error> {
-    let mut cursor = Cursor::new(bytes);
-    let reader = serialize::read_message(&mut cursor, ReaderOptions::new())
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
-    let text = reader
-        .get_root::<capnp::text::Reader<'_>>()
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
-    text.to_string()
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))
 }
 
 impl ValidationError {
@@ -6265,8 +6204,6 @@ mod tests {
             r#"
             [service]
             bind_addr = "127.0.0.1:4040"
-            capnp_unix_socket = "/tmp/memory-test.sock"
-            capnp_tcp_addr = "127.0.0.1:4041"
             api_token = "token"
             request_timeout = "30s"
 
@@ -6286,8 +6223,6 @@ mod tests {
             r#"
             [service]
             bind_addr = "127.0.0.1:4040"
-            capnp_unix_socket = "/tmp/memory-test.sock"
-            capnp_tcp_addr = "127.0.0.1:4041"
             api_token = "token"
             request_timeout = "30s"
 
@@ -6315,8 +6250,6 @@ mod tests {
             r#"
             [service]
             bind_addr = "127.0.0.1:4040"
-            capnp_unix_socket = "/tmp/memory-test.sock"
-            capnp_tcp_addr = "127.0.0.1:4041"
             api_token = "token"
             request_timeout = "30s"
 
@@ -6336,8 +6269,6 @@ mod tests {
             r#"
             [service]
             bind_addr = "127.0.0.1:4040"
-            capnp_unix_socket = "/tmp/memory-test.sock"
-            capnp_tcp_addr = "127.0.0.1:4041"
             api_token = "token"
             request_timeout = "30s"
 
@@ -6364,8 +6295,6 @@ mod tests {
             r#"
             [service]
             bind_addr = "127.0.0.1:4040"
-            capnp_unix_socket = "/tmp/memory-test.sock"
-            capnp_tcp_addr = "127.0.0.1:4041"
             api_token = "token"
             request_timeout = "30s"
 
@@ -7070,7 +6999,7 @@ mod tests {
         let config_path = config_dir.join("memory-layer.toml");
         fs::write(
             &config_path,
-            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
         )
         .unwrap();
         fs::write(
@@ -7102,7 +7031,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
         fs::write(
             &config_path,
-            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
         )
         .unwrap();
 
@@ -7125,7 +7054,7 @@ mod tests {
         let config_path = config_dir.join("memory-layer.toml");
         fs::write(
             &config_path,
-            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
         )
         .unwrap();
         fs::write(
@@ -7158,7 +7087,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
         fs::write(
             &config_path,
-            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
         )
         .unwrap();
         fs::write(
@@ -7189,7 +7118,7 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
         fs::write(
             &config_path,
-            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n",
         )
         .unwrap();
         fs::write(
@@ -7239,7 +7168,7 @@ mod tests {
 
         fs::write(
             global_dir.join("memory-layer.toml"),
-            "[service]\nbind_addr = \"127.0.0.1:4040\"\ncapnp_unix_socket = \"/tmp/a.sock\"\ncapnp_tcp_addr = \"127.0.0.1:4041\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n\n[automation]\nidle_threshold = \"5m\"\n",
+            "[service]\nbind_addr = \"127.0.0.1:4040\"\napi_token = \"from-config\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://config\"\n\n[automation]\nidle_threshold = \"5m\"\n",
         )
         .unwrap();
         fs::write(
@@ -7273,7 +7202,7 @@ mod tests {
         fs::create_dir_all(&mem_dir).unwrap();
         fs::write(
             mem_dir.join("config.toml"),
-            "[service]\nbind_addr = \"10.0.0.1:4150\"\ncapnp_unix_socket = \"/tmp/prod.sock\"\ncapnp_tcp_addr = \"10.0.0.1:4151\"\napi_token = \"t\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://shared\"\n",
+            "[service]\nbind_addr = \"10.0.0.1:4150\"\napi_token = \"t\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://shared\"\n",
         )
         .unwrap();
         fs::write(
@@ -7313,7 +7242,7 @@ mod tests {
         fs::create_dir_all(&mem_dir).unwrap();
         fs::write(
             mem_dir.join("config.toml"),
-            "[service]\nbind_addr = \"10.0.0.1:4150\"\ncapnp_unix_socket = \"/tmp/p.sock\"\ncapnp_tcp_addr = \"10.0.0.1:4151\"\napi_token = \"t\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://shared\"\n",
+            "[service]\nbind_addr = \"10.0.0.1:4150\"\napi_token = \"t\"\nrequest_timeout = \"30s\"\n\n[database]\nurl = \"postgresql://shared\"\n",
         )
         .unwrap();
 

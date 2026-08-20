@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use std::{
-    env, fs,
+    fs,
     io::{self, IsTerminal},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use anyhow::{Context, Result};
@@ -144,12 +144,9 @@ pub(in crate::commands) fn initialize_dev_overlay(
     }
     let overlay_path = project_paths.dev_config_path();
     let runtime_dev_dir = project_paths.runtime_dir().join("dev");
-    let capnp_unix_socket = dev_capnp_unix_socket_path(&project_paths);
     let state_file_path = runtime_dev_dir.join("automation-state.json");
     let audit_log_path = runtime_dev_dir.join("automation.log");
     let bind_addr = render_toml_string(&args.bind_addr);
-    let capnp_tcp_addr = render_toml_string(&args.capnp_tcp_addr);
-    let capnp_unix_socket_toml = render_toml_string(&capnp_unix_socket.display().to_string());
     let state_file_path_toml = render_toml_string(&state_file_path.display().to_string());
     let audit_log_path_toml = render_toml_string(&audit_log_path.display().to_string());
 
@@ -163,8 +160,6 @@ pub(in crate::commands) fn initialize_dev_overlay(
          \n\
          [service]\n\
          bind_addr = {bind_addr}\n\
-         capnp_tcp_addr = {capnp_tcp_addr}\n\
-         capnp_unix_socket = {capnp_unix_socket_toml}\n\
          \n\
          [automation]\n\
          state_file_path = {state_file_path_toml}\n\
@@ -207,15 +202,6 @@ pub(in crate::commands) fn initialize_dev_overlay(
         overlay_path.display(),
         runtime_dev_dir.display()
     ))
-}
-
-pub(crate) fn dev_capnp_unix_socket_path(project_paths: &mem_platform::ProjectPaths) -> PathBuf {
-    let identity = project_paths
-        .key
-        .rsplit_once('-')
-        .map(|(_, hash)| hash)
-        .unwrap_or(&project_paths.key);
-    env::temp_dir().join(format!("memory-layer-dev-{identity}.sock"))
 }
 
 /// Tables we willingly copy from the global config into the dev overlay. The

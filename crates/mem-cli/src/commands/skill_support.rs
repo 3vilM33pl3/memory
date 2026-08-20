@@ -908,7 +908,6 @@ pub(crate) fn render_repo_config(
 ) -> String {
     let repo_root = render_toml_string(&repo_root.display().to_string());
     let runtime_dir = project_paths.runtime_dir();
-    let socket_path = runtime_dir.join("memory-layer.capnp.sock");
     let audit_log_path = runtime_dir.join("automation.log");
     let state_file_path = runtime_dir.join("automation-state.json");
     let audit_log_path = render_toml_string(&audit_log_path.display().to_string());
@@ -923,8 +922,6 @@ pub(crate) fn render_repo_config(
 # Example dev endpoints:
 # [service]
 # bind_addr = "127.0.0.1:4140"
-# capnp_unix_socket = "{}"
-# capnp_tcp_addr = "127.0.0.1:4141"
 
 [automation]
 enabled = false
@@ -940,7 +937,6 @@ audit_log_path = {audit_log_path}
 state_file_path = {state_file_path}
 "#,
         default_global_config_path_label(),
-        socket_path.display(),
     )
 }
 
