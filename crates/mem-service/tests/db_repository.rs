@@ -197,7 +197,7 @@ async fn repository_memory_graph_returns_provenance_and_relationship_layers() {
     let _second_source_id = insert_graph_memory_source(&pool, target_memory_id).await;
     sqlx::query(
         r#"
-        INSERT INTO memory_source_verifications (source_id, status, checked_at, reason, resolved_path)
+        INSERT INTO memory_source_checks (source_id, status, checked_at, reason, resolved_path)
         VALUES ($1, 'verified', now(), 'repository test', '/repo/src/graph.rs')
         "#,
     )

@@ -33,6 +33,16 @@ pub struct CaptureCandidateSourceInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_start: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_end: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_memory_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol_kind: Option<String>,
@@ -70,6 +80,9 @@ pub struct CaptureTaskRequest {
     pub files_changed: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_diff_summary: Option<String>,
+    /// HEAD commit of the repo at capture time; anchors file evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
     #[serde(default)]
     pub tests: Vec<TestResult>,
     #[serde(default)]

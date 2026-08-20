@@ -929,6 +929,11 @@ fn validate_candidates(raw: Vec<ScanLlmCandidate>) -> Result<Vec<CaptureCandidat
             }
             sources.push(CaptureCandidateSourceInput {
                 file_path: Some(file.clone()),
+                git_commit: None,
+                line_start: None,
+                line_end: None,
+                content_hash: None,
+                target_memory_id: None,
                 symbol_name: None,
                 symbol_kind: None,
                 source_kind: SourceKind::File,
@@ -944,6 +949,11 @@ fn validate_candidates(raw: Vec<ScanLlmCandidate>) -> Result<Vec<CaptureCandidat
             }
             sources.push(CaptureCandidateSourceInput {
                 file_path: None,
+                git_commit: None,
+                line_start: None,
+                line_end: None,
+                content_hash: None,
+                target_memory_id: None,
                 symbol_name: None,
                 symbol_kind: None,
                 source_kind: SourceKind::GitCommit,
@@ -954,6 +964,11 @@ fn validate_candidates(raw: Vec<ScanLlmCandidate>) -> Result<Vec<CaptureCandidat
         if !candidate.rationale.trim().is_empty() {
             sources.push(CaptureCandidateSourceInput {
                 file_path: None,
+                git_commit: None,
+                line_start: None,
+                line_end: None,
+                content_hash: None,
+                target_memory_id: None,
                 symbol_name: None,
                 symbol_kind: None,
                 source_kind: SourceKind::Note,
@@ -1049,6 +1064,7 @@ fn build_capture_request(
         agent_summary: summary.to_string(),
         files_changed: file_paths,
         git_diff_summary,
+        git_commit: dossier.head.clone(),
         tests: Vec::new(),
         notes: Vec::new(),
         structured_candidates: candidates.to_vec(),

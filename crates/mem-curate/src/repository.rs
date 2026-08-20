@@ -758,19 +758,25 @@ async fn attach_candidate_metadata(
             r#"
             INSERT INTO memory_sources
                 (id, memory_entry_id, task_id, file_path, git_commit, symbol_name, symbol_kind,
-                 source_kind, excerpt, created_at)
+                 source_kind, excerpt, line_start, line_end, content_hash, target_memory_id,
+                 created_at)
             VALUES
-                ($1, $2, $3, $4, NULL, $5, $6, $7, $8, now())
+                ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
             "#,
         )
         .bind(Uuid::new_v4())
         .bind(memory_id)
         .bind(task_id)
         .bind(&source.file_path)
+        .bind(&source.git_commit)
         .bind(&source.symbol_name)
         .bind(&source.symbol_kind)
         .bind(source_kind)
         .bind(&source.excerpt)
+        .bind(source.line_start)
+        .bind(source.line_end)
+        .bind(&source.content_hash)
+        .bind(source.target_memory_id)
         .execute(&mut **tx)
         .await?;
     }
@@ -1700,6 +1706,11 @@ mod tests {
             tags: vec!["search".to_string(), "refactor".to_string()],
             sources: vec![crate::ingest::CandidateSource {
                 file_path: Some("crates/mem-search/src/lib.rs".to_string()),
+                git_commit: None,
+                line_start: None,
+                line_end: None,
+                content_hash: None,
+                target_memory_id: None,
                 symbol_name: None,
                 symbol_kind: None,
                 source_kind: mem_record::SourceKind::File,

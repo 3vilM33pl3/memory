@@ -563,6 +563,7 @@ pub fn build_capture_request(
         agent_summary: summary,
         files_changed: files,
         git_diff_summary: None,
+        git_commit: None,
         tests: state
             .current_session
             .passed_tests

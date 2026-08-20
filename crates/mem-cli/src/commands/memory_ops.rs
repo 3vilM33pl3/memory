@@ -113,6 +113,7 @@ pub(in crate::commands) fn build_remember_request(
         agent_summary: summary,
         files_changed,
         git_diff_summary: None,
+        git_commit: None,
         tests,
         notes: args.notes,
         structured_candidates: vec![candidate],
@@ -386,6 +387,11 @@ pub(crate) fn build_plan_execution_request(
     let mut sources = vec![
         mem_record::CaptureCandidateSourceInput {
             file_path: None,
+            git_commit: None,
+            line_start: None,
+            line_end: None,
+            content_hash: None,
+            target_memory_id: None,
             symbol_name: None,
             symbol_kind: None,
             source_kind: mem_record::SourceKind::TaskPrompt,
@@ -393,6 +399,11 @@ pub(crate) fn build_plan_execution_request(
         },
         mem_record::CaptureCandidateSourceInput {
             file_path: None,
+            git_commit: None,
+            line_start: None,
+            line_end: None,
+            content_hash: None,
+            target_memory_id: None,
             symbol_name: None,
             symbol_kind: None,
             source_kind: mem_record::SourceKind::Note,
@@ -406,6 +417,11 @@ pub(crate) fn build_plan_execution_request(
             0,
             mem_record::CaptureCandidateSourceInput {
                 file_path: Some(source_path.display().to_string()),
+                git_commit: None,
+                line_start: None,
+                line_end: None,
+                content_hash: None,
+                target_memory_id: None,
                 symbol_name: None,
                 symbol_kind: None,
                 source_kind: mem_record::SourceKind::File,
@@ -426,6 +442,7 @@ pub(crate) fn build_plan_execution_request(
         agent_summary: title.to_string(),
         files_changed: Vec::new(),
         git_diff_summary: git_head.map(|head| format!("Execution started from git HEAD {head}")),
+        git_commit: git_head.map(str::to_owned),
         tests: Vec::new(),
         notes: Vec::new(),
         structured_candidates: vec![mem_record::CaptureCandidateInput {
@@ -515,6 +532,7 @@ pub(crate) fn build_task_start_request(
         agent_summary: format!("Started direct no-plan task: {}", title.trim()),
         files_changed: Vec::new(),
         git_diff_summary: git_head.map(|head| format!("Task started from git HEAD {head}")),
+        git_commit: None,
         tests: Vec::new(),
         notes: Vec::new(),
         structured_candidates: vec![mem_record::CaptureCandidateInput {
@@ -532,6 +550,11 @@ pub(crate) fn build_task_start_request(
             sources: vec![
                 mem_record::CaptureCandidateSourceInput {
                     file_path: None,
+                    git_commit: None,
+                    line_start: None,
+                    line_end: None,
+                    content_hash: None,
+                    target_memory_id: None,
                     symbol_name: None,
                     symbol_kind: None,
                     source_kind: mem_record::SourceKind::TaskPrompt,
@@ -539,6 +562,11 @@ pub(crate) fn build_task_start_request(
                 },
                 mem_record::CaptureCandidateSourceInput {
                     file_path: None,
+                    git_commit: None,
+                    line_start: None,
+                    line_end: None,
+                    content_hash: None,
+                    target_memory_id: None,
                     symbol_name: None,
                     symbol_kind: None,
                     source_kind: mem_record::SourceKind::Note,
@@ -587,6 +615,11 @@ pub(crate) fn implementation_sources(
     if !prompt.trim().is_empty() {
         sources.push(mem_record::CaptureCandidateSourceInput {
             file_path: None,
+            git_commit: None,
+            line_start: None,
+            line_end: None,
+            content_hash: None,
+            target_memory_id: None,
             symbol_name: None,
             symbol_kind: None,
             source_kind: mem_record::SourceKind::TaskPrompt,
@@ -600,6 +633,11 @@ pub(crate) fn implementation_sources(
         }
         sources.push(mem_record::CaptureCandidateSourceInput {
             file_path: None,
+            git_commit: None,
+            line_start: None,
+            line_end: None,
+            content_hash: None,
+            target_memory_id: None,
             symbol_name: None,
             symbol_kind: None,
             source_kind: mem_record::SourceKind::Note,
@@ -609,6 +647,11 @@ pub(crate) fn implementation_sources(
     for file in files_changed {
         sources.push(mem_record::CaptureCandidateSourceInput {
             file_path: Some(file.clone()),
+            git_commit: None,
+            line_start: None,
+            line_end: None,
+            content_hash: None,
+            target_memory_id: None,
             symbol_name: None,
             symbol_kind: None,
             source_kind: mem_record::SourceKind::File,
@@ -618,6 +661,11 @@ pub(crate) fn implementation_sources(
     for test in tests {
         sources.push(mem_record::CaptureCandidateSourceInput {
             file_path: None,
+            git_commit: None,
+            line_start: None,
+            line_end: None,
+            content_hash: None,
+            target_memory_id: None,
             symbol_name: None,
             symbol_kind: None,
             source_kind: mem_record::SourceKind::Test,
@@ -630,6 +678,11 @@ pub(crate) fn implementation_sources(
     {
         sources.push(mem_record::CaptureCandidateSourceInput {
             file_path: None,
+            git_commit: None,
+            line_start: None,
+            line_end: None,
+            content_hash: None,
+            target_memory_id: None,
             symbol_name: None,
             symbol_kind: None,
             source_kind: mem_record::SourceKind::CommandOutput,
@@ -909,6 +962,7 @@ pub(crate) fn build_finish_execution_implementation_request(
         files_changed: Vec::new(),
         git_diff_summary: git_head
             .map(|head| format!("Implementation verified from git HEAD {head}")),
+        git_commit: git_head.map(str::to_owned),
         tests: Vec::new(),
         notes: Vec::new(),
         structured_candidates: vec![mem_record::CaptureCandidateInput {

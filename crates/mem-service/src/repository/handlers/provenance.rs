@@ -78,7 +78,8 @@ pub(crate) async fn verify_project_provenance_with_volatility(
     let rows = sqlx::query(
         r#"
         SELECT ms.id AS source_id, m.id AS memory_id, m.summary, ms.file_path,
-               ms.symbol_name, ms.symbol_kind, ms.source_kind
+               ms.symbol_name, ms.symbol_kind, ms.source_kind,
+               ms.line_start, ms.line_end, ms.content_hash
         FROM memory_sources ms
         JOIN memory_entries m ON m.id = ms.memory_entry_id
         WHERE m.project_id = $1
@@ -100,6 +101,14 @@ pub(crate) async fn verify_project_provenance_with_volatility(
         let symbol_name: Option<String> = row.try_get("symbol_name")?;
         let symbol_kind: Option<String> = row.try_get("symbol_kind")?;
         let source_kind = parse_source_kind(&row.try_get::<String, _>("source_kind")?);
+        let line_range = match (
+            row.try_get::<Option<i32>, _>("line_start")?,
+            row.try_get::<Option<i32>, _>("line_end")?,
+        ) {
+            (Some(start), Some(end)) if start > 0 && end >= start => Some((start, end)),
+            _ => None,
+        };
+        let content_hash: Option<String> = row.try_get("content_hash")?;
         let mut verification = verify_source_path(
             source_id,
             memory_id,
@@ -108,6 +117,8 @@ pub(crate) async fn verify_project_provenance_with_volatility(
             file_path,
             symbol_name,
             symbol_kind,
+            line_range,
+            content_hash.as_deref(),
             &repo_root,
         );
         verify_source_symbol(pool, project_id, &repo_root, &mut verification).await?;
@@ -126,14 +137,9 @@ pub(crate) async fn verify_project_provenance_with_volatility(
         for item in &items {
             sqlx::query(
                 r#"
-                INSERT INTO memory_source_verifications
+                INSERT INTO memory_source_checks
                     (source_id, status, checked_at, reason, resolved_path)
                 VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (source_id) DO UPDATE SET
-                    status = EXCLUDED.status,
-                    checked_at = EXCLUDED.checked_at,
-                    reason = EXCLUDED.reason,
-                    resolved_path = EXCLUDED.resolved_path
                 "#,
             )
             .bind(item.source_id)
@@ -315,6 +321,20 @@ pub(crate) async fn reverify_all_projects_once(state: &AppState) -> Result<()> {
     Ok(())
 }
 
+/// sha256 of the inclusive 1-indexed line range, matching capture-time hashing.
+fn hash_file_region(path: &FsPath, start: i32, end: i32) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let lines: Vec<&str> = content.lines().collect();
+    let start_index = usize::try_from(start).ok()?.checked_sub(1)?;
+    let end_index = usize::try_from(end).ok()?;
+    if end_index > lines.len() || start_index >= end_index {
+        return None;
+    }
+    let region = lines[start_index..end_index].join("\n");
+    use sha2::{Digest, Sha256};
+    Some(format!("{:x}", Sha256::digest(region.as_bytes())))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_source_path(
     source_id: Uuid,
@@ -324,6 +344,8 @@ pub(crate) fn verify_source_path(
     file_path: Option<String>,
     symbol_name: Option<String>,
     symbol_kind: Option<String>,
+    line_range: Option<(i32, i32)>,
+    content_hash: Option<&str>,
     repo_root: &str,
 ) -> SourceProvenanceVerification {
     let mut resolved_path = None;
@@ -353,10 +375,33 @@ pub(crate) fn verify_source_path(
             };
             resolved_path = Some(resolved.display().to_string());
             if resolved.exists() {
-                (
-                    SourceProvenanceStatus::Verified,
-                    Some("file exists".to_string()),
-                )
+                match (line_range, content_hash) {
+                    // A stored content hash makes verification substantive:
+                    // the cited region must still hash to what was captured.
+                    (Some((start, end)), Some(expected)) => {
+                        match hash_file_region(&resolved, start, end) {
+                            Some(observed) if observed == expected => (
+                                SourceProvenanceStatus::Verified,
+                                Some("cited region matches captured content hash".to_string()),
+                            ),
+                            Some(_) => (
+                                SourceProvenanceStatus::Stale,
+                                Some(
+                                    "cited region changed since capture (content hash mismatch)"
+                                        .to_string(),
+                                ),
+                            ),
+                            None => (
+                                SourceProvenanceStatus::Stale,
+                                Some("cited line range no longer exists in the file".to_string()),
+                            ),
+                        }
+                    }
+                    _ => (
+                        SourceProvenanceStatus::Verified,
+                        Some("file exists".to_string()),
+                    ),
+                }
             } else {
                 (
                     SourceProvenanceStatus::MissingFile,

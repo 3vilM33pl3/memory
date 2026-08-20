@@ -380,7 +380,7 @@ async fn insert_rank_memory(
     .expect("insert rank source");
     sqlx::query(
         r#"
-        INSERT INTO memory_source_verifications
+        INSERT INTO memory_source_checks
             (source_id, status, checked_at, reason, resolved_path)
         VALUES ($1, $2, now(), $3, $4)
         "#,

@@ -39,6 +39,8 @@ fn verify_source_path_classifies_existing_and_missing_files() {
         Some("src/lib.rs".to_string()),
         None,
         None,
+        None,
+        None,
         root.to_str().expect("temp path utf8"),
     );
     assert_eq!(existing.status, SourceProvenanceStatus::Verified);
@@ -57,6 +59,8 @@ fn verify_source_path_classifies_existing_and_missing_files() {
         "Missing source".to_string(),
         SourceKind::File,
         Some("src/missing.rs".to_string()),
+        None,
+        None,
         None,
         None,
         root.to_str().expect("temp path utf8"),
@@ -82,6 +86,8 @@ fn verify_source_path_marks_non_file_sources_unverifiable() {
         None,
         None,
         None,
+        None,
+        None,
         "/repo",
     );
 
@@ -103,6 +109,8 @@ fn verify_source_path_requires_repo_root_for_relative_files() {
         "Relative source".to_string(),
         SourceKind::File,
         Some("src/lib.rs".to_string()),
+        None,
+        None,
         None,
         None,
         "",

@@ -488,6 +488,7 @@ mod tests {
             agent_summary: "queued a capture locally".to_string(),
             files_changed: vec!["src/lib.rs".to_string()],
             git_diff_summary: None,
+            git_commit: None,
             tests: Vec::new(),
             notes: vec!["offline note".to_string()],
             structured_candidates: Vec::new(),

@@ -313,6 +313,7 @@ fn capture_request(
         agent_summary: "Captured a structured candidate for DB integration tests.".to_string(),
         files_changed: vec!["crates/mem-search/src/lib.rs".to_string()],
         git_diff_summary: None,
+        git_commit: None,
         tests: Vec::new(),
         notes: Vec::new(),
         structured_candidates: vec![CaptureCandidateInput {
@@ -324,6 +325,11 @@ fn capture_request(
             tags: vec!["query".to_string()],
             sources: vec![CaptureCandidateSourceInput {
                 file_path: Some("crates/mem-search/src/lib.rs".to_string()),
+                git_commit: None,
+                line_start: None,
+                line_end: None,
+                content_hash: None,
+                target_memory_id: None,
                 symbol_name: None,
                 symbol_kind: None,
                 source_kind: SourceKind::File,

@@ -633,6 +633,7 @@ fn capture_task_requires_project() {
         agent_summary: "summary".to_string(),
         files_changed: Vec::new(),
         git_diff_summary: None,
+        git_commit: None,
         tests: Vec::new(),
         notes: Vec::new(),
         structured_candidates: Vec::new(),

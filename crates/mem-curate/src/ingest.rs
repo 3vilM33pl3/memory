@@ -24,6 +24,19 @@ pub struct CandidateAssertion {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CandidateSource {
     pub file_path: Option<String>,
+    /// Commit the evidence was read at; the version anchor for provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_start: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_end: Option<i32>,
+    /// sha256 of the referenced region at capture time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    /// Canonical id of a cited memory, for source_kind = memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_memory_id: Option<uuid::Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -64,6 +77,11 @@ pub fn extract_candidates(request: &CaptureTaskRequest) -> Vec<CandidateAssertio
         .iter()
         .map(|path| CandidateSource {
             file_path: Some(path.clone()),
+            git_commit: request.git_commit.clone(),
+            line_start: None,
+            line_end: None,
+            content_hash: None,
+            target_memory_id: None,
             symbol_name: None,
             symbol_kind: None,
             source_kind: SourceKind::File,
@@ -92,6 +110,14 @@ pub fn extract_candidates(request: &CaptureTaskRequest) -> Vec<CandidateAssertio
                     .iter()
                     .map(|source| CandidateSource {
                         file_path: source.file_path.clone(),
+                        git_commit: source
+                            .git_commit
+                            .clone()
+                            .or_else(|| request.git_commit.clone()),
+                        line_start: source.line_start,
+                        line_end: source.line_end,
+                        content_hash: source.content_hash.clone(),
+                        target_memory_id: source.target_memory_id,
                         symbol_name: source.symbol_name.clone(),
                         symbol_kind: source.symbol_kind.clone(),
                         source_kind: source.source_kind.clone(),
@@ -331,6 +357,11 @@ fn build_sources(
     let mut sources = files.to_vec();
     sources.push(CandidateSource {
         file_path: None,
+        git_commit: request.git_commit.clone(),
+        line_start: None,
+        line_end: None,
+        content_hash: None,
+        target_memory_id: None,
         symbol_name: None,
         symbol_kind: None,
         source_kind: SourceKind::TaskPrompt,
@@ -338,6 +369,11 @@ fn build_sources(
     });
     sources.push(CandidateSource {
         file_path: None,
+        git_commit: request.git_commit.clone(),
+        line_start: None,
+        line_end: None,
+        content_hash: None,
+        target_memory_id: None,
         symbol_name: None,
         symbol_kind: None,
         source_kind: SourceKind::Note,
@@ -346,6 +382,11 @@ fn build_sources(
     if let Some(summary) = &request.git_diff_summary {
         sources.push(CandidateSource {
             file_path: None,
+            git_commit: request.git_commit.clone(),
+            line_start: None,
+            line_end: None,
+            content_hash: None,
+            target_memory_id: None,
             symbol_name: None,
             symbol_kind: None,
             source_kind: SourceKind::GitCommit,
@@ -355,6 +396,11 @@ fn build_sources(
     if let Some(output) = &request.command_output {
         sources.push(CandidateSource {
             file_path: None,
+            git_commit: request.git_commit.clone(),
+            line_start: None,
+            line_end: None,
+            content_hash: None,
+            target_memory_id: None,
             symbol_name: None,
             symbol_kind: None,
             source_kind: SourceKind::CommandOutput,
@@ -364,6 +410,11 @@ fn build_sources(
     for test in &request.tests {
         sources.push(CandidateSource {
             file_path: None,
+            git_commit: request.git_commit.clone(),
+            line_start: None,
+            line_end: None,
+            content_hash: None,
+            target_memory_id: None,
             symbol_name: None,
             symbol_kind: None,
             source_kind: SourceKind::Test,
@@ -430,6 +481,7 @@ mod tests {
             agent_summary: "Added the backend service and migrations".to_string(),
             files_changed: vec!["crates/mem-service/src/main.rs".to_string()],
             git_diff_summary: None,
+            git_commit: None,
             tests: Vec::new(),
             notes: vec![
                 "The backend service owns capture, curation, and query endpoints".to_string(),

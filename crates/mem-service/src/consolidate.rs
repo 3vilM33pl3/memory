@@ -196,7 +196,13 @@ async fn synthesize_and_queue(
     let evidence: Vec<serde_json::Value> = synthesis
         .cited_member_ids
         .iter()
-        .map(|id| serde_json::json!({ "source_kind": "memory", "excerpt": id.to_string() }))
+        .map(|id| {
+            serde_json::json!({
+                "source_kind": "memory",
+                "target_memory_id": id,
+                "excerpt": id.to_string(),
+            })
+        })
         .collect();
 
     let request = LoopMemoryProposalCreateRequest {
