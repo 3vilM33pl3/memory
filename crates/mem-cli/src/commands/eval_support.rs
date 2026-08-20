@@ -1163,6 +1163,8 @@ pub(crate) fn external_retriever_response_to_query_response(
             .collect::<Vec<_>>();
         let query_result = QueryResult {
             memory_id,
+            canonical_id: None,
+            version_no: None,
             project: None,
             project_name: None,
             repo_root: None,
@@ -1182,6 +1184,8 @@ pub(crate) fn external_retriever_response_to_query_response(
         answer_citations.push(QueryAnswerCitation {
             result_number,
             memory_id,
+            canonical_id: None,
+            version_no: None,
             project: None,
             project_name: None,
             repo_root: None,
@@ -1278,6 +1282,7 @@ fn external_citation_to_query_source(citation: &ExternalRetrieverCitation) -> Op
         } => (file_path.clone().or_else(|| path.clone()), excerpt.clone()),
     };
     file_path.map(|file_path| QuerySource {
+        git_commit: None,
         task_id: None,
         file_path: Some(file_path),
         symbol_name: None,

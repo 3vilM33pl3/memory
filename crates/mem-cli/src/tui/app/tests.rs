@@ -206,6 +206,8 @@ fn test_query_response_with_timings() -> QueryResponse {
         confidence: 0.82,
         results: vec![QueryResult {
             memory_id: Uuid::new_v4(),
+            canonical_id: None,
+            version_no: None,
             project: None,
             project_name: None,
             repo_root: None,
@@ -251,6 +253,8 @@ fn test_query_response_with_two_results() -> QueryResponse {
     let mut response = test_query_response_with_timings();
     response.results.push(QueryResult {
         memory_id: Uuid::new_v4(),
+        canonical_id: None,
+        version_no: None,
         project: None,
         project_name: None,
         repo_root: None,

@@ -1904,6 +1904,8 @@ mod tests {
             confidence: 1.0,
             results: vec![mem_record::QueryResult {
                 memory_id: Uuid::new_v4(),
+                canonical_id: None,
+                version_no: None,
                 project: None,
                 project_name: None,
                 repo_root: None,
@@ -1916,6 +1918,7 @@ mod tests {
                 debug: mem_record::QueryResultDebug::default(),
                 tags: vec!["graph".to_string()],
                 sources: vec![mem_record::QuerySource {
+                    git_commit: None,
                     task_id: None,
                     file_path: Some("crates/mem-search/src/lib.rs".to_string()),
                     symbol_name: None,
@@ -1943,6 +1946,8 @@ mod tests {
     fn tagged_result(memory_id: Uuid, tag: &str) -> mem_record::QueryResult {
         mem_record::QueryResult {
             memory_id,
+            canonical_id: None,
+            version_no: None,
             project: None,
             project_name: None,
             repo_root: None,
@@ -1964,6 +1969,8 @@ mod tests {
         mem_record::QueryAnswerCitation {
             result_number: 1,
             memory_id,
+            canonical_id: None,
+            version_no: None,
             project: None,
             project_name: None,
             repo_root: None,

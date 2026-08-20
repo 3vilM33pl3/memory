@@ -543,8 +543,17 @@ async fn query_memory_execution(
     ranked.sort_by(compare_ranked);
     let rerank_duration_ms = rerank_started.elapsed().as_millis() as u64;
 
+    let top: Vec<RankedCandidate> = ranked.into_iter().take(request.top_k as usize).collect();
+    let canonical_ids = repository::fetch_canonical_identities(
+        pool,
+        &top.iter()
+            .map(|candidate| candidate.memory_id)
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .context("resolve canonical identities")?;
     let mut results = Vec::new();
-    for candidate in ranked.into_iter().take(request.top_k as usize) {
+    for candidate in top {
         if request
             .min_confidence
             .is_some_and(|threshold| candidate.confidence < threshold)
@@ -555,8 +564,11 @@ async fn query_memory_execution(
         let sources = repository::fetch_sources(pool, candidate.memory_id)
             .await
             .context("fetch query result sources")?;
+        let identity = canonical_ids.get(&candidate.memory_id).copied();
         results.push(QueryResult {
             memory_id: candidate.memory_id,
+            canonical_id: identity.map(|(canonical_id, _)| canonical_id),
+            version_no: identity.map(|(_, version_no)| version_no),
             project: candidate.project,
             project_name: candidate.project_name,
             repo_root: candidate.repo_root,
@@ -1450,6 +1462,8 @@ fn synthesize_answer(results: &[QueryResult]) -> QueryAnswerSynthesis {
             citations.push(QueryAnswerCitation {
                 result_number: index + 1,
                 memory_id: result.memory_id,
+                canonical_id: result.canonical_id,
+                version_no: result.version_no,
                 project: result.project.clone(),
                 project_name: result.project_name.clone(),
                 repo_root: result.repo_root.clone(),
@@ -1871,6 +1885,8 @@ mod tests {
         let memory_id = Uuid::new_v4();
         let results = vec![QueryResult {
             memory_id,
+            canonical_id: None,
+            version_no: None,
             project: None,
             project_name: None,
             repo_root: None,
@@ -1883,6 +1899,7 @@ mod tests {
             debug: QueryResultDebug::default(),
             tags: vec![],
             sources: vec![QuerySource {
+                git_commit: None,
                 task_id: None,
                 file_path: Some("src/old.rs".to_string()),
                 symbol_name: None,
@@ -1960,6 +1977,8 @@ mod tests {
     fn synthesis_result(summary: &str, score: f64, memory_confidence: f32) -> QueryResult {
         QueryResult {
             memory_id: Uuid::new_v4(),
+            canonical_id: None,
+            version_no: None,
             project: None,
             project_name: None,
             repo_root: None,

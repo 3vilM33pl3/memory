@@ -374,6 +374,8 @@ mod tests {
             confidence: 1.0,
             results: vec![QueryResult {
                 memory_id,
+                canonical_id: None,
+                version_no: None,
                 project: None,
                 project_name: None,
                 repo_root: None,

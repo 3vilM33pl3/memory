@@ -465,6 +465,8 @@ pub(crate) fn citations_from_result_numbers(
             Some(QueryAnswerCitation {
                 result_number: *number,
                 memory_id: result.memory_id,
+                canonical_id: result.canonical_id,
+                version_no: result.version_no,
                 project: result.project.clone(),
                 project_name: result.project_name.clone(),
                 repo_root: result.repo_root.clone(),

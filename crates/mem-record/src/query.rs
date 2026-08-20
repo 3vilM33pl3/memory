@@ -189,6 +189,8 @@ pub struct QuerySource {
     pub symbol_kind: Option<String>,
     pub source_kind: SourceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<SourceProvenanceRecord>,
@@ -197,6 +199,12 @@ pub struct QuerySource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResult {
     pub memory_id: Uuid,
+    /// Stable identity of the memory across versions; `memory_id` is the
+    /// exact version row and may be pruned by retention.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_no: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -404,6 +412,12 @@ pub struct TokenUsage {
 pub struct QueryAnswerCitation {
     pub result_number: usize,
     pub memory_id: Uuid,
+    /// Stable identity: still resolvable after retention prunes the cited
+    /// version row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_no: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

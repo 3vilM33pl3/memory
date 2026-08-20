@@ -324,6 +324,8 @@ fn reinforcement_batch_upgrades_citations_and_skips_empty_responses() {
     response.answer_citations = vec![mem_record::QueryAnswerCitation {
         result_number: 1,
         memory_id: retrieved,
+        canonical_id: None,
+        version_no: None,
         project: None,
         project_name: None,
         repo_root: None,
@@ -350,6 +352,8 @@ fn test_query_response() -> QueryResponse {
         confidence: 0.5,
         results: vec![mem_record::QueryResult {
             memory_id: uuid::Uuid::new_v4(),
+            canonical_id: None,
+            version_no: None,
             project: None,
             project_name: None,
             repo_root: None,

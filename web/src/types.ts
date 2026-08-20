@@ -691,6 +691,8 @@ export interface ReembedResponse {
 
 export interface QueryResult {
   memory_id: string;
+  canonical_id?: string;
+  version_no?: number;
   summary: string;
   snippet: string;
   memory_type: MemoryType;

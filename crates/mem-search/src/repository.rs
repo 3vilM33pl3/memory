@@ -1158,6 +1158,7 @@ pub(super) async fn fetch_sources(pool: &PgPool, memory_id: Uuid) -> Result<Vec<
     let rows = sqlx::query(
         r#"
         SELECT ms.task_id, ms.file_path, ms.symbol_name, ms.symbol_kind, ms.source_kind, ms.excerpt,
+               ms.git_commit,
                v.status AS provenance_status,
                v.checked_at AS provenance_checked_at,
                v.reason AS provenance_reason,
@@ -1182,11 +1183,40 @@ pub(super) async fn fetch_sources(pool: &PgPool, memory_id: Uuid) -> Result<Vec<
             symbol_name: row.try_get("symbol_name")?,
             symbol_kind: row.try_get("symbol_kind")?,
             source_kind: parse_source_kind(&source_kind),
+            git_commit: row.try_get("git_commit")?,
             excerpt: row.try_get("excerpt")?,
             provenance: source_provenance_from_row(&row)?,
         });
     }
     Ok(items)
+}
+
+/// Stable identity for a set of version rows: memory_id -> (canonical_id,
+/// version_no). Batch lookup so ranking paths stay untouched.
+pub async fn fetch_canonical_identities(
+    pool: &PgPool,
+    memory_ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, (Uuid, i32)>> {
+    if memory_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let rows =
+        sqlx::query("SELECT id, canonical_id, version_no FROM memory_entries WHERE id = ANY($1)")
+            .bind(memory_ids)
+            .fetch_all(pool)
+            .await
+            .context("query canonical identities")?;
+    let mut map = std::collections::HashMap::with_capacity(rows.len());
+    for row in rows {
+        map.insert(
+            row.try_get::<Uuid, _>("id")?,
+            (
+                row.try_get::<Uuid, _>("canonical_id")?,
+                row.try_get::<i32, _>("version_no")?,
+            ),
+        );
+    }
+    Ok(map)
 }
 
 fn source_provenance_from_row(
