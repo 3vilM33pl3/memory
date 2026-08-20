@@ -1056,10 +1056,19 @@ async fn refresh_relations(
     project_id: Uuid,
     memory_id: Uuid,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM memory_relations WHERE src_memory_id = $1 OR dst_memory_id = $1")
-        .bind(memory_id)
-        .execute(&mut **tx)
-        .await?;
+    // Only heuristic edges are recomputed; asserted edges (consolidation
+    // insights, proposals, imports) survive curate runs.
+    sqlx::query(
+        r#"
+        DELETE FROM memory_relations
+        WHERE origin = 'derived'
+          AND (src_canonical_id = (SELECT canonical_id FROM memory_entries WHERE id = $1)
+            OR dst_canonical_id = (SELECT canonical_id FROM memory_entries WHERE id = $1))
+        "#,
+    )
+    .bind(memory_id)
+    .execute(&mut **tx)
+    .await?;
 
     let current = load_memory_profile(tx, memory_id).await?;
     let Some(current) = current else {
@@ -1176,8 +1185,11 @@ async fn insert_relation(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
-        INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO memory_relations
+            (id, src_canonical_id, relation_type, dst_canonical_id, origin)
+        SELECT $1, src.canonical_id, $3, dst.canonical_id, 'derived'
+        FROM memory_entries src, memory_entries dst
+        WHERE src.id = $2 AND dst.id = $4
         ON CONFLICT DO NOTHING
         "#,
     )

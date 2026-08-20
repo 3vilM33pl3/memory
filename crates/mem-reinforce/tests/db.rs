@@ -39,7 +39,9 @@ async fn insert_memory(pool: &PgPool, project_id: Uuid, memory_id: Uuid, text: &
 
 async fn insert_relation(pool: &PgPool, src: Uuid, relation_type: &str, dst: Uuid) {
     sqlx::query(
-        "INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO memory_relations (id, src_canonical_id, relation_type, dst_canonical_id) \
+         SELECT $1, src.canonical_id, $3, dst.canonical_id \
+         FROM memory_entries src, memory_entries dst WHERE src.id = $2 AND dst.id = $4",
     )
     .bind(Uuid::new_v4())
     .bind(src)

@@ -2324,8 +2324,12 @@ async fn apply_consolidation_proposal(
         };
         sqlx::query(
             r#"
-            INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id)
-            VALUES (gen_random_uuid(), $1, 'summarizes', $2)
+            INSERT INTO memory_relations
+                (id, src_canonical_id, relation_type, dst_canonical_id, origin, actor)
+            SELECT gen_random_uuid(), src.canonical_id, 'summarizes', dst.canonical_id,
+                   'asserted', 'memory_consolidation'
+            FROM memory_entries src, memory_entries dst
+            WHERE src.id = $1 AND dst.id = $2
             ON CONFLICT DO NOTHING
             "#,
         )
@@ -2538,8 +2542,12 @@ async fn link_memories_from_proposal(
         });
     sqlx::query(
         r#"
-        INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id)
-        VALUES (gen_random_uuid(), $1, $2, $3)
+        INSERT INTO memory_relations
+            (id, src_canonical_id, relation_type, dst_canonical_id, origin, actor)
+        SELECT gen_random_uuid(), src.canonical_id, $2, dst.canonical_id,
+               'asserted', 'loop_proposal'
+        FROM memory_entries src, memory_entries dst
+        WHERE src.id = $1 AND dst.id = $3
         ON CONFLICT DO NOTHING
         "#,
     )

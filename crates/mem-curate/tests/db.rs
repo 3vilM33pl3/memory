@@ -283,7 +283,9 @@ async fn relation_count(pool: &sqlx::PgPool, src: Uuid, dst: Uuid, relation_type
         r#"
         SELECT COUNT(*)::bigint AS count
         FROM memory_relations
-        WHERE src_memory_id = $1 AND dst_memory_id = $2 AND relation_type = $3
+        WHERE src_canonical_id = (SELECT canonical_id FROM memory_entries WHERE id = $1)
+          AND dst_canonical_id = (SELECT canonical_id FROM memory_entries WHERE id = $2)
+          AND relation_type = $3
         "#,
     )
     .bind(src)

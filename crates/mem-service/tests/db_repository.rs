@@ -207,8 +207,10 @@ async fn repository_memory_graph_returns_provenance_and_relationship_layers() {
     .expect("insert source verification");
     sqlx::query(
         r#"
-        INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id)
-        VALUES ($1, $2, 'supports', $3)
+        INSERT INTO memory_relations (id, src_canonical_id, relation_type, dst_canonical_id)
+        SELECT $1, src.canonical_id, 'supports', dst.canonical_id
+        FROM memory_entries src, memory_entries dst
+        WHERE src.id = $2 AND dst.id = $3
         "#,
     )
     .bind(Uuid::new_v4())
@@ -746,7 +748,8 @@ async fn loop_repository_applies_consolidate_proposal_atomically() {
 
     // Exactly three summarizes relations to the members' latest version ids.
     let relation_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM memory_relations WHERE src_memory_id = $1 AND relation_type = 'summarizes'",
+        "SELECT COUNT(*) FROM memory_relations WHERE src_canonical_id = \
+         (SELECT canonical_id FROM memory_entries WHERE id = $1) AND relation_type = 'summarizes'",
     )
     .bind(meta_id)
     .fetch_one(&pool)
@@ -755,7 +758,9 @@ async fn loop_repository_applies_consolidate_proposal_atomically() {
     assert_eq!(relation_count, 3);
     for member in &members {
         let linked: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM memory_relations WHERE src_memory_id = $1 AND dst_memory_id = $2 AND relation_type = 'summarizes'",
+            "SELECT COUNT(*) FROM memory_relations WHERE src_canonical_id = \
+             (SELECT canonical_id FROM memory_entries WHERE id = $1) AND dst_canonical_id = \
+             (SELECT canonical_id FROM memory_entries WHERE id = $2) AND relation_type = 'summarizes'",
         )
         .bind(meta_id)
         .bind(member)

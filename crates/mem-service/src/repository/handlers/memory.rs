@@ -73,8 +73,8 @@ pub async fn fetch_memory_entry(
         SELECT mr.relation_type, m.id, m.summary, m.memory_type,
                memory_state_confidence(m.canonical_id) AS confidence
         FROM memory_relations mr
-        JOIN memory_entries m ON m.id = mr.dst_memory_id
-        WHERE mr.src_memory_id = $1
+        JOIN memory_entries m ON m.id = memory_latest_version_id(mr.dst_canonical_id)
+        WHERE mr.src_canonical_id = (SELECT canonical_id FROM memory_entries WHERE id = $1)
         ORDER BY m.updated_at DESC, m.id
         LIMIT 12
         "#,

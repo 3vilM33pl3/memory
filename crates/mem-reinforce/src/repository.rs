@@ -83,27 +83,23 @@ pub async fn fetch_canonical_edges(
             FROM memory_entries m
             WHERE m.canonical_id = ANY($1)
             UNION
-            SELECT other.canonical_id, r.hop + 1
+            SELECT CASE
+                WHEN rel.src_canonical_id = r.canonical_id THEN rel.dst_canonical_id
+                ELSE rel.src_canonical_id
+            END, r.hop + 1
             FROM reachable r
-            JOIN memory_entries me ON me.canonical_id = r.canonical_id
             JOIN memory_relations rel
-              ON rel.src_memory_id = me.id OR rel.dst_memory_id = me.id
-            JOIN memory_entries other ON other.id = CASE
-                WHEN rel.src_memory_id = me.id THEN rel.dst_memory_id
-                ELSE rel.src_memory_id
-            END
+              ON rel.src_canonical_id = r.canonical_id OR rel.dst_canonical_id = r.canonical_id
             WHERE rel.relation_type <> 'supersedes' AND r.hop < $2
         )
         SELECT DISTINCT
-            LEAST(ma.canonical_id, mb.canonical_id),
-            GREATEST(ma.canonical_id, mb.canonical_id)
+            LEAST(rel.src_canonical_id, rel.dst_canonical_id),
+            GREATEST(rel.src_canonical_id, rel.dst_canonical_id)
         FROM memory_relations rel
-        JOIN memory_entries ma ON ma.id = rel.src_memory_id
-        JOIN memory_entries mb ON mb.id = rel.dst_memory_id
-        JOIN reachable ra ON ra.canonical_id = ma.canonical_id
-        JOIN reachable rb ON rb.canonical_id = mb.canonical_id
+        JOIN reachable ra ON ra.canonical_id = rel.src_canonical_id
+        JOIN reachable rb ON rb.canonical_id = rel.dst_canonical_id
         WHERE rel.relation_type <> 'supersedes'
-          AND ma.canonical_id <> mb.canonical_id
+          AND rel.src_canonical_id <> rel.dst_canonical_id
         LIMIT $3
         "#,
     )
@@ -832,13 +828,17 @@ pub async fn fetch_related_snapshots(
 ) -> Result<Vec<RelatedMemorySnapshot>> {
     sqlx::query_as::<_, RelatedMemorySnapshot>(
         r#"
+        WITH anchor AS (
+            SELECT canonical_id FROM memory_entries WHERE id = $1
+        )
         SELECT other.id AS memory_id, r.relation_type, other.summary
         FROM memory_relations r
-        JOIN memory_entries other ON other.id = CASE
-            WHEN r.src_memory_id = $1 THEN r.dst_memory_id
-            ELSE r.src_memory_id
-        END
-        WHERE (r.src_memory_id = $1 OR r.dst_memory_id = $1)
+        JOIN anchor ON r.src_canonical_id = anchor.canonical_id
+                    OR r.dst_canonical_id = anchor.canonical_id
+        JOIN memory_entries other ON other.id = memory_latest_version_id(CASE
+            WHEN r.src_canonical_id = anchor.canonical_id THEN r.dst_canonical_id
+            ELSE r.src_canonical_id
+        END)
         ORDER BY r.relation_type, other.summary
         LIMIT 20
         "#,

@@ -1041,10 +1041,12 @@ pub(super) async fn fetch_relation_map(
     }
     let rows = sqlx::query(
         r#"
-        SELECT src_memory_id, relation_type
-        FROM memory_relations
-        WHERE src_memory_id = ANY($1)
-          AND dst_memory_id = ANY($1)
+        SELECT src.id AS src_memory_id, mr.relation_type
+        FROM memory_relations mr
+        JOIN memory_entries src ON src.canonical_id = mr.src_canonical_id
+        JOIN memory_entries dst ON dst.canonical_id = mr.dst_canonical_id
+        WHERE src.id = ANY($1)
+          AND dst.id = ANY($1)
         "#,
     )
     .bind(candidate_ids)

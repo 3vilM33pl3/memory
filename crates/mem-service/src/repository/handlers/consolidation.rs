@@ -469,10 +469,9 @@ async fn fetch_insight_coverage(
 ) -> Result<Vec<BTreeSet<Uuid>>, ApiError> {
     let rows = sqlx::query(
         r#"
-        SELECT src.canonical_id AS insight_id, dst.canonical_id AS member_id
+        SELECT rel.src_canonical_id AS insight_id, rel.dst_canonical_id AS member_id
         FROM memory_relations rel
-        JOIN memory_entries src ON src.id = rel.src_memory_id
-        JOIN memory_entries dst ON dst.id = rel.dst_memory_id
+        JOIN memory_entries src ON src.id = memory_latest_version_id(rel.src_canonical_id)
         JOIN projects p ON p.id = src.project_id
         WHERE rel.relation_type = 'summarizes'
           AND p.slug = $1
@@ -518,12 +517,12 @@ pub(crate) async fn fetch_insight_tree(
         SELECT DISTINCT
             src.canonical_id AS insight_id,
             src.summary AS insight_summary,
-            dst.canonical_id AS member_id,
+            rel.dst_canonical_id AS member_id,
             dst.summary AS member_summary,
             dst.memory_type AS member_type
         FROM memory_relations rel
-        JOIN memory_entries src ON src.id = rel.src_memory_id
-        JOIN memory_entries dst ON dst.id = rel.dst_memory_id
+        JOIN memory_entries src ON src.id = memory_latest_version_id(rel.src_canonical_id)
+        JOIN memory_entries dst ON dst.id = memory_latest_version_id(rel.dst_canonical_id)
         JOIN projects p ON p.id = src.project_id
         WHERE rel.relation_type = 'summarizes'
           AND p.slug = $1
@@ -752,7 +751,7 @@ mod tests {
 
     async fn seed_summarizes(pool: &PgPool, src: Uuid, dst: Uuid) {
         sqlx::query(
-            "INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id) VALUES (gen_random_uuid(), $1, 'summarizes', $2) ON CONFLICT DO NOTHING",
+            "INSERT INTO memory_relations (id, src_canonical_id, relation_type, dst_canonical_id, origin) VALUES (gen_random_uuid(), $1, 'summarizes', $2, 'asserted') ON CONFLICT DO NOTHING",
         )
         .bind(src)
         .bind(dst)
@@ -763,7 +762,7 @@ mod tests {
 
     async fn seed_relation(pool: &PgPool, src: Uuid, dst: Uuid) {
         sqlx::query(
-            "INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id) VALUES (gen_random_uuid(), $1, 'related_to', $2) ON CONFLICT DO NOTHING",
+            "INSERT INTO memory_relations (id, src_canonical_id, relation_type, dst_canonical_id) VALUES (gen_random_uuid(), $1, 'related_to', $2) ON CONFLICT DO NOTHING",
         )
         .bind(src)
         .bind(dst)

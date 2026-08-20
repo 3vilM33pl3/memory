@@ -333,11 +333,13 @@ pub async fn fetch_project_memory_graph(
 
     let relation_rows = sqlx::query(
         r#"
-        SELECT src_memory_id, dst_memory_id, relation_type
-        FROM memory_relations
-        WHERE src_memory_id = ANY($1)
-          AND dst_memory_id = ANY($1)
-        ORDER BY relation_type ASC, src_memory_id ASC, dst_memory_id ASC
+        SELECT src.id AS src_memory_id, dst.id AS dst_memory_id, mr.relation_type
+        FROM memory_relations mr
+        JOIN memory_entries src ON src.canonical_id = mr.src_canonical_id
+        JOIN memory_entries dst ON dst.canonical_id = mr.dst_canonical_id
+        WHERE src.id = ANY($1)
+          AND dst.id = ANY($1)
+        ORDER BY mr.relation_type ASC, src.id ASC, dst.id ASC
         "#,
     )
     .bind(&memory_ids)

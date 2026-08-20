@@ -667,17 +667,23 @@ pub(crate) async fn project_bundle_import(
         let Some(src_memory_id) = current_ids.get(&entry.entry_key).copied() else {
             continue;
         };
-        sqlx::query("DELETE FROM memory_relations WHERE src_memory_id = $1")
-            .bind(src_memory_id)
-            .execute(pool)
-            .await
-            .map_err(ApiError::sql)?;
+        sqlx::query(
+            "DELETE FROM memory_relations WHERE src_canonical_id = \
+             (SELECT canonical_id FROM memory_entries WHERE id = $1)",
+        )
+        .bind(src_memory_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::sql)?;
         for relation in &entry.relations {
             if let Some(dst_memory_id) = current_ids.get(&relation.target_entry_key).copied() {
                 sqlx::query(
                     r#"
-                    INSERT INTO memory_relations (id, src_memory_id, relation_type, dst_memory_id)
-                    VALUES ($1, $2, $3, $4)
+                    INSERT INTO memory_relations
+                        (id, src_canonical_id, relation_type, dst_canonical_id, origin, actor)
+                    SELECT $1, src.canonical_id, $3, dst.canonical_id, 'asserted', 'bundle_import'
+                    FROM memory_entries src, memory_entries dst
+                    WHERE src.id = $2 AND dst.id = $4
                     ON CONFLICT DO NOTHING
                     "#,
                 )
