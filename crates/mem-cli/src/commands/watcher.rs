@@ -7,7 +7,8 @@ use std::{env, path::PathBuf};
 
 use crate::{
     commands::{
-        memory_ops::resolve_project_slug,
+        api::ApiClient,
+        memory_ops::{preview_automation_flush, resolve_project_slug},
         runtime::{WatcherArgs, WatcherCommand, WatcherManagerCommand, default_global_config_path},
         skill_support::resolve_repo_root,
         watch_support::{
@@ -18,8 +19,9 @@ use crate::{
             watch_service_status, watcher_command_requires_config_load,
         },
     },
-    writer_identity::resolve_writer_identity_for_tool,
+    writer_identity::{resolve_writer_identity, resolve_writer_identity_for_tool},
 };
+use mem_watch::{flush_path, run_once};
 
 pub(super) async fn handle_pre_config(
     args: &WatcherArgs,
@@ -28,7 +30,7 @@ pub(super) async fn handle_pre_config(
     let cwd = env::current_dir().context("read current directory")?;
     let repo_root = resolve_repo_root(&cwd)?;
     match &args.command {
-        WatcherCommand::Run(_) => {}
+        WatcherCommand::Run(_) | WatcherCommand::Flush(_) => {}
         WatcherCommand::Manager(args) => match &args.command {
             WatcherManagerCommand::Run => {}
             WatcherManagerCommand::Enable(args) => {
@@ -122,6 +124,54 @@ pub(super) async fn handle(
                 unreachable!("watcher manager lifecycle commands are handled before config loading")
             }
         },
+        WatcherCommand::Flush(args) => {
+            let cwd = env::current_dir().context("read current directory")?;
+            let project = resolve_project_slug(Some(args.project.project), &cwd)?;
+            let repo_root = config
+                .automation
+                .repo_root
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or(cwd);
+            let api = ApiClient::new(reqwest::Client::new(), config.clone());
+            let writer = resolve_writer_identity(&config, cli_writer_id.as_deref())?;
+            if args.dry_run {
+                let preview = preview_automation_flush(
+                    &api.config,
+                    &api.client,
+                    &project,
+                    &repo_root,
+                    args.curate,
+                    &writer.id,
+                    writer.name.as_deref(),
+                )
+                .await?;
+                println!("{}", serde_json::to_string_pretty(&preview)?);
+                return Ok(());
+            }
+            tokio::fs::write(flush_path(&repo_root), b"flush\n")
+                .await
+                .ok();
+            run_once(
+                &api.config,
+                &api.client,
+                &project,
+                &repo_root,
+                true,
+                args.curate,
+                &writer.id,
+                writer.name.as_deref(),
+            )
+            .await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "project": project,
+                    "status": "flush_requested",
+                    "curate": args.curate
+                }))?
+            );
+        }
         WatcherCommand::Enable(_) | WatcherCommand::Disable(_) | WatcherCommand::Status(_) => {
             unreachable!("watcher lifecycle commands are handled before config loading")
         }

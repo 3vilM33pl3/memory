@@ -1260,27 +1260,6 @@ Examples:
 See also:
   docs/user/cli/archive.md";
 
-const AUTOMATION_GROUP_AFTER_HELP: &str = "\
-Agent notes:
-  Inspect or flush pending automation capture state. Status is read-only; flush mutates capture state unless --dry-run is passed.
-
-Examples:
-  memory automation status --project memory
-  memory automation flush --project memory --curate --dry-run
-
-See also:
-  docs/user/cli/automation.md";
-
-const AUTOMATION_STATUS_AFTER_HELP: &str = "\
-Agent notes:
-  Read-only view of pending automation state for a project.
-
-Examples:
-  memory automation status --project memory
-
-See also:
-  docs/user/cli/automation.md";
-
 const AUTOMATION_FLUSH_AFTER_HELP: &str = "\
 Agent notes:
   Converts pending automation state into capture records and can optionally curate them.
@@ -1443,8 +1422,6 @@ pub(in crate::commands) enum Command {
     Agent(AgentArgs),
     #[command(about = "Inspect and operate loop automations.", after_help = LOOPS_GROUP_AFTER_HELP)]
     Loops(LoopsArgs),
-    #[command(about = "Inspect and flush automation state.", after_help = AUTOMATION_GROUP_AFTER_HELP)]
-    Automation(AutomationArgs),
     #[command(about = "Run and inspect the built-in Memory MCP server.", after_help = MCP_GROUP_AFTER_HELP)]
     Mcp(McpArgs),
     #[command(about = "Rebuild and maintain embedding spaces.", after_help = EMBEDDINGS_GROUP_AFTER_HELP)]
@@ -1829,6 +1806,8 @@ pub(in crate::commands) enum WatcherCommand {
     Status(WatchProjectArgs),
     #[command(about = "Run or manage the Codex-linked watcher manager.", after_help = WATCHER_MANAGER_GROUP_AFTER_HELP)]
     Manager(WatcherManagerArgs),
+    #[command(about = "Flush pending automation work into capture and optional curation.", after_help = AUTOMATION_FLUSH_AFTER_HELP)]
+    Flush(AutomationFlushArgs),
 }
 
 #[derive(Debug, Args)]
@@ -3521,24 +3500,6 @@ pub(in crate::commands) struct TuiArgs {
 }
 
 #[derive(Debug, Args)]
-#[command(
-    about = "Inspect or flush automation state for a project.",
-    after_help = AUTOMATION_GROUP_AFTER_HELP
-)]
-pub(in crate::commands) struct AutomationArgs {
-    #[command(subcommand)]
-    pub(crate) command: AutomationCommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub(in crate::commands) enum AutomationCommand {
-    #[command(about = "Show the current automation state for a project.", after_help = AUTOMATION_STATUS_AFTER_HELP)]
-    Status(ProjectArgs),
-    #[command(about = "Flush pending automation work into capture and optional curation.", after_help = AUTOMATION_FLUSH_AFTER_HELP)]
-    Flush(AutomationFlushArgs),
-}
-
-#[derive(Debug, Args)]
 pub(in crate::commands) struct AutomationFlushArgs {
     #[command(flatten)]
     pub(crate) project: ProjectArgs,
@@ -3724,9 +3685,6 @@ pub(super) async fn run() -> Result<()> {
         }
         Command::Health => crate::commands::health::handle(client, config).await?,
         Command::Archive(args) => crate::commands::archive::handle(args, client, config).await?,
-        Command::Automation(args) => {
-            crate::commands::automation::handle(args, client, config, cli_writer_id).await?
-        }
         Command::Watcher(args) => {
             crate::commands::watcher::handle(args, config, cli_config_path, cli_writer_id).await?
         }

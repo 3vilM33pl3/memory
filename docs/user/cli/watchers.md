@@ -137,3 +137,15 @@ Run a watcher manually:
 ```bash
 memory watcher run --project my-project
 ```
+
+## `memory watcher flush`
+
+Flushes pending automation work into a capture (and optional curation) run
+immediately, instead of waiting for the idle threshold. Formerly
+`memory automation flush`; `memory automation status` is covered by
+`memory watcher status`.
+
+```bash
+memory watcher flush --project memory --dry-run
+memory watcher flush --project memory --curate
+```

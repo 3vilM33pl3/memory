@@ -70,7 +70,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Scan Command](cli/scan.md)
 - [Commit History](cli/commits.md)
 - [Archive Command](cli/archive.md)
-- [Automation Commands](cli/automation.md)
+- Automation Commands
 - [Loop Automations](cli/loops.md)
 - [Release Compatibility And Known Limitations](release-compatibility.md)
 

@@ -13,7 +13,7 @@ These commands connect Memory Layer to humans, agents, built-in loop automations
 | `memory agent` | Yes | Coordinate concurrent agent branches and worktrees. |
 | `memory watcher` | Yes | Manage project watchers and watcher daemons. |
 | `memory loops` | Mixed | Inspect and operate built-in automation loops. |
-| `memory automation` | Yes | Legacy/local automation queue controls. |
+| `memory watcher` | Yes | Legacy/local automation queue controls. |
 | `memory mcp` | Mixed | Run and inspect the built-in Memory MCP server. |
 | `memory eval` | Yes | Run automated Memory quality evaluations. |
 
@@ -79,13 +79,13 @@ memory loops memory-proposals --project memory --status pending
 
 Use `memory loops` for the Automations tab workflows from a terminal: definitions, settings, trigger routing, manual runs, context packs, approvals, and loop-produced memory proposals. See [Automations](/docs/automations) for the built-in loop catalog and safety model.
 
-## `memory automation`
+## `memory watcher`
 
 Operate the older local automation queue controls where they are still used.
 
 ```bash
-memory automation status --project memory
-memory automation flush --project memory --dry-run
+memory watcher status --project memory
+memory watcher flush --project memory --dry-run
 ```
 
 Prefer `memory loops` for the current built-in automation control plane.

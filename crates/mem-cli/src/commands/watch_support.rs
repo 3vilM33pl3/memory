@@ -2058,6 +2058,7 @@ pub(in crate::commands) fn watcher_command_requires_config_load(command: &Watche
     matches!(
         command,
         WatcherCommand::Run(_)
+            | WatcherCommand::Flush(_)
             | WatcherCommand::Manager(WatcherManagerArgs {
                 command: WatcherManagerCommand::Run
             })

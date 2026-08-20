@@ -5,7 +5,6 @@ mod agent;
 pub(crate) mod api;
 mod archive;
 mod auth;
-mod automation;
 mod bundle;
 mod capture;
 mod checkpoint;

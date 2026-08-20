@@ -13,7 +13,7 @@ Use these commands before debugging query, TUI, watcher, MCP, or embedding behav
 | `memory status` | No | Show aggregate diagnostic status for a project. |
 | `memory doctor` | No | Inspect config, database, service, tools, and environment. |
 | `memory health` | No | Check backend API health. |
-| `memory automation` | Mixed | Inspect and flush automation state. |
+| `memory watcher` | Mixed | Inspect and flush automation state. |
 
 ## `memory service`
 
@@ -67,13 +67,13 @@ memory health
 
 If health is green but stats are empty, the service is probably healthy but the project slug or database is not the one you expected.
 
-## `memory automation`
+## `memory watcher`
 
 Automation commands inspect background queues and flush queued work when supported.
 
 ```bash
-memory automation --help
-memory automation status --project memory
+memory watcher --help
+memory watcher status --project memory
 ```
 
 Treat automation flushes as write operations. Capture logs before changing queue state when diagnosing failures.
