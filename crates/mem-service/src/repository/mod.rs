@@ -25,8 +25,13 @@ use uuid::Uuid;
 
 const LATEST_PROJECT_MEMORIES_CTE: &str = r#"
 latest AS (
-    SELECT DISTINCT ON (m.canonical_id) m.*
+    SELECT DISTINCT ON (m.canonical_id)
+        m.id, m.project_id, m.canonical_id, m.version_no, m.is_tombstone,
+        m.canonical_text, m.summary, m.memory_type, m.scope,
+        cs.importance, cs.confidence, cs.status, cs.archived_at,
+        m.created_at, m.updated_at, m.search_document
     FROM memory_entries m
+    JOIN memory_canonical_state cs ON cs.canonical_id = m.canonical_id
     JOIN projects p ON p.id = m.project_id
     WHERE p.slug = $1
     ORDER BY m.canonical_id, m.version_no DESC
@@ -1119,7 +1124,7 @@ async fn fetch_embedding_health(
             JOIN memory_entries m ON m.id = mc.memory_entry_id
             JOIN projects p ON p.id = m.project_id
             WHERE p.slug = $1
-              AND m.status = 'active'
+              AND memory_state_status(m.canonical_id) = 'active'
         ),
         chunk_embedding_status AS (
             SELECT

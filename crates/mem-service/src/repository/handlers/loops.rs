@@ -2348,8 +2348,10 @@ async fn insert_memory_update_from_proposal(
     let row = sqlx::query(
         r#"
         SELECT latest.id, latest.canonical_id, latest.version_no, latest.canonical_text,
-               latest.summary, latest.memory_type, latest.scope, latest.importance,
-               latest.confidence, latest.status
+               latest.summary, latest.memory_type, latest.scope,
+               memory_state_importance(latest.canonical_id) AS importance,
+               memory_state_confidence(latest.canonical_id) AS confidence,
+               memory_state_status(latest.canonical_id) AS status
         FROM memory_entries target
         JOIN LATERAL (
             SELECT m.*
@@ -2487,18 +2489,19 @@ async fn archive_memory_from_proposal(
             SELECT canonical_id FROM memory_entries WHERE id = $1
         ),
         latest AS (
-            SELECT m.id
+            SELECT m.id, m.canonical_id
             FROM memory_entries m
             JOIN target ON target.canonical_id = m.canonical_id
             ORDER BY m.version_no DESC
             LIMIT 1
         )
-        UPDATE memory_entries
+        UPDATE memory_canonical_state cs
         SET status = 'archived',
             archived_at = now(),
             updated_at = now()
-        WHERE id = (SELECT id FROM latest)
-        RETURNING id
+        FROM latest
+        WHERE cs.canonical_id = latest.canonical_id
+        RETURNING latest.id
         "#,
     )
     .bind(target_id)

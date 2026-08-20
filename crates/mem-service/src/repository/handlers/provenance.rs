@@ -71,7 +71,7 @@ pub(crate) async fn verify_project_provenance_with_volatility(
         FROM memory_sources ms
         JOIN memory_entries m ON m.id = ms.memory_entry_id
         WHERE m.project_id = $1
-          AND m.status = 'active'
+          AND memory_state_status(m.canonical_id) = 'active'
           AND COALESCE(m.is_tombstone, false) = false
         ORDER BY m.updated_at DESC, ms.created_at ASC
         "#,
@@ -238,7 +238,7 @@ pub(crate) async fn reverify_all_projects_once(state: &AppState) -> Result<()> {
         FROM projects p
         JOIN memory_entries m ON m.project_id = p.id
         JOIN memory_sources ms ON ms.memory_entry_id = m.id
-        WHERE m.status = 'active'
+        WHERE memory_state_status(m.canonical_id) = 'active'
           AND COALESCE(m.is_tombstone, false) = false
         ORDER BY p.slug
         "#,

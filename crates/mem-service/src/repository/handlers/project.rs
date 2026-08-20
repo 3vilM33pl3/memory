@@ -651,9 +651,9 @@ pub(crate) async fn fetch_latest_active_plan_memory(
             m.summary,
             left(m.canonical_text, 240) AS preview,
             m.memory_type,
-            m.status,
-            m.confidence,
-            m.importance,
+            cs.status,
+            cs.confidence,
+            cs.importance,
             m.updated_at,
             m.canonical_id,
             m.version_no,
@@ -674,9 +674,10 @@ pub(crate) async fn fetch_latest_active_plan_memory(
                 WHERE ms.memory_entry_id = m.id
             ), 0) AS source_count
         FROM memory_entries m
+        JOIN memory_canonical_state cs ON cs.canonical_id = m.canonical_id
         JOIN projects p ON p.id = m.project_id
         WHERE p.slug = $1
-          AND m.status = 'active'
+          AND cs.status = 'active'
           AND m.memory_type = 'plan'
           AND m.is_tombstone = FALSE
           AND m.version_no = (

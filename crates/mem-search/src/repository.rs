@@ -44,8 +44,8 @@ pub(super) async fn fetch_lexical_candidates(
             m.summary,
             m.memory_type,
             m.canonical_text,
-            m.importance,
-            m.confidence,
+            mstate.importance,
+            mstate.confidence,
             m.updated_at,
             COALESCE(ts_rank_cd(m.search_document, input.query), 0) AS entry_fts,
             COALESCE(best_chunk.chunk_fts, 0) AS chunk_fts,
@@ -62,6 +62,7 @@ pub(super) async fn fetch_lexical_candidates(
                   AND ms.file_path IS NOT NULL
             ), ARRAY[]::text[]) AS source_paths
         FROM memory_entries m
+        JOIN memory_canonical_state mstate ON mstate.canonical_id = m.canonical_id
         JOIN projects p ON p.id = m.project_id
         CROSS JOIN input
         LEFT JOIN LATERAL (
@@ -75,7 +76,7 @@ pub(super) async fn fetch_lexical_candidates(
             LIMIT 1
         ) best_chunk ON true
         WHERE ($1::text IS NULL OR p.slug = $1)
-          AND m.status = 'active'
+          AND mstate.status = 'active'
           AND (
                 $9::boolean
                 OR (
@@ -204,8 +205,8 @@ pub(super) async fn fetch_semantic_candidates(
             m.summary,
             m.memory_type,
             m.canonical_text,
-            m.importance,
-            m.confidence,
+            mstate.importance,
+            mstate.confidence,
             m.updated_at,
             mc.chunk_text,
             (mce.embedding <=> $6) AS cosine_distance,
@@ -223,9 +224,10 @@ pub(super) async fn fetch_semantic_candidates(
         FROM memory_chunks mc
         JOIN memory_chunk_embeddings mce ON mce.chunk_id = mc.id
         JOIN memory_entries m ON m.id = mc.memory_entry_id
+        JOIN memory_canonical_state mstate ON mstate.canonical_id = m.canonical_id
         JOIN projects p ON p.id = m.project_id
         WHERE ($1::text IS NULL OR p.slug = $1)
-          AND m.status = 'active'
+          AND mstate.status = 'active'
           AND (
                 $8::boolean
                 OR (
@@ -331,6 +333,7 @@ pub(super) async fn rebuild_chunks_selected(
         r#"
         SELECT m.id, m.canonical_text, m.summary
         FROM memory_entries m
+        JOIN memory_canonical_state mstate ON mstate.canonical_id = m.canonical_id
         JOIN projects p ON p.id = m.project_id
         WHERE p.slug = $1
         "#,
@@ -362,6 +365,7 @@ pub(super) async fn rebuild_memory_chunks_selected(
         r#"
         SELECT m.id, m.canonical_text, m.summary
         FROM memory_entries m
+        JOIN memory_canonical_state mstate ON mstate.canonical_id = m.canonical_id
         JOIN projects p ON p.id = m.project_id
         WHERE p.slug = $1
           AND m.id = ANY($2)
@@ -458,12 +462,13 @@ pub(super) async fn reembed_single_backend(
         SELECT mc.id, mc.search_text
         FROM memory_chunks mc
         JOIN memory_entries m ON m.id = mc.memory_entry_id
+        JOIN memory_canonical_state mstate ON mstate.canonical_id = m.canonical_id
         JOIN projects p ON p.id = m.project_id
         LEFT JOIN memory_chunk_embeddings mce
           ON mce.chunk_id = mc.id
          AND mce.embedding_space = $2
         WHERE p.slug = $1
-          AND m.status = 'active'
+          AND mstate.status = 'active'
           AND m.is_tombstone = FALSE
           AND (
                 mce.chunk_id IS NULL
@@ -534,7 +539,7 @@ pub(super) async fn prune_project_embeddings(
           AND mc.memory_entry_id = m.id
           AND m.project_id = p.id
           AND p.slug = $1
-          AND m.status = 'active'
+          AND mstate.status = 'active'
           AND m.is_tombstone = FALSE
           AND mce.embedding_space <> ALL($2)
         "#,
@@ -552,9 +557,10 @@ async fn ensure_chunks_for_reembedding(pool: &PgPool, project: &str) -> Result<u
         r#"
         SELECT m.id, m.canonical_text, m.summary
         FROM memory_entries m
+        JOIN memory_canonical_state mstate ON mstate.canonical_id = m.canonical_id
         JOIN projects p ON p.id = m.project_id
         WHERE p.slug = $1
-          AND m.status = 'active'
+          AND mstate.status = 'active'
           AND m.is_tombstone = FALSE
           AND NOT EXISTS (
               SELECT 1
@@ -658,9 +664,11 @@ pub(super) async fn scope_has_active_embedding_space(
             FROM memory_chunk_embeddings mce
             JOIN memory_chunks mc ON mc.id = mce.chunk_id
             JOIN memory_entries m ON m.id = mc.memory_entry_id
+            JOIN memory_canonical_state mstate ON mstate.canonical_id = m.canonical_id
+        JOIN memory_canonical_state mstate ON mstate.canonical_id = m.canonical_id
             JOIN projects p ON p.id = m.project_id
             WHERE ($1::text IS NULL OR p.slug = $1)
-              AND m.status = 'active'
+              AND mstate.status = 'active'
               AND m.is_tombstone = FALSE
               AND mce.embedding_space = $2
               AND mce.embedding_dimension = $3
@@ -883,8 +891,8 @@ pub(super) async fn fetch_graph_candidates(
             m.summary,
             m.memory_type,
             m.canonical_text,
-            m.importance,
-            m.confidence,
+            mstate.importance,
+            mstate.confidence,
             m.updated_at,
             left(m.canonical_text, 320) AS best_chunk_text,
             COALESCE((
@@ -915,9 +923,10 @@ pub(super) async fn fetch_graph_candidates(
                 OR (right(ms.file_path, 1) = '/' AND gh.file_path LIKE ms.file_path || '%')
              )
         JOIN memory_entries m ON m.id = ms.memory_entry_id
+        JOIN memory_canonical_state mstate ON mstate.canonical_id = m.canonical_id
         JOIN projects p ON p.id = m.project_id
         WHERE ($1::text IS NULL OR p.slug = $1)
-          AND m.status = 'active'
+          AND mstate.status = 'active'
           AND (
                 $4::boolean
                 OR (

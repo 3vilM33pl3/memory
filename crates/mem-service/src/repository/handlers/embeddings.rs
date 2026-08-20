@@ -175,7 +175,7 @@ pub(crate) async fn count_missing_embedding_chunks(
               ON mce.chunk_id = mc.id
              AND mce.embedding_space = $2
             WHERE p.slug = $1
-              AND m.status = 'active'
+              AND memory_state_status(m.canonical_id) = 'active'
               AND m.is_tombstone = FALSE
               AND (
                     mce.chunk_id IS NULL
@@ -219,7 +219,7 @@ pub(crate) async fn prune_embeddings(
             JOIN memory_entries m ON m.id = mc.memory_entry_id
             JOIN projects p ON p.id = m.project_id
             WHERE p.slug = $1
-              AND m.status = 'active'
+              AND memory_state_status(m.canonical_id) = 'active'
               AND mce.embedding_space <> ALL($2)
             "#,
         )
@@ -360,7 +360,7 @@ pub(crate) async fn fetch_project_embedding_coverage(
         JOIN memory_entries m ON m.id = mc.memory_entry_id
         JOIN projects p ON p.id = m.project_id
         WHERE p.slug = $1
-          AND m.status = 'active'
+          AND memory_state_status(m.canonical_id) = 'active'
           AND m.is_tombstone = FALSE
         GROUP BY mce.embedding_space
         "#,

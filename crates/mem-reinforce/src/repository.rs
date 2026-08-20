@@ -762,8 +762,10 @@ pub async fn fetch_memory_snapshot(
         r#"
         SELECT m.id AS memory_id, m.canonical_id, m.project_id,
                p.slug AS project_slug, COALESCE(p.root_path, '') AS repo_root,
-               m.summary, m.canonical_text, m.memory_type, m.importance,
-               m.confidence, m.created_at, m.updated_at
+               m.summary, m.canonical_text, m.memory_type,
+               memory_state_importance(m.canonical_id) AS importance,
+               memory_state_confidence(m.canonical_id) AS confidence,
+               m.created_at, m.updated_at
         FROM memory_entries m
         JOIN projects p ON p.id = m.project_id
         WHERE m.id = $1 AND COALESCE(m.is_tombstone, false) = false

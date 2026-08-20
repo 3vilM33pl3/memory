@@ -9,10 +9,12 @@ pub async fn fetch_memory_entry(
 ) -> Result<Option<MemoryEntryResponse>, sqlx::Error> {
     let row = sqlx::query(
         r#"
-        SELECT p.slug, m.id, m.canonical_text, m.summary, m.memory_type, m.importance, m.confidence,
-               m.status, m.created_at, m.updated_at,
+        SELECT p.slug, m.id, m.canonical_text, m.summary, m.memory_type,
+               cs.importance, cs.confidence, cs.status,
+               m.created_at, m.updated_at,
                m.canonical_id, m.version_no, m.is_tombstone
         FROM memory_entries m
+        JOIN memory_canonical_state cs ON cs.canonical_id = m.canonical_id
         JOIN projects p ON p.id = m.project_id
         WHERE m.id = $1
         "#,
@@ -68,7 +70,8 @@ pub async fn fetch_memory_entry(
 
     let related_memories = sqlx::query(
         r#"
-        SELECT mr.relation_type, m.id, m.summary, m.memory_type, m.confidence
+        SELECT mr.relation_type, m.id, m.summary, m.memory_type,
+               memory_state_confidence(m.canonical_id) AS confidence
         FROM memory_relations mr
         JOIN memory_entries m ON m.id = mr.dst_memory_id
         WHERE mr.src_memory_id = $1
@@ -259,12 +262,12 @@ pub(crate) async fn archive(
         sqlx::query(
             r#"
             SELECT COUNT(*) AS count
-            FROM memory_entries m
-            JOIN projects p ON p.id = m.project_id
+            FROM memory_canonical_state cs
+            JOIN projects p ON p.id = cs.project_id
             WHERE p.slug = $1
-              AND m.status = 'active'
-              AND m.confidence <= $2
-              AND m.importance <= $3
+              AND cs.status = 'active'
+              AND cs.confidence <= $2
+              AND cs.importance <= $3
             "#,
         )
         .bind(&request.project)
@@ -278,14 +281,14 @@ pub(crate) async fn archive(
     } else {
         sqlx::query(
             r#"
-            UPDATE memory_entries m
+            UPDATE memory_canonical_state cs
             SET status = 'archived', archived_at = now(), updated_at = now()
             FROM projects p
-            WHERE p.id = m.project_id
+            WHERE p.id = cs.project_id
               AND p.slug = $1
-              AND m.status = 'active'
-              AND m.confidence <= $2
-              AND m.importance <= $3
+              AND cs.status = 'active'
+              AND cs.confidence <= $2
+              AND cs.importance <= $3
             "#,
         )
         .bind(&request.project)
@@ -336,14 +339,15 @@ pub(crate) async fn archive_memory(
 
     let archived = sqlx::query(
         r#"
-        UPDATE memory_entries m
+        UPDATE memory_canonical_state cs
         SET status = 'archived',
-            archived_at = COALESCE(archived_at, now()),
+            archived_at = COALESCE(cs.archived_at, now()),
             updated_at = now()
-        FROM projects p
-        WHERE p.id = m.project_id
-          AND m.id = $1
-        RETURNING p.slug, m.summary, m.status
+        FROM memory_entries m
+        JOIN projects p ON p.id = m.project_id
+        WHERE m.id = $1
+          AND cs.canonical_id = m.canonical_id
+        RETURNING p.slug, m.summary, cs.status
         "#,
     )
     .bind(id)

@@ -184,11 +184,13 @@ pub async fn curate(pool: &PgPool, request: &CurateRequest) -> Result<CurateResp
                 let memory_id: Uuid = existing.try_get("id")?;
                 sqlx::query(
                     r#"
-                    UPDATE memory_entries
-                    SET confidence = GREATEST(confidence, $2),
-                        importance = GREATEST(importance, $3),
+                    UPDATE memory_canonical_state cs
+                    SET confidence = GREATEST(cs.confidence, $2),
+                        importance = GREATEST(cs.importance, $3),
                         updated_at = now()
-                    WHERE id = $1
+                    FROM memory_entries m
+                    WHERE m.id = $1
+                      AND cs.canonical_id = m.canonical_id
                     "#,
                 )
                 .bind(memory_id)
@@ -506,7 +508,7 @@ async fn load_existing_plan_for_thread(
          AND thread_tag.tag = $3
         LEFT JOIN imported_memory_entries ime ON ime.memory_entry_id = m.id
         WHERE m.project_id = $1
-          AND m.status = 'active'
+          AND memory_state_status(m.canonical_id) = 'active'
           AND ime.memory_entry_id IS NULL
           AND m.memory_type = $2
           AND m.scope = 'project'
@@ -563,7 +565,7 @@ async fn load_candidate_replacement_targets(
         FROM memory_entries m
         LEFT JOIN imported_memory_entries ime ON ime.memory_entry_id = m.id
         WHERE m.project_id = $1
-          AND m.status = 'active'
+          AND memory_state_status(m.canonical_id) = 'active'
           AND ime.memory_entry_id IS NULL
           AND m.memory_type = ANY($2)
           AND m.scope = 'project'
@@ -624,7 +626,9 @@ pub async fn apply_validation_revision(
              created_at, updated_at, archived_at, search_document)
         SELECT $2, m.project_id, m.canonical_id,
                (SELECT MAX(version_no) + 1 FROM memory_entries WHERE canonical_id = m.canonical_id),
-               FALSE, $3, $4, m.memory_type, m.scope, m.importance, m.confidence,
+               FALSE, $3, $4, m.memory_type, m.scope,
+               memory_state_importance(m.canonical_id),
+               memory_state_confidence(m.canonical_id),
                'active', now(), now(), NULL,
                to_tsvector('english', $3 || ' ' || $4)
         FROM memory_entries m
@@ -912,7 +916,7 @@ pub async fn refresh_semantic_relations(
             JOIN memory_entries other ON other.id = oc.memory_entry_id
             WHERE mc.memory_entry_id = $1
               AND other.project_id = $2
-              AND other.status = 'active'
+              AND memory_state_status(other.canonical_id) = 'active'
               AND other.canonical_id <> me.canonical_id
             GROUP BY other.id, other.summary, other.canonical_text
             HAVING MAX(1 - (ce.embedding <=> oe.embedding)) >= $3
@@ -1083,7 +1087,7 @@ async fn refresh_relations(
         FROM memory_entries m
         WHERE m.project_id = $1
           AND m.id <> $2
-          AND m.status = 'active'
+          AND memory_state_status(m.canonical_id) = 'active'
         "#,
     )
     .bind(project_id)

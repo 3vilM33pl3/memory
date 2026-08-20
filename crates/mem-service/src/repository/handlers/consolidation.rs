@@ -319,14 +319,14 @@ async fn fetch_active_memories(
         JOIN LATERAL (
             SELECT id FROM memory_entries e
             WHERE e.canonical_id = m.canonical_id
-              AND e.status = 'active'
+              AND memory_state_status(e.canonical_id) = 'active'
               AND COALESCE(e.is_tombstone, false) = false
             ORDER BY e.version_no DESC
             LIMIT 1
         ) latest ON latest.id = m.id
         LEFT JOIN memory_scores s ON s.canonical_id = m.canonical_id
         WHERE m.project_id = $1
-          AND m.status = 'active'
+          AND memory_state_status(m.canonical_id) = 'active'
           AND COALESCE(m.is_tombstone, false) = false
         "#,
     )
@@ -376,14 +376,14 @@ pub(crate) async fn fetch_similarity_edges(
                 WHERE oe.embedding_space = ce.embedding_space
                   AND COALESCE(oe.embedding_dimension, 0) = COALESCE(ce.embedding_dimension, 0)
                   AND oe_me.project_id = $1
-                  AND oe_me.status = 'active'
+                  AND memory_state_status(oe_me.canonical_id) = 'active'
                   AND oe_me.canonical_id <> me.canonical_id
                 ORDER BY oe.embedding <=> ce.embedding
                 LIMIT $2
             ) oe ON true
             JOIN memory_entries other ON other.id = oe.memory_entry_id
             WHERE me.project_id = $1
-              AND me.status = 'active'
+              AND memory_state_status(me.canonical_id) = 'active'
         )
         SELECT
             LEAST(a, b) AS lo,
@@ -477,7 +477,7 @@ async fn fetch_insight_coverage(
         WHERE rel.relation_type = 'summarizes'
           AND p.slug = $1
           AND src.memory_type = 'insight'
-          AND src.status = 'active'
+          AND memory_state_status(src.canonical_id) = 'active'
         "#,
     )
     .bind(project)
@@ -528,9 +528,9 @@ pub(crate) async fn fetch_insight_tree(
         WHERE rel.relation_type = 'summarizes'
           AND p.slug = $1
           AND src.memory_type = 'insight'
-          AND src.status = 'active'
+          AND memory_state_status(src.canonical_id) = 'active'
           AND COALESCE(src.is_tombstone, false) = false
-          AND dst.status = 'active'
+          AND memory_state_status(dst.canonical_id) = 'active'
           AND COALESCE(dst.is_tombstone, false) = false
         "#,
     )
