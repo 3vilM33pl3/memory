@@ -5,9 +5,7 @@ use mem_config::AppConfig;
 use reqwest::Client;
 
 use crate::commands::{
-    api::{get_json, print_memory_history},
-    output::service_url,
-    runtime::HistoryArgs,
+    api::get_json, output::print_memory_history, output::service_url, runtime::HistoryArgs,
 };
 
 pub(super) async fn handle(args: HistoryArgs, client: Client, config: AppConfig) -> Result<()> {

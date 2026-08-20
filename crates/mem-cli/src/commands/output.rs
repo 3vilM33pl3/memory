@@ -3,12 +3,14 @@
 use crate::{resume, scan};
 use std::path::Path;
 
+use crate::commands::api::diagnostic_severity_name;
+use crate::commands::memory_ops::SourceKindString;
 use anyhow::Result;
 use mem_config::AppConfig;
 use mem_record::{
     ActivityListResponse, CodeGraphStatusResponse, CommitDetailResponse, CommitSyncResponse,
     ProjectCommitsResponse, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
-    ResumeResponse, UpToSpeedResponse,
+    ProvenanceVerificationResponse, QueryResponse, ResumeResponse, UpToSpeedResponse,
 };
 use reqwest::header::HeaderMap;
 
@@ -633,4 +635,302 @@ pub(crate) fn client_api_token(config: &AppConfig) -> String {
 
 pub(crate) fn service_url(config: &AppConfig, path: &str) -> String {
     format!("http://{}{}", config.service.bind_addr, path)
+}
+
+// Response renderers (moved from api.rs: rendering is not transport).
+pub(crate) fn print_embedding_backends(payload: &mem_record::EmbeddingBackendsResponse) {
+    if payload.backends.is_empty() {
+        println!("No embedding backends configured.");
+        return;
+    }
+    let active = payload.active.as_deref();
+    let name_width = payload
+        .backends
+        .iter()
+        .map(|b| b.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let provider_width = payload
+        .backends
+        .iter()
+        .map(|b| b.provider.len())
+        .max()
+        .unwrap_or(8)
+        .max(8);
+    println!(
+        "  {:name_width$}  {:provider_width$}  CREATE  MODEL",
+        "NAME",
+        "PROVIDER",
+        name_width = name_width,
+        provider_width = provider_width
+    );
+    for backend in &payload.backends {
+        let marker = if Some(backend.name.as_str()) == active {
+            "*"
+        } else if !backend.ready {
+            "!"
+        } else {
+            " "
+        };
+        println!(
+            "{marker} {:name_width$}  {:provider_width$}  {:7} {}",
+            backend.name,
+            backend.provider,
+            if backend.create_enabled { "on" } else { "off" },
+            backend.model,
+            name_width = name_width,
+            provider_width = provider_width
+        );
+    }
+    println!();
+    if let Some(name) = active {
+        println!("Active: {name}");
+    } else {
+        println!("Active: (none) — run `memory embeddings activate <name>` to pick one.");
+    }
+    let not_ready: Vec<&str> = payload
+        .backends
+        .iter()
+        .filter(|b| !b.ready)
+        .map(|b| b.name.as_str())
+        .collect();
+    if !not_ready.is_empty() {
+        println!(
+            "Not ready ({} — missing API key or model): {}",
+            not_ready.len(),
+            not_ready.join(", ")
+        );
+    }
+}
+
+pub(crate) fn print_memory_history(payload: &mem_record::MemoryHistoryResponse) {
+    println!(
+        "Canonical {} in project {} — {} version(s)",
+        payload.canonical_id,
+        payload.project,
+        payload.versions.len()
+    );
+    for version in &payload.versions {
+        let marker = if version.is_tombstone {
+            " [tombstone]"
+        } else {
+            ""
+        };
+        let status_label = match version.status {
+            mem_record::MemoryStatus::Active => "active",
+            mem_record::MemoryStatus::Archived => "archived",
+        };
+        println!(
+            "\nv{} — {} ({}){}\n  id: {}\n  updated: {}",
+            version.version_no,
+            version.memory_type,
+            status_label,
+            marker,
+            version.id,
+            version.updated_at.to_rfc3339(),
+        );
+        if version.is_tombstone {
+            println!("  (empty — memory was deleted at this point)");
+        } else {
+            println!("  summary: {}", version.summary);
+            let preview: String = version.canonical_text.chars().take(240).collect();
+            let ellipsis = if version.canonical_text.chars().count() > 240 {
+                "..."
+            } else {
+                ""
+            };
+            println!("  text: {preview}{ellipsis}");
+        }
+    }
+}
+
+pub(crate) fn print_query_response(payload: QueryResponse) {
+    println!("Answer:\n{}\n", payload.answer);
+    println!(
+        "Confidence: {:.2} | Evidence: {} | Method: {} | Citations: {}\n",
+        payload.confidence,
+        if payload.insufficient_evidence {
+            "insufficient"
+        } else {
+            "sufficient"
+        },
+        payload.answer_generation.method,
+        format_query_citations(&payload.answer_generation.cited_result_numbers)
+    );
+    if let Some(reason) = &payload.answer_generation.fallback_reason {
+        println!("Fallback: {reason}\n");
+    }
+    if !payload.diagnostics.provenance_warnings.is_empty() {
+        println!("Provenance warnings:");
+        for warning in &payload.diagnostics.provenance_warnings {
+            println!(
+                "  - [{}] {}",
+                diagnostic_severity_name(&warning.severity),
+                warning.message
+            );
+            if let Some(fix_hint) = &warning.fix_hint {
+                println!("    hint: {fix_hint}");
+            }
+        }
+        println!();
+    }
+    println!(
+        "Diagnostics: lexical {} ({} ms) | semantic {} ({} ms) | graph {} [{}] ({} ms) | merged {} | returned {} | rerank {} ms | total {} ms\n",
+        payload.diagnostics.lexical_candidates,
+        payload.diagnostics.lexical_duration_ms,
+        payload.diagnostics.semantic_candidates,
+        payload.diagnostics.semantic_duration_ms,
+        payload.diagnostics.graph_candidates,
+        payload.diagnostics.graph_status,
+        payload.diagnostics.graph_duration_ms,
+        payload.diagnostics.merged_candidates,
+        payload.diagnostics.returned_results,
+        payload.diagnostics.rerank_duration_ms,
+        payload.diagnostics.total_duration_ms,
+    );
+    if !payload.answer_citations.is_empty() {
+        println!("Cited memories:");
+        for citation in &payload.answer_citations {
+            println!(
+                "{}. {} [{}] {}",
+                citation.result_number, citation.summary, citation.memory_type, citation.snippet
+            );
+        }
+        println!();
+    }
+    for (index, result) in payload.results.into_iter().enumerate() {
+        println!(
+            "{}. {} [{} / {}] score={:.2}",
+            index + 1,
+            result.summary,
+            result.memory_type,
+            result.match_kind,
+            result.score
+        );
+        println!("  {}", result.snippet);
+        println!(
+            "  debug: chunk {:.2} | entry {:.2} | semantic {:.2} | relation {:.2} | graph {:.2}",
+            result.debug.chunk_fts,
+            result.debug.entry_fts,
+            result.debug.semantic_similarity,
+            result.debug.relation_boost,
+            result.debug.graph_boost,
+        );
+        if !result.score_explanation.is_empty() {
+            println!("  why: {}", result.score_explanation.join(" | "));
+        }
+        for connection in &result.graph_connections {
+            let symbol = connection
+                .symbol
+                .as_deref()
+                .map(|value| format!(" symbol={value}"))
+                .unwrap_or_default();
+            let edge = connection
+                .edge_kind
+                .as_deref()
+                .map(|value| format!(" edge={value}"))
+                .unwrap_or_default();
+            let neighbor = connection
+                .neighbor_symbol
+                .as_deref()
+                .map(|value| format!(" neighbor={value}"))
+                .unwrap_or_default();
+            println!(
+                "  graph: {} {}{}{}{} boost={:.2}",
+                connection.reason,
+                connection.file_path,
+                symbol,
+                edge,
+                neighbor,
+                connection.score_boost
+            );
+        }
+        if !result.tags.is_empty() {
+            println!("  tags: {}", result.tags.join(", "));
+        }
+        for source in result.sources {
+            let path = source.file_path.unwrap_or_else(|| "<no-file>".to_string());
+            if let Some(provenance) = source.provenance {
+                println!(
+                    "  source: {} {} provenance={}",
+                    path,
+                    source.source_kind.source_kind_string(),
+                    provenance.status.as_str()
+                );
+                if let Some(reason) = provenance.reason {
+                    println!("    provenance reason: {reason}");
+                }
+            } else {
+                println!(
+                    "  source: {} {}",
+                    path,
+                    source.source_kind.source_kind_string()
+                );
+            }
+        }
+    }
+}
+
+pub(crate) fn print_provenance_verification_response(response: &ProvenanceVerificationResponse) {
+    println!(
+        "Provenance verification for `{}` at {}",
+        response.project, response.repo_root
+    );
+    println!(
+        "checked={} verified={} missing_file={} missing_symbol={} unverifiable={} stale={} stored={} dry_run={}",
+        response.checked_count,
+        response.verified_count,
+        response.missing_file_count,
+        response.missing_symbol_count,
+        response.unverifiable_count,
+        response.stale_count,
+        response.stored_count,
+        response.dry_run
+    );
+    if !response.warnings.is_empty() {
+        println!("\nWarnings:");
+        for warning in &response.warnings {
+            println!(
+                "  - [{}] {}",
+                diagnostic_severity_name(&warning.severity),
+                warning.message
+            );
+            if let Some(fix_hint) = &warning.fix_hint {
+                println!("    hint: {fix_hint}");
+            }
+        }
+    }
+    let problem_items: Vec<_> = response
+        .items
+        .iter()
+        .filter(|item| item.status != mem_record::SourceProvenanceStatus::Verified)
+        .take(25)
+        .collect();
+    if !problem_items.is_empty() {
+        println!("\nNon-verified sources:");
+        for item in problem_items {
+            println!(
+                "  - {} {} {}",
+                item.status.as_str(),
+                item.file_path.as_deref().unwrap_or("<no-file>"),
+                item.memory_summary
+            );
+            if let Some(reason) = &item.reason {
+                println!("    {reason}");
+            }
+        }
+    }
+}
+
+pub(crate) fn format_query_citations(numbers: &[usize]) -> String {
+    if numbers.is_empty() {
+        "none".to_string()
+    } else {
+        numbers
+            .iter()
+            .map(|number| format!("[{number}]"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }

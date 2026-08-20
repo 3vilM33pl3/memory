@@ -7,9 +7,8 @@ use reqwest::Client;
 use std::env;
 
 use crate::commands::{
-    api::{ApiClient, print_provenance_verification_response},
-    memory_ops::resolve_project_slug,
-    runtime::VerifyProvenanceArgs,
+    api::ApiClient, memory_ops::resolve_project_slug,
+    output::print_provenance_verification_response, runtime::VerifyProvenanceArgs,
 };
 
 pub(super) async fn handle(

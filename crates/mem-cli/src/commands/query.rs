@@ -6,7 +6,8 @@ use mem_record::{QueryFilters, QueryRequest, QueryResponse};
 use reqwest::Client;
 
 use crate::commands::{
-    api::{get_json, print_query_response},
+    api::get_json,
+    output::print_query_response,
     output::{parse_memory_type, service_url},
     runtime::QueryArgs,
 };

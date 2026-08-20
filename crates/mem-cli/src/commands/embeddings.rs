@@ -6,7 +6,8 @@ use mem_record::{ReembedRequest, ReindexRequest};
 use reqwest::Client;
 
 use crate::commands::{
-    api::{ApiClient, print_embedding_backends, print_json_response},
+    api::{ApiClient, print_json_response},
+    output::print_embedding_backends,
     output::{service_url, write_headers},
     runtime::{EmbeddingsArgs, EmbeddingsCommand},
 };
