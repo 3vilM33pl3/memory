@@ -162,6 +162,8 @@ fn single_user_reader() -> AuthenticatedPrincipal {
         kind: AuthPrincipalKind::Internal,
         display_name: "single-user local reader".to_string(),
         email: None,
+        issuer: None,
+        subject: None,
         groups: Vec::new(),
         global_role: Some(AuthRole::Reader),
         project_roles: BTreeMap::new(),
@@ -178,6 +180,8 @@ fn legacy_principal() -> AuthenticatedPrincipal {
         kind: AuthPrincipalKind::LegacyServiceToken,
         display_name: "legacy service token".to_string(),
         email: None,
+        issuer: None,
+        subject: None,
         groups: Vec::new(),
         global_role: Some(AuthRole::Admin),
         project_roles: BTreeMap::new(),
@@ -195,7 +199,7 @@ async fn load_service_token_principal(
 ) -> Result<AuthenticatedPrincipal, ApiError> {
     let row = sqlx::query(
         r#"
-        SELECT p.id, p.kind, p.display_name, p.email, p.groups_json, p.global_role,
+        SELECT p.id, p.kind, p.display_name, p.email, p.issuer, p.subject, p.groups_json, p.global_role,
                t.id AS token_id
         FROM auth_service_tokens t
         JOIN auth_principals p ON p.id = t.principal_id
@@ -229,7 +233,7 @@ async fn load_session_principal(
 ) -> Result<AuthenticatedPrincipal, ApiError> {
     let row = sqlx::query(
         r#"
-        SELECT p.id, p.kind, p.display_name, p.email, p.groups_json, p.global_role,
+        SELECT p.id, p.kind, p.display_name, p.email, p.issuer, p.subject, p.groups_json, p.global_role,
                s.id AS session_id, s.csrf_hash
         FROM auth_web_sessions s
         JOIN auth_principals p ON p.id = s.principal_id
@@ -266,6 +270,8 @@ async fn principal_from_row(
     let id: Uuid = row.try_get("id").map_err(ApiError::sql)?;
     let display_name: String = row.try_get("display_name").map_err(ApiError::sql)?;
     let email: Option<String> = row.try_get("email").map_err(ApiError::sql)?;
+    let issuer: Option<String> = row.try_get("issuer").map_err(ApiError::sql)?;
+    let subject: Option<String> = row.try_get("subject").map_err(ApiError::sql)?;
     let kind = parse_principal_kind(
         row.try_get::<String, _>("kind")
             .map_err(ApiError::sql)?
@@ -304,6 +310,8 @@ async fn principal_from_row(
         kind,
         display_name,
         email,
+        issuer,
+        subject,
         groups,
         global_role,
         project_roles,

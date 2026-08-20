@@ -631,6 +631,8 @@ mod tests {
             kind: AuthPrincipalKind::HumanOidc,
             display_name: "Project Admin".to_string(),
             email: None,
+            issuer: None,
+            subject: None,
             groups: Vec::new(),
             global_role: None,
             project_roles,

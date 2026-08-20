@@ -71,6 +71,10 @@ pub struct AuthPrincipalResponse {
     pub display_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
     #[serde(default)]
     pub groups: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

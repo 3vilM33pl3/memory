@@ -19,6 +19,10 @@ pub(crate) struct AuthenticatedPrincipal {
     pub(crate) kind: AuthPrincipalKind,
     pub(crate) display_name: String,
     pub(crate) email: Option<String>,
+    /// OIDC issuer/subject pair when the principal came from an identity
+    /// provider - the natural slot for a future decentralized identifier.
+    pub(crate) issuer: Option<String>,
+    pub(crate) subject: Option<String>,
     pub(crate) groups: Vec<String>,
     pub(crate) global_role: Option<AuthRole>,
     pub(crate) project_roles: BTreeMap<String, ProjectRoleGrant>,
@@ -75,6 +79,8 @@ impl AuthenticatedPrincipal {
             kind: self.kind,
             display_name: self.display_name.clone(),
             email: self.email.clone(),
+            issuer: self.issuer.clone(),
+            subject: self.subject.clone(),
             groups: self.groups.clone(),
             global_role: self.global_role,
             projects: self
@@ -130,6 +136,8 @@ mod tests {
             kind: AuthPrincipalKind::HumanOidc,
             display_name: "Memory Admin".to_string(),
             email: None,
+            issuer: None,
+            subject: None,
             groups: Vec::new(),
             global_role: Some(AuthRole::Admin),
             project_roles: BTreeMap::new(),
