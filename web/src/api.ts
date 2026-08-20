@@ -53,13 +53,7 @@ import type {
   AuthServiceTokenResponse,
 } from "./types";
 
-interface WebAuthTokenResponse {
-  api_token: string;
-  header: "x-api-token";
-  read_only?: boolean;
-}
-
-let webAuthTokenPromise: Promise<string> | null = null;
+let sessionBootstrapPromise: Promise<void> | null = null;
 let authMePromise: Promise<AuthMeResponse> | null = null;
 let serviceReadOnly = false;
 
@@ -81,21 +75,23 @@ async function parseJson<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function getWebAuthToken(): Promise<string> {
-  if (!webAuthTokenPromise) {
-    webAuthTokenPromise = parseJson<WebAuthTokenResponse>(
-      await fetch("/v1/web/auth-token", { credentials: "same-origin" }),
-    )
-      .then((payload) => {
-        serviceReadOnly = payload.read_only === true;
-        return payload.api_token;
+/** Single-user installs mint a local-owner browser session over loopback. */
+async function ensureSession(): Promise<void> {
+  if (readCookie("memory_csrf")) return;
+  if (!sessionBootstrapPromise) {
+    sessionBootstrapPromise = fetch("/v1/auth/session/bootstrap", {
+      method: "POST",
+      credentials: "same-origin",
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`session bootstrap failed: ${response.status}`);
       })
       .catch((error) => {
-        webAuthTokenPromise = null;
+        sessionBootstrapPromise = null;
         throw error;
       });
   }
-  return webAuthTokenPromise;
+  return sessionBootstrapPromise;
 }
 
 export async function getAuthMe(refresh = false): Promise<AuthMeResponse> {
@@ -119,10 +115,10 @@ export async function getAuthMe(refresh = false): Promise<AuthMeResponse> {
 async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const auth = await getAuthMe();
   const headers = new Headers(init.headers);
-  if (auth.mode === "single_user") {
-    const token = await getWebAuthToken();
-    headers.set("x-api-token", token);
-  } else if (init.method && !["GET", "HEAD", "OPTIONS"].includes(init.method.toUpperCase())) {
+  const mutating =
+    init.method !== undefined && !["GET", "HEAD", "OPTIONS"].includes(init.method.toUpperCase());
+  if (mutating) {
+    if (auth.mode === "single_user") await ensureSession();
     const csrf = readCookie("memory_csrf");
     if (csrf) headers.set("x-csrf-token", csrf);
   }

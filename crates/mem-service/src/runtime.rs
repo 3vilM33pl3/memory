@@ -30,11 +30,14 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
             .await
             .context("bind http listener")?;
         let mut http_server = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
-                .await
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
         });
         let mut cluster_tasks = start_cluster_tasks(state.clone()).await?;
 

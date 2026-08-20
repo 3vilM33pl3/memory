@@ -30,11 +30,11 @@ use super::{
     project_replacement_proposals, project_resume, project_structure, project_up_to_speed,
     prune_embeddings, prune_history, query, query_global, read_skill, reembed, reindex,
     reject_loop_approval, reject_loop_memory_proposal, repair_skills, review_validation_run,
-    route_loop_trigger, run_loop, runtime_status, scan_activity, set_embedding_creation_enabled,
-    set_llm_audit_enabled, skills, snooze_loop, start_agent_workspace, submit_loop_feedback,
-    sync_commits, update_loop_global_state, validate_memory, validation_runs, verify_provenance,
-    watcher_heartbeat, watcher_restart_local, watcher_unregister, web_auth_token, web_unavailable,
-    websocket,
+    route_loop_trigger, run_loop, runtime_status, scan_activity, session_bootstrap,
+    set_embedding_creation_enabled, set_llm_audit_enabled, skills, snooze_loop,
+    start_agent_workspace, submit_loop_feedback, sync_commits, update_loop_global_state,
+    validate_memory, validation_runs, verify_provenance, watcher_heartbeat, watcher_restart_local,
+    watcher_unregister, web_unavailable, websocket,
 };
 
 /// The API specification, embedded at compile time so the running service
@@ -54,7 +54,7 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/v1/openapi.yaml", get(openapi_spec))
         .route("/ws", get(websocket))
-        .route("/v1/web/auth-token", get(web_auth_token))
+        .route("/v1/auth/session/bootstrap", post(session_bootstrap))
         .route("/v1/auth/login", get(auth_login))
         .route("/v1/auth/callback", get(auth_callback))
         .route("/v1/auth/me", get(auth_me))

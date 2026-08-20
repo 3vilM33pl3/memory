@@ -64,11 +64,11 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
-  /v1/web/auth-token:
-    get:
-      operationId: get_v1_web_auth_token
-      summary: "Short-lived auth token for the bundled web UI (loopback only)."
-      tags: ["System"]
+  /v1/auth/session/bootstrap:
+    post:
+      operationId: post_v1_auth_session_bootstrap
+      summary: "Mint a browser session for the machine-local owner (single-user mode, loopback only)."
+      tags: ["Auth"]
       x-stability: internal
       responses:
         "200":

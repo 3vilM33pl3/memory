@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use std::net::SocketAddr;
+
 use axum::{
     Extension, Json,
-    extract::{Path, State},
-    http::{HeaderMap, HeaderValue, header},
+    extract::{ConnectInfo, Path, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use mem_record::AuthMode;
 use mem_record::{
     AuthMeResponse, AuthMembershipGrantRequest, AuthMembershipResponse, AuthPrincipalResponse,
     AuthServiceTokenCreateRequest, AuthServiceTokenResponse,
@@ -28,6 +31,56 @@ pub(crate) async fn auth_me(
         read_only: state.config.service.read_only,
         principal: principal.to_response(),
     }))
+}
+
+/// Mints a browser session for the machine-local owner. Single-user mode
+/// only, loopback connections only: this replaces the old /v1/web/auth-token
+/// endpoint that handed the raw installation token to the browser.
+pub(crate) async fn session_bootstrap(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Result<Response, ApiError> {
+    if state.config.auth.mode != AuthMode::SingleUser {
+        return Err(ApiError::status_message(
+            StatusCode::NOT_FOUND,
+            "session bootstrap exists only in single-user mode; use the OIDC login flow",
+        ));
+    }
+    if !peer.ip().is_loopback() {
+        return Err(ApiError::forbidden(
+            "session bootstrap requires a loopback connection",
+        ));
+    }
+    let pool = state.pool()?;
+    crate::auth::ensure_local_owner_principal(&pool)
+        .await
+        .map_err(ApiError::sql)?;
+    let (session_secret, csrf_secret) =
+        crate::auth::mint_web_session(&state, &pool, crate::auth::local_owner_id()).await?;
+    let secure = false; // loopback-only by construction
+    let max_age = i64::try_from(state.config.auth.session_ttl.as_secs())
+        .map_err(|_| ApiError::internal("auth session ttl is too large"))?;
+    let mut response = Json(serde_json::json!({ "authenticated": true })).into_response();
+    crate::auth::append_cookie(
+        response.headers_mut(),
+        SESSION_COOKIE_NAME,
+        &session_secret,
+        max_age,
+        true,
+        secure,
+    )?;
+    crate::auth::append_cookie(
+        response.headers_mut(),
+        CSRF_COOKIE_NAME,
+        &csrf_secret,
+        max_age,
+        false,
+        secure,
+    )?;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
 }
 
 pub(crate) async fn auth_logout(

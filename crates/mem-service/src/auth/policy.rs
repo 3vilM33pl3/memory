@@ -87,13 +87,13 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             )],
         ),
         (
-            "/v1/web/auth-token",
+            "/v1/auth/session/bootstrap",
             &[(
-                Method::GET,
+                Method::POST,
                 RoutePolicy {
                     permission: Permission::MemoryRead,
                     scope: ProjectScope::Public,
-                    semantic_read: false,
+                    semantic_read: true,
                 },
             )],
         ),
@@ -1352,24 +1352,29 @@ fn validate_browser_mutation(
     headers: &axum::http::HeaderMap,
     principal: &AuthenticatedPrincipal,
 ) -> Result<(), ApiError> {
-    let public_base_url = state
-        .config
-        .auth
-        .public_base_url
-        .as_deref()
-        .ok_or_else(|| {
-            ApiError::forbidden("auth.public_base_url is required for browser writes")
-        })?;
-    let expected_origin = reqwest::Url::parse(public_base_url)
-        .map_err(|_| ApiError::internal("auth.public_base_url is invalid"))?
-        .origin()
-        .ascii_serialization();
-    let origin = headers
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-        .ok_or_else(|| ApiError::forbidden("browser write is missing Origin"))?;
-    if origin != expected_origin {
-        return Err(ApiError::forbidden("browser write Origin is not allowed"));
+    match state.config.auth.public_base_url.as_deref() {
+        Some(public_base_url) => {
+            let expected_origin = reqwest::Url::parse(public_base_url)
+                .map_err(|_| ApiError::internal("auth.public_base_url is invalid"))?
+                .origin()
+                .ascii_serialization();
+            let origin = headers
+                .get(header::ORIGIN)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| ApiError::forbidden("browser write is missing Origin"))?;
+            if origin != expected_origin {
+                return Err(ApiError::forbidden("browser write Origin is not allowed"));
+            }
+        }
+        // Single-user installs have no public base URL; their sessions are
+        // minted over loopback only, and the CSRF double-submit check below
+        // remains unconditional.
+        None if state.config.auth.mode == mem_record::AuthMode::SingleUser => {}
+        None => {
+            return Err(ApiError::forbidden(
+                "auth.public_base_url is required for browser writes",
+            ));
+        }
     }
     let csrf_header = headers
         .get("x-csrf-token")

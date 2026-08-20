@@ -185,26 +185,7 @@ pub(crate) async fn auth_callback(
     )
     .await?;
 
-    let session_secret = format!("mls_{}", random_secret(32));
-    let csrf_secret = format!("mlc_{}", random_secret(24));
-    let expires_at = Utc::now()
-        + Duration::from_std(state.config.auth.session_ttl)
-            .map_err(|_| ApiError::internal("auth session ttl is too large"))?;
-    sqlx::query(
-        r#"
-        INSERT INTO auth_web_sessions
-            (id, principal_id, session_hash, csrf_hash, created_at, expires_at, last_seen_at)
-        VALUES ($1, $2, $3, $4, now(), $5, now())
-        "#,
-    )
-    .bind(Uuid::new_v4())
-    .bind(principal_id)
-    .bind(hash_secret(&session_secret))
-    .bind(hash_secret(&csrf_secret))
-    .bind(expires_at)
-    .execute(&pool)
-    .await
-    .map_err(ApiError::sql)?;
+    let (session_secret, csrf_secret) = mint_web_session(&state, &pool, principal_id).await?;
     sqlx::query(
         r#"
         INSERT INTO auth_audit_events
@@ -249,6 +230,37 @@ pub(crate) async fn auth_callback(
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(response)
+}
+
+/// Creates an auth_web_sessions row for the principal and returns the
+/// (session, csrf) secrets. Shared by the OIDC callback and the single-user
+/// session bootstrap.
+pub(crate) async fn mint_web_session(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    principal_id: Uuid,
+) -> Result<(String, String), ApiError> {
+    let session_secret = format!("mls_{}", random_secret(32));
+    let csrf_secret = format!("mlc_{}", random_secret(24));
+    let expires_at = Utc::now()
+        + Duration::from_std(state.config.auth.session_ttl)
+            .map_err(|_| ApiError::internal("auth session ttl is too large"))?;
+    sqlx::query(
+        r#"
+        INSERT INTO auth_web_sessions
+            (id, principal_id, session_hash, csrf_hash, created_at, expires_at, last_seen_at)
+        VALUES ($1, $2, $3, $4, now(), $5, now())
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(principal_id)
+    .bind(hash_secret(&session_secret))
+    .bind(hash_secret(&csrf_secret))
+    .bind(expires_at)
+    .execute(pool)
+    .await
+    .map_err(ApiError::sql)?;
+    Ok((session_secret, csrf_secret))
 }
 
 async fn discover_client(state: &AppState) -> Result<DiscoveredCoreClient, ApiError> {
@@ -407,7 +419,7 @@ async fn upsert_human_principal(
     row.try_get("id").map_err(ApiError::sql)
 }
 
-fn append_cookie(
+pub(crate) fn append_cookie(
     headers: &mut axum::http::HeaderMap,
     name: &str,
     value: &str,

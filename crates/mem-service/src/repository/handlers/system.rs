@@ -9,30 +9,6 @@ pub(crate) async fn healthz(
     Ok(Json(health_payload(&state).await.map_err(ApiError::io)?))
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct WebAuthTokenResponse {
-    pub(crate) api_token: String,
-    pub(crate) header: &'static str,
-    /// True when the service runs in read-only (student) mode, so the web UI
-    /// can surface the mode instead of surfacing 403s on write attempts.
-    pub(crate) read_only: bool,
-}
-
-pub(crate) async fn web_auth_token(
-    State(state): State<AppState>,
-) -> Result<Json<WebAuthTokenResponse>, ApiError> {
-    if state.config.auth.mode == mem_record::AuthMode::MultiUser {
-        return Err(ApiError::not_found(
-            "the shared browser token endpoint is disabled in multiuser mode",
-        ));
-    }
-    Ok(Json(WebAuthTokenResponse {
-        read_only: state.config.service.read_only,
-        api_token: state.api_token,
-        header: "x-api-token",
-    }))
-}
-
 pub(crate) async fn admin_shutdown(
     State(state): State<AppState>,
     headers: HeaderMap,
