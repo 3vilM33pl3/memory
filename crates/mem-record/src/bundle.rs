@@ -103,6 +103,12 @@ pub struct ProjectMemoryBundleEntryRelation {
 pub struct ProjectMemoryBundleSource {
     pub source_kind: SourceKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_start: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_end: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_commit: Option<String>,
@@ -117,6 +123,11 @@ pub struct ProjectMemoryBundleSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMemoryBundleEntry {
     pub entry_key: String,
+    /// Stable identity in the source instance (v2 bundles).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_no: Option<i32>,
     pub canonical_text: String,
     pub summary: String,
     pub memory_type: MemoryType,

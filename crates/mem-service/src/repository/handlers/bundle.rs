@@ -3,7 +3,9 @@
 use crate::prelude::*;
 use crate::*;
 
-pub(crate) const MEMORY_BUNDLE_SCHEMA_VERSION: u32 = 1;
+pub(crate) const MEMORY_BUNDLE_SCHEMA_VERSION: u32 = 2;
+/// Oldest schema still accepted on import.
+pub(crate) const MIN_MEMORY_BUNDLE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug)]
 pub(crate) struct LoadedBundle {
@@ -18,13 +20,33 @@ pub(crate) struct ImportAssessment {
     replacing_count: usize,
 }
 
+/// Content-derived entry key: identical content exports to the identical
+/// key on every instance, so imports dedupe across re-exports. canonical
+/// text is unique per project (curate dedups on it).
 pub(crate) fn entry_key_for_memory(memory: &MemoryEntryResponse) -> String {
-    memory.id.to_string()
+    hex_sha256(format!("{}\n{}", memory.memory_type, memory.canonical_text).as_bytes())
+}
+
+/// Canonical JSON bytes: serde_json maps are sorted (no preserve_order
+/// feature), so a Value round-trip yields deterministic key order.
+fn canonical_json_bytes<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, ApiError> {
+    let value = serde_json::to_value(value).map_err(|error| ApiError::io(error.into()))?;
+    serde_json::to_vec(&value).map_err(|error| ApiError::io(error.into()))
+}
+
+/// The hashed projection of a manifest: content only - no wall-clock
+/// exported_at, no bundle id, no prose summary.
+fn bundle_hash_input(manifest: &ProjectMemoryBundleManifest) -> Result<Vec<u8>, ApiError> {
+    canonical_json_bytes(&serde_json::json!({
+        "schema_version": manifest.schema_version,
+        "source_project": manifest.source_project,
+        "options": manifest.options,
+        "entries": manifest.entries,
+    }))
 }
 
 pub(crate) fn entry_hash(entry: &ProjectMemoryBundleEntry) -> Result<String, ApiError> {
-    let bytes = serde_json::to_vec(entry).map_err(|error| ApiError::io(error.into()))?;
-    Ok(hex_sha256(&bytes))
+    Ok(hex_sha256(&canonical_json_bytes(entry)?))
 }
 
 pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
@@ -205,6 +227,9 @@ pub(crate) fn build_bundle_manifest(
             for source in &memory.sources {
                 sources.push(ProjectMemoryBundleSource {
                     source_kind: source.source_kind.clone(),
+                    line_start: None,
+                    line_end: None,
+                    content_hash: None,
                     file_path: options
                         .include_source_file_paths
                         .then(|| source.file_path.clone())
@@ -225,6 +250,8 @@ pub(crate) fn build_bundle_manifest(
 
         entries.push(ProjectMemoryBundleEntry {
             entry_key: entry_key_for_memory(memory),
+            canonical_id: Some(memory.canonical_id),
+            version_no: Some(memory.version_no),
             canonical_text: memory.canonical_text.clone(),
             summary: memory.summary.clone(),
             memory_type: memory.memory_type.clone(),
@@ -242,12 +269,12 @@ pub(crate) fn build_bundle_manifest(
         });
     }
 
+    entries.sort_by(|a, b| a.entry_key.cmp(&b.entry_key));
     let warnings = detect_bundle_warnings(&entries, options);
     let summary_markdown = render_bundle_summary(slug, &entries, options, warnings.len());
-    let bundle_id = format!("{slug}-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"));
     let mut manifest = ProjectMemoryBundleManifest {
         schema_version: MEMORY_BUNDLE_SCHEMA_VERSION,
-        bundle_id,
+        bundle_id: String::new(),
         source_project: slug.to_string(),
         exported_at: chrono::Utc::now(),
         summary_markdown,
@@ -255,8 +282,10 @@ pub(crate) fn build_bundle_manifest(
         options: options.clone(),
         entries,
     };
-    let hash_input = serde_json::to_vec(&manifest).map_err(|error| ApiError::io(error.into()))?;
-    manifest.bundle_hash = hex_sha256(&hash_input);
+    // Content-addressed: identical content yields the identical hash and id
+    // regardless of when it was exported.
+    manifest.bundle_hash = hex_sha256(&bundle_hash_input(&manifest)?);
+    manifest.bundle_id = format!("{slug}-{}", &manifest.bundle_hash[..12]);
     Ok((manifest, warnings))
 }
 
@@ -315,16 +344,23 @@ pub(crate) fn load_bundle_archive(bytes: &[u8]) -> Result<LoadedBundle, ApiError
         .map_err(|error| ApiError::io(error.into()))?;
     let manifest: ProjectMemoryBundleManifest =
         serde_json::from_str(&manifest_json).map_err(|error| ApiError::io(error.into()))?;
-    if manifest.schema_version != MEMORY_BUNDLE_SCHEMA_VERSION {
+    if manifest.schema_version < MIN_MEMORY_BUNDLE_SCHEMA_VERSION
+        || manifest.schema_version > MEMORY_BUNDLE_SCHEMA_VERSION
+    {
         return Err(ApiError::validation(ValidationError::new(
             "unsupported memory bundle schema version",
         )));
     }
-    let mut hashable = manifest.clone();
-    let bundle_hash = std::mem::take(&mut hashable.bundle_hash);
-    let recalculated =
-        hex_sha256(&serde_json::to_vec(&hashable).map_err(|error| ApiError::io(error.into()))?);
-    if bundle_hash != recalculated {
+    let recalculated = if manifest.schema_version >= 2 {
+        hex_sha256(&bundle_hash_input(&manifest)?)
+    } else {
+        // v1 hashed the whole manifest (including exported_at) with the hash
+        // field cleared.
+        let mut hashable = manifest.clone();
+        hashable.bundle_hash = String::new();
+        hex_sha256(&serde_json::to_vec(&hashable).map_err(|error| ApiError::io(error.into()))?)
+    };
+    if manifest.bundle_hash != recalculated {
         return Err(ApiError::validation(ValidationError::new(
             "memory bundle hash verification failed",
         )));
@@ -741,4 +777,53 @@ pub(crate) async fn project_bundle_import(
             .map(|entry| entry.relations.len())
             .sum(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mem_record::{MemoryStatus, MemoryType, ProjectMemoryExportOptions};
+
+    fn sample_memory(text: &str) -> MemoryEntryResponse {
+        MemoryEntryResponse {
+            id: Uuid::new_v4(),
+            project: "demo".to_string(),
+            canonical_text: text.to_string(),
+            summary: "A memory".to_string(),
+            memory_type: MemoryType::Architecture,
+            importance: 3,
+            confidence: 0.9,
+            status: MemoryStatus::Active,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            canonical_id: Uuid::new_v4(),
+            version_no: 1,
+            is_tombstone: false,
+            tags: vec!["demo".to_string()],
+            related_memories: Vec::new(),
+            sources: Vec::new(),
+            embedding_spaces: Vec::new(),
+        }
+    }
+
+    /// Same content exported twice (different wall-clock, different row ids)
+    /// must produce the same bundle hash, id, and entry keys.
+    #[test]
+    fn bundle_hash_and_id_are_content_derived() {
+        let options = ProjectMemoryExportOptions::default();
+        let alpha = sample_memory("Alpha.");
+        let beta = sample_memory("Beta.");
+        let first = [alpha.clone(), beta.clone()];
+        let second = [beta, alpha];
+        let (a, _) = build_bundle_manifest("demo", &options, &first).expect("first manifest");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let (b, _) = build_bundle_manifest("demo", &options, &second).expect("second manifest");
+        assert_eq!(a.bundle_hash, b.bundle_hash);
+        assert_eq!(a.bundle_id, b.bundle_id);
+        assert_eq!(
+            a.entries.iter().map(|e| &e.entry_key).collect::<Vec<_>>(),
+            b.entries.iter().map(|e| &e.entry_key).collect::<Vec<_>>(),
+        );
+        assert_ne!(a.exported_at, b.exported_at);
+    }
 }
