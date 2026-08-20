@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 ROOT = Path(__file__).resolve().parent.parent
-TMUX = os.environ.get("TMUX_BIN", "/home/olivier/bin/tmux")
+TMUX = os.environ.get("TMUX_BIN", "tmux")
 PROJECT = os.environ.get("MEMORY_LAYER_SCREENSHOT_PROJECT", "memory")
 TUI_BIN = os.environ.get("MEMORY_LAYER_TUI_BIN", str(ROOT / "target" / "debug" / "memory"))
 WATCH_CMD = os.environ.get(
