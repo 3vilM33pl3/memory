@@ -208,6 +208,36 @@ pub(crate) fn notify_project_changed(
     );
 }
 
+/// Like `notify_project_changed`, but stamps the event's actor identity from
+/// the authenticated principal (all auth modes - single-user actions belong
+/// to the local owner).
+pub(crate) fn notify_project_changed_by(
+    state: &AppState,
+    principal: &crate::auth::AuthenticatedPrincipal,
+    project: String,
+    memory_id: Option<Uuid>,
+    kind: ActivityKind,
+    summary: String,
+    details: Option<ActivityDetails>,
+) {
+    notify_project_changed_with_metadata(
+        state,
+        project,
+        memory_id,
+        kind,
+        summary,
+        details,
+        Some(principal.id.to_string()),
+        Some(principal.display_name.clone()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+}
+
 pub(crate) fn notify_project_diagnostic(
     state: &AppState,
     project: String,

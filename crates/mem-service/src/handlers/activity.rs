@@ -7,12 +7,11 @@ use axum::Extension;
 pub(crate) async fn capture_task(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
-    Json(mut request): Json<CaptureTaskRequest>,
+    Json(request): Json<CaptureTaskRequest>,
 ) -> Result<Json<mem_record::CaptureTaskResponse>, ApiError> {
-    if state.config.auth.mode == mem_record::AuthMode::MultiUser {
-        request.writer_id = principal.id.to_string();
-        request.writer_name = Some(principal.display_name.clone());
-    }
+    // writer_id/writer_name stay what the client reported: they label the
+    // agent runtime (claude-cli, codex, watcher), not the identity. The
+    // identity is the principal, stamped on the activity event below.
     request.validate().map_err(ApiError::validation)?;
     if !state.pool_available() {
         return queue_capture_offline(&state, &request).await.map(Json);
@@ -36,8 +35,9 @@ pub(crate) async fn capture_task(
     if request.dry_run {
         return Ok(Json(response));
     }
-    notify_project_changed(
+    notify_project_changed_by(
         &state,
+        &principal,
         project,
         None,
         ActivityKind::CaptureTask,

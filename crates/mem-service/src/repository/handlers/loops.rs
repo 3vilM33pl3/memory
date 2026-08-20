@@ -10,7 +10,7 @@ use mem_loops::{
     estimate_tokens, evaluate_action, invoke_runner_with_policy, resolve_effective_settings,
     route_trigger_event, validate_definition,
 };
-use mem_record::{AuthMode, EffectiveLoopSettings, LoopActionKind};
+use mem_record::{EffectiveLoopSettings, LoopActionKind};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -183,7 +183,7 @@ pub(crate) async fn update_loop_global_state(
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Json(mut request): Json<LoopGlobalStateUpdateRequest>,
 ) -> Result<Json<LoopGlobalStateResponse>, ApiError> {
-    stamp_multiuser_actor(&state, &principal, &mut request.updated_by);
+    stamp_actor(&principal, &mut request.updated_by);
     Ok(Json(
         store_loop_global_state(&state.pool()?, &request).await?,
     ))
@@ -195,7 +195,7 @@ pub(crate) async fn enable_loop(
     Path(loop_id): Path<String>,
     Json(mut request): Json<LoopSettingsUpdateRequest>,
 ) -> Result<Json<LoopSettingResponse>, ApiError> {
-    stamp_multiuser_actor(&state, &principal, &mut request.updated_by);
+    stamp_actor(&principal, &mut request.updated_by);
     request.enabled = Some(true);
     if request.mode.is_none() {
         let definition = fetch_loop_definition(&state.pool()?, &loop_id).await?;
@@ -210,7 +210,7 @@ pub(crate) async fn disable_loop(
     Path(loop_id): Path<String>,
     Json(mut request): Json<LoopSettingsUpdateRequest>,
 ) -> Result<Json<LoopSettingResponse>, ApiError> {
-    stamp_multiuser_actor(&state, &principal, &mut request.updated_by);
+    stamp_actor(&principal, &mut request.updated_by);
     request.enabled = Some(false);
     request.mode = Some(LoopMode::Off);
     mutate_loop_setting(state, loop_id, request, false).await
@@ -222,7 +222,7 @@ pub(crate) async fn pause_loop(
     Path(loop_id): Path<String>,
     Json(mut request): Json<LoopSettingsUpdateRequest>,
 ) -> Result<Json<LoopSettingResponse>, ApiError> {
-    stamp_multiuser_actor(&state, &principal, &mut request.updated_by);
+    stamp_actor(&principal, &mut request.updated_by);
     if request.paused_until.is_none() {
         return Err(ApiError::validation(ValidationError::new(
             "paused_until is required",
@@ -238,7 +238,7 @@ pub(crate) async fn snooze_loop(
     Path(loop_id): Path<String>,
     Json(mut request): Json<LoopSettingsUpdateRequest>,
 ) -> Result<Json<LoopSettingResponse>, ApiError> {
-    stamp_multiuser_actor(&state, &principal, &mut request.updated_by);
+    stamp_actor(&principal, &mut request.updated_by);
     if request.snoozed_until.is_none() {
         return Err(ApiError::validation(ValidationError::new(
             "snoozed_until is required",
@@ -444,7 +444,7 @@ pub(crate) async fn approve_loop_approval(
     Path(approval_id): Path<Uuid>,
     Json(mut request): Json<LoopApprovalDecisionRequest>,
 ) -> Result<Json<LoopApprovalDecisionResponse>, ApiError> {
-    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
+    stamp_actor(&principal, &mut request.reviewer);
     Ok(Json(
         resolve_loop_approval_decision(
             &state.pool()?,
@@ -462,7 +462,7 @@ pub(crate) async fn reject_loop_approval(
     Path(approval_id): Path<Uuid>,
     Json(mut request): Json<LoopApprovalDecisionRequest>,
 ) -> Result<Json<LoopApprovalDecisionResponse>, ApiError> {
-    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
+    stamp_actor(&principal, &mut request.reviewer);
     Ok(Json(
         resolve_loop_approval_decision(
             &state.pool()?,
@@ -480,7 +480,7 @@ pub(crate) async fn edit_loop_approval(
     Path(approval_id): Path<Uuid>,
     Json(mut request): Json<LoopApprovalDecisionRequest>,
 ) -> Result<Json<LoopApprovalDecisionResponse>, ApiError> {
-    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
+    stamp_actor(&principal, &mut request.reviewer);
     if request.edited_action.is_none() {
         return Err(ApiError::validation(ValidationError::new(
             "edited_action is required",
@@ -522,7 +522,7 @@ pub(crate) async fn approve_loop_memory_proposal(
     Path(proposal_id): Path<Uuid>,
     Json(mut request): Json<LoopMemoryProposalDecisionRequest>,
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
-    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
+    stamp_actor(&principal, &mut request.reviewer);
     Ok(Json(
         resolve_loop_memory_proposal_decision(
             &state.pool()?,
@@ -541,7 +541,7 @@ pub(crate) async fn reject_loop_memory_proposal(
     Path(proposal_id): Path<Uuid>,
     Json(mut request): Json<LoopMemoryProposalDecisionRequest>,
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
-    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
+    stamp_actor(&principal, &mut request.reviewer);
     Ok(Json(
         resolve_loop_memory_proposal_decision(
             &state.pool()?,
@@ -560,7 +560,7 @@ pub(crate) async fn edit_loop_memory_proposal(
     Path(proposal_id): Path<Uuid>,
     Json(mut request): Json<LoopMemoryProposalDecisionRequest>,
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
-    stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
+    stamp_actor(&principal, &mut request.reviewer);
     if request.edited_candidate.is_none()
         && request.edited_evidence.is_none()
         && request.edited_risk_notes.is_none()
@@ -574,14 +574,10 @@ pub(crate) async fn edit_loop_memory_proposal(
     ))
 }
 
-fn stamp_multiuser_actor(
-    state: &AppState,
-    principal: &AuthenticatedPrincipal,
-    field: &mut Option<String>,
-) {
-    if state.config.auth.mode == AuthMode::MultiUser {
-        *field = Some(principal.actor_label());
-    }
+/// Control-plane actor fields always carry the authenticated identity; a
+/// client-supplied value is never trusted.
+fn stamp_actor(principal: &AuthenticatedPrincipal, field: &mut Option<String>) {
+    *field = Some(principal.actor_label());
 }
 
 pub async fn list_registered_loop_definitions(pool: &PgPool) -> Result<Vec<LoopDefinitionRecord>> {

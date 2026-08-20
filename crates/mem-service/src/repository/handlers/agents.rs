@@ -36,12 +36,12 @@ pub(crate) async fn list_agent_workspaces(
 
 pub(crate) async fn start_agent_workspace(
     State(state): State<AppState>,
-    Extension(principal): Extension<AuthenticatedPrincipal>,
-    Json(mut request): Json<AgentWorkspaceStartRequest>,
+    Extension(_principal): Extension<AuthenticatedPrincipal>,
+    Json(request): Json<AgentWorkspaceStartRequest>,
 ) -> Result<Json<AgentWorkspaceRecord>, ApiError> {
-    if state.config.auth.mode == mem_record::AuthMode::MultiUser {
-        request.writer_id = Some(principal.id.to_string());
-    }
+    // writer_id labels the agent runtime, not the identity; workspace
+    // activity events (added with the event-log wave) will carry the
+    // principal.
     request.validate().map_err(ApiError::validation)?;
     Ok(Json(
         upsert_agent_workspace_start(&state.pool()?, &request)
