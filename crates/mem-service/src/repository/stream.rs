@@ -301,6 +301,15 @@ pub(crate) async fn process_stream_request(
             responses.push(StreamResponse::ProjectSnapshot { overview, memories });
             responses.extend(recent_activity_responses(&state.recent_activity, &project).await);
         }
+        StreamRequest::Resync { project } => {
+            require_stream_project_role(principal.as_ref(), &project, Permission::MemoryRead)?;
+            let pool = state
+                .pool()
+                .map_err(|error| anyhow::anyhow!(error.message))?;
+            let overview = fetch_project_overview_with_watchers(state, &project).await?;
+            let memories = fetch_project_memories(&pool, &project, None, 500, 0).await?;
+            responses.push(StreamResponse::ProjectSnapshot { overview, memories });
+        }
         StreamRequest::SubscribeMemory { memory_id } => {
             let pool = state
                 .pool()
@@ -344,9 +353,29 @@ pub(crate) async fn render_subscription_updates(
         if event.include_activity {
             responses.push(stream_activity_response(event.clone()));
         }
+        // Deltas, not snapshots: the event names its subject; consumers that
+        // detect a seq gap issue StreamRequest::Resync for a full snapshot.
+        if let Some(memory_id) = event.memory_id {
+            match fetch_memory_entry(&pool, memory_id).await? {
+                Some(detail) if detail.status == mem_record::MemoryStatus::Active => {
+                    responses.push(StreamResponse::MemoryUpserted { detail });
+                }
+                Some(detail) => {
+                    responses.push(StreamResponse::MemoryRemoved {
+                        memory_id,
+                        canonical_id: Some(detail.canonical_id),
+                    });
+                }
+                None => {
+                    responses.push(StreamResponse::MemoryRemoved {
+                        memory_id,
+                        canonical_id: None,
+                    });
+                }
+            }
+        }
         let overview = fetch_project_overview_with_watchers(state, project).await?;
-        let memories = fetch_project_memories(&pool, project, None, 500, 0).await?;
-        responses.push(StreamResponse::ProjectChanged { overview, memories });
+        responses.push(StreamResponse::OverviewChanged { overview });
     }
 
     if let Some(memory_id) = subscriptions.memory_id

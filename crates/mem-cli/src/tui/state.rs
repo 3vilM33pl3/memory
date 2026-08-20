@@ -70,6 +70,9 @@ pub(super) struct UiChrome {
     pub(in crate::tui) status_message: String,
     pub(in crate::tui) input_mode: InputMode,
     pub(in crate::tui) needs_redraw: bool,
+    /// A stream delta changed the memory set; the run loop requests a fresh
+    /// project memory list on the next tick.
+    pub(in crate::tui) needs_memories_refresh: bool,
 }
 
 pub(super) struct RuntimeMeta {

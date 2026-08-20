@@ -50,10 +50,13 @@ export function useProjectStream({
     };
   }, [addActivityEvent, recordLocalDiagnostic, setOverview, setProjectMemories, setSelectedMemory, setStatusMessage]);
 
+  const lastSeq = useRef<number | null>(null);
+
   useEffect(() => {
     const socket = new WebSocket(websocketUrl());
     wsRef.current = socket;
     setConnectionState("connecting");
+    lastSeq.current = null;
 
     socket.addEventListener("open", () => {
       setConnectionState("live");
@@ -68,9 +71,31 @@ export function useProjectStream({
       if (payload.type === "project_snapshot" || payload.type === "project_changed") {
         callbacks.current.setOverview(payload.overview);
         callbacks.current.setProjectMemories(payload.memories);
+      } else if (payload.type === "project_memories") {
+        callbacks.current.setProjectMemories(payload.value);
+      } else if (payload.type === "overview_changed") {
+        callbacks.current.setOverview(payload.overview);
+      } else if (payload.type === "memory_upserted") {
+        if (selectedMemoryId && payload.detail.id === selectedMemoryId) {
+          callbacks.current.setSelectedMemory(payload.detail);
+        }
+        sendStream({ type: "project_memories", project }, socket);
+      } else if (payload.type === "memory_removed") {
+        if (selectedMemoryId && payload.memory_id === selectedMemoryId) {
+          callbacks.current.setSelectedMemory(null);
+        }
+        sendStream({ type: "project_memories", project }, socket);
       } else if (payload.type === "memory_snapshot" || payload.type === "memory_changed") {
         callbacks.current.setSelectedMemory(payload.detail);
       } else if (payload.type === "activity") {
+        const seq = payload.event.seq ?? null;
+        if (seq !== null) {
+          if (lastSeq.current !== null && seq > lastSeq.current + 1) {
+            // Missed events: pull a full snapshot to re-anchor.
+            sendStream({ type: "resync", project }, socket);
+          }
+          lastSeq.current = Math.max(lastSeq.current ?? 0, seq);
+        }
         callbacks.current.addActivityEvent(payload.event);
       } else if (payload.type === "error") {
         callbacks.current.setStatusMessage(payload.message);

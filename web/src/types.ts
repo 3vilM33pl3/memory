@@ -1038,6 +1038,7 @@ export type ActivityDetails =
 
 export interface ActivityEvent {
   id: string;
+  seq?: number;
   project: string;
   kind: ActivityKind;
   memory_id?: string | null;
@@ -1531,6 +1532,7 @@ export type StreamRequest =
   | { type: "subscribe_project"; project: string }
   | { type: "subscribe_memory"; memory_id: string }
   | { type: "unsubscribe_memory" }
+  | { type: "resync"; project: string }
   | { type: "ping" };
 
 export type StreamResponse =
@@ -1550,6 +1552,9 @@ export type StreamResponse =
     }
   | { type: "memory_snapshot"; detail: MemoryEntryResponse | null }
   | { type: "memory_changed"; detail: MemoryEntryResponse | null }
+  | { type: "memory_upserted"; detail: MemoryEntryResponse }
+  | { type: "memory_removed"; memory_id: string; canonical_id?: string }
+  | { type: "overview_changed"; overview: ProjectOverviewResponse }
   | { type: "activity"; event: ActivityEvent }
   | { type: "ack"; message: string }
   | { type: "pong" }

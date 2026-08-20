@@ -214,14 +214,31 @@ pub struct StatsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StreamRequest {
-    Authenticate { token: String },
+    Authenticate {
+        token: String,
+    },
     Health,
-    ProjectOverview { project: String },
-    ProjectMemories { project: String },
-    MemoryDetail { memory_id: Uuid },
-    SubscribeProject { project: String },
-    SubscribeMemory { memory_id: Uuid },
+    ProjectOverview {
+        project: String,
+    },
+    ProjectMemories {
+        project: String,
+    },
+    MemoryDetail {
+        memory_id: Uuid,
+    },
+    SubscribeProject {
+        project: String,
+    },
+    SubscribeMemory {
+        memory_id: Uuid,
+    },
     UnsubscribeMemory,
+    /// Re-request the full project snapshot (e.g. after a detected gap in
+    /// activity sequence numbers).
+    Resync {
+        project: String,
+    },
     Ping,
 }
 
@@ -253,6 +270,20 @@ pub enum StreamResponse {
     },
     MemoryChanged {
         detail: Option<MemoryEntryResponse>,
+    },
+    /// A single memory was created or updated within the subscribed project.
+    MemoryUpserted {
+        detail: MemoryEntryResponse,
+    },
+    /// A memory left the active set (archived, deleted, or tombstoned).
+    MemoryRemoved {
+        memory_id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        canonical_id: Option<Uuid>,
+    },
+    /// Project overview counters changed (cheap; no memory list attached).
+    OverviewChanged {
+        overview: ProjectOverviewResponse,
     },
     Activity {
         event: ActivityEvent,

@@ -111,6 +111,15 @@ pub(crate) async fn run(api: ApiClient, project: String, repo_root: PathBuf) -> 
                     {
                         app.chrome.status_message = error.to_string();
                     }
+                    if std::mem::take(&mut app.chrome.needs_memories_refresh)
+                        && let Err(error) = current_stream
+                            .send(StreamRequest::ProjectMemories {
+                                project: app.project.clone(),
+                            })
+                            .await
+                    {
+                        app.chrome.status_message = error.to_string();
+                    }
                 }
                 Ok(None) => {}
                 Err(error) => {
@@ -574,6 +583,7 @@ impl App {
                 relay_discovery_enabled,
             },
             chrome: UiChrome {
+                needs_memories_refresh: false,
                 help: HelpState {
                     help_open: false,
                     help_tab: TabKind::Memories,
@@ -2610,6 +2620,30 @@ impl App {
             StreamResponse::MemorySnapshot { detail }
             | StreamResponse::MemoryChanged { detail } => {
                 self.apply_stream_memory_detail(detail);
+                None
+            }
+            StreamResponse::OverviewChanged { overview } => {
+                self.meta.overview = overview;
+                None
+            }
+            StreamResponse::MemoryUpserted { detail } => {
+                if self.selected_memory_id() == Some(detail.id) {
+                    self.apply_stream_memory_detail(Some(detail));
+                }
+                self.chrome.needs_memories_refresh = true;
+                None
+            }
+            StreamResponse::MemoryRemoved { memory_id, .. } => {
+                if self.selected_memory_id() == Some(memory_id) {
+                    self.apply_stream_memory_detail(None);
+                }
+                self.chrome.needs_memories_refresh = true;
+                None
+            }
+            StreamResponse::ProjectMemories { value } => {
+                self.memories.total_memories = value.total;
+                self.memories.all_memories = value.items;
+                self.apply_filters();
                 None
             }
             StreamResponse::Activity { event } => {
