@@ -2,13 +2,13 @@
 
 `memory capture` sends structured task evidence to Memory Layer without relying on the higher-level `remember` wrapper.
 
-Right now the public capture surface is `memory capture task`.
+Right now the public capture surface is `memory capture`.
 
 ## Common Usage
 
 ```bash
-memory capture task --file /tmp/task.json
-memory capture task --file /tmp/task.json --dry-run
+memory capture --file /tmp/task.json
+memory capture --file /tmp/task.json --dry-run
 ```
 
 ## When To Use It

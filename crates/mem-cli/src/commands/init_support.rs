@@ -157,7 +157,7 @@ pub(in crate::commands) fn initialize_dev_overlay(
         "# Overlay on top of the user-local project config for the dev profile.\n\
          # Active when MEMORY_LAYER_PROFILE=dev or the binary runs from a cargo target/ directory.\n\
          # The dev profile does NOT read the global config — anything shared (database URL,\n\
-         # LLM endpoints) lives here. Re-run `memory dev init --copy-from-global` to refresh.\n\
+         # LLM endpoints) lives here. Re-run `memory dev --copy-from-global` to refresh.\n\
          \n\
          [service]\n\
          bind_addr = {bind_addr}\n\
@@ -254,7 +254,7 @@ fn resolve_shared_global_snippet(args: &DevInitArgs) -> Result<String> {
     let rendered =
         toml::to_string(&toml::Value::Table(copied)).context("serialize shared sections")?;
     Ok(format!(
-        "# Copied from {} — re-run `memory dev init --copy-from-global --force` to refresh.\n{}",
+        "# Copied from {} — re-run `memory dev --copy-from-global --force` to refresh.\n{}",
         global_path.display(),
         rendered
     ))

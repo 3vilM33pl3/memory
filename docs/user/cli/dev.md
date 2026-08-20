@@ -7,14 +7,14 @@ Use it only when developing Memory Layer itself. Normal users should use `memory
 ## Common Usage
 
 ```bash
-memory dev init --copy-from-global
-memory dev init --dry-run
-memory dev init --no-copy-from-global
+memory dev --copy-from-global
+memory dev --dry-run
+memory dev --no-copy-from-global
 ```
 
 ## What It Creates
 
-`memory dev init` creates the user-local project `config.dev.toml` and dev runtime directory. Dev-profile binaries use separate defaults from installed packages:
+`memory dev` creates the user-local project `config.dev.toml` and dev runtime directory. Dev-profile binaries use separate defaults from installed packages:
 
 | Stack | HTTP | Cap'n Proto TCP |
 |---|---|---|

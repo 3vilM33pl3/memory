@@ -862,7 +862,7 @@ If you are developing Memory Layer itself, a `cargo` checkout runs as a **dev** 
 
 ```bash
 cargo run --bin memory -- init
-cargo run --bin memory -- dev init --copy-from-global
+cargo run --bin memory -- dev --copy-from-global
 cargo run --bin memory --features embedded-service -- service run            # in its own shell
 cargo run --bin memory -- tui                    # header reads [dev]
 ```
@@ -873,7 +873,7 @@ Optional watcher manager:
 cargo run --bin memory -- watcher manager run
 ```
 
-`memory dev init` without `--copy-from-global` leaves the user-local dev overlay without shared credentials — fine if you want the dev stack on a different database or LLM endpoint, otherwise rerun with the flag or copy `[database]`, `[llm]`, `[embeddings]` into the project `config.dev.toml` by hand.
+`memory dev` without `--copy-from-global` leaves the user-local dev overlay without shared credentials — fine if you want the dev stack on a different database or LLM endpoint, otherwise rerun with the flag or copy `[database]`, `[llm]`, `[embeddings]` into the project `config.dev.toml` by hand.
 
 The full isolation contract, default endpoint table, and troubleshooting live in [Dev Stack vs Installed Stack](../developer/dev-stack.md).
 

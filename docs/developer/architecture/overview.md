@@ -124,7 +124,7 @@ For the detailed runtime model of skill discovery, selection, and template boots
 - repo bootstrap (`init`)
 - query
 - remember
-- `capture task`
+- `capture`
 - curate
 - `embeddings reindex`
 - TUI views

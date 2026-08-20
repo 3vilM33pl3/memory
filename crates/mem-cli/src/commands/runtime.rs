@@ -101,26 +101,15 @@ See also:
 
 const DEV_GROUP_AFTER_HELP: &str = "\
 Agent notes:
-  Use from a cargo checkout to manage the isolated dev profile.
-  Dev binaries use 127.0.0.1:4250 HTTP and 127.0.0.1:4251 Cap'n Proto by default.
-
-Examples:
-  memory dev init --copy-from-global
-  memory dev init --dry-run
-
-See also:
-  docs/developer/dev-stack.md";
-
-const DEV_INIT_AFTER_HELP: &str = "\
-Agent notes:
-  Run after memory init when developing Memory Layer from source.
+  Use from a cargo checkout to manage the isolated dev profile; run after memory init.
+  Dev binaries use 127.0.0.1:4250 HTTP by default.
   Use --copy-from-global to copy database, LLM, embedding, feature, and writer settings into the dev overlay.
   Mutates the user-local project dev overlay and dev runtime directory unless --dry-run is passed.
 
 Examples:
   memory init
-  memory dev init --copy-from-global
-  memory dev init --dry-run
+  memory dev --copy-from-global
+  memory dev --dry-run
 
 See also:
   docs/developer/dev-stack.md";
@@ -1013,21 +1002,11 @@ See also:
 const CAPTURE_GROUP_AFTER_HELP: &str = "\
 Agent notes:
   Low-level capture ingestion for structured task payloads. Prefer remember for normal completed-work capture.
-  Mutates raw capture state unless --dry-run is passed on the leaf command.
+  Sends one JSON task payload to the backend; --dry-run validates without writing.
 
 Examples:
-  memory capture task --file /tmp/task.json
-
-See also:
-  docs/user/cli/capture.md";
-
-const CAPTURE_TASK_AFTER_HELP: &str = "\
-Agent notes:
-  Sends one JSON task payload to the backend. Use --dry-run to validate without writing.
-
-Examples:
-  memory capture task --file /tmp/task.json
-  memory capture task --file /tmp/task.json --dry-run
+  memory capture --file /tmp/task.json
+  memory capture --file /tmp/task.json --dry-run
 
 See also:
   docs/user/cli/capture.md";
@@ -1445,7 +1424,7 @@ pub(in crate::commands) enum Command {
     #[command(hide = true, about = "Generate shell completion scripts.", after_help = COMPLETION_AFTER_HELP)]
     Completion(CompletionArgs),
     #[command(hide = true, about = "Scaffold and inspect the dev-profile overlay.", after_help = DEV_GROUP_AFTER_HELP)]
-    Dev(DevArgs),
+    Dev(DevInitArgs),
 }
 
 #[derive(Debug, Args)]
@@ -1463,19 +1442,6 @@ pub(in crate::commands) struct StatusArgs {
     /// Emit the aggregate status report as JSON.
     #[arg(long)]
     pub(crate) json: bool,
-}
-
-#[derive(Debug, Args)]
-pub(in crate::commands) struct DevArgs {
-    #[command(subcommand)]
-    pub(crate) command: DevCommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub(in crate::commands) enum DevCommand {
-    /// Create the user-local project dev overlay and dev runtime directory.
-    #[command(after_help = DEV_INIT_AFTER_HELP)]
-    Init(DevInitArgs),
 }
 
 #[derive(Debug, Args)]
@@ -2702,18 +2668,6 @@ pub(in crate::commands) struct CheckpointFinishExecutionArgs {
     after_help = CAPTURE_GROUP_AFTER_HELP
 )]
 pub(in crate::commands) struct CaptureArgs {
-    #[command(subcommand)]
-    pub(crate) command: CaptureCommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub(in crate::commands) enum CaptureCommand {
-    #[command(about = "Send one structured task capture payload to the backend.", after_help = CAPTURE_TASK_AFTER_HELP)]
-    Task(CaptureTaskArgs),
-}
-
-#[derive(Debug, Args)]
-pub(in crate::commands) struct CaptureTaskArgs {
     /// JSON file containing the capture payload.
     #[arg(long)]
     pub(crate) file: PathBuf,

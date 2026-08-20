@@ -290,7 +290,7 @@ npm --prefix web ci && npm --prefix web run build
 
 # Bootstrap the repo-local base config and the dev overlay.
 cargo run --bin memory -- init
-cargo run --bin memory -- dev init --copy-from-global
+cargo run --bin memory -- dev --copy-from-global
 
 # Each piece in its own shell, all on the dev stack.
 cargo run --bin memory --features embedded-service -- service run            # backend (4250 HTTP)

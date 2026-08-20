@@ -259,7 +259,7 @@ The diagram below shows the common write path and the watcher-driven variant. Th
 flowchart TD
     subgraph Sources["Capture sources"]
         Skill["Agent skill<br/>remember-task"]
-        CLI["memory remember<br/>or capture task"]
+        CLI["memory remember<br/>or capture"]
         Watcher["watcher manager<br/>and watchers"]
         Scan["scan and import flows"]
     end

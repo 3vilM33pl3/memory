@@ -958,7 +958,7 @@ fn agent_critical_help_mentions_current_surfaces() {
     assert!(remember.contains("after meaningful completed work"));
     assert!(remember.contains("--file-changed"));
 
-    let dev = rendered_help(&["memory", "dev", "init", "--help"]);
+    let dev = rendered_help(&["memory", "dev", "--help"]);
     assert!(dev.contains("127.0.0.1:4250"));
     assert!(dev.contains("--copy-from-global"));
     assert!(dev.contains("docs/developer/dev-stack.md"));

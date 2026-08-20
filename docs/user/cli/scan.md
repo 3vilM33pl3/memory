@@ -220,7 +220,7 @@ That request contains:
 
 Then `scan` does exactly what a normal high-level write should do:
 
-1. call `memory capture task`
+1. call `memory capture`
 2. call `curate`
 
 That means scan output goes through the same:

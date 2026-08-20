@@ -90,7 +90,7 @@ Bootstrap is one-time per checkout:
 
 ```bash
 cargo run --bin memory -- init
-cargo run --bin memory -- dev init --copy-from-global
+cargo run --bin memory -- dev --copy-from-global
 cargo run --bin memory --features embedded-service -- service run
 ```
 

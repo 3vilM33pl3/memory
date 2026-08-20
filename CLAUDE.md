@@ -33,13 +33,13 @@ Bootstrap the overlay once, then run each piece via the single `memory`
 binary in a separate shell:
 
 ```bash
-cargo run --bin memory -- dev init      # prompts to copy DB/LLM settings
+cargo run --bin memory -- dev      # prompts to copy DB/LLM settings
                                         # from the global config
 cargo run --bin memory --features embedded-service -- service run   # dev service
 cargo run --bin memory -- tui           # dev TUI
 ```
 
-Non-interactive flags for `dev init`: `--copy-from-global` (copy shared
+Non-interactive flags for `dev`: `--copy-from-global` (copy shared
 database URL + LLM/embedding endpoints into the overlay),
 `--no-copy-from-global` (skip the prompt), `--force` (overwrite an
 existing overlay), `--dry-run` (preview only).

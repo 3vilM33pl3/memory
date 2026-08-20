@@ -116,7 +116,7 @@ Responsibilities:
 
 1. Task completes or meaningful knowledge is discovered
 2. Codex Skill decides to capture the task
-3. Skill script calls `memory capture task`
+3. Skill script calls `memory capture`
 4. CLI sends structured payload to backend
 5. Backend stores raw capture in PostgreSQL
 6. Raw capture is available for later curation and replay

@@ -26,7 +26,7 @@ npm --prefix web ci && npm --prefix web run build
 
 # 2. Bootstrap the user-local project base config and the dev overlay.
 cargo run --bin memory -- init
-cargo run --bin memory -- dev init --copy-from-global
+cargo run --bin memory -- dev --copy-from-global
 
 # 3. Run each piece in its own shell. All three target the dev stack.
 cargo run --bin memory --features embedded-service -- service run            # backend (4250 HTTP)
@@ -34,9 +34,9 @@ cargo run --bin memory -- watcher manager run    # optional: project watchers
 cargo run --bin memory -- tui                    # TUI shows [dev] in the header
 ```
 
-`memory dev init --copy-from-global` lifts the database URL and LLM/embedding endpoints out of the installed config so the dev stack does not need its own credentials. Without `--copy-from-global` (and without a TTY) the overlay is left without shared credentials and you'll need to fill them in manually.
+`memory dev --copy-from-global` lifts the database URL and LLM/embedding endpoints out of the installed config so the dev stack does not need its own credentials. Without `--copy-from-global` (and without a TTY) the overlay is left without shared credentials and you'll need to fill them in manually.
 
-If you skip `memory init`, `memory dev init` will refuse with a clear message — the overlay layers on top of the user-local project `config.toml` and needs that file to exist first.
+If you skip `memory init`, `memory dev` will refuse with a clear message — the overlay layers on top of the user-local project `config.toml` and needs that file to exist first.
 
 When the dev stack is no longer needed, just stop the three processes. There is nothing to clean up on the installed side.
 
@@ -69,13 +69,13 @@ The dev profile reads the user-local project `config.toml` and then layers the u
 | `automation.audit_log_path` | system path | user-local project `runtime/dev/automation.log` |
 | `cluster.service_id` | derived from bind addr | `memory-layer-dev` |
 
-Importantly, **the dev profile ignores the global config entirely**. That is what keeps a cargo-run service from silently picking up packaged machine-wide settings. Anything the dev stack needs that's normally global (database URL, LLM/embedding endpoints) must live in the dev overlay, which is why `memory dev init --copy-from-global` exists.
+Importantly, **the dev profile ignores the global config entirely**. That is what keeps a cargo-run service from silently picking up packaged machine-wide settings. Anything the dev stack needs that's normally global (database URL, LLM/embedding endpoints) must live in the dev overlay, which is why `memory dev --copy-from-global` exists.
 
 Dev binaries also **advertise themselves with a `-dev` version suffix**. `memory --version`, `mem-service --version`, `memory-watch --version`, the `/healthz` JSON `version` field, the cluster discovery packet, and the TUI version panel all report `0.6.0-dev` rather than `0.6.0` when the profile is dev. That way logs, peer lists, and health checks cannot silently conflate a dev service with an installed one.
 
 ## What Is Shared
 
-By default, only the **PostgreSQL database** is shared between dev and installed stacks — and only because `memory dev init --copy-from-global` copies the URL into the overlay. If you want the dev stack on a separate database, edit the user-local project `config.dev.toml` to point `[database].url` somewhere else.
+By default, only the **PostgreSQL database** is shared between dev and installed stacks — and only because `memory dev --copy-from-global` copies the URL into the overlay. If you want the dev stack on a separate database, edit the user-local project `config.dev.toml` to point `[database].url` somewhere else.
 
 Tables that are willingly copied from the global config when you opt in:
 
@@ -89,7 +89,7 @@ Service endpoint, automation paths, and cluster id are intentionally excluded �
 
 ## Default Endpoints
 
-After `memory dev init` with defaults, ports look like this:
+After `memory dev` with defaults, ports look like this:
 
 | Stack | HTTP |
 | --- | --- |
@@ -99,7 +99,7 @@ After `memory dev init` with defaults, ports look like this:
 Override the dev ports at bootstrap time:
 
 ```bash
-cargo run --bin memory -- dev init \
+cargo run --bin memory -- dev \
   --bind-addr 127.0.0.1:4260 \
 ```
 
@@ -128,10 +128,10 @@ cargo run --bin memory -- doctor
 ## Common Pitfalls
 
 **`dev profile active but <project config>/config.dev.toml is missing`**
-You ran a `target/debug/memory` binary in a checkout that has not been bootstrapped yet. Run `memory init && memory dev init` (or `MEMORY_LAYER_PROFILE=prod` to force the installed stack instead).
+You ran a `target/debug/memory` binary in a checkout that has not been bootstrapped yet. Run `memory init && memory dev` (or `MEMORY_LAYER_PROFILE=prod` to force the installed stack instead).
 
 **Dev stack reads no LLM key even though the installed stack works**
-The dev profile does not fall back to the global config. Either rerun `memory dev init --copy-from-global --force` or add `[llm]`/`[embeddings]` blocks directly to the user-local project `config.dev.toml`.
+The dev profile does not fall back to the global config. Either rerun `memory dev --copy-from-global --force` or add `[llm]`/`[embeddings]` blocks directly to the user-local project `config.dev.toml`.
 
 **Two installed services on one machine fighting for `127.0.0.1:4041`**
 This happens when both a system-wide (`/etc/memory-layer/`) and a user-level (`~/.config/memory-layer/`) install are enabled. Pick one or give the user-level install its own `bind_addr`. This is unrelated to the dev stack.

@@ -65,7 +65,7 @@ The current live bundle workflow is:
 10. Prefer insufficient evidence over unsupported conclusions.
 11. Never invent provenance.
 
-The important change is that the bundle is no longer centered on one broad skill or on a manual `memory capture task -> curate-memory` sequence for normal work. The preferred path is now a focused workflow plus `remember-task`, which captures and curates in one step.
+The important change is that the bundle is no longer centered on one broad skill or on a manual `memory capture -> curate-memory` sequence for normal work. The preferred path is now a focused workflow plus `remember-task`, which captures and curates in one step.
 
 ## Shared Go Helper
 
@@ -100,7 +100,7 @@ Older documentation in this repo focused on:
 
 - query memory
 - build a capture payload manually
-- run `memory capture task`
+- run `memory capture`
 - run `curate-memory`
 
 The current skill bundle has moved beyond that. It now also covers:
