@@ -8,14 +8,25 @@ pub(crate) async fn verify_provenance(
     Json(request): Json<ProvenanceVerificationRequest>,
 ) -> Result<Json<ProvenanceVerificationResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
-    verify_project_provenance_with_volatility(
+    let response = verify_project_provenance_with_volatility(
         &state.pool()?,
         &request,
         state.config.reinforcement.volatility_ewma_alpha,
     )
     .await
-    .map(Json)
-    .map_err(ApiError::sql)
+    .map_err(ApiError::sql)?;
+    notify_project_changed(
+        &state,
+        request.project.clone(),
+        None,
+        ActivityKind::ProvenanceCheck,
+        format!(
+            "Provenance verified: {} checked, {} verified, {} missing",
+            response.checked_count, response.verified_count, response.missing_file_count
+        ),
+        None,
+    );
+    Ok(Json(response))
 }
 
 pub(crate) async fn verify_project_provenance_with_volatility(

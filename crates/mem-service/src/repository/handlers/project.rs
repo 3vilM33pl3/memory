@@ -415,7 +415,7 @@ pub(crate) async fn fetch_project_timeline(
 ) -> Result<Vec<ActivityEvent>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
-        SELECT te.id, te.recorded_at, p.slug AS project, te.kind, te.memory_id, te.summary, te.details_json,
+        SELECT te.id, te.seq, te.recorded_at, p.slug AS project, te.kind, te.memory_id, te.summary, te.details_json,
                te.actor_id, te.actor_name, te.source, te.operation_id, te.duration_ms, te.provider, te.model,
                te.input_tokens, te.output_tokens, te.cache_read_tokens, te.cache_write_tokens, te.total_tokens
         FROM project_timeline_events te
@@ -440,6 +440,7 @@ pub(crate) async fn fetch_project_timeline(
             .map(|payload| payload.0);
         items.push(ActivityEvent {
             id: row.try_get("id")?,
+            seq: row.try_get("seq")?,
             recorded_at: row.try_get("recorded_at")?,
             project: row.try_get("project")?,
             kind: parse_activity_kind(&kind),
@@ -508,6 +509,7 @@ pub(crate) fn activity_events_from_rows(
             .map(|payload| payload.0);
         items.push(ActivityEvent {
             id: row.try_get("id")?,
+            seq: row.try_get("seq")?,
             recorded_at: row.try_get("recorded_at")?,
             project: row.try_get("project")?,
             kind: parse_activity_kind(&kind),
@@ -953,6 +955,28 @@ pub(crate) fn infer_current_thread(
             ActivityKind::MemoryValidation => {
                 "Recent work validated stored memories against project evidence."
             }
+            ActivityKind::LoopRunStarted
+            | ActivityKind::LoopRunFinished
+            | ActivityKind::LoopRunFailed
+            | ActivityKind::LoopSettingChanged
+            | ActivityKind::TriggerReceived => {
+                "Recent work ran background loop automation for the project."
+            }
+            ActivityKind::ProposalCreated
+            | ActivityKind::ProposalDecided
+            | ActivityKind::ProposalApplied => {
+                "Recent work reviewed loop proposals against project memory."
+            }
+            ActivityKind::Consolidation => {
+                "Recent work consolidated related memories into insights."
+            }
+            ActivityKind::ProvenanceCheck => {
+                "Recent work re-verified stored memory provenance against the repo."
+            }
+            ActivityKind::WorkspaceChanged => {
+                "Recent work tracked agent workspaces operating on the project."
+            }
+            ActivityKind::AuthEvent => "",
             ActivityKind::Checkpoint => "",
         };
         if !thread.is_empty() {

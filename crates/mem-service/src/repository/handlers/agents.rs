@@ -43,11 +43,19 @@ pub(crate) async fn start_agent_workspace(
     // activity events (added with the event-log wave) will carry the
     // principal.
     request.validate().map_err(ApiError::validation)?;
-    Ok(Json(
-        upsert_agent_workspace_start(&state.pool()?, &request)
-            .await
-            .map_err(ApiError::sql)?,
-    ))
+    let record = upsert_agent_workspace_start(&state.pool()?, &request)
+        .await
+        .map_err(ApiError::sql)?;
+    notify_project_changed_by(
+        &state,
+        &_principal,
+        request.project.clone(),
+        None,
+        ActivityKind::WorkspaceChanged,
+        format!("Agent workspace started: {}", record.id),
+        None,
+    );
+    Ok(Json(record))
 }
 
 pub(crate) async fn heartbeat_agent_workspace(

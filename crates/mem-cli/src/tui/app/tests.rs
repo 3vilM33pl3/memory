@@ -1367,6 +1367,7 @@ fn backend_activity_dedupes_by_persisted_event_id_and_formats_tokens() {
     let id = Uuid::new_v4();
     let event = ActivityEvent {
         id,
+        seq: None,
         recorded_at: Utc::now(),
         project: "memory".to_string(),
         kind: ActivityKind::Query,
@@ -1471,6 +1472,7 @@ fn errors_tab_collects_persisted_diagnostics() {
     app.service.health_ok = true;
     app.record_backend_activity(ActivityEvent {
         id: Uuid::new_v4(),
+        seq: None,
         recorded_at: Utc::now(),
         project: "memory".to_string(),
         kind: ActivityKind::Diagnostic,
@@ -1511,6 +1513,7 @@ fn errors_tab_collects_persisted_diagnostics() {
 fn backend_query_activity_detail_renders_graph_metadata() {
     let event = ActivityEvent {
         id: Uuid::new_v4(),
+        seq: None,
         recorded_at: Utc::now(),
         project: "memory".to_string(),
         kind: ActivityKind::Query,
@@ -1581,6 +1584,7 @@ fn historical_query_activity_without_graph_metadata_omits_graph_section() {
     .expect("historical query details should deserialize");
     let event = ActivityEvent {
         id: Uuid::new_v4(),
+        seq: None,
         recorded_at: Utc::now(),
         project: "memory".to_string(),
         kind: ActivityKind::Query,
@@ -1611,6 +1615,7 @@ fn historical_query_activity_without_graph_metadata_omits_graph_section() {
 fn backend_llm_audit_activity_detail_renders_prompt_messages() {
     let event = ActivityEvent {
         id: Uuid::new_v4(),
+        seq: None,
         recorded_at: Utc::now(),
         project: "memory".to_string(),
         kind: ActivityKind::LlmAudit,
@@ -1656,6 +1661,7 @@ fn backend_graph_extract_activity_detail_renders_counts() {
     let run_id = Uuid::new_v4();
     let event = ActivityEvent {
         id: Uuid::new_v4(),
+        seq: None,
         recorded_at: Utc::now(),
         project: "memory".to_string(),
         kind: ActivityKind::GraphExtract,

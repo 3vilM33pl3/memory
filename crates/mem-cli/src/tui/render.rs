@@ -3195,6 +3195,18 @@ pub(super) fn activity_kind_span(kind: &ActivityKind) -> Span<'static> {
         ActivityKind::Diagnostic => ("diagnostic", Theme::DANGER),
         ActivityKind::LlmAudit => ("llm-audit", Theme::WARNING),
         ActivityKind::MemoryValidation => ("validation", Theme::ACCENT),
+        ActivityKind::LoopRunStarted => ("loop-run", Theme::ACCENT),
+        ActivityKind::LoopRunFinished => ("loop-run", Theme::SUCCESS),
+        ActivityKind::LoopRunFailed => ("loop-run", Theme::DANGER),
+        ActivityKind::LoopSettingChanged => ("loop-setting", Theme::ACCENT_STRONG),
+        ActivityKind::ProposalCreated => ("proposal", Theme::ACCENT),
+        ActivityKind::ProposalDecided => ("proposal", Theme::WARNING),
+        ActivityKind::ProposalApplied => ("proposal", Theme::SUCCESS),
+        ActivityKind::Consolidation => ("consolidation", Theme::ACCENT_STRONG),
+        ActivityKind::ProvenanceCheck => ("provenance", Theme::ACCENT),
+        ActivityKind::WorkspaceChanged => ("workspace", Theme::ACCENT),
+        ActivityKind::TriggerReceived => ("trigger", Theme::ACCENT),
+        ActivityKind::AuthEvent => ("auth", Theme::WARNING),
     };
     Span::styled(
         label,

@@ -95,6 +95,18 @@ pub(crate) fn activity_kind_text(kind: &mem_record::ActivityKind) -> &'static st
         mem_record::ActivityKind::Diagnostic => "diagnostic",
         mem_record::ActivityKind::LlmAudit => "llm_audit",
         mem_record::ActivityKind::MemoryValidation => "memory_validation",
+        mem_record::ActivityKind::LoopRunStarted => "loop_run_started",
+        mem_record::ActivityKind::LoopRunFinished => "loop_run_finished",
+        mem_record::ActivityKind::LoopRunFailed => "loop_run_failed",
+        mem_record::ActivityKind::LoopSettingChanged => "loop_setting_changed",
+        mem_record::ActivityKind::ProposalCreated => "proposal_created",
+        mem_record::ActivityKind::ProposalDecided => "proposal_decided",
+        mem_record::ActivityKind::ProposalApplied => "proposal_applied",
+        mem_record::ActivityKind::Consolidation => "consolidation",
+        mem_record::ActivityKind::ProvenanceCheck => "provenance_check",
+        mem_record::ActivityKind::WorkspaceChanged => "workspace_changed",
+        mem_record::ActivityKind::TriggerReceived => "trigger_received",
+        mem_record::ActivityKind::AuthEvent => "auth_event",
     }
 }
 

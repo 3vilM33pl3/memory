@@ -31,6 +31,9 @@ pub(crate) struct AppState {
 #[derive(Clone, Debug)]
 pub(crate) struct ServiceEvent {
     pub(crate) id: Uuid,
+    /// Monotonic position in the durable timeline log; None until persisted
+    /// (or when the event is ephemeral / the database is offline).
+    pub(crate) seq: Option<i64>,
     pub(crate) project: String,
     pub(crate) memory_id: Option<Uuid>,
     pub(crate) kind: ActivityKind,

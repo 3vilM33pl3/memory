@@ -994,6 +994,7 @@ async fn recent_activity_responses_replays_latest_project_events() {
     let recent_activity = Mutex::new(VecDeque::from(vec![
         ServiceEvent {
             id: Uuid::new_v4(),
+            seq: None,
             project: "memory".to_string(),
             memory_id: None,
             kind: ActivityKind::Curate,
@@ -1012,6 +1013,7 @@ async fn recent_activity_responses_replays_latest_project_events() {
         },
         ServiceEvent {
             id: Uuid::new_v4(),
+            seq: None,
             project: "other".to_string(),
             memory_id: None,
             kind: ActivityKind::CaptureTask,
@@ -1030,6 +1032,7 @@ async fn recent_activity_responses_replays_latest_project_events() {
         },
         ServiceEvent {
             id: Uuid::new_v4(),
+            seq: None,
             project: "memory".to_string(),
             memory_id: None,
             kind: ActivityKind::Reindex,

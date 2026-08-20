@@ -38,6 +38,18 @@ pub(crate) fn parse_activity_kind(value: &str) -> ActivityKind {
         "diagnostic" => ActivityKind::Diagnostic,
         "llm_audit" => ActivityKind::LlmAudit,
         "memory_validation" => ActivityKind::MemoryValidation,
+        "loop_run_started" => ActivityKind::LoopRunStarted,
+        "loop_run_finished" => ActivityKind::LoopRunFinished,
+        "loop_run_failed" => ActivityKind::LoopRunFailed,
+        "loop_setting_changed" => ActivityKind::LoopSettingChanged,
+        "proposal_created" => ActivityKind::ProposalCreated,
+        "proposal_decided" => ActivityKind::ProposalDecided,
+        "proposal_applied" => ActivityKind::ProposalApplied,
+        "consolidation" => ActivityKind::Consolidation,
+        "provenance_check" => ActivityKind::ProvenanceCheck,
+        "workspace_changed" => ActivityKind::WorkspaceChanged,
+        "trigger_received" => ActivityKind::TriggerReceived,
+        "auth_event" => ActivityKind::AuthEvent,
         _ => ActivityKind::Query,
     }
 }
@@ -110,88 +122,80 @@ pub(crate) async fn watcher_restart_local(
     }))
 }
 
-pub(crate) fn persist_timeline_event(state: &AppState, event: &ServiceEvent) {
-    let Ok(pool) = state.pool() else {
-        return;
+/// Appends the event to the durable project timeline and returns its
+/// monotonic sequence number. Runs on the caller's executor so mutation
+/// paths can (eventually) couple it to their transaction.
+pub(crate) async fn append_timeline_event(
+    pool: &sqlx::PgPool,
+    event: &ServiceEvent,
+) -> Result<i64, sqlx::Error> {
+    let project_id: Uuid = sqlx::query_scalar("SELECT id FROM projects WHERE slug = $1")
+        .bind(&event.project)
+        .fetch_one(pool)
+        .await?;
+    let identity = match event.memory_id {
+        Some(memory_id) => {
+            sqlx::query("SELECT canonical_id, version_no FROM memory_entries WHERE id = $1")
+                .bind(memory_id)
+                .fetch_optional(pool)
+                .await?
+                .map(|row| {
+                    Ok::<_, sqlx::Error>((
+                        row.try_get::<Uuid, _>("canonical_id")?,
+                        row.try_get::<i32, _>("version_no")?,
+                    ))
+                })
+                .transpose()?
+        }
+        None => None,
     };
-    let project = event.project.clone();
-    let kind = activity_kind_label(&event.kind).to_string();
-    let id = event.id;
-    let summary = event.summary.clone();
-    let memory_id = event.memory_id;
-    let recorded_at = event.recorded_at;
-    let details = event.details.clone().map(sqlx::types::Json);
-    let actor_id = event.actor_id.clone();
-    let actor_name = event.actor_name.clone();
-    let source = event.source.clone();
-    let operation_id = event.operation_id.clone();
-    let duration_ms = event.duration_ms.map(|value| value as i64);
-    let provider = event.provider.clone();
-    let model = event.model.clone();
-    let input_tokens = event
-        .token_usage
-        .as_ref()
-        .map(|usage| usage.input_tokens as i64);
-    let output_tokens = event
-        .token_usage
-        .as_ref()
-        .map(|usage| usage.output_tokens as i64);
-    let cache_read_tokens = event
-        .token_usage
-        .as_ref()
-        .map(|usage| usage.cache_read_tokens as i64);
-    let cache_write_tokens = event
-        .token_usage
-        .as_ref()
-        .map(|usage| usage.cache_write_tokens as i64);
-    let total_tokens = event
-        .token_usage
-        .as_ref()
-        .map(|usage| usage.total_tokens as i64);
-    tokio::spawn(async move {
-        let project_id = match sqlx::query("SELECT id FROM projects WHERE slug = $1")
-            .bind(&project)
-            .fetch_optional(&pool)
-            .await
-        {
-            Ok(Some(row)) => match row.try_get::<Uuid, _>("id") {
-                Ok(value) => value,
-                Err(_) => return,
-            },
-            _ => return,
-        };
-        let _ = sqlx::query(
-            r#"
-            INSERT INTO project_timeline_events (
-                id, project_id, recorded_at, kind, memory_id, summary, details_json,
-                actor_id, actor_name, source, operation_id, duration_ms, provider, model,
-                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-            "#,
+    let seq: i64 = sqlx::query_scalar(
+        r#"
+        INSERT INTO project_timeline_events (
+            id, project_id, recorded_at, kind, memory_id, canonical_id, version_no,
+            summary, details_json,
+            actor_id, actor_name, source, operation_id, duration_ms, provider, model,
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens
         )
-        .bind(id)
-        .bind(project_id)
-        .bind(recorded_at)
-        .bind(kind)
-        .bind(memory_id)
-        .bind(summary)
-        .bind(details)
-        .bind(actor_id)
-        .bind(actor_name)
-        .bind(source)
-        .bind(operation_id)
-        .bind(duration_ms)
-        .bind(provider)
-        .bind(model)
-        .bind(input_tokens)
-        .bind(output_tokens)
-        .bind(cache_read_tokens)
-        .bind(cache_write_tokens)
-        .bind(total_tokens)
-        .execute(&pool)
-        .await;
-    });
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                $17, $18, $19, $20, $21)
+        RETURNING seq
+        "#,
+    )
+    .bind(event.id)
+    .bind(project_id)
+    .bind(event.recorded_at)
+    .bind(activity_kind_label(&event.kind))
+    .bind(event.memory_id)
+    .bind(identity.map(|(canonical_id, _)| canonical_id))
+    .bind(identity.map(|(_, version_no)| version_no))
+    .bind(&event.summary)
+    .bind(event.details.clone().map(sqlx::types::Json))
+    .bind(&event.actor_id)
+    .bind(&event.actor_name)
+    .bind(&event.source)
+    .bind(&event.operation_id)
+    .bind(event.duration_ms.map(|value| value as i64))
+    .bind(&event.provider)
+    .bind(&event.model)
+    .bind(event.token_usage.as_ref().map(|u| u.input_tokens as i64))
+    .bind(event.token_usage.as_ref().map(|u| u.output_tokens as i64))
+    .bind(
+        event
+            .token_usage
+            .as_ref()
+            .map(|u| u.cache_read_tokens as i64),
+    )
+    .bind(
+        event
+            .token_usage
+            .as_ref()
+            .map(|u| u.cache_write_tokens as i64),
+    )
+    .bind(event.token_usage.as_ref().map(|u| u.total_tokens as i64))
+    .fetch_one(pool)
+    .await?;
+    Ok(seq)
 }
 
 pub(crate) fn notify_project_changed(
@@ -272,6 +276,7 @@ pub(crate) fn notify_project_changed_with_metadata(
 ) {
     let event = ServiceEvent {
         id: Uuid::new_v4(),
+        seq: None,
         project,
         memory_id,
         kind,
@@ -288,23 +293,47 @@ pub(crate) fn notify_project_changed_with_metadata(
         token_usage,
         include_activity: true,
     };
-    let _ = state.events.send(event.clone());
-    if event.include_activity {
-        persist_timeline_event(state, &event);
+    {
+        let mut history = state
+            .recent_activity
+            .lock()
+            .expect("activity history mutex poisoned");
+        history.push_front(event.clone());
+        while history.len() > 20 {
+            history.pop_back();
+        }
     }
-    let mut history = state
-        .recent_activity
-        .lock()
-        .expect("activity history mutex poisoned");
-    history.push_front(event);
-    while history.len() > 20 {
-        history.pop_back();
+    match (event.include_activity, state.pool()) {
+        (true, Ok(pool)) => {
+            // Persist first so subscribers see the log position; failures are
+            // loud, and the event still broadcasts without a seq.
+            let events = state.events.clone();
+            tokio::spawn(async move {
+                let mut event = event;
+                match append_timeline_event(&pool, &event).await {
+                    Ok(seq) => event.seq = Some(seq),
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            project = %event.project,
+                            kind = ?event.kind,
+                            "failed to persist timeline event"
+                        );
+                    }
+                }
+                let _ = events.send(event);
+            });
+        }
+        _ => {
+            let _ = state.events.send(event);
+        }
     }
 }
 
 pub(crate) fn notify_project_refreshed(state: &AppState, project: String) {
     let event = ServiceEvent {
         id: Uuid::new_v4(),
+        seq: None,
         project,
         memory_id: None,
         kind: ActivityKind::Query,
@@ -511,6 +540,18 @@ pub(crate) fn activity_kind_label(kind: &ActivityKind) -> &'static str {
         ActivityKind::Diagnostic => "diagnostic",
         ActivityKind::LlmAudit => "llm_audit",
         ActivityKind::MemoryValidation => "memory_validation",
+        ActivityKind::LoopRunStarted => "loop_run_started",
+        ActivityKind::LoopRunFinished => "loop_run_finished",
+        ActivityKind::LoopRunFailed => "loop_run_failed",
+        ActivityKind::LoopSettingChanged => "loop_setting_changed",
+        ActivityKind::ProposalCreated => "proposal_created",
+        ActivityKind::ProposalDecided => "proposal_decided",
+        ActivityKind::ProposalApplied => "proposal_applied",
+        ActivityKind::Consolidation => "consolidation",
+        ActivityKind::ProvenanceCheck => "provenance_check",
+        ActivityKind::WorkspaceChanged => "workspace_changed",
+        ActivityKind::TriggerReceived => "trigger_received",
+        ActivityKind::AuthEvent => "auth_event",
     }
 }
 
@@ -935,6 +976,7 @@ pub(crate) fn stream_activity_response(event: ServiceEvent) -> StreamResponse {
     StreamResponse::Activity {
         event: ActivityEvent {
             id: event.id,
+            seq: event.seq,
             recorded_at: event.recorded_at,
             project: event.project,
             kind: event.kind,
@@ -950,5 +992,55 @@ pub(crate) fn stream_activity_response(event: ServiceEvent) -> StreamResponse {
             model: event.model,
             token_usage: event.token_usage,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{activity_kind_label, parse_activity_kind};
+    use mem_record::ActivityKind;
+
+    /// Guards the silent `_ => Query` fallback: every variant must round-trip
+    /// through its persisted label.
+    #[test]
+    fn activity_kind_labels_round_trip() {
+        let kinds = [
+            ActivityKind::Checkpoint,
+            ActivityKind::Scan,
+            ActivityKind::Plan,
+            ActivityKind::CommitSync,
+            ActivityKind::BundleExport,
+            ActivityKind::BundleImport,
+            ActivityKind::GraphExtract,
+            ActivityKind::Query,
+            ActivityKind::QueryError,
+            ActivityKind::WatcherHealth,
+            ActivityKind::MemoryReplacement,
+            ActivityKind::CaptureTask,
+            ActivityKind::Curate,
+            ActivityKind::Reindex,
+            ActivityKind::Reembed,
+            ActivityKind::Archive,
+            ActivityKind::DeleteMemory,
+            ActivityKind::Briefing,
+            ActivityKind::Diagnostic,
+            ActivityKind::LlmAudit,
+            ActivityKind::MemoryValidation,
+            ActivityKind::LoopRunStarted,
+            ActivityKind::LoopRunFinished,
+            ActivityKind::LoopRunFailed,
+            ActivityKind::LoopSettingChanged,
+            ActivityKind::ProposalCreated,
+            ActivityKind::ProposalDecided,
+            ActivityKind::ProposalApplied,
+            ActivityKind::Consolidation,
+            ActivityKind::ProvenanceCheck,
+            ActivityKind::WorkspaceChanged,
+            ActivityKind::TriggerReceived,
+            ActivityKind::AuthEvent,
+        ];
+        for kind in kinds {
+            assert_eq!(parse_activity_kind(activity_kind_label(&kind)), kind);
+        }
     }
 }

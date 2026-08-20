@@ -44,6 +44,18 @@ pub enum ActivityKind {
     Diagnostic,
     LlmAudit,
     MemoryValidation,
+    LoopRunStarted,
+    LoopRunFinished,
+    LoopRunFailed,
+    LoopSettingChanged,
+    ProposalCreated,
+    ProposalDecided,
+    ProposalApplied,
+    Consolidation,
+    ProvenanceCheck,
+    WorkspaceChanged,
+    TriggerReceived,
+    AuthEvent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,8 +241,10 @@ pub struct LlmAuditMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityEvent {
-    #[serde(default = "Uuid::new_v4")]
     pub id: Uuid,
+    /// Monotonic position in the project timeline log, when persisted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<i64>,
     pub recorded_at: DateTime<Utc>,
     pub project: String,
     pub kind: ActivityKind,

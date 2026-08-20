@@ -281,6 +281,20 @@ async fn mutate_loop_setting(
     }
 
     let setting = upsert_loop_setting(pool, &definition.loop_id, &scope, &request).await?;
+    if let Some(project) = setting.project.clone() {
+        notify_project_changed(
+            &state,
+            project,
+            None,
+            ActivityKind::LoopSettingChanged,
+            format!(
+                "Loop {} setting changed by {}",
+                definition.loop_id,
+                request.updated_by.as_deref().unwrap_or("unknown")
+            ),
+            None,
+        );
+    }
     insert_loop_setting_audit(
         pool,
         Some(&definition.loop_id),
@@ -314,6 +328,23 @@ pub(crate) async fn run_loop(
 ) -> Result<Json<LoopRunResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
     let response = create_control_plane_loop_run(&state.pool()?, &loop_id, &request).await?;
+    if let Some(project) = request.project.clone() {
+        let kind = match response.run.summary.status {
+            mem_record::LoopRunStatus::Failed => ActivityKind::LoopRunFailed,
+            mem_record::LoopRunStatus::Running | mem_record::LoopRunStatus::Queued => {
+                ActivityKind::LoopRunStarted
+            }
+            _ => ActivityKind::LoopRunFinished,
+        };
+        notify_project_changed(
+            &state,
+            project,
+            None,
+            kind,
+            format!("Loop {loop_id} run {:?}", response.run.summary.status),
+            None,
+        );
+    }
     // Consolidation is the one LLM-backed loop: after the deterministic report
     // is stored, synthesize insight proposals when enabled and not dry-run.
     // Runs where the LLM or a cluster fails are logged, never fatal. The work
@@ -511,9 +542,19 @@ pub(crate) async fn create_loop_memory_proposal(
     Json(request): Json<LoopMemoryProposalCreateRequest>,
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
-    Ok(Json(
-        insert_loop_memory_proposal(&state.pool()?, &request).await?,
-    ))
+    let response = insert_loop_memory_proposal(&state.pool()?, &request).await?;
+    notify_project_changed(
+        &state,
+        request.project.clone(),
+        None,
+        ActivityKind::ProposalCreated,
+        format!(
+            "Loop {} proposed {} ({})",
+            request.loop_id, request.proposal_type, response.proposal.id
+        ),
+        None,
+    );
+    Ok(Json(response))
 }
 
 pub(crate) async fn approve_loop_memory_proposal(
@@ -523,16 +564,25 @@ pub(crate) async fn approve_loop_memory_proposal(
     Json(mut request): Json<LoopMemoryProposalDecisionRequest>,
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
     stamp_actor(&principal, &mut request.reviewer);
-    Ok(Json(
-        resolve_loop_memory_proposal_decision(
-            &state.pool()?,
-            &state.config.procedural,
-            proposal_id,
-            "approved",
-            &request,
-        )
-        .await?,
-    ))
+    let response = resolve_loop_memory_proposal_decision(
+        &state.pool()?,
+        &state.config.procedural,
+        proposal_id,
+        "approved",
+        &request,
+    )
+    .await?;
+    if let Some(project) = response.proposal.project.clone() {
+        notify_project_changed(
+            &state,
+            project,
+            None,
+            ActivityKind::ProposalDecided,
+            format!("Proposal {proposal_id} approved"),
+            None,
+        );
+    }
+    Ok(Json(response))
 }
 
 pub(crate) async fn reject_loop_memory_proposal(
@@ -542,16 +592,25 @@ pub(crate) async fn reject_loop_memory_proposal(
     Json(mut request): Json<LoopMemoryProposalDecisionRequest>,
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
     stamp_actor(&principal, &mut request.reviewer);
-    Ok(Json(
-        resolve_loop_memory_proposal_decision(
-            &state.pool()?,
-            &state.config.procedural,
-            proposal_id,
-            "rejected",
-            &request,
-        )
-        .await?,
-    ))
+    let response = resolve_loop_memory_proposal_decision(
+        &state.pool()?,
+        &state.config.procedural,
+        proposal_id,
+        "rejected",
+        &request,
+    )
+    .await?;
+    if let Some(project) = response.proposal.project.clone() {
+        notify_project_changed(
+            &state,
+            project,
+            None,
+            ActivityKind::ProposalDecided,
+            format!("Proposal {proposal_id} rejected"),
+            None,
+        );
+    }
+    Ok(Json(response))
 }
 
 pub(crate) async fn edit_loop_memory_proposal(
