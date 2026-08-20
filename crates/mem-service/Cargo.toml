@@ -18,7 +18,6 @@ mem-consolidate = { path = "../mem-consolidate" }
 mem-curate = { path = "../mem-curate" }
 mem-reinforce = { path = "../mem-reinforce" }
 mem-graph = { path = "../mem-graph" }
-mem-ingest = { path = "../mem-ingest" }
 mem-loops = { path = "../mem-loops" }
 mem-mcp = { path = "../mem-mcp" }
 mem-platform = { path = "../mem-platform" }

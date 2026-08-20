@@ -258,7 +258,7 @@ fn queue_capture_sync(
     conn: &Connection,
     request: &CaptureTaskRequest,
 ) -> Result<CaptureTaskResponse> {
-    let idempotency_key = mem_ingest::idempotency_key(request);
+    let idempotency_key = mem_curate::ingest::idempotency_key(request);
     if let Some(existing) = queued_capture_response(conn, &idempotency_key)? {
         return Ok(existing);
     }

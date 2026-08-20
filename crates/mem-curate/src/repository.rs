@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use crate::ingest::{CandidateAssertion, extract_candidates, idempotency_key};
 use mem_api::{
     AppliedMemoryReplacement, CaptureTaskResponse, CurateRequest, CurateResponse,
     MemoryRelationType, ReplacementPolicy, ReplacementProposalListResponse,
     ReplacementProposalRecord, ReplacementProposalResolutionResponse,
 };
-use mem_ingest::{CandidateAssertion, extract_candidates, idempotency_key};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -1014,7 +1014,7 @@ trait SourceKindSql {
     fn source_kind_to_string(&self) -> String;
 }
 
-impl SourceKindSql for mem_ingest::CandidateSource {
+impl SourceKindSql for crate::ingest::CandidateSource {
     fn source_kind_to_string(&self) -> String {
         match self.source_kind {
             mem_api::SourceKind::TaskPrompt => "task_prompt",
@@ -1682,7 +1682,7 @@ mod tests {
             confidence: 0.9,
             importance: 3,
             tags: vec!["search".to_string(), "refactor".to_string()],
-            sources: vec![mem_ingest::CandidateSource {
+            sources: vec![crate::ingest::CandidateSource {
                 file_path: Some("crates/mem-search/src/lib.rs".to_string()),
                 symbol_name: None,
                 symbol_kind: None,

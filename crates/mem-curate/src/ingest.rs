@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+//! Deterministic candidate extraction from capture requests (formerly the
+//! mem-ingest crate; merged here because curation is its only consumer).
+
 // Tests may unwrap; production code must not (workspace lints deny it).
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 

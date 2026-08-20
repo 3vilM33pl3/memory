@@ -2569,9 +2569,10 @@ version = "1.0.3"
 dependencies = [
  "chrono",
  "mem-api",
- "mem-ingest",
  "mem-test-support",
+ "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "tokio",
  "uuid",
@@ -2605,17 +2606,6 @@ dependencies = [
  "sqlx",
  "tokio",
  "uuid",
-]
-
-[[package]]
-name = "mem-ingest"
-version = "1.0.3"
-dependencies = [
- "chrono",
- "mem-api",
- "serde",
- "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -2714,7 +2704,6 @@ dependencies = [
  "mem-consolidate",
  "mem-curate",
  "mem-graph",
- "mem-ingest",
  "mem-loops",
  "mem-mcp",
  "mem-platform",
