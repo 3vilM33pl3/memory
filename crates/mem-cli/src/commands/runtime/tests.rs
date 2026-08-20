@@ -285,53 +285,16 @@ fn repo_root_for_tests() -> PathBuf {
         .join("..")
 }
 
-fn root_command_doc_name(command_name: &str) -> Option<&'static str> {
+fn root_command_doc_name(command_name: &str) -> Option<String> {
+    // Convention: docs/user/cli/<command>.md, dashes preserved. Exceptions
+    // are pluralized doc pages; new commands should follow the convention
+    // instead of extending this list.
     match command_name {
         "help" => None,
-        "agent" => Some("agents.md"),
-        "bundle" => Some("bundles.md"),
-        "watcher" => Some("watchers.md"),
-        "wizard" => Some("wizard.md"),
-        "demo" => Some("demo.md"),
-        "tour" => Some("tour.md"),
-        "init" => Some("init.md"),
-        "upgrade" => Some("upgrade.md"),
-        "service" => Some("service.md"),
-        "mcp" => Some("mcp.md"),
-        "auth" => Some("auth.md"),
-        "doctor" => Some("doctor.md"),
-        "status" => Some("status.md"),
-        "commits" => Some("commits.md"),
-        "repo" => Some("repo.md"),
-        "graph" => Some("graph.md"),
-        "checkpoint" => Some("checkpoint.md"),
-        "resume" => Some("resume.md"),
-        "activities" => Some("activities.md"),
-        "up-to-speed" => Some("up-to-speed.md"),
-        "eval" => Some("eval.md"),
-        "query" => Some("query.md"),
-        "verify-provenance" => Some("verify-provenance.md"),
-        "history" => Some("history.md"),
-        "prune-history" => Some("prune-history.md"),
-        "scan" => Some("scan.md"),
-        "ingest" => Some("ingest.md"),
-        "capture" => Some("capture.md"),
-        "remember" => Some("remember.md"),
-        "curate" => Some("curate.md"),
-        "consolidate" => Some("consolidate.md"),
-        "structure" => Some("structure.md"),
-        "proposals" => Some("proposals.md"),
-        "scores" => Some("scores.md"),
-        "validate" => Some("validate.md"),
-        "review" => Some("review.md"),
-        "loops" => Some("loops.md"),
-        "embeddings" => Some("embeddings.md"),
-        "health" => Some("health.md"),
-        "archive" => Some("archive.md"),
-        "tui" => Some("tui.md"),
-        "completion" => Some("completion.md"),
-        "dev" => Some("dev.md"),
-        other => panic!("root command {other} must declare a docs mapping"),
+        "agent" => Some("agents.md".to_string()),
+        "bundle" => Some("bundles.md".to_string()),
+        "watcher" => Some("watchers.md".to_string()),
+        other => Some(format!("{other}.md")),
     }
 }
 
@@ -343,7 +306,7 @@ fn root_commands_have_user_cli_reference_pages() {
             continue;
         };
         assert!(
-            docs_dir.join(doc_name).is_file(),
+            docs_dir.join(&doc_name).is_file(),
             "missing docs/user/cli/{doc_name} for root command {}",
             command.get_name()
         );
