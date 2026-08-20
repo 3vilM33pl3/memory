@@ -41,7 +41,6 @@ mod scan;
 mod service;
 pub(crate) mod service_support;
 pub(crate) mod skill_support;
-mod stats;
 mod status;
 pub(crate) mod status_support;
 mod structure;

@@ -107,11 +107,7 @@ pub(crate) fn route_policy(method: &Method, path: &str) -> RoutePolicy {
             scope: ProjectScope::ValidationResource,
         };
     }
-    if path == "/v1/stats"
-        || path == "/v1/agents"
-        || path == "/v1/agents/workspaces"
-        || path == "/v1/skills/repair"
-    {
+    if path == "/v1/agents" || path == "/v1/agents/workspaces" || path == "/v1/skills/repair" {
         return global(AuthRole::Admin);
     }
     if path == "/v1/runtime/status" {
@@ -129,8 +125,7 @@ pub(crate) fn route_policy(method: &Method, path: &str) -> RoutePolicy {
     {
         return unscoped(AuthRole::Reader);
     }
-    if path == "/v1/offline/pending"
-        || path == "/v1/loops/runs"
+    if path == "/v1/loops/runs"
         || path == "/v1/loops/approvals"
         || path == "/v1/loops/memory-proposals"
     {
@@ -720,7 +715,7 @@ mod tests {
 
     #[test]
     fn reads_and_query_paths_are_allowed() {
-        assert!(read_only_request_allowed(&Method::GET, "/v1/stats"));
+        assert!(read_only_request_allowed(&Method::GET, "/v1/loops"));
         assert!(read_only_request_allowed(
             &Method::GET,
             "/v1/projects/demo/structure"

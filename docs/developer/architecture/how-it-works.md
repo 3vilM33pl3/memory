@@ -204,7 +204,6 @@ Current HTTP routes include:
 - `POST /v1/reindex`
 - `GET /v1/memory/{id}`
 - `DELETE /v1/memory`
-- `GET /v1/stats`
 - `GET /v1/projects/{slug}/memories`
 - `GET /v1/projects/{slug}/overview`
 - `POST /v1/archive`

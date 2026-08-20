@@ -40,7 +40,7 @@ Most commands follow one of three shapes:
 | Group | Commands | Use when |
 |---|---|---|
 | [Setup and bootstrap](/docs/reference/cli/setup) | `wizard`, `init`, `upgrade`, `completion`, `dev` | Installing, configuring, refreshing repo-local integration files, and setting up shell completion. |
-| [Service and health](/docs/reference/cli/service-health) | `service`, `status`, `doctor`, `health`, `stats`, `automation` | Starting the backend, diagnosing config, checking API health, and inspecting automation queues. |
+| [Service and health](/docs/reference/cli/service-health) | `service`, `status`, `doctor`, `health`, `automation` | Starting the backend, diagnosing config, checking API health, and inspecting automation queues. |
 | [Query and briefings](/docs/reference/cli/query-briefings) | `query`, `resume`, `up-to-speed`, `activities`, `history`, `verify-provenance` | Asking project questions, resuming work, inspecting activity, and proving memory sources still exist. |
 | [Capture and curation](/docs/reference/cli/capture-curation) | `remember`, `capture`, `scan`, `curate`, `proposals`, `archive`, `prune-history`, `checkpoint` | Writing project memory, reviewing replacements, pruning history, and tracking plan execution. |
 | [Reinforcement and validation](/docs/reference/cli/reinforcement) | `scores`, `validate`, `review` | Inspecting activation scores, validating hot memories against evidence, and reviewing proposed corrections. |
@@ -62,7 +62,7 @@ Agents should follow a repeatable command pattern:
 | Kind | Mostly read-only | Writes local or service state |
 |---|---|---|
 | Setup | `completion`, most `dev` inspection | `wizard`, `init`, `upgrade`, some `dev` scaffolding |
-| Service | `status`, `doctor`, `health`, `stats` | `service enable`, `service disable`, `service restart-all`, automation flushes |
+| Service | `status`, `doctor`, `health` | `service enable`, `service disable`, `service restart-all`, automation flushes |
 | Query | `query`, `resume`, `up-to-speed`, `activities`, `history`, `verify-provenance` | Query/activity logging may write audit events when the service is running. |
 | Memory | `proposals list`, `scan --dry-run` | `remember`, `capture`, `curate`, `scan`, proposal approval/rejection, `archive`, `prune-history` |
 | Reinforcement | `scores`, `review list` | `validate`, `review apply`, `review reject` |

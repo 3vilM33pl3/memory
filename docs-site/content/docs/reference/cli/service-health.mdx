@@ -13,7 +13,6 @@ Use these commands before debugging query, TUI, watcher, MCP, or embedding behav
 | `memory status` | No | Show aggregate diagnostic status for a project. |
 | `memory doctor` | No | Inspect config, database, service, tools, and environment. |
 | `memory health` | No | Check backend API health. |
-| `memory stats` | No | Show project memory and capture counts. |
 | `memory automation` | Mixed | Inspect and flush automation state. |
 
 ## `memory service`
@@ -58,13 +57,12 @@ memory doctor --fix
 
 Run it after config edits, package upgrades, database migrations, token changes, or provider changes.
 
-## `memory health` and `memory stats`
+## `memory health`
 
-Use health to confirm the backend responds; use stats to confirm the expected project has data.
+Use health to confirm the backend responds; use `memory status` to confirm the expected project has data.
 
 ```bash
 memory health
-memory stats --project memory
 ```
 
 If health is green but stats are empty, the service is probably healthy but the project slug or database is not the one you expected.

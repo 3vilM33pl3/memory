@@ -1,4 +1,4 @@
-# `memory health` and `memory stats`
+# `memory health`
 
 These two commands are lightweight operational checks.
 
@@ -12,17 +12,9 @@ memory health
 
 Returns backend service health, database status, instance identity, and version information.
 
-## `memory stats`
-
-```bash
-memory stats
-```
-
-Shows a compact project and service summary, useful for quick inspection or scripting.
 
 ## Related Docs
 
 - [Status Command](status.md)
-- [Stats Command](stats.md)
 - [Service Commands](service.md)
 - [Doctor Diagnostics](doctor.md)

@@ -255,18 +255,6 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
-  /v1/offline/pending:
-    get:
-      operationId: get_v1_offline_pending
-      summary: "Pending offline-outbox rows awaiting replay."
-      tags: ["System"]
-      x-stability: internal
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
   /v1/skills:
     get:
       operationId: get_v1_skills
@@ -1216,18 +1204,6 @@ paths:
         content:
           application/json:
             schema: { type: object, additionalProperties: true }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-  /v1/stats:
-    get:
-      operationId: get_v1_stats
-      summary: "Compact project and service statistics."
-      tags: ["System"]
-      x-stability: core
       responses:
         "200":
           description: OK

@@ -21,20 +21,19 @@ use super::{
     get_loop_run_context_pack, get_memory, get_memory_history, graph_activity, healthz,
     heartbeat_agent_workspace, list_agent_workspaces, list_embedding_backends, list_loop_approvals,
     list_loop_definitions, list_loop_memory_proposals, list_loop_runs, llm_audit_status,
-    memory_scores, offline_pending, pause_loop, plan_activity, project_activities,
-    project_bundle_export, project_bundle_export_preview, project_bundle_import,
-    project_bundle_import_preview, project_commit_detail, project_commits, project_graph,
-    project_graph_status, project_memories, project_memory_graph, project_overview,
-    project_replacement_policy, project_replacement_policy_update,
-    project_replacement_proposal_approve, project_replacement_proposal_reject,
-    project_replacement_proposals, project_resume, project_structure, project_up_to_speed,
-    prune_embeddings, prune_history, query, query_global, read_skill, reembed, reindex,
-    reject_loop_approval, reject_loop_memory_proposal, repair_skills, review_validation_run,
-    route_loop_trigger, run_loop, runtime_status, scan_activity, set_embedding_creation_enabled,
-    set_llm_audit_enabled, skills, snooze_loop, start_agent_workspace, stats, submit_loop_feedback,
-    sync_commits, update_loop_global_state, validate_memory, validation_runs, verify_provenance,
-    watcher_heartbeat, watcher_restart_local, watcher_unregister, web_auth_token, web_unavailable,
-    websocket,
+    memory_scores, pause_loop, plan_activity, project_activities, project_bundle_export,
+    project_bundle_export_preview, project_bundle_import, project_bundle_import_preview,
+    project_commit_detail, project_commits, project_graph, project_graph_status, project_memories,
+    project_memory_graph, project_overview, project_replacement_policy,
+    project_replacement_policy_update, project_replacement_proposal_approve,
+    project_replacement_proposal_reject, project_replacement_proposals, project_resume,
+    project_structure, project_up_to_speed, prune_embeddings, prune_history, query, query_global,
+    read_skill, reembed, reindex, reject_loop_approval, reject_loop_memory_proposal, repair_skills,
+    review_validation_run, route_loop_trigger, run_loop, runtime_status, scan_activity,
+    set_embedding_creation_enabled, set_llm_audit_enabled, skills, snooze_loop,
+    start_agent_workspace, submit_loop_feedback, sync_commits, update_loop_global_state,
+    validate_memory, validation_runs, verify_provenance, watcher_heartbeat, watcher_restart_local,
+    watcher_unregister, web_auth_token, web_unavailable, websocket,
 };
 
 /// The API specification, embedded at compile time so the running service
@@ -72,7 +71,6 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
         .route("/v1/auth/memberships/{id}", delete(auth_revoke_membership))
         .route("/v1/admin/shutdown", post(admin_shutdown))
         .route("/v1/runtime/status", get(runtime_status))
-        .route("/v1/offline/pending", get(offline_pending))
         .route("/v1/skills", get(skills))
         .route("/v1/skills/repair", post(repair_skills))
         .route("/v1/skills/{skill_name}", get(read_skill))
@@ -169,7 +167,6 @@ pub(crate) fn build_http_app(state: AppState) -> Router {
         .route("/v1/memory/{id}/history", get(get_memory_history))
         .route("/v1/memory", delete(delete_memory))
         .route("/v1/prune-history", post(prune_history))
-        .route("/v1/stats", get(stats))
         .route("/v1/projects/{project}/memory-scores", get(memory_scores))
         .route("/v1/projects/{project}/structure", get(project_structure))
         .route(

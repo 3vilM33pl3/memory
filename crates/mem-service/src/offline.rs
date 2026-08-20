@@ -3,7 +3,9 @@
 use crate::prelude::*;
 
 use duckdb::{Connection, params};
-use mem_api::{CaptureTaskResponse, OfflinePendingItem, OfflinePendingResponse};
+use mem_api::CaptureTaskResponse;
+#[cfg(test)]
+use mem_api::{OfflinePendingItem, OfflinePendingResponse};
 use std::path::Path as StdPath;
 
 #[derive(Clone, Debug)]
@@ -166,6 +168,7 @@ impl OfflineStore {
             .context("join offline pending count")?
     }
 
+    #[cfg(test)]
     pub(crate) async fn pending_response(
         &self,
         project: Option<&str>,
@@ -348,6 +351,7 @@ fn pending_count_sync(conn: &Connection) -> Result<u64> {
     Ok(count)
 }
 
+#[cfg(test)]
 fn pending_response_sync(
     conn: &Connection,
     path: &StdPath,
@@ -395,6 +399,7 @@ fn pending_response_sync(
     })
 }
 
+#[cfg(test)]
 fn row_to_pending_item(row: &duckdb::Row<'_>) -> Result<OfflinePendingItem> {
     let queue_id: String = row.get(0)?;
     let created_at: String = row.get(5)?;

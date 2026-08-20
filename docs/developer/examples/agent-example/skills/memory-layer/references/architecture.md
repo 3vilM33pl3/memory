@@ -490,8 +490,6 @@ Rebuilds search chunks/index state.
 #### `GET /v1/memory/:id`
 Returns one memory entry with provenance.
 
-#### `GET /v1/stats`
-Returns service stats.
 
 #### `POST /v1/archive`
 Archives or prunes low-value entries.

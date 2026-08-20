@@ -1268,18 +1268,6 @@ Examples:
 See also:
   docs/user/cli/health.md";
 
-const STATS_AFTER_HELP: &str = "\
-Agent notes:
-  Compatibility read-only memory and project summary. Prefer status when diagnosing an install.
-
-Examples:
-  memory stats
-  memory status --project memory
-  memory health
-
-See also:
-  docs/user/cli/health.md";
-
 const ARCHIVE_AFTER_HELP: &str = "\
 Agent notes:
   Archives low-signal memories by confidence and importance. Always use --dry-run first from an agent.
@@ -1418,8 +1406,6 @@ pub(in crate::commands) enum Command {
     Status(StatusArgs),
     #[command(about = "Check backend service health.", after_help = HEALTH_AFTER_HELP)]
     Health,
-    #[command(about = "Show memory and project summary statistics.", after_help = STATS_AFTER_HELP)]
-    Stats,
     #[command(about = "Inspect configuration and environment health.", after_help = DOCTOR_AFTER_HELP)]
     Doctor(DoctorArgs),
 
@@ -3769,7 +3755,6 @@ pub(super) async fn run() -> Result<()> {
             crate::commands::embeddings::handle(args, client, config).await?
         }
         Command::Health => crate::commands::health::handle(client, config).await?,
-        Command::Stats => crate::commands::stats::handle(client, config).await?,
         Command::Archive(args) => crate::commands::archive::handle(args, client, config).await?,
         Command::Automation(args) => {
             crate::commands::automation::handle(args, client, config, cli_writer_id).await?

@@ -399,7 +399,7 @@ The Fumadocs / Next.js website source lives in [`docs-site/`](docs-site/README.m
 - **Ask and explain:** [Query Command](docs/user/cli/query.md), [Code Graph Extraction](docs/user/cli/graph.md), [Embedding Operations](docs/user/cli/embeddings.md)
 - **Run agents and automation:** [Watcher Health](docs/user/cli/watchers.md), [Activities](docs/user/cli/activities.md), [Get Up To Speed](docs/user/cli/up-to-speed.md), [Resume Briefings](docs/user/cli/resume.md)
 - **Integrate MCP clients:** [MCP Server](docs/user/cli/mcp.md)
-- **Operate and troubleshoot:** [Service Commands](docs/user/cli/service.md), [Health](docs/user/cli/health.md), [Stats](docs/user/cli/stats.md), [Doctor Diagnostics](docs/user/cli/doctor.md), [Shell Completion](docs/user/cli/completion.md)
+- **Operate and troubleshoot:** [Service Commands](docs/user/cli/service.md), [Health](docs/user/cli/health.md), [Doctor Diagnostics](docs/user/cli/doctor.md), [Shell Completion](docs/user/cli/completion.md)
 - **Maintain memories:** [Remember](docs/user/cli/remember.md), [Curate](docs/user/cli/curate.md), [History](docs/user/cli/history.md), [Prune History](docs/user/cli/prune-history.md), [Archive](docs/user/cli/archive.md), [Bundles](docs/user/cli/bundles.md)
 - **Measure and develop:** [Beginner Evaluation Guide](docs/user/evaluation-guide.md), [Automated Evaluation](docs/user/cli/eval.md), [Dev Stack](docs/developer/dev-stack.md), [Dev Command](docs/user/cli/dev.md)
 

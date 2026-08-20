@@ -9,31 +9,6 @@ pub(crate) async fn healthz(
     Ok(Json(health_payload(&state).await.map_err(ApiError::io)?))
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct OfflinePendingQuery {
-    pub(crate) project: Option<String>,
-    pub(crate) limit: Option<usize>,
-}
-
-pub(crate) async fn offline_pending(
-    State(state): State<AppState>,
-    Query(query): Query<OfflinePendingQuery>,
-) -> Result<Json<mem_api::OfflinePendingResponse>, ApiError> {
-    let Some(store) = state.offline_store() else {
-        return Ok(Json(mem_api::OfflinePendingResponse {
-            enabled: false,
-            database_path: None,
-            pending_count: 0,
-            items: Vec::new(),
-        }));
-    };
-    let response = store
-        .pending_response(query.project.as_deref(), query.limit.unwrap_or(50).min(200))
-        .await
-        .map_err(ApiError::io)?;
-    Ok(Json(response))
-}
-
 #[derive(Debug, Serialize)]
 pub(crate) struct WebAuthTokenResponse {
     pub(crate) api_token: String,
@@ -97,40 +72,4 @@ pub(crate) async fn web_unavailable() -> impl IntoResponse {
 </html>"#,
         ),
     )
-}
-
-pub(crate) async fn stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, ApiError> {
-    let pool = &state.pool()?;
-    let counts = [
-        ("projects", "SELECT COUNT(*) AS count FROM projects"),
-        ("sessions", "SELECT COUNT(*) AS count FROM sessions"),
-        ("tasks", "SELECT COUNT(*) AS count FROM tasks"),
-        ("raw_captures", "SELECT COUNT(*) AS count FROM raw_captures"),
-        (
-            "memory_entries",
-            "SELECT COUNT(*) AS count FROM memory_entries",
-        ),
-        (
-            "curation_runs",
-            "SELECT COUNT(*) AS count FROM curation_runs",
-        ),
-    ];
-
-    let mut values = Vec::with_capacity(counts.len());
-    for (_, sql) in counts {
-        let row = sqlx::query(sql)
-            .fetch_one(pool)
-            .await
-            .map_err(ApiError::sql)?;
-        values.push(row.try_get::<i64, _>("count").map_err(ApiError::sql)?);
-    }
-
-    Ok(Json(StatsResponse {
-        projects: values[0],
-        sessions: values[1],
-        tasks: values[2],
-        raw_captures: values[3],
-        memory_entries: values[4],
-        curation_runs: values[5],
-    }))
 }

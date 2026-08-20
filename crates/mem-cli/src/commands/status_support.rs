@@ -70,7 +70,6 @@ pub(crate) struct CliStatusReport {
     pub(crate) summary: CliStatusSummary,
     pub(crate) service: StatusTextProbe,
     pub(crate) health: StatusJsonProbe,
-    pub(crate) stats: StatusJsonProbe,
     pub(crate) runtime: StatusJsonProbe,
     pub(crate) watcher_manager: StatusTextProbe,
     pub(crate) project_watcher: StatusTextProbe,
@@ -85,7 +84,6 @@ pub(crate) struct CliStatusSummary {
     pub(crate) doctor_failures: usize,
     pub(crate) doctor_warnings: usize,
     pub(crate) service_reachable: bool,
-    pub(crate) stats_reachable: bool,
     pub(crate) mcp_service_reachable: bool,
     pub(crate) mcp_project_ok: bool,
 }
@@ -181,7 +179,6 @@ pub(crate) async fn build_cli_status_report(
     let config_path = config_path.unwrap_or_else(default_global_config_path);
     let service = text_probe("service", backend_service_status(&config_path));
     let health = fetch_status_json_probe(client, &config, "/healthz", false).await;
-    let stats = fetch_status_json_probe(client, &config, "/v1/stats", true).await;
     let runtime = fetch_status_json_probe(
         client,
         &config,
@@ -208,7 +205,7 @@ pub(crate) async fn build_cli_status_report(
         .count();
     let overall = if doctor_failures > 0 || !health.ok || !mcp.service_reachable {
         DoctorStatus::Fail
-    } else if doctor_warnings > 0 || !stats.ok || !mcp.project_overview_ok {
+    } else if doctor_warnings > 0 || !mcp.project_overview_ok {
         DoctorStatus::Warn
     } else {
         DoctorStatus::Ok
@@ -223,13 +220,11 @@ pub(crate) async fn build_cli_status_report(
             doctor_failures,
             doctor_warnings,
             service_reachable: health.ok,
-            stats_reachable: stats.ok,
             mcp_service_reachable: mcp.service_reachable,
             mcp_project_ok: mcp.project_overview_ok,
         },
         service,
         health,
-        stats,
         runtime,
         watcher_manager,
         project_watcher,
@@ -347,14 +342,6 @@ pub(crate) fn print_cli_status_report(report: &CliStatusReport) {
             report.health.ok,
             report.health.status,
             report.health.error.as_deref()
-        )
-    );
-    println!(
-        "Stats API: {}",
-        status_probe_summary(
-            report.stats.ok,
-            report.stats.status,
-            report.stats.error.as_deref()
         )
     );
     if let Some(provenance) = report

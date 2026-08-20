@@ -69,7 +69,7 @@ Use these diagnostics to decide whether an answer is grounded. A high-quality an
 
 | Symptom | Likely cause | First check |
 |---|---|---|
-| Good exact query returns nothing | Wrong project slug or missing memory | `memory stats --project <slug>` |
+| Good exact query returns nothing | Wrong project slug or missing memory | `memory status --project <slug>` |
 | Semantic search is empty | Embeddings missing or provider down | `memory embeddings status --project <slug>` |
 | File-specific query misses context | Repo index or graph stale | `memory repo inspect`, `memory graph inspect` |
 | Answer cites old facts | Memory needs replacement review | TUI Review tab or `memory proposals` |

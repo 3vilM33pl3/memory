@@ -328,7 +328,6 @@ fn root_command_doc_name(command_name: &str) -> Option<&'static str> {
         "loops" => Some("loops.md"),
         "embeddings" => Some("embeddings.md"),
         "health" => Some("health.md"),
-        "stats" => Some("stats.md"),
         "archive" => Some("archive.md"),
         "automation" => Some("automation.md"),
         "tui" => Some("tui.md"),

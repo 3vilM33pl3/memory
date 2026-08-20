@@ -30,7 +30,6 @@ Use the narrower commands when you already know which subsystem you need:
 - `memory doctor --project memory` for the full setup checklist and repair hints
 - `memory upgrade --dry-run` for the full repo-local focused-skill bundle view
 - `memory health` for only `/healthz`
-- `memory stats` for only `/v1/stats`
 - `memory service status` for the packaged service manager
 - `memory watcher manager status` for the Codex-linked watcher manager
 - `memory mcp status --project memory` for MCP-only status
