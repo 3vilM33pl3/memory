@@ -48,9 +48,10 @@ async fn mcp_http_auth_middleware(
             .map_err(|error| error.status);
     }
     validate_mcp_origin(&headers, &state.config.service.bind_addr)?;
-    let principal = crate::auth::resolve_request_principal(&state, &headers, false)
-        .await
-        .map_err(|error| error.status)?;
+    let principal =
+        crate::auth::resolve_request_principal(&state, &headers, crate::auth::CookiePolicy::Ignore)
+            .await
+            .map_err(|error| error.status)?;
     let token_required =
         state.config.mcp.require_token || state.config.auth.mode == AuthMode::MultiUser;
     let Some(principal) = principal else {

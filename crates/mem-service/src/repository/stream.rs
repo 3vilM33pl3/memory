@@ -245,17 +245,11 @@ pub(crate) async fn process_stream_request(
     let mut responses = Vec::new();
     match request {
         StreamRequest::Authenticate { token } => {
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                "x-api-token",
-                token
-                    .parse()
-                    .context("stream authentication token is not a valid header value")?,
-            );
-            let authenticated = crate::auth::resolve_request_principal(state, &headers, false)
-                .await
-                .map_err(|error| anyhow::anyhow!(error.message))?
-                .ok_or_else(|| anyhow::anyhow!("stream authentication required"))?;
+            let authenticated =
+                crate::auth::resolve_principal(state, crate::auth::Credential::ApiToken(token))
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error.message))?
+                    .ok_or_else(|| anyhow::anyhow!("stream authentication required"))?;
             if !authenticated.has_any_role(AuthRole::Reader) {
                 anyhow::bail!("stream principal does not have reader access");
             }

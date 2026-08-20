@@ -24,65 +24,34 @@ use crate::{ApiError, AppState};
 pub(crate) const SESSION_COOKIE_NAME: &str = "memory_session";
 pub(crate) const CSRF_COOKIE_NAME: &str = "memory_csrf";
 
-#[derive(Debug)]
-struct PresentedCredentials {
-    api_token: Option<String>,
-    session_token: Option<String>,
+/// One credential presented by a request, independent of the transport that
+/// carried it (HTTP headers, websocket message, future federation channel).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Credential {
+    None,
+    ApiToken(String),
+    BrowserSession(String),
+}
+
+/// Whether a transport adapter may read browser-session cookies. HTTP allows
+/// them; machine transports (MCP, streams) ignore them by design.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CookiePolicy {
+    Allow,
+    Ignore,
 }
 
 pub(crate) fn hash_secret(secret: &str) -> Vec<u8> {
     Sha256::digest(secret.as_bytes()).to_vec()
 }
 
-pub(crate) async fn resolve_request_principal(
-    state: &AppState,
+/// Transport adapter: extract the single presented credential from HTTP
+/// headers, rejecting ambiguous combinations here so `resolve_principal`
+/// never sees them.
+pub(crate) fn credential_from_headers(
     headers: &HeaderMap,
-    allow_cookie: bool,
-) -> Result<Option<AuthenticatedPrincipal>, ApiError> {
-    let credentials = presented_credentials(headers, allow_cookie)?;
-
-    if credentials.api_token.is_some() && credentials.session_token.is_some() {
-        return Err(ApiError::unauthorized(
-            "conflicting api-token and browser-session credentials",
-        ));
-    }
-
-    match state.config.auth.mode {
-        AuthMode::SingleUser => {
-            if credentials.session_token.is_some() {
-                return Err(ApiError::unauthorized(
-                    "browser sessions are unavailable in single-user mode",
-                ));
-            }
-            match credentials.api_token {
-                Some(token) if token == state.api_token => Ok(Some(legacy_principal())),
-                Some(_) => Err(ApiError::unauthorized("invalid api token")),
-                None => Ok(Some(single_user_reader())),
-            }
-        }
-        AuthMode::MultiUser => {
-            if let Some(token) = credentials.api_token {
-                if state.config.auth.multi_user_legacy_token_enabled && token == state.api_token {
-                    return Ok(Some(legacy_principal()));
-                }
-                let pool = state.pool()?;
-                return load_service_token_principal(&pool, state, &token)
-                    .await
-                    .map(Some);
-            }
-            if let Some(token) = credentials.session_token {
-                let pool = state.pool()?;
-                return load_session_principal(&pool, state, &token).await.map(Some);
-            }
-            Ok(None)
-        }
-    }
-}
-
-fn presented_credentials(
-    headers: &HeaderMap,
-    allow_cookie: bool,
-) -> Result<PresentedCredentials, ApiError> {
+    cookies: CookiePolicy,
+) -> Result<Credential, ApiError> {
     let x_api_token = headers
         .get("x-api-token")
         .map(|value| {
@@ -118,15 +87,62 @@ fn presented_credentials(
         (None, None) => None,
     };
 
-    let session_token = if allow_cookie {
-        cookie_value(headers, SESSION_COOKIE_NAME)
-    } else {
-        None
+    let session_token = match cookies {
+        CookiePolicy::Allow => cookie_value(headers, SESSION_COOKIE_NAME),
+        CookiePolicy::Ignore => None,
     };
-    Ok(PresentedCredentials {
-        api_token,
-        session_token,
-    })
+
+    match (api_token, session_token) {
+        (Some(_), Some(_)) => Err(ApiError::unauthorized(
+            "conflicting api-token and browser-session credentials",
+        )),
+        (Some(token), None) => Ok(Credential::ApiToken(token)),
+        (None, Some(session)) => Ok(Credential::BrowserSession(session)),
+        (None, None) => Ok(Credential::None),
+    }
+}
+
+/// Resolve one presented credential to a principal, independent of transport.
+pub(crate) async fn resolve_principal(
+    state: &AppState,
+    credential: Credential,
+) -> Result<Option<AuthenticatedPrincipal>, ApiError> {
+    match state.config.auth.mode {
+        AuthMode::SingleUser => match credential {
+            Credential::BrowserSession(_) => Err(ApiError::unauthorized(
+                "browser sessions are unavailable in single-user mode",
+            )),
+            Credential::ApiToken(token) if token == state.api_token => Ok(Some(legacy_principal())),
+            Credential::ApiToken(_) => Err(ApiError::unauthorized("invalid api token")),
+            Credential::None => Ok(Some(single_user_reader())),
+        },
+        AuthMode::MultiUser => match credential {
+            Credential::ApiToken(token) => {
+                if state.config.auth.multi_user_legacy_token_enabled && token == state.api_token {
+                    return Ok(Some(legacy_principal()));
+                }
+                let pool = state.pool()?;
+                load_service_token_principal(&pool, state, &token)
+                    .await
+                    .map(Some)
+            }
+            Credential::BrowserSession(token) => {
+                let pool = state.pool()?;
+                load_session_principal(&pool, state, &token).await.map(Some)
+            }
+            Credential::None => Ok(None),
+        },
+    }
+}
+
+/// HTTP convenience wrapper: adapter + resolution in one call.
+pub(crate) async fn resolve_request_principal(
+    state: &AppState,
+    headers: &HeaderMap,
+    cookies: CookiePolicy,
+) -> Result<Option<AuthenticatedPrincipal>, ApiError> {
+    let credential = credential_from_headers(headers, cookies)?;
+    resolve_principal(state, credential).await
 }
 
 pub(crate) fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -852,8 +868,9 @@ mod tests {
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer token"),
         );
-        let credentials = presented_credentials(&headers, false).expect("credentials");
-        assert_eq!(credentials.api_token.as_deref(), Some("token"));
+        let credential =
+            credential_from_headers(&headers, CookiePolicy::Ignore).expect("credential");
+        assert_eq!(credential, Credential::ApiToken("token".to_string()));
     }
 
     #[test]
@@ -864,9 +881,14 @@ mod tests {
             HeaderValue::from_static("memory_session=browser-secret"),
         );
 
-        let credentials = presented_credentials(&headers, false).expect("credentials");
-        assert!(credentials.api_token.is_none());
-        assert!(credentials.session_token.is_none());
+        let credential =
+            credential_from_headers(&headers, CookiePolicy::Ignore).expect("credential");
+        assert_eq!(credential, Credential::None);
+        let allowed = credential_from_headers(&headers, CookiePolicy::Allow).expect("credential");
+        assert_eq!(
+            allowed,
+            Credential::BrowserSession("browser-secret".to_string())
+        );
     }
 
     #[tokio::test]
@@ -899,7 +921,7 @@ mod tests {
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer right"),
         );
-        assert!(presented_credentials(&headers, false).is_err());
+        assert!(credential_from_headers(&headers, CookiePolicy::Ignore).is_err());
     }
 
     #[test]

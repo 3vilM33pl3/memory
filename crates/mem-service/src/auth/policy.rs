@@ -13,8 +13,8 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::{
-    AuthenticatedPrincipal, CSRF_COOKIE_NAME, CredentialSource, cookie_value, hash_secret,
-    resolve_request_principal,
+    AuthenticatedPrincipal, CSRF_COOKIE_NAME, CookiePolicy, CredentialSource, cookie_value,
+    hash_secret, resolve_request_principal,
 };
 use crate::{ApiError, AppState};
 
@@ -279,13 +279,14 @@ pub(crate) async fn authorization_guard(
         return next.run(request).await;
     }
 
-    let principal = match resolve_request_principal(&state, request.headers(), true).await {
-        Ok(Some(principal)) => principal,
-        Ok(None) => {
-            return ApiError::unauthorized("authentication required").into_response();
-        }
-        Err(error) => return error.into_response(),
-    };
+    let principal =
+        match resolve_request_principal(&state, request.headers(), CookiePolicy::Allow).await {
+            Ok(Some(principal)) => principal,
+            Ok(None) => {
+                return ApiError::unauthorized("authentication required").into_response();
+            }
+            Err(error) => return error.into_response(),
+        };
 
     if principal.credential_source == CredentialSource::BrowserSession
         && is_mutating(request.method())
