@@ -505,6 +505,13 @@ pub(crate) async fn run_doctor(
         .clone()
         .unwrap_or_else(|| project_paths.config_path());
     let global_config_path = discover_global_config_path();
+    let ctx = DoctorCtx {
+        fix,
+        project: project.to_string(),
+        repo_root: repo_root.to_path_buf(),
+        config_path: config_path.clone(),
+        global_config_path: global_config_path.clone(),
+    };
     let mut report = DoctorReport {
         project: project.to_string(),
         repo_root: repo_root.display().to_string(),
@@ -517,12 +524,52 @@ pub(crate) async fn run_doctor(
     };
 
     report.push(cli_path_check());
+    repo_bootstrap_checks(&mut report, &ctx)?;
+    skill_checks(&mut report, &ctx)?;
 
+    if let Some(config) = config_load_check(&mut report, &ctx, cli_config) {
+        let runtime_facts = fetch_runtime_status_facts(&config).await;
+        let database_connect_error =
+            database_checks(&mut report, &ctx, &config, runtime_facts.as_ref());
+        config_value_checks(
+            &mut report,
+            &ctx,
+            &config,
+            runtime_facts.as_ref(),
+            &database_connect_error,
+        )
+        .await?;
+        let resolved_repo_root = automation_checks(&mut report, &ctx, &config)?;
+        watcher_manager_checks(&mut report)?;
+        backend_checks(&mut report, &ctx, &config, &database_connect_error).await?;
+        automation_state_check(&mut report, &ctx, &config, &resolved_repo_root).await;
+        workflow_checks(&mut report, &ctx);
+    } else {
+        config_skipped_checks(&mut report);
+    }
+
+    Ok(report)
+}
+
+/// Shared inputs threaded through the doctor sections.
+struct DoctorCtx {
+    fix: bool,
+    project: String,
+    repo_root: PathBuf,
+    config_path: PathBuf,
+    global_config_path: Option<PathBuf>,
+}
+
+fn repo_bootstrap_checks(report: &mut DoctorReport, ctx: &DoctorCtx) -> Result<()> {
+    let fix = ctx.fix;
+    let project: &str = &ctx.project;
+    let repo_root: &Path = ctx.repo_root.as_path();
+    let config_path = ctx.config_path.clone();
+    let global_config_path = ctx.global_config_path.clone();
     let mem_dir = repo_root.join(".mem");
     let project_path = mem_dir.join("project.toml");
     let legacy_config_path = mem_dir.join("config.toml");
     let root_gitignore_path = repo_root.join(".gitignore");
-    let local_service_overrides = read_local_service_overrides(repo_root);
 
     let mut init_fix_applied = false;
     if !mem_dir.exists() && fix {
@@ -695,6 +742,12 @@ pub(crate) async fn run_doctor(
         },
         false,
     ));
+    Ok(())
+}
+
+fn skill_checks(report: &mut DoctorReport, ctx: &DoctorCtx) -> Result<()> {
+    let fix = ctx.fix;
+    let repo_root: &Path = ctx.repo_root.as_path();
 
     let skill_upgrade_fix = if fix {
         Some(upgrade_project_skills(repo_root, false, false)?)
@@ -782,8 +835,18 @@ pub(crate) async fn run_doctor(
             false,
         )),
     }
+    Ok(())
+}
 
-    let config = match AppConfig::load_from_path(cli_config.clone()) {
+fn config_load_check(
+    report: &mut DoctorReport,
+    ctx: &DoctorCtx,
+    cli_config: Option<PathBuf>,
+) -> Option<AppConfig> {
+    let config_path = ctx.config_path.clone();
+    let global_config_path = ctx.global_config_path.clone();
+
+    match AppConfig::load_from_path(cli_config.clone()) {
         Ok(config) => {
             report.push(doctor_check(
                 "config.load",
@@ -813,710 +876,870 @@ pub(crate) async fn run_doctor(
             ));
             None
         }
-    };
+    }
+}
 
-    if let Some(config) = config {
-        report.push(doctor_check(
-            "config.database_url",
-            if is_placeholder_database_url(&config.database.url) {
-                DoctorStatus::Warn
-            } else {
-                DoctorStatus::Ok
-            },
-            if is_placeholder_database_url(&config.database.url) {
-                "Database URL still uses the placeholder value."
-            } else {
-                "Database URL is configured."
-            },
-            Some(mask_database_url(&config.database.url)),
-            if is_placeholder_database_url(&config.database.url) {
-                Some(format!(
-                    "Set [database].url in {}",
-                    global_config_path
-                        .as_ref()
-                        .unwrap_or(&config_path)
-                        .display()
-                ))
-            } else {
-                None
-            },
-            false,
-        ));
+fn database_checks(
+    report: &mut DoctorReport,
+    ctx: &DoctorCtx,
+    config: &AppConfig,
+    runtime_facts: Option<&serde_json::Value>,
+) -> Option<String> {
+    let config_path = ctx.config_path.clone();
+    let global_config_path = ctx.global_config_path.clone();
 
-        let mut database_connect_error = None;
+    report.push(doctor_check(
+        "config.database_url",
         if is_placeholder_database_url(&config.database.url) {
-            report.push(doctor_check(
-                "database.reachable",
-                DoctorStatus::Skipped,
-                "Skipped database checks because the database URL is still a placeholder.",
-                None,
-                None,
-                false,
-            ));
+            DoctorStatus::Warn
         } else {
-            // The service owns the database; the CLI only probes raw TCP
-            // reachability of the configured host and relays the service's
-            // authoritative pgvector/connectivity report from runtime status.
-            match database_host_status(&config.database.url) {
-                Ok((status, details)) => {
-                    if matches!(status, DoctorStatus::Fail) {
-                        database_connect_error = Some(details.clone());
-                    }
-                    report.push(doctor_check(
-                        "database.reachable",
-                        status,
-                        "TCP reachability of the configured database host.",
-                        Some(details),
-                        None,
-                        false,
-                    ));
-                }
-                Err(error) => {
-                    database_connect_error = Some(error.to_string());
-                    report.push(doctor_check(
-                        "database.reachable",
-                        DoctorStatus::Warn,
-                        "Could not parse the configured database URL for a reachability probe.",
-                        Some(error.to_string()),
-                        None,
-                        false,
-                    ));
-                }
-            }
-            match fetch_runtime_database_status(&config).await {
-                Some(database) => {
-                    let connected = database
-                        .get("connected")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false);
-                    let pgvector = database
-                        .get("pgvector_version")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string);
-                    let error = database
-                        .get("error")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string);
-                    report.push(doctor_check(
-                        "database.service_report",
-                        if connected && pgvector.is_some() {
-                            DoctorStatus::Ok
-                        } else {
-                            DoctorStatus::Fail
-                        },
-                        if connected && pgvector.is_some() {
-                            "Service reports the database connected with pgvector enabled."
-                        } else if connected {
-                            "Service reports the database connected but pgvector is not confirmed."
-                        } else {
-                            "Service reports the database as unavailable."
-                        },
-                        Some(match (&pgvector, &error) {
-                            (Some(version), _) => format!("pgvector {version}"),
-                            (None, Some(error)) => error.clone(),
-                            (None, None) => "no pgvector version reported".to_string(),
-                        }),
-                        if connected && pgvector.is_some() {
-                            None
-                        } else {
-                            Some(
-                                "Restart the service (it applies migrations including CREATE EXTENSION vector), or install pgvector and run CREATE EXTENSION vector; in the target database."
-                                    .to_string(),
-                            )
-                        },
-                        false,
-                    ));
-                    if !connected {
-                        database_connect_error.get_or_insert_with(|| {
-                            "service reports database unavailable".to_string()
-                        });
-                    }
-                }
-                None => report.push(doctor_check(
-                    "database.service_report",
-                    DoctorStatus::Skipped,
-                    "Skipped the service database report because the backend is unreachable.",
-                    None,
-                    None,
-                    false,
-                )),
-            }
-        }
-
-        report.push(doctor_check(
-            "config.api_token",
-            if config.service.api_token.trim().is_empty() {
-                DoctorStatus::Fail
-            } else if config.service.api_token == DEV_API_TOKEN {
-                DoctorStatus::Warn
-            } else {
-                DoctorStatus::Ok
-            },
-            if config.service.api_token.trim().is_empty() {
-                "API token is empty."
-            } else if config.service.api_token == DEV_API_TOKEN {
-                "API token is set to the development default."
-            } else {
-                "API token is configured."
-            },
-            None,
-            if config.service.api_token.trim().is_empty()
-                || config.service.api_token == DEV_API_TOKEN
-            {
-                Some(
-                    "Run `memory wizard --global` or `memory service ensure-api-token --rotate-placeholder` to provision a machine-local token."
-                        .to_string(),
-                )
-            } else {
-                None
-            },
-            false,
-        ));
-
-        report.push(doctor_check(
-            "config.writer_id",
-            DoctorStatus::Ok,
-            if config.writer.id.trim().is_empty() {
-                "Writer id will be auto-derived for write-capable workflows."
-            } else {
-                "Writer id is configured."
-            },
-            Some(resolve_writer_identity(&config, None)?.id),
-            if config.writer.id.trim().is_empty() {
-                Some(format!(
-                    "Optional: set [writer].id in {} or export MEMORY_LAYER_WRITER_ID if you want a custom stable writer label.",
-                    config_path.display()
-                ))
-            } else {
-                None
-            },
-            false,
-        ));
-
-        let llm_curation_enabled = config.features.llm_curation;
-        let repo_env_path = discover_repo_env_path();
-        let llm_api_key_value = resolve_llm_api_key(&config.llm).unwrap_or_default();
-        let llm_api_key_required = llm_requires_api_key(&config.llm);
-        let (llm_model_status, llm_api_key_status) = llm_doctor_statuses(
-            llm_curation_enabled,
-            !config.llm.model.trim().is_empty(),
-            llm_api_key_required,
-            !llm_api_key_value.trim().is_empty(),
-        );
-
-        report.push(doctor_check(
-            "config.llm_model",
-            llm_model_status,
-            if !llm_curation_enabled {
-                "LLM curation is disabled; no model is required."
-            } else if config.llm.model.trim().is_empty() {
-                "LLM model is not configured."
-            } else {
-                "LLM model is configured."
-            },
+            DoctorStatus::Ok
+        },
+        if is_placeholder_database_url(&config.database.url) {
+            "Database URL still uses the placeholder value."
+        } else {
+            "Database URL is configured."
+        },
+        Some(mask_database_url(&config.database.url)),
+        if is_placeholder_database_url(&config.database.url) {
             Some(format!(
-                "provider={} base_url={}",
-                config.llm.provider,
-                effective_llm_base_url(&config.llm)
-            )),
-            if llm_curation_enabled && config.llm.model.trim().is_empty() {
-                Some(format!(
-                    "Set [llm].model in {}",
-                    global_config_path
-                        .as_ref()
-                        .unwrap_or(&config_path)
-                        .display()
-                ))
-            } else {
-                None
-            },
-            false,
-        ));
+                "Set [database].url in {}",
+                global_config_path
+                    .as_ref()
+                    .unwrap_or(&config_path)
+                    .display()
+            ))
+        } else {
+            None
+        },
+        false,
+    ));
 
+    let mut database_connect_error = None;
+    if is_placeholder_database_url(&config.database.url) {
         report.push(doctor_check(
-            "config.llm_api_key",
-            llm_api_key_status,
-            if !llm_curation_enabled {
-                "LLM curation is disabled; no API key is required."
-            } else if !llm_api_key_required {
-                "LLM API key is optional for this provider."
-            } else if llm_api_key_value.trim().is_empty() {
-                "LLM API key environment variable is missing."
-            } else {
-                "LLM API key environment variable is present."
-            },
-            Some(config.llm.api_key_env.clone()),
-            if llm_curation_enabled && llm_api_key_required && llm_api_key_value.trim().is_empty() {
-                Some({
-                    let mut locations = Vec::new();
-                    if let Some(path) = repo_env_path.as_ref() {
-                        locations.push(path.display().to_string());
-                    }
-                    locations.push(
-                        global_config_path
-                            .as_ref()
-                            .map(|path| shared_env_path_for_config(path).display().to_string())
-                            .unwrap_or_else(|| {
-                                shared_env_path_for_config(&config_path)
-                                    .display()
-                                    .to_string()
-                            }),
-                    );
-                    format!(
-                        "Set {} in {} or export it in your shell",
-                        config.llm.api_key_env,
-                        locations.join(" or ")
-                    )
-                })
-            } else {
-                None
-            },
-            false,
-        ));
-
-        if llm_curation_enabled && is_ollama_provider(&config.llm.provider) {
-            let models_url = format!("{}/models", effective_llm_base_url(&config.llm));
-            let ollama_check = match Client::new().get(&models_url).send().await {
-                Ok(response) if response.status().is_success() => {
-                    match response.json::<serde_json::Value>().await {
-                        Ok(body) => {
-                            let model = config.llm.model.trim();
-                            let found = body
-                                .get("data")
-                                .and_then(|value| value.as_array())
-                                .is_some_and(|models| {
-                                    models.iter().any(|entry| {
-                                        entry
-                                            .get("id")
-                                            .and_then(|value| value.as_str())
-                                            .is_some_and(|id| id == model)
-                                    })
-                                });
-                            doctor_check(
-                                "config.ollama",
-                                if found {
-                                    DoctorStatus::Ok
-                                } else {
-                                    DoctorStatus::Warn
-                                },
-                                if found {
-                                    "Ollama is reachable and the configured model is available."
-                                } else {
-                                    "Ollama is reachable but the configured model was not listed."
-                                },
-                                Some(models_url),
-                                (!found).then(|| format!("Run `ollama pull {model}`")),
-                                false,
-                            )
-                        }
-                        Err(error) => doctor_check(
-                            "config.ollama",
-                            DoctorStatus::Warn,
-                            "Ollama responded but the model list could not be parsed.",
-                            Some(models_url),
-                            Some(error.to_string()),
-                            false,
-                        ),
-                    }
-                }
-                Ok(response) => doctor_check(
-                    "config.ollama",
-                    DoctorStatus::Fail,
-                    "Ollama model endpoint returned an error.",
-                    Some(models_url),
-                    Some(format!("HTTP {}", response.status())),
-                    false,
-                ),
-                Err(error) => doctor_check(
-                    "config.ollama",
-                    DoctorStatus::Fail,
-                    "Ollama is not reachable at the configured base URL.",
-                    Some(models_url),
-                    Some(format!("Start Ollama with `ollama serve`: {error}")),
-                    false,
-                ),
-            };
-            report.push(ollama_check);
-        }
-
-        let service_endpoint_details = format!("http={}", config.service.bind_addr);
-        report.push(doctor_check(
-            "config.service_endpoints",
-            DoctorStatus::Ok,
-            if local_service_overrides.is_some() {
-                "Repo-local service endpoints are configured."
-            } else {
-                "Using shared/global service endpoints."
-            },
-            Some(service_endpoint_details),
+            "database.reachable",
+            DoctorStatus::Skipped,
+            "Skipped database checks because the database URL is still a placeholder.",
+            None,
             None,
             false,
         ));
-        report.push(doctor_check(
-            "config.relay_discovery",
-            if config.cluster.enabled {
-                DoctorStatus::Ok
-            } else if database_connect_error.is_some() {
-                DoctorStatus::Warn
-            } else {
-                DoctorStatus::Ok
-            },
-            if config.cluster.enabled {
-                "Relay discovery is enabled for backend failover."
-            } else {
-                "Relay discovery is disabled."
-            },
-            Some(format!(
-                "enabled={} multicast={} priority={}",
-                config.cluster.enabled,
-                config.cluster.discovery_multicast_addr,
-                config.cluster.priority
-            )),
-            if config.cluster.enabled {
-                None
-            } else {
-                Some(format!(
-                    "Set [cluster].enabled = true in {} to allow this backend to discover and proxy to another Memory Layer backend when PostgreSQL is unavailable.",
-                    global_config_path
-                        .as_ref()
-                        .unwrap_or(&config_path)
-                        .display()
-                ))
-            },
-            false,
-        ));
-
-        let runtime_dir = automation_runtime_dir(&config, repo_root);
-        let runtime_fix_applied = if !runtime_dir.exists() && fix {
-            fs::create_dir_all(&runtime_dir)
-                .with_context(|| format!("create {}", runtime_dir.display()))?;
-            true
-        } else {
-            false
-        };
-        report.push(doctor_check(
-            "automation.runtime_dir",
-            if runtime_dir.exists() {
-                DoctorStatus::Ok
-            } else {
-                DoctorStatus::Warn
-            },
-            if runtime_dir.exists() {
-                "Automation runtime directory is present."
-            } else {
-                "Automation runtime directory is missing."
-            },
-            Some(runtime_dir.display().to_string()),
-            if runtime_dir.exists() {
-                None
-            } else {
-                Some("memory doctor --fix".to_string())
-            },
-            runtime_fix_applied,
-        ));
-
-        let resolved_repo_root = config
-            .automation
-            .repo_root
-            .as_ref()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| repo_root.to_path_buf());
-        report.push(doctor_check(
-            "automation.repo_root",
-            if resolved_repo_root == repo_root {
-                DoctorStatus::Ok
-            } else {
-                DoctorStatus::Warn
-            },
-            if resolved_repo_root == repo_root {
-                "Automation repo_root matches the current repository."
-            } else {
-                "Automation repo_root differs from the current repository."
-            },
-            Some(resolved_repo_root.display().to_string()),
-            if resolved_repo_root == repo_root {
-                None
-            } else {
-                Some(format!(
-                    "Edit {} and set [automation].repo_root",
-                    config_path.display()
-                ))
-            },
-            false,
-        ));
-
-        #[cfg(target_os = "macos")]
-        {
-            let manager_plist_path = watch_manager_launch_agent_path()?;
-            let manager_status = launch_agent_status(watch_manager_launch_agent_label())?;
-            let manager_installed = manager_plist_path.exists();
-            report.push(doctor_check(
-                "watcher.manager_service",
-                if manager_status.running {
-                    DoctorStatus::Ok
-                } else {
-                    DoctorStatus::Warn
-                },
-                if manager_status.running {
-                    "Agent-linked watcher manager service is active."
-                } else if manager_installed || manager_status.loaded {
-                    "Agent-linked watcher manager service is installed but not active."
-                } else {
-                    "Agent-linked watcher manager service is not installed."
-                },
-                Some(format!(
-                    "installed={} loaded={} active={} plist={}",
-                    yes_no(manager_installed),
-                    yes_no(manager_status.loaded),
-                    yes_no(manager_status.running),
-                    manager_plist_path.display()
-                )),
-                if manager_status.running {
-                    None
-                } else {
-                    Some("memory watcher manager enable".to_string())
-                },
-                false,
-            ));
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            let task_name = mem_platform::windows_watch_manager_task_name();
-            let manager_installed = mem_platform::windows_task_exists(task_name);
-            let manager_active = mem_platform::windows_task_is_running(task_name);
-            report.push(doctor_check(
-                "watcher.manager_service",
-                if manager_active {
-                    DoctorStatus::Ok
-                } else {
-                    DoctorStatus::Warn
-                },
-                if manager_active {
-                    "Agent-linked watcher manager task is active."
-                } else if manager_installed {
-                    "Agent-linked watcher manager task is installed but not active."
-                } else {
-                    "Agent-linked watcher manager task is not installed."
-                },
-                Some(format!(
-                    "installed={} active={} task={task_name}",
-                    yes_no(manager_installed),
-                    yes_no(manager_active),
-                )),
-                if manager_active {
-                    None
-                } else {
-                    Some("memory watcher manager enable".to_string())
-                },
-                false,
-            ));
-        }
-
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            let manager_unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
-            let manager_installed = manager_unit_path.exists();
-            let manager_enabled =
-                run_systemctl_user(["is-enabled", WATCH_MANAGER_UNIT_NAME]).is_ok();
-            let manager_active = run_systemctl_user(["is-active", WATCH_MANAGER_UNIT_NAME]).is_ok();
-            report.push(doctor_check(
-                "watcher.manager_service",
-                if manager_active {
-                    DoctorStatus::Ok
-                } else {
-                    DoctorStatus::Warn
-                },
-                if manager_active {
-                    "Agent-linked watcher manager service is active."
-                } else if manager_installed {
-                    "Agent-linked watcher manager service is installed but not active."
-                } else {
-                    "Agent-linked watcher manager service is not installed."
-                },
-                Some(format!(
-                    "installed={} enabled={} active={} unit={}",
-                    yes_no(manager_installed),
-                    yes_no(manager_enabled),
-                    yes_no(manager_active),
-                    manager_unit_path.display()
-                )),
-                if manager_active {
-                    None
-                } else {
-                    Some("memory watcher manager enable".to_string())
-                },
-                false,
-            ));
-        }
-
-        let client = Client::builder()
-            .timeout(config.service.request_timeout)
-            .build()
-            .context("build doctor http client")?;
-        let api = ApiClient::new(client, config.clone());
-
-        match api.health().await {
-            Ok(value) => {
-                let role = value.get("role").and_then(|field| field.as_str());
-                let upstream = value.get("upstream").cloned();
-                report.push(doctor_check(
-                    "backend.health",
-                    DoctorStatus::Ok,
-                    "Backend health endpoint is reachable.",
-                    Some(value.to_string()),
-                    None,
-                    false,
-                ));
-                report.push(doctor_check(
-                    "backend.role",
-                    if role == Some("relay")
-                        && upstream
-                            .as_ref()
-                            .and_then(|payload| payload.as_object())
-                            .is_none()
-                    {
-                        DoctorStatus::Warn
-                    } else {
-                        DoctorStatus::Ok
-                    },
-                    match role {
-                        Some("primary") => "Backend is running in primary mode.",
-                        Some("relay") => "Backend is running in relay mode.",
-                        _ => "Backend did not report a cluster role.",
-                    },
-                    match role {
-                        Some("relay") => upstream.as_ref().map(|payload| payload.to_string()),
-                        Some(other) => Some(other.to_string()),
-                        None => None,
-                    },
-                    if role == Some("relay")
-                        && upstream
-                            .as_ref()
-                            .and_then(|payload| payload.as_object())
-                            .is_none()
-                    {
-                        Some(
-                            "Start a database-connected Memory service on the local network or fix the local database connection."
-                                .to_string(),
-                        )
-                    } else {
-                        None
-                    },
-                    false,
-                ));
-                match api.project_overview(project).await {
-                    Ok(overview) => {
-                        report.push(doctor_check(
-                            "backend.project_overview",
-                            DoctorStatus::Ok,
-                            "Project overview endpoint is reachable.",
-                            Some(format!(
-                                "{} memories / {} raw captures",
-                                overview.memory_entries_total, overview.raw_captures_total
-                            )),
-                            None,
-                            false,
-                        ));
-                        if overview
-                            .automation
-                            .as_ref()
-                            .is_some_and(|automation| automation.enabled)
-                        {
-                            let active_watchers = overview
-                                .watchers
-                                .as_ref()
-                                .map(|watchers| watchers.active_count);
-                            report.push(doctor_check(
-                                "backend.watchers",
-                                if active_watchers.unwrap_or(0) > 0 {
-                                    DoctorStatus::Ok
-                                } else {
-                                    DoctorStatus::Warn
-                                },
-                                if active_watchers.unwrap_or(0) > 0 {
-                                    "At least one active watcher is visible to the backend."
-                                } else {
-                                    "Automation is enabled but no active watcher is visible."
-                                },
-                                active_watchers.map(|count| format!("{count} active watcher(s)")),
-                                if active_watchers.unwrap_or(0) > 0 {
-                                    None
-                                } else {
-                                    Some(if cfg!(target_os = "macos") {
-                                        format!("memory watcher enable --project {}", project)
-                                    } else {
-                                        "memory watcher manager enable".to_string()
-                                    })
-                                },
-                                false,
-                            ));
-                        }
-
-                        if repo_root.join(".git").exists() {
-                            match api.project_commits(project, 1, 0).await {
-                                Ok(commits) => report.push(doctor_check(
-                                    "history.commit_sync",
-                                    if commits.total > 0 {
-                                        DoctorStatus::Ok
-                                    } else {
-                                        DoctorStatus::Warn
-                                    },
-                                    if commits.total > 0 {
-                                        "Commit history has been imported for this project."
-                                    } else {
-                                        "No commit history has been imported for this project."
-                                    },
-                                    Some(format!("{} stored commit(s)", commits.total)),
-                                    if commits.total > 0 {
-                                        None
-                                    } else {
-                                        Some(format!("memory commits sync --project {}", project))
-                                    },
-                                    false,
-                                )),
-                                Err(error) => report.push(doctor_check(
-                                    "history.commit_sync",
-                                    DoctorStatus::Warn,
-                                    "Could not load project commit history.",
-                                    Some(error.to_string()),
-                                    Some(format!("memory commits sync --project {}", project)),
-                                    false,
-                                )),
-                            }
-                        }
-                    }
-                    Err(error) => report.push(doctor_check(
-                        "backend.project_overview",
-                        DoctorStatus::Warn,
-                        "Project overview endpoint did not return data.",
-                        Some(error.to_string()),
-                        Some(format!("memory init --project {}", project)),
-                        false,
-                    )),
+    } else {
+        // The service owns the database; the CLI only probes raw TCP
+        // reachability of the configured host and relays the service's
+        // authoritative pgvector/connectivity report from runtime status.
+        match database_host_status(&config.database.url) {
+            Ok((status, details)) => {
+                if matches!(status, DoctorStatus::Fail) {
+                    database_connect_error = Some(details.clone());
                 }
-
-                let (http_status, http_details) = tcp_endpoint_status(&config.service.bind_addr);
                 report.push(doctor_check(
-                    "backend.http_endpoint",
-                    if matches!(http_status, DoctorStatus::Fail) {
-                        DoctorStatus::Fail
-                    } else {
-                        DoctorStatus::Ok
-                    },
-                    "Configured HTTP endpoint is reachable.",
-                    Some(http_details),
+                    "database.reachable",
+                    status,
+                    "TCP reachability of the configured database host.",
+                    Some(details),
                     None,
                     false,
                 ));
             }
             Err(error) => {
+                database_connect_error = Some(error.to_string());
                 report.push(doctor_check(
-                    "backend.health",
-                    DoctorStatus::Fail,
-                    "Backend health endpoint is not reachable.",
+                    "database.reachable",
+                    DoctorStatus::Warn,
+                    "Could not parse the configured database URL for a reachability probe.",
                     Some(error.to_string()),
-                    Some(if database_connect_error.is_some() && !config.cluster.enabled {
+                    None,
+                    false,
+                ));
+            }
+        }
+        match runtime_facts.and_then(|facts| facts.get("database").cloned()) {
+            Some(database) => {
+                let connected = database
+                    .get("connected")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                let pgvector = database
+                    .get("pgvector_version")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                let error = database
+                    .get("error")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string);
+                report.push(doctor_check(
+                    "database.service_report",
+                    if connected && pgvector.is_some() {
+                        DoctorStatus::Ok
+                    } else {
+                        DoctorStatus::Fail
+                    },
+                    if connected && pgvector.is_some() {
+                        "Service reports the database connected with pgvector enabled."
+                    } else if connected {
+                        "Service reports the database connected but pgvector is not confirmed."
+                    } else {
+                        "Service reports the database as unavailable."
+                    },
+                    Some(match (&pgvector, &error) {
+                        (Some(version), _) => format!("pgvector {version}"),
+                        (None, Some(error)) => error.clone(),
+                        (None, None) => "no pgvector version reported".to_string(),
+                    }),
+                    if connected && pgvector.is_some() {
+                        None
+                    } else {
+                        Some(
+                            "Restart the service (it applies migrations including CREATE EXTENSION vector), or install pgvector and run CREATE EXTENSION vector; in the target database."
+                                .to_string(),
+                        )
+                    },
+                    false,
+                ));
+                if !connected {
+                    database_connect_error
+                        .get_or_insert_with(|| "service reports database unavailable".to_string());
+                }
+            }
+            None => report.push(doctor_check(
+                "database.service_report",
+                DoctorStatus::Skipped,
+                "Skipped the service database report because the backend is unreachable.",
+                None,
+                None,
+                false,
+            )),
+        }
+    }
+    database_connect_error
+}
+
+async fn config_value_checks(
+    report: &mut DoctorReport,
+    ctx: &DoctorCtx,
+    config: &AppConfig,
+    runtime_facts: Option<&serde_json::Value>,
+    database_connect_error: &Option<String>,
+) -> Result<()> {
+    let repo_root: &Path = ctx.repo_root.as_path();
+    let config_path = ctx.config_path.clone();
+    let global_config_path = ctx.global_config_path.clone();
+    let local_service_overrides = read_local_service_overrides(repo_root);
+
+    report.push(doctor_check(
+        "config.api_token",
+        if config.service.api_token.trim().is_empty() {
+            DoctorStatus::Fail
+        } else if config.service.api_token == DEV_API_TOKEN {
+            DoctorStatus::Warn
+        } else {
+            DoctorStatus::Ok
+        },
+        if config.service.api_token.trim().is_empty() {
+            "API token is empty."
+        } else if config.service.api_token == DEV_API_TOKEN {
+            "API token is set to the development default."
+        } else {
+            "API token is configured."
+        },
+        None,
+        if config.service.api_token.trim().is_empty()
+            || config.service.api_token == DEV_API_TOKEN
+        {
+            Some(
+                "Run `memory wizard --global` or `memory service ensure-api-token --rotate-placeholder` to provision a machine-local token."
+                    .to_string(),
+            )
+        } else {
+            None
+        },
+        false,
+    ));
+
+    report.push(doctor_check(
+        "config.writer_id",
+        DoctorStatus::Ok,
+        if config.writer.id.trim().is_empty() {
+            "Writer id will be auto-derived for write-capable workflows."
+        } else {
+            "Writer id is configured."
+        },
+        Some(resolve_writer_identity(config, None)?.id),
+        if config.writer.id.trim().is_empty() {
+            Some(format!(
+                "Optional: set [writer].id in {} or export MEMORY_LAYER_WRITER_ID if you want a custom stable writer label.",
+                config_path.display()
+            ))
+        } else {
+            None
+        },
+        false,
+    ));
+
+    let llm_curation_enabled = config.features.llm_curation;
+    let repo_env_path = discover_repo_env_path();
+    let llm_api_key_value = resolve_llm_api_key(&config.llm).unwrap_or_default();
+    let llm_api_key_required = llm_requires_api_key(&config.llm);
+    let (llm_model_status, llm_api_key_status) = llm_doctor_statuses(
+        llm_curation_enabled,
+        !config.llm.model.trim().is_empty(),
+        llm_api_key_required,
+        !llm_api_key_value.trim().is_empty(),
+    );
+
+    report.push(doctor_check(
+        "config.llm_model",
+        llm_model_status,
+        if !llm_curation_enabled {
+            "LLM curation is disabled; no model is required."
+        } else if config.llm.model.trim().is_empty() {
+            "LLM model is not configured."
+        } else {
+            "LLM model is configured."
+        },
+        Some(format!(
+            "provider={} base_url={}",
+            config.llm.provider,
+            effective_llm_base_url(&config.llm)
+        )),
+        if llm_curation_enabled && config.llm.model.trim().is_empty() {
+            Some(format!(
+                "Set [llm].model in {}",
+                global_config_path
+                    .as_ref()
+                    .unwrap_or(&config_path)
+                    .display()
+            ))
+        } else {
+            None
+        },
+        false,
+    ));
+
+    report.push(doctor_check(
+        "config.llm_api_key",
+        llm_api_key_status,
+        if !llm_curation_enabled {
+            "LLM curation is disabled; no API key is required."
+        } else if !llm_api_key_required {
+            "LLM API key is optional for this provider."
+        } else if llm_api_key_value.trim().is_empty() {
+            "LLM API key environment variable is missing."
+        } else {
+            "LLM API key environment variable is present."
+        },
+        Some(config.llm.api_key_env.clone()),
+        if llm_curation_enabled && llm_api_key_required && llm_api_key_value.trim().is_empty() {
+            Some({
+                let mut locations = Vec::new();
+                if let Some(path) = repo_env_path.as_ref() {
+                    locations.push(path.display().to_string());
+                }
+                locations.push(
+                    global_config_path
+                        .as_ref()
+                        .map(|path| shared_env_path_for_config(path).display().to_string())
+                        .unwrap_or_else(|| {
+                            shared_env_path_for_config(&config_path)
+                                .display()
+                                .to_string()
+                        }),
+                );
+                format!(
+                    "Set {} in {} or export it in your shell",
+                    config.llm.api_key_env,
+                    locations.join(" or ")
+                )
+            })
+        } else {
+            None
+        },
+        false,
+    ));
+
+    if llm_curation_enabled && is_ollama_provider(&config.llm.provider) {
+        let models_url = format!("{}/models", effective_llm_base_url(&config.llm));
+        let ollama_check = match Client::new().get(&models_url).send().await {
+            Ok(response) if response.status().is_success() => {
+                match response.json::<serde_json::Value>().await {
+                    Ok(body) => {
+                        let model = config.llm.model.trim();
+                        let found = body
+                            .get("data")
+                            .and_then(|value| value.as_array())
+                            .is_some_and(|models| {
+                                models.iter().any(|entry| {
+                                    entry
+                                        .get("id")
+                                        .and_then(|value| value.as_str())
+                                        .is_some_and(|id| id == model)
+                                })
+                            });
+                        doctor_check(
+                            "config.ollama",
+                            if found {
+                                DoctorStatus::Ok
+                            } else {
+                                DoctorStatus::Warn
+                            },
+                            if found {
+                                "Ollama is reachable and the configured model is available."
+                            } else {
+                                "Ollama is reachable but the configured model was not listed."
+                            },
+                            Some(models_url),
+                            (!found).then(|| format!("Run `ollama pull {model}`")),
+                            false,
+                        )
+                    }
+                    Err(error) => doctor_check(
+                        "config.ollama",
+                        DoctorStatus::Warn,
+                        "Ollama responded but the model list could not be parsed.",
+                        Some(models_url),
+                        Some(error.to_string()),
+                        false,
+                    ),
+                }
+            }
+            Ok(response) => doctor_check(
+                "config.ollama",
+                DoctorStatus::Fail,
+                "Ollama model endpoint returned an error.",
+                Some(models_url),
+                Some(format!("HTTP {}", response.status())),
+                false,
+            ),
+            Err(error) => doctor_check(
+                "config.ollama",
+                DoctorStatus::Fail,
+                "Ollama is not reachable at the configured base URL.",
+                Some(models_url),
+                Some(format!("Start Ollama with `ollama serve`: {error}")),
+                false,
+            ),
+        };
+        report.push(ollama_check);
+    }
+
+    let service_endpoint_details = format!("http={}", config.service.bind_addr);
+    report.push(doctor_check(
+        "config.service_endpoints",
+        DoctorStatus::Ok,
+        if local_service_overrides.is_some() {
+            "Repo-local service endpoints are configured."
+        } else {
+            "Using shared/global service endpoints."
+        },
+        Some(service_endpoint_details),
+        None,
+        false,
+    ));
+    report.push(doctor_check(
+        "config.relay_discovery",
+        if config.cluster.enabled {
+            DoctorStatus::Ok
+        } else if database_connect_error.is_some() {
+            DoctorStatus::Warn
+        } else {
+            DoctorStatus::Ok
+        },
+        if config.cluster.enabled {
+            "Relay discovery is enabled for backend failover."
+        } else {
+            "Relay discovery is disabled."
+        },
+        Some(format!(
+            "enabled={} multicast={} priority={}",
+            config.cluster.enabled,
+            config.cluster.discovery_multicast_addr,
+            config.cluster.priority
+        )),
+        if config.cluster.enabled {
+            None
+        } else {
+            Some(format!(
+                "Set [cluster].enabled = true in {} to allow this backend to discover and proxy to another Memory Layer backend when PostgreSQL is unavailable.",
+                global_config_path
+                    .as_ref()
+                    .unwrap_or(&config_path)
+                    .display()
+            ))
+        },
+        false,
+    ));
+
+    llm_report_checks(report, runtime_facts);
+    Ok(())
+}
+
+/// Relay the service's own LLM/embeddings facts; in remote setups these are
+/// the values that actually drive curation, not the local config copies.
+fn llm_report_checks(report: &mut DoctorReport, runtime_facts: Option<&serde_json::Value>) {
+    match runtime_facts.and_then(|facts| facts.get("llm")) {
+        Some(llm) => {
+            let curation_enabled = llm
+                .get("curation_enabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let model = llm
+                .get("model")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            let api_key_present = llm
+                .get("api_key_present")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let api_key_required = llm
+                .get("api_key_required")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let healthy =
+                !curation_enabled || (!model.is_empty() && (api_key_present || !api_key_required));
+            report.push(doctor_check(
+                "backend.llm_report",
+                if healthy {
+                    DoctorStatus::Ok
+                } else {
+                    DoctorStatus::Warn
+                },
+                if !curation_enabled {
+                    "Service reports LLM curation disabled."
+                } else if healthy {
+                    "Service reports a usable LLM configuration."
+                } else {
+                    "Service reports an incomplete LLM configuration."
+                },
+                Some(format!(
+                    "provider={} model={} api_key_present={}",
+                    llm.get("provider")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown"),
+                    if model.is_empty() { "<unset>" } else { model },
+                    api_key_present
+                )),
+                (!healthy).then(|| {
+                    "Fix [llm] in the service's config (model and API key), then restart the service."
+                        .to_string()
+                }),
+                false,
+            ));
+        }
+        None => report.push(doctor_check(
+            "backend.llm_report",
+            DoctorStatus::Skipped,
+            "Skipped the service LLM report because the backend is unreachable.",
+            None,
+            None,
+            false,
+        )),
+    }
+    match runtime_facts.and_then(|facts| facts.get("embeddings")) {
+        Some(embeddings) => {
+            let enabled = embeddings
+                .get("enabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let backend_count = embeddings
+                .get("backend_count")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let healthy = !enabled || backend_count > 0;
+            report.push(doctor_check(
+                "backend.embeddings_report",
+                if healthy {
+                    DoctorStatus::Ok
+                } else {
+                    DoctorStatus::Warn
+                },
+                if !enabled {
+                    "Service reports embeddings disabled."
+                } else if healthy {
+                    "Service reports configured embedding backends."
+                } else {
+                    "Service reports embeddings enabled but no backends configured."
+                },
+                Some(format!(
+                    "enabled={enabled} backends={backend_count} active={}",
+                    embeddings
+                        .get("active_backend")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("<default>")
+                )),
+                (!healthy).then(|| "memory embeddings add".to_string()),
+                false,
+            ));
+        }
+        None => report.push(doctor_check(
+            "backend.embeddings_report",
+            DoctorStatus::Skipped,
+            "Skipped the service embeddings report because the backend is unreachable.",
+            None,
+            None,
+            false,
+        )),
+    }
+}
+
+fn automation_checks(
+    report: &mut DoctorReport,
+    ctx: &DoctorCtx,
+    config: &AppConfig,
+) -> Result<PathBuf> {
+    let fix = ctx.fix;
+    let repo_root: &Path = ctx.repo_root.as_path();
+    let config_path = ctx.config_path.clone();
+
+    let runtime_dir = automation_runtime_dir(config, repo_root);
+    let runtime_fix_applied = if !runtime_dir.exists() && fix {
+        fs::create_dir_all(&runtime_dir)
+            .with_context(|| format!("create {}", runtime_dir.display()))?;
+        true
+    } else {
+        false
+    };
+    report.push(doctor_check(
+        "automation.runtime_dir",
+        if runtime_dir.exists() {
+            DoctorStatus::Ok
+        } else {
+            DoctorStatus::Warn
+        },
+        if runtime_dir.exists() {
+            "Automation runtime directory is present."
+        } else {
+            "Automation runtime directory is missing."
+        },
+        Some(runtime_dir.display().to_string()),
+        if runtime_dir.exists() {
+            None
+        } else {
+            Some("memory doctor --fix".to_string())
+        },
+        runtime_fix_applied,
+    ));
+
+    let resolved_repo_root = config
+        .automation
+        .repo_root
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root.to_path_buf());
+    report.push(doctor_check(
+        "automation.repo_root",
+        if resolved_repo_root == repo_root {
+            DoctorStatus::Ok
+        } else {
+            DoctorStatus::Warn
+        },
+        if resolved_repo_root == repo_root {
+            "Automation repo_root matches the current repository."
+        } else {
+            "Automation repo_root differs from the current repository."
+        },
+        Some(resolved_repo_root.display().to_string()),
+        if resolved_repo_root == repo_root {
+            None
+        } else {
+            Some(format!(
+                "Edit {} and set [automation].repo_root",
+                config_path.display()
+            ))
+        },
+        false,
+    ));
+    Ok(resolved_repo_root)
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn watcher_manager_checks(report: &mut DoctorReport) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let manager_plist_path = watch_manager_launch_agent_path()?;
+        let manager_status = launch_agent_status(watch_manager_launch_agent_label())?;
+        let manager_installed = manager_plist_path.exists();
+        report.push(doctor_check(
+            "watcher.manager_service",
+            if manager_status.running {
+                DoctorStatus::Ok
+            } else {
+                DoctorStatus::Warn
+            },
+            if manager_status.running {
+                "Agent-linked watcher manager service is active."
+            } else if manager_installed || manager_status.loaded {
+                "Agent-linked watcher manager service is installed but not active."
+            } else {
+                "Agent-linked watcher manager service is not installed."
+            },
+            Some(format!(
+                "installed={} loaded={} active={} plist={}",
+                yes_no(manager_installed),
+                yes_no(manager_status.loaded),
+                yes_no(manager_status.running),
+                manager_plist_path.display()
+            )),
+            if manager_status.running {
+                None
+            } else {
+                Some("memory watcher manager enable".to_string())
+            },
+            false,
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let task_name = mem_platform::windows_watch_manager_task_name();
+        let manager_installed = mem_platform::windows_task_exists(task_name);
+        let manager_active = mem_platform::windows_task_is_running(task_name);
+        report.push(doctor_check(
+            "watcher.manager_service",
+            if manager_active {
+                DoctorStatus::Ok
+            } else {
+                DoctorStatus::Warn
+            },
+            if manager_active {
+                "Agent-linked watcher manager task is active."
+            } else if manager_installed {
+                "Agent-linked watcher manager task is installed but not active."
+            } else {
+                "Agent-linked watcher manager task is not installed."
+            },
+            Some(format!(
+                "installed={} active={} task={task_name}",
+                yes_no(manager_installed),
+                yes_no(manager_active),
+            )),
+            if manager_active {
+                None
+            } else {
+                Some("memory watcher manager enable".to_string())
+            },
+            false,
+        ));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let manager_unit_path = user_systemd_unit_dir()?.join(WATCH_MANAGER_UNIT_NAME);
+        let manager_installed = manager_unit_path.exists();
+        let manager_enabled = run_systemctl_user(["is-enabled", WATCH_MANAGER_UNIT_NAME]).is_ok();
+        let manager_active = run_systemctl_user(["is-active", WATCH_MANAGER_UNIT_NAME]).is_ok();
+        report.push(doctor_check(
+            "watcher.manager_service",
+            if manager_active {
+                DoctorStatus::Ok
+            } else {
+                DoctorStatus::Warn
+            },
+            if manager_active {
+                "Agent-linked watcher manager service is active."
+            } else if manager_installed {
+                "Agent-linked watcher manager service is installed but not active."
+            } else {
+                "Agent-linked watcher manager service is not installed."
+            },
+            Some(format!(
+                "installed={} enabled={} active={} unit={}",
+                yes_no(manager_installed),
+                yes_no(manager_enabled),
+                yes_no(manager_active),
+                manager_unit_path.display()
+            )),
+            if manager_active {
+                None
+            } else {
+                Some("memory watcher manager enable".to_string())
+            },
+            false,
+        ));
+    }
+    Ok(())
+}
+
+async fn backend_checks(
+    report: &mut DoctorReport,
+    ctx: &DoctorCtx,
+    config: &AppConfig,
+    database_connect_error: &Option<String>,
+) -> Result<()> {
+    let project: &str = &ctx.project;
+    let repo_root: &Path = ctx.repo_root.as_path();
+    let config_path = ctx.config_path.clone();
+    let global_config_path = ctx.global_config_path.clone();
+
+    let client = Client::builder()
+        .timeout(config.service.request_timeout)
+        .build()
+        .context("build doctor http client")?;
+    let api = ApiClient::new(client, config.clone());
+
+    match api.health().await {
+        Ok(value) => {
+            let role = value.get("role").and_then(|field| field.as_str());
+            let upstream = value.get("upstream").cloned();
+            report.push(doctor_check(
+                "backend.health",
+                DoctorStatus::Ok,
+                "Backend health endpoint is reachable.",
+                Some(value.to_string()),
+                None,
+                false,
+            ));
+            report.push(doctor_check(
+                "backend.role",
+                if role == Some("relay")
+                    && upstream
+                        .as_ref()
+                        .and_then(|payload| payload.as_object())
+                        .is_none()
+                {
+                    DoctorStatus::Warn
+                } else {
+                    DoctorStatus::Ok
+                },
+                match role {
+                    Some("primary") => "Backend is running in primary mode.",
+                    Some("relay") => "Backend is running in relay mode.",
+                    _ => "Backend did not report a cluster role.",
+                },
+                match role {
+                    Some("relay") => upstream.as_ref().map(|payload| payload.to_string()),
+                    Some(other) => Some(other.to_string()),
+                    None => None,
+                },
+                if role == Some("relay")
+                    && upstream
+                        .as_ref()
+                        .and_then(|payload| payload.as_object())
+                        .is_none()
+                {
+                    Some(
+                        "Start a database-connected Memory service on the local network or fix the local database connection."
+                            .to_string(),
+                    )
+                } else {
+                    None
+                },
+                false,
+            ));
+            match api.project_overview(project).await {
+                Ok(overview) => {
+                    report.push(doctor_check(
+                        "backend.project_overview",
+                        DoctorStatus::Ok,
+                        "Project overview endpoint is reachable.",
+                        Some(format!(
+                            "{} memories / {} raw captures",
+                            overview.memory_entries_total, overview.raw_captures_total
+                        )),
+                        None,
+                        false,
+                    ));
+                    if overview
+                        .automation
+                        .as_ref()
+                        .is_some_and(|automation| automation.enabled)
+                    {
+                        let active_watchers = overview
+                            .watchers
+                            .as_ref()
+                            .map(|watchers| watchers.active_count);
+                        report.push(doctor_check(
+                            "backend.watchers",
+                            if active_watchers.unwrap_or(0) > 0 {
+                                DoctorStatus::Ok
+                            } else {
+                                DoctorStatus::Warn
+                            },
+                            if active_watchers.unwrap_or(0) > 0 {
+                                "At least one active watcher is visible to the backend."
+                            } else {
+                                "Automation is enabled but no active watcher is visible."
+                            },
+                            active_watchers.map(|count| format!("{count} active watcher(s)")),
+                            if active_watchers.unwrap_or(0) > 0 {
+                                None
+                            } else {
+                                Some(if cfg!(target_os = "macos") {
+                                    format!("memory watcher enable --project {}", project)
+                                } else {
+                                    "memory watcher manager enable".to_string()
+                                })
+                            },
+                            false,
+                        ));
+                    }
+
+                    if repo_root.join(".git").exists() {
+                        match api.project_commits(project, 1, 0).await {
+                            Ok(commits) => report.push(doctor_check(
+                                "history.commit_sync",
+                                if commits.total > 0 {
+                                    DoctorStatus::Ok
+                                } else {
+                                    DoctorStatus::Warn
+                                },
+                                if commits.total > 0 {
+                                    "Commit history has been imported for this project."
+                                } else {
+                                    "No commit history has been imported for this project."
+                                },
+                                Some(format!("{} stored commit(s)", commits.total)),
+                                if commits.total > 0 {
+                                    None
+                                } else {
+                                    Some(format!("memory commits sync --project {}", project))
+                                },
+                                false,
+                            )),
+                            Err(error) => report.push(doctor_check(
+                                "history.commit_sync",
+                                DoctorStatus::Warn,
+                                "Could not load project commit history.",
+                                Some(error.to_string()),
+                                Some(format!("memory commits sync --project {}", project)),
+                                false,
+                            )),
+                        }
+                    }
+                }
+                Err(error) => report.push(doctor_check(
+                    "backend.project_overview",
+                    DoctorStatus::Warn,
+                    "Project overview endpoint did not return data.",
+                    Some(error.to_string()),
+                    Some(format!("memory init --project {}", project)),
+                    false,
+                )),
+            }
+
+            let (http_status, http_details) = tcp_endpoint_status(&config.service.bind_addr);
+            report.push(doctor_check(
+                "backend.http_endpoint",
+                if matches!(http_status, DoctorStatus::Fail) {
+                    DoctorStatus::Fail
+                } else {
+                    DoctorStatus::Ok
+                },
+                "Configured HTTP endpoint is reachable.",
+                Some(http_details),
+                None,
+                false,
+            ));
+        }
+        Err(error) => {
+            report.push(doctor_check(
+                "backend.health",
+                DoctorStatus::Fail,
+                "Backend health endpoint is not reachable.",
+                Some(error.to_string()),
+                Some(
+                    if database_connect_error.is_some() && !config.cluster.enabled {
                         format!(
                             "{} or enable relay discovery in {} and rerun `memory service enable`",
                             backend_start_hint(&config_path),
@@ -1527,196 +1750,210 @@ pub(crate) async fn run_doctor(
                         )
                     } else {
                         backend_start_hint(&config_path)
-                    }),
-                    false,
-                ));
-                report.push(doctor_check(
-                    "backend.project_overview",
-                    DoctorStatus::Skipped,
-                    "Skipped project overview because the backend is unavailable.",
-                    None,
-                    None,
-                    false,
-                ));
-                report.push(doctor_check(
-                    "history.commit_sync",
-                    DoctorStatus::Skipped,
-                    "Skipped commit history check because the backend is unavailable.",
-                    None,
-                    None,
-                    false,
-                ));
-
-                let (http_status, http_details) = tcp_endpoint_status(&config.service.bind_addr);
-                report.push(doctor_check(
-                    "backend.http_endpoint",
-                    http_status,
-                    "Configured HTTP endpoint is not serving Memory Layer health.",
-                    Some(http_details),
-                    Some(format!(
-                        "Start the intended backend for {} or change [service].bind_addr",
-                        project
-                    )),
-                    false,
-                ));
-            }
-        }
-
-        match load_state(project, &resolved_repo_root, &config.automation).await {
-            Ok(state) => report.push(doctor_check(
-                "automation.state",
-                if config.automation.enabled {
-                    DoctorStatus::Ok
-                } else {
-                    DoctorStatus::Skipped
-                },
-                if config.automation.enabled {
-                    "Automation state can be loaded."
-                } else {
-                    "Skipped automation state because automation is disabled."
-                },
-                Some(format!(
-                    "enabled={} dirty_files={}",
-                    state.enabled,
-                    state.current_session.changed_files.len()
-                )),
-                None,
-                false,
-            )),
-            Err(error) => report.push(doctor_check(
-                "automation.state",
-                if config.automation.enabled {
-                    DoctorStatus::Warn
-                } else {
-                    DoctorStatus::Skipped
-                },
-                if config.automation.enabled {
-                    "Automation state could not be loaded."
-                } else {
-                    "Skipped automation state because automation is disabled."
-                },
-                Some(error.to_string()),
-                Some("memory doctor --fix".to_string()),
-                false,
-            )),
-        }
-
-        let remember_prereqs = detect_changed_files().is_ok();
-        report.push(doctor_check(
-            "workflow.remember_ready",
-            if remember_prereqs {
-                DoctorStatus::Ok
-            } else {
-                DoctorStatus::Warn
-            },
-            if remember_prereqs {
-                "Remember workflow prerequisites look usable."
-            } else {
-                "Remember workflow could not inspect repo state."
-            },
-            None,
-            if remember_prereqs {
-                None
-            } else {
-                Some("Ensure git is available and run inside the repo".to_string())
-            },
-            false,
-        ));
-
-        if repo_uses_go_skill_runtime(repo_root) {
-            let go_available = go_runtime_available();
-            report.push(doctor_check(
-                "workflow.skill_runtime_go",
-                if go_available {
-                    DoctorStatus::Ok
-                } else {
-                    DoctorStatus::Warn
-                },
-                if go_available {
-                    "Go runtime is available for the repo-local memory skill helper."
-                } else {
-                    "Repo-local memory skills require `go run`, but Go is not available."
-                },
-                None,
-                if go_available {
-                    None
-                } else {
-                    Some(
-                        "Install Go and ensure `go` is on PATH before using the repo-local memory skills."
-                            .to_string(),
-                    )
-                },
+                    },
+                ),
                 false,
             ));
-        } else {
             report.push(doctor_check(
-                "workflow.skill_runtime_go",
-                DoctorStatus::Skipped,
-                "Skipped Go runtime check because the repo-local memory skill helper is not installed.",
-                None,
-                None,
-                false,
-            ));
-        }
-    } else {
-        for (id, summary) in [
-            (
-                "config.database_url",
-                "Skipped database URL validation because config could not load.",
-            ),
-            (
-                "config.api_token",
-                "Skipped API token validation because config could not load.",
-            ),
-            (
-                "automation.runtime_dir",
-                "Skipped automation runtime checks because config could not load.",
-            ),
-            (
-                "config.llm_model",
-                "Skipped LLM model validation because config could not load.",
-            ),
-            (
-                "config.llm_api_key",
-                "Skipped LLM API key validation because config could not load.",
-            ),
-            (
-                "automation.repo_root",
-                "Skipped automation repo_root check because config could not load.",
-            ),
-            (
-                "backend.health",
-                "Skipped backend health check because config could not load.",
-            ),
-            (
                 "backend.project_overview",
-                "Skipped project overview check because config could not load.",
-            ),
-            (
-                "automation.state",
-                "Skipped automation state check because config could not load.",
-            ),
-            (
-                "workflow.remember_ready",
-                "Skipped remember readiness check because config could not load.",
-            ),
-            (
-                "workflow.skill_runtime_go",
-                "Skipped skill helper Go runtime check because config could not load.",
-            ),
-        ] {
-            report.push(doctor_check(
-                id,
                 DoctorStatus::Skipped,
-                summary,
+                "Skipped project overview because the backend is unavailable.",
                 None,
                 None,
+                false,
+            ));
+            report.push(doctor_check(
+                "history.commit_sync",
+                DoctorStatus::Skipped,
+                "Skipped commit history check because the backend is unavailable.",
+                None,
+                None,
+                false,
+            ));
+
+            let (http_status, http_details) = tcp_endpoint_status(&config.service.bind_addr);
+            report.push(doctor_check(
+                "backend.http_endpoint",
+                http_status,
+                "Configured HTTP endpoint is not serving Memory Layer health.",
+                Some(http_details),
+                Some(format!(
+                    "Start the intended backend for {} or change [service].bind_addr",
+                    project
+                )),
                 false,
             ));
         }
     }
+    Ok(())
+}
 
-    Ok(report)
+async fn automation_state_check(
+    report: &mut DoctorReport,
+    ctx: &DoctorCtx,
+    config: &AppConfig,
+    resolved_repo_root: &Path,
+) {
+    let project: &str = &ctx.project;
+
+    match load_state(project, resolved_repo_root, &config.automation).await {
+        Ok(state) => report.push(doctor_check(
+            "automation.state",
+            if config.automation.enabled {
+                DoctorStatus::Ok
+            } else {
+                DoctorStatus::Skipped
+            },
+            if config.automation.enabled {
+                "Automation state can be loaded."
+            } else {
+                "Skipped automation state because automation is disabled."
+            },
+            Some(format!(
+                "enabled={} dirty_files={}",
+                state.enabled,
+                state.current_session.changed_files.len()
+            )),
+            None,
+            false,
+        )),
+        Err(error) => report.push(doctor_check(
+            "automation.state",
+            if config.automation.enabled {
+                DoctorStatus::Warn
+            } else {
+                DoctorStatus::Skipped
+            },
+            if config.automation.enabled {
+                "Automation state could not be loaded."
+            } else {
+                "Skipped automation state because automation is disabled."
+            },
+            Some(error.to_string()),
+            Some("memory doctor --fix".to_string()),
+            false,
+        )),
+    }
+}
+
+fn workflow_checks(report: &mut DoctorReport, ctx: &DoctorCtx) {
+    let repo_root: &Path = ctx.repo_root.as_path();
+
+    let remember_prereqs = detect_changed_files().is_ok();
+    report.push(doctor_check(
+        "workflow.remember_ready",
+        if remember_prereqs {
+            DoctorStatus::Ok
+        } else {
+            DoctorStatus::Warn
+        },
+        if remember_prereqs {
+            "Remember workflow prerequisites look usable."
+        } else {
+            "Remember workflow could not inspect repo state."
+        },
+        None,
+        if remember_prereqs {
+            None
+        } else {
+            Some("Ensure git is available and run inside the repo".to_string())
+        },
+        false,
+    ));
+
+    if repo_uses_go_skill_runtime(repo_root) {
+        let go_available = go_runtime_available();
+        report.push(doctor_check(
+            "workflow.skill_runtime_go",
+            if go_available {
+                DoctorStatus::Ok
+            } else {
+                DoctorStatus::Warn
+            },
+            if go_available {
+                "Go runtime is available for the repo-local memory skill helper."
+            } else {
+                "Repo-local memory skills require `go run`, but Go is not available."
+            },
+            None,
+            if go_available {
+                None
+            } else {
+                Some(
+                    "Install Go and ensure `go` is on PATH before using the repo-local memory skills."
+                        .to_string(),
+                )
+            },
+            false,
+        ));
+    } else {
+        report.push(doctor_check(
+            "workflow.skill_runtime_go",
+            DoctorStatus::Skipped,
+            "Skipped Go runtime check because the repo-local memory skill helper is not installed.",
+            None,
+            None,
+            false,
+        ));
+    }
+}
+
+fn config_skipped_checks(report: &mut DoctorReport) {
+    for (id, summary) in [
+        (
+            "config.database_url",
+            "Skipped database URL validation because config could not load.",
+        ),
+        (
+            "config.api_token",
+            "Skipped API token validation because config could not load.",
+        ),
+        (
+            "automation.runtime_dir",
+            "Skipped automation runtime checks because config could not load.",
+        ),
+        (
+            "config.llm_model",
+            "Skipped LLM model validation because config could not load.",
+        ),
+        (
+            "config.llm_api_key",
+            "Skipped LLM API key validation because config could not load.",
+        ),
+        (
+            "automation.repo_root",
+            "Skipped automation repo_root check because config could not load.",
+        ),
+        (
+            "backend.health",
+            "Skipped backend health check because config could not load.",
+        ),
+        (
+            "backend.project_overview",
+            "Skipped project overview check because config could not load.",
+        ),
+        (
+            "automation.state",
+            "Skipped automation state check because config could not load.",
+        ),
+        (
+            "workflow.remember_ready",
+            "Skipped remember readiness check because config could not load.",
+        ),
+        (
+            "workflow.skill_runtime_go",
+            "Skipped skill helper Go runtime check because config could not load.",
+        ),
+    ] {
+        report.push(doctor_check(
+            id,
+            DoctorStatus::Skipped,
+            summary,
+            None,
+            None,
+            false,
+        ));
+    }
 }
 
 pub(crate) fn repair_repo_bootstrap(repo_root: &Path, project: &str) -> Result<()> {
@@ -1923,7 +2160,7 @@ pub(crate) fn database_host_status(database_url: &str) -> Result<(DoctorStatus, 
     )
 }
 
-async fn fetch_runtime_database_status(config: &AppConfig) -> Option<serde_json::Value> {
+async fn fetch_runtime_status_facts(config: &AppConfig) -> Option<serde_json::Value> {
     let client = Client::new();
     let response = client
         .get(service_url(config, "/v1/runtime/status"))
@@ -1935,8 +2172,7 @@ async fn fetch_runtime_database_status(config: &AppConfig) -> Option<serde_json:
     if !response.status().is_success() {
         return None;
     }
-    let payload: serde_json::Value = response.json().await.ok()?;
-    payload.get("database").cloned()
+    response.json().await.ok()
 }
 
 pub(crate) fn tcp_endpoint_status(addr: &str) -> (DoctorStatus, String) {

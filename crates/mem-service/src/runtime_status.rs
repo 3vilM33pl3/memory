@@ -34,6 +34,8 @@ pub(crate) struct RuntimeStatusResponse {
     pub(crate) watchers: RuntimeWatcherStatus,
     pub(crate) provenance: RuntimeProvenanceStatus,
     pub(crate) database: RuntimeDatabaseStatus,
+    pub(crate) llm: RuntimeLlmStatus,
+    pub(crate) embeddings: RuntimeEmbeddingsStatus,
     pub(crate) offline: RuntimeOfflineStatus,
     pub(crate) skills: RuntimeSkillStatus,
     pub(crate) restart_notice: Option<RuntimeRestartNotice>,
@@ -53,6 +55,27 @@ pub(crate) struct RuntimeDatabaseStatus {
     pub(crate) pgvector_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
+}
+
+/// Server-side LLM/embeddings facts so remote clients (doctor) can report the
+/// configuration that actually drives curation instead of their local copy.
+#[derive(Debug, Serialize)]
+pub(crate) struct RuntimeLlmStatus {
+    pub(crate) curation_enabled: bool,
+    pub(crate) provider: String,
+    pub(crate) model: String,
+    pub(crate) base_url: String,
+    pub(crate) api_key_present: bool,
+    pub(crate) api_key_required: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RuntimeEmbeddingsStatus {
+    pub(crate) enabled: bool,
+    pub(crate) create_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) active_backend: Option<String>,
+    pub(crate) backend_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -257,6 +280,21 @@ pub(crate) async fn runtime_status(
             error: Some(error.message),
         },
     };
+    let llm = RuntimeLlmStatus {
+        curation_enabled: state.config.features.llm_curation,
+        provider: state.config.llm.provider.clone(),
+        model: state.config.llm.model.clone(),
+        base_url: mem_config::effective_llm_base_url(&state.config.llm),
+        api_key_present: mem_config::resolve_llm_api_key(&state.config.llm)
+            .is_some_and(|key| !key.trim().is_empty()),
+        api_key_required: mem_config::llm_requires_api_key(&state.config.llm),
+    };
+    let embeddings = RuntimeEmbeddingsStatus {
+        enabled: state.config.embeddings.enabled,
+        create_enabled: state.config.embeddings.create_enabled,
+        active_backend: state.config.embeddings.active.clone(),
+        backend_count: state.config.embeddings.backends.len(),
+    };
     let agent_workspaces = if state.is_primary() {
         match state.pool() {
             Ok(pool) => fetch_agent_workspaces(&pool, &project, false)
@@ -354,6 +392,8 @@ pub(crate) async fn runtime_status(
                 error: provenance.error,
             },
             database,
+            llm,
+            embeddings,
             offline,
             skills,
             restart_notice,
