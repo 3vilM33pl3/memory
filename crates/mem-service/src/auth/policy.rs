@@ -66,6 +66,7 @@ pub(crate) fn route_policy(method: &Method, path: &str) -> RoutePolicy {
     if path.starts_with("/v1/projects/") {
         let role = if path.contains("/bundle/import")
             || path.contains("/replacement-proposals/")
+            || path.ends_with("/graph/extract")
             || (path.ends_with("/replacement-policy") && *method != Method::GET)
         {
             AuthRole::Operator

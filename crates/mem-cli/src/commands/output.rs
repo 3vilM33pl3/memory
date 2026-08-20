@@ -3,15 +3,14 @@
 use crate::{resume, scan};
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use mem_config::AppConfig;
 use mem_record::{
-    ActivityListResponse, CommitDetailResponse, CommitSyncResponse, GraphActivityRequest,
+    ActivityListResponse, CodeGraphStatusResponse, CommitDetailResponse, CommitSyncResponse,
     ProjectCommitsResponse, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
     ResumeResponse, UpToSpeedResponse,
 };
 use reqwest::header::HeaderMap;
-use sqlx::postgres::PgPoolOptions;
 
 use crate::commands::memory_ops::PlanExecutionFinishReport;
 
@@ -417,14 +416,6 @@ pub(crate) fn print_index_status(status: &Option<scan::RepoIndexStatus>, project
     println!("Index: {}", status.index_path);
 }
 
-pub(crate) async fn connect_graph_database(config: &AppConfig) -> Result<sqlx::PgPool> {
-    PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&config.database.url)
-        .await
-        .context("connect graph database")
-}
-
 pub(crate) fn print_graph_extract_report(
     report: &mem_graph::GraphExtractionReport,
     index_path: &Path,
@@ -481,43 +472,25 @@ pub(crate) fn print_graph_extract_report(
     }
 }
 
-pub(crate) fn build_graph_activity_request(
-    report: &mem_graph::GraphExtractionReport,
-) -> GraphActivityRequest {
-    GraphActivityRequest {
-        project: report.project.clone(),
-        repo_root: report.repo_root.clone(),
-        git_head: report.git_head.clone(),
-        since: report.since.clone(),
-        extraction_run_id: report.extraction_run_id,
-        dry_run: report.dry_run,
-        reused_existing_run: report.reused_existing_run,
-        index_reused: report.index_reused,
-        analyzer_version: report.analyzer_version.clone(),
-        strategy_version: report.strategy_version.clone(),
-        symbol_count: report.symbol_count,
-        reference_count: report.reference_count,
-        resolved_reference_count: report.resolved_reference_count,
-        unresolved_reference_count: report.unresolved_reference_count,
-        ambiguous_reference_count: report.ambiguous_reference_count,
-        graph_node_count: report.graph_node_count,
-        graph_edge_count: report.graph_edge_count,
-        evidence_count: report.evidence_count,
-    }
-}
-
-pub(crate) fn print_graph_status(status: &Option<mem_graph::GraphStatusReport>, project: &str) {
-    let Some(status) = status else {
-        println!("No code graph extraction found for {project}.");
-        println!("Build one with: memory graph extract --project {project}");
+pub(crate) fn print_graph_status(status: &CodeGraphStatusResponse) {
+    if !status.has_graph {
+        println!("No code graph extraction found for {}.", status.project);
+        println!(
+            "Build one with: memory graph extract --project {}",
+            status.project
+        );
         return;
-    };
+    }
     println!("Code graph status for {}\n", status.project);
-    println!("Status: {}", status.status);
+    if let Some(state) = &status.status {
+        println!("Status: {state}");
+    }
     if let Some(completed_at) = status.completed_at {
         println!("Completed: {completed_at}");
     }
-    println!("Extraction run: {}", status.extraction_run_id);
+    if let Some(run_id) = status.latest_run_id {
+        println!("Extraction run: {run_id}");
+    }
     println!(
         "Symbols: {} | References: {} | Resolved: {} | Unresolved: {} | Ambiguous: {}",
         status.symbol_count,
@@ -530,17 +503,18 @@ pub(crate) fn print_graph_status(status: &Option<mem_graph::GraphStatusReport>, 
         "Graph: nodes {} | edges {} | evidence {}",
         status.graph_node_count, status.graph_edge_count, status.evidence_count,
     );
-    println!(
-        "Analyzer: {} | Strategy: {}",
-        status.analyzer_version, status.strategy_version
-    );
+    if let (Some(analyzer), Some(strategy)) = (&status.analyzer_version, &status.strategy_version) {
+        println!("Analyzer: {analyzer} | Strategy: {strategy}");
+    }
     if let Some(head) = &status.git_head {
         println!("HEAD: {head}");
     }
     if let Some(since) = &status.since {
         println!("Since: {since}");
     }
-    println!("Repo: {}", status.repo_root);
+    if let Some(repo_root) = &status.repo_root {
+        println!("Repo: {repo_root}");
+    }
 }
 
 pub(crate) fn print_commit_sync_response(response: &CommitSyncResponse) {

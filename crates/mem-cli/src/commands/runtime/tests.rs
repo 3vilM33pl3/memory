@@ -26,7 +26,7 @@ use crate::commands::{
         build_plan_execution_finish_report, build_plan_execution_request, build_remember_request,
         build_task_start_request, parse_memory_type_arg, resolve_project_slug,
     },
-    output::{build_graph_activity_request, write_headers},
+    output::write_headers,
     service_support::{
         TuiRestartMarker, newest_tui_restart_notice, restart_marker_requires_restart,
         set_cluster_enabled_in_shared_config,
@@ -1211,7 +1211,7 @@ fn graph_activity_request_copies_extraction_report_counts() {
         sample_unresolved_references: Vec::new(),
     };
 
-    let request = build_graph_activity_request(&report);
+    let request = mem_graph::activity_request(&report);
 
     assert_eq!(request.project, "memory");
     assert_eq!(request.extraction_run_id, Some(run_id));

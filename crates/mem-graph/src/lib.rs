@@ -78,6 +78,31 @@ pub struct GraphStatusReport {
     pub evidence_count: i64,
 }
 
+/// Activity payload describing a completed extraction, shared by the service
+/// endpoint and any client that logs extraction runs.
+pub fn activity_request(report: &GraphExtractionReport) -> mem_record::GraphActivityRequest {
+    mem_record::GraphActivityRequest {
+        project: report.project.clone(),
+        repo_root: report.repo_root.clone(),
+        git_head: report.git_head.clone(),
+        since: report.since.clone(),
+        extraction_run_id: report.extraction_run_id,
+        dry_run: report.dry_run,
+        reused_existing_run: report.reused_existing_run,
+        index_reused: report.index_reused,
+        analyzer_version: report.analyzer_version.clone(),
+        strategy_version: report.strategy_version.clone(),
+        symbol_count: report.symbol_count,
+        reference_count: report.reference_count,
+        resolved_reference_count: report.resolved_reference_count,
+        unresolved_reference_count: report.unresolved_reference_count,
+        ambiguous_reference_count: report.ambiguous_reference_count,
+        graph_node_count: report.graph_node_count,
+        graph_edge_count: report.graph_edge_count,
+        evidence_count: report.evidence_count,
+    }
+}
+
 pub fn build_extraction_preview(request: &GraphExtractionRequest) -> GraphExtractionReport {
     let resolved = resolve_analysis(&request.analysis);
     report_from_resolved(request, &resolved, None, false)

@@ -59,3 +59,26 @@ pub(crate) async fn project_graph(
             .map_err(ApiError::io)?,
     ))
 }
+
+pub(crate) async fn project_graph_extract(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+    Json(mut request): Json<mem_graph::GraphExtractionRequest>,
+) -> Result<Json<mem_graph::GraphExtractionReport>, ApiError> {
+    // The path segment is authoritative for authorization; ignore any
+    // project the client put in the body.
+    request.project = slug;
+    let report = if request.dry_run {
+        mem_graph::build_extraction_preview(&request)
+    } else {
+        mem_graph::PostgresGraphRepository::new(state.pool()?.clone())
+            .extract(request)
+            .await
+            .map_err(ApiError::io)?
+    };
+    if !report.dry_run {
+        let activity = mem_graph::activity_request(&report);
+        crate::handlers::activity::record_graph_activity(&state, activity).await?;
+    }
+    Ok(Json(report))
+}

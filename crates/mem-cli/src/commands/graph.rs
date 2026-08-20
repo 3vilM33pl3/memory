@@ -9,10 +9,7 @@ use crate::{
     commands::{
         api::ApiClient,
         memory_ops::resolve_project_slug,
-        output::{
-            build_graph_activity_request, connect_graph_database, print_graph_extract_report,
-            print_graph_status,
-        },
+        output::{print_graph_extract_report, print_graph_status},
         runtime::{GraphArgs, GraphCommand},
         skill_support::resolve_repo_root,
     },
@@ -46,22 +43,12 @@ pub(super) async fn handle(args: GraphArgs, client: Client, config: AppConfig) -
             let report = if args.dry_run {
                 mem_graph::build_extraction_preview(&request)
             } else {
-                let pool = connect_graph_database(&config).await?;
-                mem_graph::run_migrations(&pool).await?;
-                mem_graph::PostgresGraphRepository::new(pool)
-                    .extract(request)
+                // The service owns the database; it also records the
+                // extraction activity event.
+                let api = ApiClient::new(client.clone(), config.clone());
+                api.graph_extract(&request.project.clone(), &request)
                     .await?
             };
-            if !report.dry_run {
-                let api = ApiClient::new(client.clone(), config.clone());
-                let activity_request = build_graph_activity_request(&report);
-                if let Err(error) = api.log_graph_activity(&activity_request).await {
-                    eprintln!(
-                        "warning: failed to log graph extraction activity for `{}`: {error}",
-                        report.project
-                    );
-                }
-            }
             if args.text {
                 print_graph_extract_report(&report, &index.index_path);
             } else {
@@ -70,13 +57,10 @@ pub(super) async fn handle(args: GraphArgs, client: Client, config: AppConfig) -
         }
         GraphCommand::Status(args) => {
             let project = resolve_project_slug(args.project, &cwd)?;
-            let pool = connect_graph_database(&config).await?;
-            mem_graph::run_migrations(&pool).await?;
-            let status = mem_graph::PostgresGraphRepository::new(pool)
-                .latest_status(&project)
-                .await?;
+            let api = ApiClient::new(client.clone(), config.clone());
+            let status = api.graph_status(&project).await?;
             if args.text {
-                print_graph_status(&status, &project);
+                print_graph_status(&status);
             } else {
                 println!("{}", serde_json::to_string_pretty(&status)?);
             }

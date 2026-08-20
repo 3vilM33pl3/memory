@@ -15,7 +15,6 @@ use mem_config::{AppConfig, Profile, discover_global_config_path};
 use mem_platform as platform;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use sqlx::postgres::PgPoolOptions;
 
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::commands::runtime::{packaged_service_available, run_systemctl_system};
@@ -901,13 +900,12 @@ pub(crate) async fn wait_for_backend_health(config_path: &Path) -> Result<serde_
 }
 
 pub(crate) async fn check_database_connectivity(config: &AppConfig) -> Result<()> {
-    PgPoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(Duration::from_secs(3))
-        .connect(&config.database.url)
-        .await
-        .map(drop)
-        .context("connect postgres")
+    let (status, details) =
+        crate::commands::status_support::database_host_status(&config.database.url)?;
+    if matches!(status, crate::commands::status_support::DoctorStatus::Fail) {
+        anyhow::bail!("database host unreachable: {details}");
+    }
+    Ok(())
 }
 
 pub(crate) fn format_backend_health_summary(health: &serde_json::Value) -> String {

@@ -17,7 +17,6 @@ use mem_config::{
 use mem_watch::load_state;
 use reqwest::Client;
 use serde::Serialize;
-use sqlx::{Row, postgres::PgPoolOptions};
 
 use crate::commands::{
     api::{ApiClient, format_api_error},
@@ -847,127 +846,100 @@ pub(crate) async fn run_doctor(
         let mut database_connect_error = None;
         if is_placeholder_database_url(&config.database.url) {
             report.push(doctor_check(
-                "database.pgvector_extension",
+                "database.reachable",
                 DoctorStatus::Skipped,
-                "Skipped pgvector checks because the database URL is still a placeholder.",
+                "Skipped database checks because the database URL is still a placeholder.",
                 None,
                 None,
                 false,
             ));
         } else {
-            match PgPoolOptions::new()
-                .max_connections(1)
-                .acquire_timeout(Duration::from_secs(3))
-                .connect(&config.database.url)
-                .await
-            {
-                Ok(pool) => {
+            // The service owns the database; the CLI only probes raw TCP
+            // reachability of the configured host and relays the service's
+            // authoritative pgvector/connectivity report from runtime status.
+            match database_host_status(&config.database.url) {
+                Ok((status, details)) => {
+                    if matches!(status, DoctorStatus::Fail) {
+                        database_connect_error = Some(details.clone());
+                    }
                     report.push(doctor_check(
-                        "database.connect",
-                        DoctorStatus::Ok,
-                        "Database connection succeeded.",
-                        Some(mask_database_url(&config.database.url)),
+                        "database.reachable",
+                        status,
+                        "TCP reachability of the configured database host.",
+                        Some(details),
                         None,
                         false,
                     ));
-
-                    match sqlx::query(
-                        "SELECT extversion FROM pg_extension WHERE extname = 'vector' LIMIT 1",
-                    )
-                    .fetch_optional(&pool)
-                    .await
-                    {
-                        Ok(Some(row)) => report.push(doctor_check(
-                            "database.pgvector_extension",
-                            DoctorStatus::Ok,
-                            "pgvector extension is enabled in the target database.",
-                            Some(format!(
-                                "vector extension version {}",
-                                row.try_get::<String, _>("extversion")
-                                    .unwrap_or_else(|_| "unknown".to_string())
-                            )),
-                            None,
-                            false,
-                        )),
-                        Ok(None) if fix => {
-                            match sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
-                                .execute(&pool)
-                                .await
-                            {
-                                Ok(_) => report.push(doctor_check(
-                                    "database.pgvector_extension",
-                                    DoctorStatus::Ok,
-                                    "Enabled the pgvector extension in the target database.",
-                                    None,
-                                    None,
-                                    true,
-                                )),
-                                Err(error) => report.push(doctor_check(
-                                    "database.pgvector_extension",
-                                    DoctorStatus::Fail,
-                                    "pgvector extension is missing and could not be created automatically.",
-                                    Some(error.to_string()),
-                                    Some(
-                                        "Install the pgvector package for your PostgreSQL version (e.g. postgresql-16-pgvector), then run CREATE EXTENSION vector; in the target database."
-                                            .to_string(),
-                                    ),
-                                    false,
-                                )),
-                            }
-                        }
-                        Ok(None) => report.push(doctor_check(
-                            "database.pgvector_extension",
-                            DoctorStatus::Fail,
-                            "pgvector extension is not enabled in the target database.",
-                            None,
-                            Some(
-                                "Run `memory doctor --fix` to attempt CREATE EXTENSION vector, or install pgvector for your PostgreSQL version and run CREATE EXTENSION vector; in the target database."
-                                    .to_string(),
-                            ),
-                            false,
-                        )),
-                        Err(error) => report.push(doctor_check(
-                            "database.pgvector_extension",
-                            DoctorStatus::Fail,
-                            "Could not verify pgvector extension state.",
-                            Some(error.to_string()),
-                            Some(
-                                "Install pgvector for your PostgreSQL version and run CREATE EXTENSION vector; in the target database."
-                                    .to_string(),
-                            ),
-                            false,
-                        )),
-                    }
                 }
                 Err(error) => {
                     database_connect_error = Some(error.to_string());
                     report.push(doctor_check(
-                        "database.connect",
-                        DoctorStatus::Fail,
-                        "Could not connect to the configured database directly.",
+                        "database.reachable",
+                        DoctorStatus::Warn,
+                        "Could not parse the configured database URL for a reachability probe.",
                         Some(error.to_string()),
-                        Some(if config.cluster.enabled {
-                            "Fix the database URL or credentials first, or start another database-connected Memory Layer backend on the local network for relay discovery.".to_string()
-                        } else {
-                            format!(
-                                "Fix the database URL or credentials first, or enable relay discovery by setting [cluster].enabled = true in {}.",
-                                global_config_path
-                                    .as_ref()
-                                    .unwrap_or(&config_path)
-                                    .display()
-                            )
-                        }),
-                        false,
-                    ));
-                    report.push(doctor_check(
-                        "database.pgvector_extension",
-                        DoctorStatus::Skipped,
-                        "Skipped pgvector extension check because the database connection failed.",
-                        None,
                         None,
                         false,
                     ));
                 }
+            }
+            match fetch_runtime_database_status(&config).await {
+                Some(database) => {
+                    let connected = database
+                        .get("connected")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false);
+                    let pgvector = database
+                        .get("pgvector_version")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string);
+                    let error = database
+                        .get("error")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string);
+                    report.push(doctor_check(
+                        "database.service_report",
+                        if connected && pgvector.is_some() {
+                            DoctorStatus::Ok
+                        } else {
+                            DoctorStatus::Fail
+                        },
+                        if connected && pgvector.is_some() {
+                            "Service reports the database connected with pgvector enabled."
+                        } else if connected {
+                            "Service reports the database connected but pgvector is not confirmed."
+                        } else {
+                            "Service reports the database as unavailable."
+                        },
+                        Some(match (&pgvector, &error) {
+                            (Some(version), _) => format!("pgvector {version}"),
+                            (None, Some(error)) => error.clone(),
+                            (None, None) => "no pgvector version reported".to_string(),
+                        }),
+                        if connected && pgvector.is_some() {
+                            None
+                        } else {
+                            Some(
+                                "Restart the service (it applies migrations including CREATE EXTENSION vector), or install pgvector and run CREATE EXTENSION vector; in the target database."
+                                    .to_string(),
+                            )
+                        },
+                        false,
+                    ));
+                    if !connected {
+                        database_connect_error.get_or_insert_with(|| {
+                            "service reports database unavailable".to_string()
+                        });
+                    }
+                }
+                None => report.push(doctor_check(
+                    "database.service_report",
+                    DoctorStatus::Skipped,
+                    "Skipped the service database report because the backend is unreachable.",
+                    None,
+                    None,
+                    false,
+                )),
             }
         }
 
@@ -1927,6 +1899,44 @@ pub(crate) fn read_local_service_overrides(repo_root: &Path) -> Option<LocalServ
     }
 
     overrides.is_enabled().then_some(overrides)
+}
+
+/// Raw TCP reachability of the configured database host: no SQL, no
+/// credentials - the service owns actual database access.
+pub(crate) fn database_host_status(database_url: &str) -> Result<(DoctorStatus, String)> {
+    let parsed = reqwest::Url::parse(database_url).context("parse database url")?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("database url has no host"))?;
+    let port = parsed.port().unwrap_or(5432);
+    let addrs = format!("{host}:{port}");
+    let mut resolved = std::net::ToSocketAddrs::to_socket_addrs(&addrs)
+        .with_context(|| format!("resolve {addrs}"))?;
+    let Some(addr) = resolved.next() else {
+        anyhow::bail!("{addrs} did not resolve");
+    };
+    Ok(
+        match TcpStream::connect_timeout(&addr, Duration::from_millis(750)) {
+            Ok(_) => (DoctorStatus::Ok, format!("listener reachable at {addrs}")),
+            Err(error) => (DoctorStatus::Fail, format!("{addrs}: {error}")),
+        },
+    )
+}
+
+async fn fetch_runtime_database_status(config: &AppConfig) -> Option<serde_json::Value> {
+    let client = Client::new();
+    let response = client
+        .get(service_url(config, "/v1/runtime/status"))
+        .headers(write_headers(config).ok()?)
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let payload: serde_json::Value = response.json().await.ok()?;
+    payload.get("database").cloned()
 }
 
 pub(crate) fn tcp_endpoint_status(addr: &str) -> (DoctorStatus, String) {

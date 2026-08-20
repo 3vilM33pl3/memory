@@ -33,6 +33,7 @@ pub(crate) struct RuntimeStatusResponse {
     pub(crate) manager: RuntimeManagerStatus,
     pub(crate) watchers: RuntimeWatcherStatus,
     pub(crate) provenance: RuntimeProvenanceStatus,
+    pub(crate) database: RuntimeDatabaseStatus,
     pub(crate) offline: RuntimeOfflineStatus,
     pub(crate) skills: RuntimeSkillStatus,
     pub(crate) restart_notice: Option<RuntimeRestartNotice>,
@@ -43,6 +44,15 @@ pub(crate) struct RuntimeComponentStatus {
     pub(crate) version: String,
     pub(crate) status: String,
     pub(crate) detail: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct RuntimeDatabaseStatus {
+    pub(crate) connected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) pgvector_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -221,6 +231,32 @@ pub(crate) async fn runtime_status(
     } else {
         0
     };
+    let database = match state.pool() {
+        Ok(pool) => {
+            match sqlx::query_scalar::<_, String>(
+                "SELECT extversion FROM pg_extension WHERE extname = 'vector' LIMIT 1",
+            )
+            .fetch_optional(&pool)
+            .await
+            {
+                Ok(version) => RuntimeDatabaseStatus {
+                    connected: true,
+                    pgvector_version: version,
+                    error: None,
+                },
+                Err(error) => RuntimeDatabaseStatus {
+                    connected: true,
+                    pgvector_version: None,
+                    error: Some(error.to_string()),
+                },
+            }
+        }
+        Err(error) => RuntimeDatabaseStatus {
+            connected: false,
+            pgvector_version: None,
+            error: Some(error.message),
+        },
+    };
     let agent_workspaces = if state.is_primary() {
         match state.pool() {
             Ok(pool) => fetch_agent_workspaces(&pool, &project, false)
@@ -317,6 +353,7 @@ pub(crate) async fn runtime_status(
                 stale_count: provenance.stale_count,
                 error: provenance.error,
             },
+            database,
             offline,
             skills,
             restart_notice,

@@ -140,29 +140,40 @@ pub(crate) async fn graph_activity(
     State(state): State<AppState>,
     Json(request): Json<GraphActivityRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    record_graph_activity(&state, request).await?;
+    Ok(Json(serde_json::json!({ "logged": true })))
+}
+
+/// Records a graph-extraction activity event; shared by the activity route
+/// and the server-side extraction endpoint.
+pub(crate) async fn record_graph_activity(
+    state: &AppState,
+    request: GraphActivityRequest,
+) -> Result<(), ApiError> {
     request.validate().map_err(ApiError::validation)?;
 
     let summary = graph_activity_summary(&request);
     let details = graph_activity_details(&request);
     if !state.pool_available() {
-        return offline_activity_response(
-            &state,
+        let _queued = offline_activity_response(
+            state,
             request.project.clone(),
             ActivityKind::GraphExtract,
             summary,
             Some(details),
         )
-        .await;
+        .await?;
+        return Ok(());
     }
     notify_project_changed(
-        &state,
+        state,
         request.project.clone(),
         None,
         ActivityKind::GraphExtract,
         summary,
         Some(details),
     );
-    Ok(Json(serde_json::json!({ "logged": true })))
+    Ok(())
 }
 
 pub(crate) fn graph_activity_summary(request: &GraphActivityRequest) -> String {

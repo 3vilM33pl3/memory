@@ -1524,6 +1524,25 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
+  /v1/projects/{slug}/graph/extract:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: post_v1_projects_slug_graph_extract
+      summary: "Run a code-graph extraction from a client-supplied analysis report."
+      tags: ["Graph"]
+      x-stability: internal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
   /v1/projects/{slug}/graph/status:
     parameters:
       - name: slug

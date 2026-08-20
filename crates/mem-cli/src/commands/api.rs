@@ -6,11 +6,11 @@ use mem_record::{
     ActivityListResponse, AgentWorkspaceFinishRequest, AgentWorkspaceHeartbeatRequest,
     AgentWorkspaceListResponse, AgentWorkspaceRecord, AgentWorkspaceStartRequest,
     ArchiveMemoryResponse, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
-    CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
-    CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse, GraphActivityRequest,
-    LoopApprovalDecisionRequest, LoopApprovalDecisionResponse, LoopApprovalStatus,
-    LoopApprovalsResponse, LoopCancelRequest, LoopContextPackResponse, LoopDefinitionResponse,
-    LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
+    CheckpointActivityRequest, CodeGraphStatusResponse, CommitDetailResponse, CommitSyncRequest,
+    CommitSyncResponse, CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse,
+    LoopApprovalDecisionRequest, LoopApprovalDecisionResponse,
+    LoopApprovalStatus, LoopApprovalsResponse, LoopCancelRequest, LoopContextPackResponse,
+    LoopDefinitionResponse, LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
     LoopGlobalStateUpdateRequest, LoopMemoryProposalCreateRequest,
     LoopMemoryProposalDecisionRequest, LoopMemoryProposalDecisionResponse,
     LoopMemoryProposalsResponse, LoopRunRequest, LoopRunResponse, LoopRunStatus, LoopRunsResponse,
@@ -497,20 +497,36 @@ impl ApiClient {
         Ok(())
     }
 
-    pub(crate) async fn log_graph_activity(&self, request: &GraphActivityRequest) -> Result<()> {
-        let response = self
-            .client
-            .post(service_url(&self.config, "/v1/graph/activity"))
-            .headers(write_headers(&self.config)?)
-            .json(request)
-            .send()
-            .await?;
-        let status = response.status();
-        let body = response.text().await?;
-        if !status.is_success() {
-            anyhow::bail!("{status} {body}");
-        }
-        Ok(())
+    pub(crate) async fn graph_extract(
+        &self,
+        project: &str,
+        request: &mem_graph::GraphExtractionRequest,
+    ) -> Result<mem_graph::GraphExtractionReport> {
+        get_json(
+            self.client
+                .post(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/graph/extract"),
+                ))
+                .headers(write_headers(&self.config)?)
+                .json(request)
+                .send()
+                .await?,
+        )
+        .await
+    }
+
+    pub(crate) async fn graph_status(&self, project: &str) -> Result<CodeGraphStatusResponse> {
+        get_json(
+            self.client
+                .get(service_url(
+                    &self.config,
+                    &format!("/v1/projects/{project}/graph/status"),
+                ))
+                .send()
+                .await?,
+        )
+        .await
     }
 
     pub(crate) async fn log_checkpoint_activity(

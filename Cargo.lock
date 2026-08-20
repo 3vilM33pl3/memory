@@ -2533,7 +2533,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "similar",
- "sqlx",
  "tokio",
  "tokio-tungstenite 0.24.0",
  "toml 0.8.23",
