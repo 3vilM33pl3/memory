@@ -10,11 +10,6 @@ pub(crate) async fn reindex(
 ) -> Result<Json<ReindexResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/reindex", &request, true).await?,
-        ));
-    }
     let embedders = state.embedders.read().await;
     let selected_keys: Vec<String> = if let Some(name) = request.backend.as_deref() {
         let service = embedders.get(name).ok_or_else(|| {
@@ -98,11 +93,6 @@ pub(crate) async fn reembed(
 ) -> Result<Json<ReembedResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/reembed", &request, true).await?,
-        ));
-    }
     let embedders = state.embedders.read().await;
     if embedders.is_empty() {
         return Err(ApiError::validation(ValidationError::new(
@@ -215,11 +205,6 @@ pub(crate) async fn prune_embeddings(
 ) -> Result<Json<PruneEmbeddingsResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/prune-embeddings", &request, true).await?,
-        ));
-    }
     let embedders = state.embedders.read().await;
     if embedders.is_empty() {
         return Err(ApiError::validation(ValidationError::new(
@@ -436,11 +421,6 @@ pub(crate) async fn activate_embedding_backend(
 ) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/embeddings/activate", &request, true).await?,
-        ));
-    }
 
     let previous_active = {
         let mut embedders = state.embedders.write().await;
@@ -469,17 +449,6 @@ pub(crate) async fn deactivate_embedding_backend(
     Json(_request): Json<mem_api::DeactivateEmbeddingBackendRequest>,
 ) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                "/v1/embeddings/deactivate",
-                &mem_api::DeactivateEmbeddingBackendRequest::default(),
-                true,
-            )
-            .await?,
-        ));
-    }
 
     let previous_active = {
         let mut embedders = state.embedders.write().await;
@@ -505,11 +474,6 @@ pub(crate) async fn set_embedding_creation_enabled(
     Json(request): Json<SetEmbeddingCreationRequest>,
 ) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/embeddings/create-enabled", &request, true).await?,
-        ));
-    }
 
     let name = request.name.trim();
     if name.is_empty() {
@@ -626,9 +590,6 @@ pub(crate) async fn persist_embedding_creation_enabled(
 pub(crate) async fn llm_audit_status(
     State(state): State<AppState>,
 ) -> Result<Json<LlmAuditStatusResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(proxy_get_json(&state, "/v1/config/llm-audit").await?));
-    }
     Ok(Json(build_llm_audit_status_response(&state)))
 }
 
@@ -638,11 +599,6 @@ pub(crate) async fn set_llm_audit_enabled(
     Json(request): Json<SetLlmAuditRequest>,
 ) -> Result<Json<LlmAuditStatusResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/config/llm-audit", &request, true).await?,
-        ));
-    }
 
     let previous = state
         .llm_audit

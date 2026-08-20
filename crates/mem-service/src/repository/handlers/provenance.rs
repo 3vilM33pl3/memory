@@ -10,11 +10,6 @@ pub(crate) async fn verify_provenance(
 ) -> Result<Json<ProvenanceVerificationResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/provenance/verify", &request, true).await?,
-        ));
-    }
     verify_project_provenance_with_volatility(
         &state.pool()?,
         &request,

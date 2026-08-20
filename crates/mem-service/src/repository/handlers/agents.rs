@@ -24,14 +24,6 @@ pub(crate) async fn list_agent_workspaces(
             "project must be non-empty",
         )));
     }
-    if !state.is_primary() {
-        let path = format!(
-            "/v1/agents/workspaces?project={}&include_finished={}",
-            urlencoding::encode(&project),
-            query.include_finished.unwrap_or(false)
-        );
-        return Ok(Json(proxy_get_json(&state, &path).await?));
-    }
     let response = fetch_agent_workspaces(
         &state.pool()?,
         &project,
@@ -53,11 +45,6 @@ pub(crate) async fn start_agent_workspace(
         request.writer_id = Some(principal.id.to_string());
     }
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/agents/workspaces/start", &request, true).await?,
-        ));
-    }
     Ok(Json(
         upsert_agent_workspace_start(&state.pool()?, &request)
             .await
@@ -72,17 +59,6 @@ pub(crate) async fn heartbeat_agent_workspace(
     Json(request): Json<AgentWorkspaceHeartbeatRequest>,
 ) -> Result<Json<AgentWorkspaceRecord>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/agents/workspaces/{workspace_id}/heartbeat"),
-                &request,
-                true,
-            )
-            .await?,
-        ));
-    }
     update_agent_workspace_heartbeat(&state.pool()?, workspace_id, &request)
         .await
         .map_err(ApiError::sql)?
@@ -97,17 +73,6 @@ pub(crate) async fn finish_agent_workspace(
     Json(request): Json<AgentWorkspaceFinishRequest>,
 ) -> Result<Json<AgentWorkspaceRecord>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/agents/workspaces/{workspace_id}/finish"),
-                &request,
-                true,
-            )
-            .await?,
-        ));
-    }
     finish_agent_workspace_record(&state.pool()?, workspace_id, &request)
         .await
         .map_err(ApiError::sql)?

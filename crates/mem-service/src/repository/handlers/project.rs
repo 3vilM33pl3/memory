@@ -10,11 +10,6 @@ pub(crate) async fn sync_commits(
 ) -> Result<Json<CommitSyncResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/commits/sync", &request, true).await?,
-        ));
-    }
     let project = request.project.clone();
     let response = if request.dry_run {
         preview_project_commit_sync(&state.pool()?, &request)
@@ -72,19 +67,6 @@ pub(crate) async fn project_memories(
     Path(slug): Path<String>,
     Query(params): Query<ProjectMemoriesParams>,
 ) -> Result<Json<ProjectMemoriesResponse>, ApiError> {
-    if !state.is_primary() {
-        let suffix = format!(
-            "?limit={}&offset={}",
-            params.limit.unwrap_or(200).clamp(1, 500),
-            params.offset.unwrap_or(0).max(0)
-        );
-        let mut path = format!("/v1/projects/{slug}/memories{suffix}");
-        if let Some(status) = &params.status {
-            path.push_str("&status=");
-            path.push_str(status);
-        }
-        return Ok(Json(proxy_get_json(&state, &path).await?));
-    }
     let limit = params.limit.unwrap_or(200).clamp(1, 500);
     let offset = params.offset.unwrap_or(0).max(0);
     let status_filter = params
@@ -114,10 +96,6 @@ pub(crate) async fn project_memory_graph(
 ) -> Result<Json<ProjectMemoryGraphResponse>, ApiError> {
     let limit = params.limit.unwrap_or(250).clamp(1, 1000);
     let offset = params.offset.unwrap_or(0).max(0);
-    if !state.is_primary() {
-        let path = format!("/v1/projects/{slug}/memory-graph?limit={limit}&offset={offset}");
-        return Ok(Json(proxy_get_json(&state, &path).await?));
-    }
 
     let half_life_secs = state.config.reinforcement.half_life.as_secs_f64().max(1.0);
     Ok(Json(
@@ -131,11 +109,6 @@ pub(crate) async fn project_overview(
     State(state): State<AppState>,
     Path(slug): Path<String>,
 ) -> Result<Json<ProjectOverviewResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/projects/{slug}/overview")).await?,
-        ));
-    }
     Ok(Json(
         fetch_project_overview_with_watchers(&state, &slug)
             .await
@@ -148,14 +121,6 @@ pub(crate) async fn project_commits(
     Path(slug): Path<String>,
     Query(params): Query<ProjectCommitsParams>,
 ) -> Result<Json<ProjectCommitsResponse>, ApiError> {
-    if !state.is_primary() {
-        let path = format!(
-            "/v1/projects/{slug}/commits?limit={}&offset={}",
-            params.limit.unwrap_or(50).clamp(1, 500),
-            params.offset.unwrap_or(0).max(0)
-        );
-        return Ok(Json(proxy_get_json(&state, &path).await?));
-    }
     let limit = params.limit.unwrap_or(50).clamp(1, 500);
     let offset = params.offset.unwrap_or(0).max(0);
     Ok(Json(
@@ -169,11 +134,6 @@ pub(crate) async fn project_commit_detail(
     State(state): State<AppState>,
     Path((slug, hash)): Path<(String, String)>,
 ) -> Result<Json<CommitDetailResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/projects/{slug}/commits/{hash}")).await?,
-        ));
-    }
     let commit = fetch_project_commit(&state.pool()?, &slug, &hash)
         .await
         .map_err(ApiError::sql)?
@@ -194,17 +154,6 @@ pub(crate) async fn project_resume(
         return Err(ApiError::validation(ValidationError::new(
             "request project must match path slug",
         )));
-    }
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/projects/{slug}/resume"),
-                &request,
-                false,
-            )
-            .await?,
-        ));
     }
 
     if request.checkpoint.is_none() {
@@ -312,30 +261,6 @@ pub(crate) async fn project_activities(
     Path(slug): Path<String>,
     Query(query): Query<ActivityListQuery>,
 ) -> Result<Json<ActivityListResponse>, ApiError> {
-    if !state.is_primary() {
-        let mut path = format!("/v1/projects/{slug}/activities");
-        let mut params = Vec::new();
-        if let Some(limit) = query.limit {
-            params.push(format!("limit={limit}"));
-        }
-        if let Some(kind) = &query.kind {
-            params.push(format!("kind={kind}"));
-        }
-        if let Some(since) = query.since {
-            params.push(format!("since={}", since.to_rfc3339()));
-        }
-        if let Some(before) = query.before {
-            params.push(format!("before={}", before.to_rfc3339()));
-        }
-        if let Some(include_details) = query.include_details {
-            params.push(format!("include_details={include_details}"));
-        }
-        if !params.is_empty() {
-            path.push('?');
-            path.push_str(&params.join("&"));
-        }
-        return Ok(Json(proxy_get_json(&state, &path).await?));
-    }
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
     let mut items = fetch_project_activities(
         &state.pool()?,
@@ -370,17 +295,6 @@ pub(crate) async fn project_up_to_speed(
         return Err(ApiError::validation(ValidationError::new(
             "request project must match path slug",
         )));
-    }
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/projects/{slug}/up-to-speed"),
-                &request,
-                false,
-            )
-            .await?,
-        ));
     }
     let response = build_up_to_speed_response(&state, &slug, &request).await?;
     notify_project_changed(

@@ -657,15 +657,6 @@ pub(crate) async fn project_structure(
     axum::extract::State(state): axum::extract::State<crate::state::AppState>,
     axum::extract::Path(project): axum::extract::Path<String>,
 ) -> Result<axum::Json<mem_api::ProjectStructureResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(axum::Json(
-            crate::repository::stream::proxy_get_json(
-                &state,
-                &format!("/v1/projects/{project}/structure"),
-            )
-            .await?,
-        ));
-    }
     let pool = state.pool()?;
     let half_life_secs = state.config.reinforcement.half_life.as_secs_f64().max(1.0);
     let report =

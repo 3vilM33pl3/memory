@@ -10,11 +10,6 @@ pub(crate) async fn curate_memory(
 ) -> Result<Json<mem_api::CurateResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/curate", &request, true).await?,
-        ));
-    }
     let response = if request.dry_run {
         preview_curate(&state.pool()?, &request)
             .await
@@ -245,15 +240,6 @@ pub(crate) async fn project_replacement_proposals(
     State(state): State<AppState>,
     Path(slug): Path<String>,
 ) -> Result<Json<ReplacementProposalListResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(
-                &state,
-                &format!("/v1/projects/{slug}/replacement-proposals"),
-            )
-            .await?,
-        ));
-    }
     Ok(Json(
         list_replacement_proposals(&state.pool()?, &slug)
             .await
@@ -267,17 +253,6 @@ pub(crate) async fn project_replacement_proposal_approve(
     headers: HeaderMap,
 ) -> Result<Json<ReplacementProposalResolutionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/projects/{slug}/replacement-proposals/{proposal_id}/approve"),
-                &serde_json::json!({}),
-                true,
-            )
-            .await?,
-        ));
-    }
     let response = approve_replacement_proposal(&state.pool()?, &slug, proposal_id)
         .await
         .map_err(ApiError::sql)?;
@@ -311,17 +286,6 @@ pub(crate) async fn project_replacement_proposal_reject(
     headers: HeaderMap,
 ) -> Result<Json<ReplacementProposalResolutionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/projects/{slug}/replacement-proposals/{proposal_id}/reject"),
-                &serde_json::json!({}),
-                true,
-            )
-            .await?,
-        ));
-    }
     let response = reject_replacement_proposal(&state.pool()?, &slug, proposal_id)
         .await
         .map_err(ApiError::sql)?;
@@ -339,11 +303,6 @@ pub(crate) async fn project_replacement_policy(
     Path(slug): Path<String>,
     Query(params): Query<ReplacementPolicyQuery>,
 ) -> Result<Json<ReplacementPolicyResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/projects/{slug}/replacement-policy")).await?,
-        ));
-    }
     let repo_root = resolve_project_repo_root(&state, &slug, params.repo_root.as_deref());
     let replacement_policy = repo_root
         .as_deref()
@@ -365,17 +324,6 @@ pub(crate) async fn project_replacement_policy_update(
 ) -> Result<Json<ReplacementPolicyResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/projects/{slug}/replacement-policy"),
-                &request,
-                true,
-            )
-            .await?,
-        ));
-    }
     let repo_root = request
         .repo_root
         .as_deref()

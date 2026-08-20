@@ -58,26 +58,6 @@ pub(crate) async fn watcher_heartbeat(
 ) -> Result<Json<WatcherPresenceSummary>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        let project = request.project.clone();
-        let (_, changed, transition) = register_watcher_heartbeat(&state.watchers, request.clone());
-        if changed {
-            notify_project_refreshed(&state, project);
-        }
-        if let Some((summary, details)) = transition {
-            notify_project_changed(
-                &state,
-                request.project.clone(),
-                None,
-                ActivityKind::WatcherHealth,
-                summary,
-                Some(details),
-            );
-        }
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/watchers/heartbeat", &request, true).await?,
-        ));
-    }
     let project = request.project.clone();
     let (summary, changed, transition) = register_watcher_heartbeat(&state.watchers, request);
     if changed {
@@ -103,16 +83,6 @@ pub(crate) async fn watcher_unregister(
 ) -> Result<Json<WatcherPresenceSummary>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        let project = request.project.clone();
-        let (_, changed) = unregister_watcher(&state.watchers, &request);
-        if changed {
-            notify_project_refreshed(&state, project);
-        }
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/watchers/unregister", &request, true).await?,
-        ));
-    }
     let project = request.project.clone();
     let (summary, changed) = unregister_watcher(&state.watchers, &request);
     if changed {

@@ -100,9 +100,6 @@ pub(crate) async fn web_unavailable() -> impl IntoResponse {
 }
 
 pub(crate) async fn stats(State(state): State<AppState>) -> Result<Json<StatsResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(proxy_get_json(&state, "/v1/stats").await?));
-    }
     let pool = &state.pool()?;
     let counts = [
         ("projects", "SELECT COUNT(*) AS count FROM projects"),

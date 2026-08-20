@@ -10,11 +10,6 @@ pub(crate) async fn query(
     Json(request): Json<QueryRequest>,
 ) -> Result<Json<mem_api::QueryResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/query", &request, false).await?,
-        ));
-    }
     let pool = &state.pool()?;
     let embedders = state.embedders.read().await;
     match mem_search::query_memory_with_configs(
@@ -91,11 +86,6 @@ pub(crate) async fn query_global(
     Json(request): Json<GlobalQueryRequest>,
 ) -> Result<Json<mem_api::QueryResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/query/global", &request, false).await?,
-        ));
-    }
     let pool = &state.pool()?;
     let embedders = state.embedders.read().await;
     let reinforcement = mem_search::ReinforcementRankParams::from(&state.config.reinforcement);

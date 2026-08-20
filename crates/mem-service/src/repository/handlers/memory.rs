@@ -182,11 +182,6 @@ pub(crate) async fn get_memory(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<MemoryEntryResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/memory/{id}")).await?,
-        ));
-    }
     let detail = fetch_memory_entry(&state.pool()?, id)
         .await
         .map_err(ApiError::sql)?
@@ -199,11 +194,6 @@ pub(crate) async fn get_memory_history(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<MemoryHistoryResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/memory/{id}/history")).await?,
-        ));
-    }
     let pool = &state.pool()?;
     // Walk back to the canonical_id of the provided version, then pull every
     // sibling version in chronological order. The caller can pass any
@@ -266,11 +256,6 @@ pub(crate) async fn archive(
 ) -> Result<Json<ArchiveResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/archive", &request, true).await?,
-        ));
-    }
     let project = request.project.clone();
     let archived_count = if request.dry_run {
         sqlx::query(
@@ -352,17 +337,6 @@ pub(crate) async fn archive_memory(
             "memory id must be non-nil",
         )));
     }
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/memory/{id}/archive"),
-                &serde_json::json!({}),
-                true,
-            )
-            .await?,
-        ));
-    }
 
     let archived = sqlx::query(
         r#"
@@ -411,11 +385,6 @@ pub(crate) async fn delete_memory(
 ) -> Result<Json<DeleteMemoryResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_delete_json(&state, "/v1/memory", &request).await?,
-        ));
-    }
 
     // Memories are immutable. Delete writes a tombstone version — a row with
     // the same canonical_id but empty content and is_tombstone=TRUE. Default
@@ -512,12 +481,6 @@ pub(crate) async fn prune_history(
         dry_run: request.dry_run,
     };
     effective.validate().map_err(ApiError::validation)?;
-
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/prune-history", &effective, true).await?,
-        ));
-    }
 
     let pool = &state.pool()?;
     let mut tx = pool.begin().await.map_err(ApiError::sql)?;

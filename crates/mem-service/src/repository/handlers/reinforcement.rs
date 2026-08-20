@@ -297,11 +297,6 @@ pub(crate) async fn memory_scores(
     Path(project): Path<String>,
     Query(params): Query<MemoryScoresQuery>,
 ) -> Result<Json<mem_api::MemoryScoresResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/projects/{project}/memory-scores")).await?,
-        ));
-    }
     let pool = state.pool()?;
     let project_id = resolve_project_id(&pool, &project).await?;
     let scores = mem_reinforce::repository::list_memory_scores(
@@ -440,11 +435,6 @@ pub(crate) async fn validation_runs(
     Path(project): Path<String>,
     Query(params): Query<ValidationRunsQuery>,
 ) -> Result<Json<mem_api::ValidationRunsResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/projects/{project}/validation-runs")).await?,
-        ));
-    }
     let pool = state.pool()?;
     let project_id = resolve_project_id(&pool, &project).await?;
     let runs = mem_reinforce::repository::list_validation_runs(

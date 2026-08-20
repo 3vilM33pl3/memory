@@ -34,12 +34,6 @@ pub(crate) async fn project_graph_status(
     State(state): State<AppState>,
     Path(slug): Path<String>,
 ) -> Result<Json<CodeGraphStatusResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/projects/{slug}/graph/status")).await?,
-        ));
-    }
-
     let repository = mem_graph::PostgresGraphRepository::new(state.pool()?.clone());
     Ok(Json(
         repository
@@ -56,11 +50,6 @@ pub(crate) async fn project_graph(
 ) -> Result<Json<CodeGraphResponse>, ApiError> {
     let request: CodeGraphViewRequest = params.into();
     let filters = request.normalize();
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &project_graph_path(&slug, &filters)).await?,
-        ));
-    }
 
     let repository = mem_graph::PostgresGraphRepository::new(state.pool()?.clone());
     Ok(Json(
@@ -69,28 +58,4 @@ pub(crate) async fn project_graph(
             .await
             .map_err(ApiError::io)?,
     ))
-}
-
-fn project_graph_path(slug: &str, filters: &CodeGraphViewFilters) -> String {
-    let mut params = Vec::new();
-    if let Some(run_id) = filters.run_id {
-        params.push(format!("run_id={run_id}"));
-    }
-    if let Some(q) = &filters.q {
-        params.push(format!("q={}", urlencoding::encode(q)));
-    }
-    if let Some(file_path) = &filters.file_path {
-        params.push(format!("file_path={}", urlencoding::encode(file_path)));
-    }
-    if let Some(symbol) = &filters.symbol {
-        params.push(format!("symbol={}", urlencoding::encode(symbol)));
-    }
-    if let Some(edge_kind) = &filters.edge_kind {
-        params.push(format!("edge_kind={}", urlencoding::encode(edge_kind)));
-    }
-    params.push(format!("depth={}", filters.depth));
-    params.push(format!("limit_nodes={}", filters.limit_nodes));
-    params.push(format!("limit_edges={}", filters.limit_edges));
-
-    format!("/v1/projects/{slug}/graph?{}", params.join("&"))
 }

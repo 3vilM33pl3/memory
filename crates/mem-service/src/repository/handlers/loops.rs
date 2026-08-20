@@ -114,9 +114,6 @@ pub(crate) async fn list_loop_definitions(
     State(state): State<AppState>,
     Query(query): Query<LoopDefinitionQuery>,
 ) -> Result<Json<LoopDefinitionsResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(proxy_get_json(&state, "/v1/loops").await?));
-    }
     let pool = &state.pool()?;
     let definitions = fetch_loop_definitions(pool).await?;
     // Advisory learned-utility sidecar: project-scoped, ordered by utility,
@@ -153,11 +150,6 @@ pub(crate) async fn get_loop_definition(
     Path(loop_id): Path<String>,
     Query(query): Query<LoopDefinitionQuery>,
 ) -> Result<Json<LoopDefinitionResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/loops/{loop_id}")).await?,
-        ));
-    }
     let pool = &state.pool()?;
     let definition = fetch_loop_definition(pool, &loop_id).await?;
     let effective_settings = if query.project.is_some() || query.repo_root.is_some() {
@@ -183,11 +175,6 @@ pub(crate) async fn get_loop_definition(
 pub(crate) async fn get_loop_global_state(
     State(state): State<AppState>,
 ) -> Result<Json<LoopGlobalStateResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, "/v1/loops/global-kill-switch").await?,
-        ));
-    }
     Ok(Json(fetch_loop_global_state(&state.pool()?).await?))
 }
 
@@ -199,11 +186,6 @@ pub(crate) async fn update_loop_global_state(
 ) -> Result<Json<LoopGlobalStateResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     stamp_multiuser_actor(&state, &principal, &mut request.updated_by);
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/loops/global-kill-switch", &request, true).await?,
-        ));
-    }
     Ok(Json(
         store_loop_global_state(&state.pool()?, &request).await?,
     ))
@@ -283,18 +265,6 @@ async fn mutate_loop_setting(
     requires_explicit_approval: bool,
 ) -> Result<Json<LoopSettingResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        let path = if request.enabled == Some(true) {
-            format!("/v1/loops/{loop_id}/enable")
-        } else if request.paused_until.is_some() {
-            format!("/v1/loops/{loop_id}/pause")
-        } else if request.snoozed_until.is_some() {
-            format!("/v1/loops/{loop_id}/snooze")
-        } else {
-            format!("/v1/loops/{loop_id}/disable")
-        };
-        return Ok(Json(proxy_post_json(&state, &path, &request, true).await?));
-    }
 
     let pool = &state.pool()?;
     let definition = fetch_loop_definition(pool, &loop_id).await?;
@@ -355,11 +325,6 @@ pub(crate) async fn run_loop(
 ) -> Result<Json<LoopRunResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, &format!("/v1/loops/{loop_id}/run"), &request, true).await?,
-        ));
-    }
     let response = create_control_plane_loop_run(&state.pool()?, &loop_id, &request).await?;
     // Consolidation is the one LLM-backed loop: after the deterministic report
     // is stored, synthesize insight proposals when enabled and not dry-run.
@@ -401,11 +366,6 @@ pub(crate) async fn route_loop_trigger(
 ) -> Result<Json<LoopTriggerRouteResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/loops/triggers/route", &request, true).await?,
-        ));
-    }
     Ok(Json(
         route_loop_trigger_event_inner(&state.pool()?, &request).await?,
     ))
@@ -416,32 +376,6 @@ pub(crate) async fn build_loop_context_pack(
     Path(loop_id): Path<String>,
     Query(query): Query<LoopContextPackQuery>,
 ) -> Result<Json<LoopContextPackResponse>, ApiError> {
-    if !state.is_primary() {
-        let mut params = Vec::new();
-        if let Some(project) = &query.project {
-            params.push(format!("project={project}"));
-        }
-        if let Some(repo_root) = &query.repo_root {
-            params.push(format!("repo_root={repo_root}"));
-        }
-        if let Some(run_id) = query.run_id {
-            params.push(format!("run_id={run_id}"));
-        }
-        if let Some(token_budget) = query.token_budget {
-            params.push(format!("token_budget={token_budget}"));
-        }
-        if let Some(limit) = query.limit {
-            params.push(format!("limit={limit}"));
-        }
-        let suffix = if params.is_empty() {
-            String::new()
-        } else {
-            format!("?{}", params.join("&"))
-        };
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/loops/{loop_id}/context-pack{suffix}")).await?,
-        ));
-    }
     let request = LoopContextPackRequest {
         project: query.project,
         repo_root: query.repo_root,
@@ -459,9 +393,6 @@ pub(crate) async fn list_loop_runs(
     State(state): State<AppState>,
     Query(query): Query<LoopRunsQuery>,
 ) -> Result<Json<LoopRunsResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(proxy_get_json(&state, "/v1/loops/runs").await?));
-    }
     Ok(Json(fetch_loop_runs(&state.pool()?, &query).await?))
 }
 
@@ -469,11 +400,6 @@ pub(crate) async fn get_loop_run(
     State(state): State<AppState>,
     Path(run_id): Path<Uuid>,
 ) -> Result<Json<LoopRunResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/loops/runs/{run_id}")).await?,
-        ));
-    }
     Ok(Json(LoopRunResponse {
         run: fetch_loop_run_detail(&state.pool()?, run_id).await?,
     }))
@@ -483,11 +409,6 @@ pub(crate) async fn get_loop_run_context_pack(
     State(state): State<AppState>,
     Path(run_id): Path<Uuid>,
 ) -> Result<Json<LoopContextPackResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, &format!("/v1/loops/runs/{run_id}/context-pack")).await?,
-        ));
-    }
     let response = fetch_loop_run_context_pack(&state.pool()?, run_id)
         .await?
         .ok_or_else(|| ApiError::not_found("loop run context pack not found"))?;
@@ -501,17 +422,6 @@ pub(crate) async fn cancel_loop_run(
     Json(request): Json<LoopCancelRequest>,
 ) -> Result<Json<LoopRunResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/loops/runs/{run_id}/cancel"),
-                &request,
-                true,
-            )
-            .await?,
-        ));
-    }
     Ok(Json(
         cancel_loop_run_record(&state.pool()?, run_id, &request).await?,
     ))
@@ -525,17 +435,6 @@ pub(crate) async fn submit_loop_feedback(
 ) -> Result<Json<LoopRunResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/loops/runs/{run_id}/feedback"),
-                &request,
-                true,
-            )
-            .await?,
-        ));
-    }
     append_loop_trace(
         &state.pool()?,
         run_id,
@@ -554,9 +453,6 @@ pub(crate) async fn list_loop_approvals(
     State(state): State<AppState>,
     Query(query): Query<LoopApprovalsQuery>,
 ) -> Result<Json<LoopApprovalsResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(proxy_get_json(&state, "/v1/loops/approvals").await?));
-    }
     Ok(Json(fetch_loop_approvals(&state.pool()?, &query).await?))
 }
 
@@ -569,17 +465,6 @@ pub(crate) async fn approve_loop_approval(
 ) -> Result<Json<LoopApprovalDecisionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/loops/approvals/{approval_id}/approve"),
-                &request,
-                true,
-            )
-            .await?,
-        ));
-    }
     Ok(Json(
         resolve_loop_approval_decision(
             &state.pool()?,
@@ -600,17 +485,6 @@ pub(crate) async fn reject_loop_approval(
 ) -> Result<Json<LoopApprovalDecisionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/loops/approvals/{approval_id}/reject"),
-                &request,
-                true,
-            )
-            .await?,
-        ));
-    }
     Ok(Json(
         resolve_loop_approval_decision(
             &state.pool()?,
@@ -636,17 +510,6 @@ pub(crate) async fn edit_loop_approval(
             "edited_action is required",
         )));
     }
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/loops/approvals/{approval_id}/edit"),
-                &request,
-                true,
-            )
-            .await?,
-        ));
-    }
     Ok(Json(
         resolve_loop_approval_decision(
             &state.pool()?,
@@ -662,11 +525,6 @@ pub(crate) async fn list_loop_memory_proposals(
     State(state): State<AppState>,
     Query(query): Query<LoopMemoryProposalsQuery>,
 ) -> Result<Json<LoopMemoryProposalsResponse>, ApiError> {
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_get_json(&state, "/v1/loops/memory-proposals").await?,
-        ));
-    }
     Ok(Json(
         fetch_loop_memory_proposals_for_query(&state.pool()?, &query).await?,
     ))
@@ -679,11 +537,6 @@ pub(crate) async fn create_loop_memory_proposal(
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/loops/memory-proposals", &request, true).await?,
-        ));
-    }
     Ok(Json(
         insert_loop_memory_proposal(&state.pool()?, &request).await?,
     ))
@@ -698,17 +551,6 @@ pub(crate) async fn approve_loop_memory_proposal(
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/loops/memory-proposals/{proposal_id}/approve"),
-                &request,
-                true,
-            )
-            .await?,
-        ));
-    }
     Ok(Json(
         resolve_loop_memory_proposal_decision(
             &state.pool()?,
@@ -730,17 +572,6 @@ pub(crate) async fn reject_loop_memory_proposal(
 ) -> Result<Json<LoopMemoryProposalDecisionResponse>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     stamp_multiuser_actor(&state, &principal, &mut request.reviewer);
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/loops/memory-proposals/{proposal_id}/reject"),
-                &request,
-                true,
-            )
-            .await?,
-        ));
-    }
     Ok(Json(
         resolve_loop_memory_proposal_decision(
             &state.pool()?,
@@ -769,17 +600,6 @@ pub(crate) async fn edit_loop_memory_proposal(
         return Err(ApiError::validation(ValidationError::new(
             "at least one edited proposal field is required",
         )));
-    }
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(
-                &state,
-                &format!("/v1/loops/memory-proposals/{proposal_id}/edit"),
-                &request,
-                true,
-            )
-            .await?,
-        ));
     }
     Ok(Json(
         edit_loop_memory_proposal_record(&state.pool()?, proposal_id, &request).await?,

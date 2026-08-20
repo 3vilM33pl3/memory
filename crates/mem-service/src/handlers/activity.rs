@@ -16,11 +16,6 @@ pub(crate) async fn capture_task(
         request.writer_name = Some(principal.display_name.clone());
     }
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/capture/task", &request, true).await?,
-        ));
-    }
     if !state.pool_available() {
         return queue_capture_offline(&state, &request).await.map(Json);
     }
@@ -102,11 +97,6 @@ pub(crate) async fn scan_activity(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/scan/activity", &request, true).await?,
-        ));
-    }
 
     let summary = if request.dry_run {
         format!(
@@ -157,11 +147,6 @@ pub(crate) async fn graph_activity(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/graph/activity", &request, true).await?,
-        ));
-    }
 
     let summary = graph_activity_summary(&request);
     let details = graph_activity_details(&request);
@@ -229,11 +214,6 @@ pub(crate) async fn checkpoint_activity(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/checkpoint/activity", &request, true).await?,
-        ));
-    }
 
     let summary = if let Some(note) = request.checkpoint.note.as_deref() {
         format!("Saved checkpoint for project {} ({note})", request.project)
@@ -275,11 +255,6 @@ pub(crate) async fn plan_activity(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
-    if !state.is_primary() {
-        return Ok(Json(
-            proxy_post_json(&state, "/v1/plan/activity", &request, true).await?,
-        ));
-    }
 
     let remaining_count = request.remaining_items.len();
     let verified_complete = matches!(request.action, PlanActivityAction::FinishVerified);

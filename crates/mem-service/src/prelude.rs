@@ -43,7 +43,7 @@ pub(crate) use mem_api::{
     AgentWorkspaceListResponse, AgentWorkspaceRecord, AgentWorkspaceStartRequest,
     AgentWorkspaceStatus, AgentWorkspaceWarning, AppConfig, ArchiveMemoryResponse, ArchiveRequest,
     ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest, CodeGraphResponse,
-    CodeGraphStatusResponse, CodeGraphViewFilters, CodeGraphViewRequest, CommitDetailResponse,
+    CodeGraphStatusResponse, CodeGraphViewRequest, CommitDetailResponse,
     CommitSyncRequest, CommitSyncResponse, CurateRequest, DeleteMemoryRequest,
     DeleteMemoryResponse, DiagnosticInfo, DiagnosticSeverity, EmbeddingBackendInfo,
     EmbeddingBackendsResponse, GraphActivityRequest, LlmAuditConfig, LlmAuditMessage,
