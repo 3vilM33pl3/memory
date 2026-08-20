@@ -279,16 +279,18 @@ async fn discover_client(state: &AppState) -> Result<DiscoveredCoreClient, ApiEr
                 format!("Authentik OIDC discovery failed: {error}"),
             )
         })?;
-    let redirect = format!(
-        "{}/v1/auth/callback",
-        state
-            .config
-            .auth
-            .public_base_url
-            .as_deref()
-            .expect("validated public base URL")
-            .trim_end_matches('/')
-    );
+    let public_base_url = state
+        .config
+        .auth
+        .public_base_url
+        .as_deref()
+        .ok_or_else(|| {
+            ApiError::status_message(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "auth.public_base_url is required for the OIDC login flow",
+            )
+        })?;
+    let redirect = format!("{}/v1/auth/callback", public_base_url.trim_end_matches('/'));
     let client_secret = state
         .config
         .credential_env_value(&oidc.client_secret_env)

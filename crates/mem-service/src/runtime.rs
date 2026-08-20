@@ -22,6 +22,23 @@ pub async fn run_service(config_path: Option<PathBuf>) -> Result<()> {
             .bind_addr
             .parse()
             .context("parse bind_addr")?;
+        if config.auth.mode == mem_record::AuthMode::MultiUser {
+            let oidc = &config.auth.oidc;
+            if oidc.issuer_url.trim().is_empty()
+                || oidc.client_id.trim().is_empty()
+                || config
+                    .auth
+                    .public_base_url
+                    .as_deref()
+                    .is_none_or(|url| url.trim().is_empty())
+            {
+                anyhow::bail!(
+                    "auth.mode = \"multi_user\" requires auth.public_base_url, \
+                     auth.oidc.issuer_url, and auth.oidc.client_id to be set - \
+                     refusing to start with a half-configured identity provider"
+                );
+            }
+        }
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let shutdown_handle = Arc::new(Mutex::new(Some(shutdown_tx)));
         let state = build_state(config.clone(), shutdown_handle.clone()).await?;

@@ -325,6 +325,9 @@ async fn loop_repository_registers_definitions_and_records_run() {
     mem_test_support::cleanup_project(&pool, &project)
         .await
         .expect("cleanup old test project");
+    mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+        .await
+        .expect("seed project row");
 
     mem_service::repository::handlers::loops::register_builtin_loop_definitions(&pool)
         .await
@@ -580,6 +583,9 @@ async fn loop_repository_approves_memory_proposal_and_writes_provenance() {
     mem_test_support::cleanup_project(&pool, &project)
         .await
         .expect("cleanup old test project");
+    mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+        .await
+        .expect("seed project row");
 
     let request = LoopMemoryProposalCreateRequest {
         project: project.clone(),
@@ -783,6 +789,10 @@ async fn procedural_utility_learns_from_proposal_decisions() {
     mem_test_support::cleanup_project(&pool, &project)
         .await
         .expect("cleanup old test project");
+    mem_service::repository::handlers::bundle::upsert_project_slug(&pool, &project)
+        .await
+        .expect("seed project row");
+
     let procedural = mem_config::ProceduralConfig::default();
 
     let make_request = |summary: &str| LoopMemoryProposalCreateRequest {

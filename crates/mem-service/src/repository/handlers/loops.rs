@@ -737,11 +737,7 @@ async fn resolve_loop_scope(
         .or_else(|| request.project.clone())
         .unwrap_or_else(|| "default".to_string());
     let project_id = match request.project.as_deref() {
-        Some(project) if create_project => Some(
-            upsert_project_slug(pool, project)
-                .await
-                .map_err(ApiError::sql)?,
-        ),
+        Some(project) if create_project => Some(require_project_id(pool, project).await?),
         Some(project) => find_project_id(pool, project).await?,
         None => None,
     };
@@ -1062,11 +1058,7 @@ async fn route_loop_trigger_event_inner(
     }
 
     let project_id = match request.project.as_deref() {
-        Some(project) => Some(
-            upsert_project_slug(pool, project)
-                .await
-                .map_err(ApiError::sql)?,
-        ),
+        Some(project) => Some(require_project_id(pool, project).await?),
         None => None,
     };
     let stored = store_trigger_event(pool, request, project_id).await?;
@@ -1331,11 +1323,7 @@ async fn create_control_plane_loop_run_with_trigger(
 ) -> Result<LoopRunResponse, ApiError> {
     let definition = fetch_loop_definition(pool, loop_id).await?;
     let project_id = match request.project.as_deref() {
-        Some(project) => Some(
-            upsert_project_slug(pool, project)
-                .await
-                .map_err(ApiError::sql)?,
-        ),
+        Some(project) => Some(require_project_id(pool, project).await?),
         None => None,
     };
     let effective = load_effective_loop_settings(
@@ -2006,9 +1994,7 @@ async fn insert_loop_memory_proposal(
     pool: &PgPool,
     request: &LoopMemoryProposalCreateRequest,
 ) -> Result<LoopMemoryProposalDecisionResponse, ApiError> {
-    let project_id = upsert_project_slug(pool, &request.project)
-        .await
-        .map_err(ApiError::sql)?;
+    let project_id = require_project_id(pool, &request.project).await?;
     let row = sqlx::query(
         r#"
         INSERT INTO memory_proposals (
@@ -3919,9 +3905,7 @@ async fn emit_draft_pr_loop_report(
         .project
         .as_deref()
         .ok_or_else(|| ApiError::validation(ValidationError::new("project is required")))?;
-    let project_id = upsert_project_slug(pool, project)
-        .await
-        .map_err(ApiError::sql)?;
+    let project_id = require_project_id(pool, project).await?;
     let issue = issue_payload_text(request.trigger_payload.as_ref());
     let lower = issue.to_lowercase();
     let sensitive = contains_any(
@@ -4988,6 +4972,15 @@ fn approval_proposal_id(value: &serde_json::Value) -> Option<Uuid> {
         .or_else(|| value.get("memory_proposal_id"))
         .and_then(serde_json::Value::as_str)
         .and_then(|value| Uuid::parse_str(value).ok())
+}
+
+async fn require_project_id(pool: &PgPool, project: &str) -> Result<Uuid, ApiError> {
+    find_project_id(pool, project).await?.ok_or_else(|| {
+        ApiError::status_message(
+            StatusCode::NOT_FOUND,
+            format!("project `{project}` does not exist; capture a memory in it first"),
+        )
+    })
 }
 
 async fn find_project_id(pool: &PgPool, project: &str) -> Result<Option<Uuid>, ApiError> {
