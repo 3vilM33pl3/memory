@@ -1666,14 +1666,9 @@ async fn insert_memory_fixture(pool: &PgPool, project_id: Uuid) -> Uuid {
     sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
-             summary, memory_type, scope, importance, confidence, status,
-             created_at, updated_at, archived_at, search_document)
-        VALUES ($1, $2, $1, 1, FALSE,
-                'Repository handler tests cover a write path and a read path.',
-                'Repository DB test memory', 'implementation', 'project', 3, 0.9,
-                'active', now(), now(), NULL,
-                to_tsvector('english', 'Repository handler tests cover a write path and a read path. Repository DB test memory'))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $1, 1, FALSE, 'Repository handler tests cover a write path and a read path.', 'Repository DB test memory', 'implementation', 'project', 3, 0.9, now(), now(), to_tsvector('english', 'Repository handler tests cover a write path and a read path. Repository DB test memory'))
         "#,
     )
     .bind(memory_id)
@@ -1713,12 +1708,9 @@ async fn insert_hygiene_memory_fixture(
     sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
-             summary, memory_type, scope, importance, confidence, status,
-             created_at, updated_at, archived_at, search_document)
-        VALUES ($1, $2, $1, 1, FALSE, $3, $4, 'implementation', 'project',
-                $5, $6, 'active', now(), now(), NULL,
-                to_tsvector('english', $3 || ' ' || $4))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $1, 1, FALSE, $3, $4, 'implementation', 'project', $5, $6, now(), now(), to_tsvector('english', $3 || ' ' || $4))
         "#,
     )
     .bind(memory_id)
@@ -1749,12 +1741,9 @@ async fn insert_typed_memory_fixture(
     sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
-             summary, memory_type, scope, importance, confidence, status,
-             created_at, updated_at, archived_at, search_document)
-        VALUES ($1, $2, $1, 1, FALSE, $3, $4, $5, 'project',
-                4, 0.92, 'active', now(), now(), NULL,
-                to_tsvector('english', $3 || ' ' || $4))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $1, 1, FALSE, $3, $4, $5, 'project', 4, 0.92, now(), now(), to_tsvector('english', $3 || ' ' || $4))
         "#,
     )
     .bind(memory_id)

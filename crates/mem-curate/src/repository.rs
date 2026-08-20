@@ -621,15 +621,20 @@ pub async fn apply_validation_revision(
     let inserted = sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
-             summary, memory_type, scope, importance, confidence, status,
-             created_at, updated_at, archived_at, search_document)
-        SELECT $2, m.project_id, m.canonical_id,
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        SELECT $2,
+               m.project_id,
+               m.canonical_id,
                (SELECT MAX(version_no) + 1 FROM memory_entries WHERE canonical_id = m.canonical_id),
-               FALSE, $3, $4, m.memory_type, m.scope,
+               FALSE,
+               $3,
+               $4,
+               m.memory_type,
+               m.scope,
                memory_state_importance(m.canonical_id),
                memory_state_confidence(m.canonical_id),
-               'active', now(), now(), NULL,
+               now(),
+               now(),
                to_tsvector('english', $3 || ' ' || $4)
         FROM memory_entries m
         WHERE m.id = $1 AND COALESCE(m.is_tombstone, false) = false
@@ -717,9 +722,9 @@ async fn insert_memory_version(
     sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
         VALUES
-            ($1, $2, $3, $4, FALSE, $5, $6, $7, 'project', $8, $9, 'active', now(), now(), NULL, to_tsvector('english', $5 || ' ' || $6))
+            ($1, $2, $3, $4, FALSE, $5, $6, $7, 'project', $8, $9, now(), now(), to_tsvector('english', $5 || ' ' || $6))
         "#,
     )
     .bind(memory_id)

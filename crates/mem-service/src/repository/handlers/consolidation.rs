@@ -732,11 +732,9 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO memory_entries
-                (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
-                 summary, memory_type, scope, importance, confidence, status,
-                 created_at, updated_at, search_document)
-            VALUES ($1, $2, $1, 1, false, $3, $3, $4, 'project', 3, 0.9,
-                    'active', now(), now(), to_tsvector('english', $3))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $1, 1, false, $3, $3, $4, 'project', 3, 0.9, now(), now(), to_tsvector('english', $3))
             "#,
         )
         .bind(id)

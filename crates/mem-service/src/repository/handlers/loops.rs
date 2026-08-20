@@ -2368,7 +2368,7 @@ async fn apply_consolidation_proposal(
             r#"
             SELECT id FROM memory_entries
             WHERE canonical_id = $1
-              AND status = 'active'
+              AND memory_state_status(canonical_id) = 'active'
               AND COALESCE(is_tombstone, false) = false
             ORDER BY version_no DESC
             LIMIT 1
@@ -2496,12 +2496,9 @@ async fn insert_memory_from_proposal(
     sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_id, version_no, is_tombstone,
-             canonical_text, summary, memory_type, scope, importance, confidence,
-             status, created_at, updated_at, archived_at, search_document)
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
         VALUES
-            ($1, $2, $3, $4, FALSE, $5, $6, $7, $8, $9, $10,
-             'active', now(), now(), NULL, to_tsvector('english', $5 || ' ' || $6))
+            ($1, $2, $3, $4, FALSE, $5, $6, $7, $8, $9, $10, now(), now(), to_tsvector('english', $5 || ' ' || $6))
         "#,
     )
     .bind(memory_id)

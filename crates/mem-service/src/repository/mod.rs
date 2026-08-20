@@ -1268,9 +1268,9 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO memory_entries
-                (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
-            VALUES
-                ($1, $2, $3, 2, FALSE, 'Updated canonical memory.', 'Updated memory', 'decision', 'project', 4, 0.9, 'active', now(), now(), NULL, to_tsvector('english', 'Updated canonical memory Updated memory'))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $3, 2, FALSE, 'Updated canonical memory.', 'Updated memory', 'decision', 'project', 4, 0.9, now(), now(), to_tsvector('english', 'Updated canonical memory Updated memory'))
             "#,
         )
         .bind(updated_id)
@@ -1297,10 +1297,10 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO memory_entries
-                (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
-            VALUES
-                ($1, $2, $1, 1, FALSE, 'Deleted canonical memory.', 'Deleted memory', 'architecture', 'project', 1, 0.8, 'active', now(), now(), NULL, to_tsvector('english', 'Deleted canonical memory Deleted memory')),
-                ($3, $2, $1, 2, TRUE, '', '', 'implementation', 'project', 0, 0.0, 'active', now(), now(), NULL, to_tsvector('english', ''))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $1, 1, FALSE, 'Deleted canonical memory.', 'Deleted memory', 'architecture', 'project', 1, 0.8, now(), now(), to_tsvector('english', 'Deleted canonical memory Deleted memory')),
+                ($3, $2, $1, 2, TRUE, '', '', 'implementation', 'project', 0, 0.0, now(), now(), to_tsvector('english', ''))
             "#,
         )
         .bind(deleted_id)
@@ -1430,7 +1430,10 @@ mod tests {
         .await?;
         tx.execute(
             sqlx::query(
-                "INSERT INTO memory_entries (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document) VALUES ($1, $2, $1, 1, FALSE, $3, $4, 'architecture', 'project', 3, 0.85, 'active', now(), now(), NULL, to_tsvector('english', $3 || ' ' || $4))",
+                "INSERT INTO memory_entries
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $1, 1, FALSE, $3, $4, 'architecture', 'project', 3, 0.85, now(), now(), to_tsvector('english', $3 || ' ' || $4))",
             )
             .bind(memory_id)
             .bind(project_id)

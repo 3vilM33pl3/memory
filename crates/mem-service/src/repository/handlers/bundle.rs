@@ -606,9 +606,9 @@ pub(crate) async fn project_bundle_import(
         sqlx::query(
             r#"
             INSERT INTO memory_entries
-                (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, status, created_at, updated_at, archived_at, search_document)
-            VALUES
-                ($1, $2, $3, $4, FALSE, $5, $6, $7, 'project', $8, $9, 'active', $10, $11, NULL, to_tsvector('english', $5 || ' ' || $6))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $3, $4, FALSE, $5, $6, $7, 'project', $8, $9, $10, $11, to_tsvector('english', $5 || ' ' || $6))
             "#,
         )
         .bind(memory_id)

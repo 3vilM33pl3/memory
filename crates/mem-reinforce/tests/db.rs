@@ -22,11 +22,9 @@ async fn insert_memory(pool: &PgPool, project_id: Uuid, memory_id: Uuid, text: &
     sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
-             summary, memory_type, scope, importance, confidence, status,
-             created_at, updated_at, archived_at, search_document)
-        VALUES ($1, $2, $1, 1, FALSE, $3, $3, 'implementation', 'project', 3, 0.9,
-                'active', now(), now(), NULL, to_tsvector('english', $3))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $1, 1, FALSE, $3, $3, 'implementation', 'project', 3, 0.9, now(), now(), to_tsvector('english', $3))
         "#,
     )
     .bind(memory_id)

@@ -524,7 +524,7 @@ pub async fn fetch_due_candidates(
                 SELECT id FROM memory_entries
                 WHERE canonical_id = s.canonical_id
                   AND COALESCE(is_tombstone, false) = false
-                  AND status = 'active'
+                  AND memory_state_status(canonical_id) = 'active'
                 ORDER BY version_no DESC
                 LIMIT 1
             ) m ON true

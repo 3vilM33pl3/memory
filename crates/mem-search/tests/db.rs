@@ -177,13 +177,9 @@ async fn insert_embedding_reindex_fixture(
     sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
-             summary, memory_type, scope, importance, confidence, status,
-             created_at, updated_at, archived_at, search_document)
-        VALUES ($1, $2, $1, 1, FALSE, 'Persistent backend embedding coverage.',
-                'Backend coverage summary', 'implementation', 'project', 3, 0.9,
-                'active', now(), now(), NULL,
-                to_tsvector('english', 'Persistent backend embedding coverage. Backend coverage summary'))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $1, 1, FALSE, 'Persistent backend embedding coverage.', 'Backend coverage summary', 'implementation', 'project', 3, 0.9, now(), now(), to_tsvector('english', 'Persistent backend embedding coverage. Backend coverage summary'))
         "#,
     )
     .bind(memory_id)
@@ -233,13 +229,9 @@ async fn insert_graph_query_fixture(
     sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
-             summary, memory_type, scope, importance, confidence, status,
-             created_at, updated_at, archived_at, search_document)
-        VALUES ($1, $2, $1, 1, FALSE, 'Durable implementation detail.',
-                'Unrelated summary', 'implementation', 'project', 3, 0.9,
-                'active', now(), now(), NULL,
-                to_tsvector('english', 'Durable implementation detail. Unrelated summary'))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $1, 1, FALSE, 'Durable implementation detail.', 'Unrelated summary', 'implementation', 'project', 3, 0.9, now(), now(), to_tsvector('english', 'Durable implementation detail. Unrelated summary'))
         "#,
     )
     .bind(memory_id)
@@ -352,13 +344,9 @@ async fn insert_rank_memory(
     sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
-             summary, memory_type, scope, importance, confidence, status,
-             created_at, updated_at, archived_at, search_document)
-        VALUES ($1, $2, $1, 1, FALSE, 'ranking proof durable detail',
-                $3, 'implementation', 'project', 3, 0.9,
-                'active', now(), now() - make_interval(secs => $4), NULL,
-                to_tsvector('english', 'ranking proof durable detail'))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $1, 1, FALSE, 'ranking proof durable detail', $3, 'implementation', 'project', 3, 0.9, now(), now() - make_interval(secs => $4), to_tsvector('english', 'ranking proof durable detail'))
         "#,
     )
     .bind(memory_id)
@@ -415,13 +403,9 @@ async fn activation_boost_reorders_equal_candidates_and_flags_needs_review() {
         sqlx::query(
             r#"
             INSERT INTO memory_entries
-                (id, project_id, canonical_id, version_no, is_tombstone, canonical_text,
-                 summary, memory_type, scope, importance, confidence, status,
-                 created_at, updated_at, archived_at, search_document)
-            VALUES ($1, $2, $1, 1, FALSE, 'Reinforcement ranking twin memory.',
-                    'Reinforcement ranking twin', 'implementation', 'project', 3, 0.9,
-                    'active', now(), now(), NULL,
-                    to_tsvector('english', 'Reinforcement ranking twin memory.'))
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
+        VALUES
+            ($1, $2, $1, 1, FALSE, 'Reinforcement ranking twin memory.', 'Reinforcement ranking twin', 'implementation', 'project', 3, 0.9, now(), now(), to_tsvector('english', 'Reinforcement ranking twin memory.'))
             "#,
         )
         .bind(memory_id)

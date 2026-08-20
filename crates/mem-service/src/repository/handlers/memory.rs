@@ -419,13 +419,9 @@ pub(crate) async fn delete_memory(
     sqlx::query(
         r#"
         INSERT INTO memory_entries
-            (id, project_id, canonical_id, version_no, is_tombstone,
-             canonical_text, summary, memory_type, scope, importance,
-             confidence, status, created_at, updated_at, archived_at,
-             search_document)
+            (id, project_id, canonical_id, version_no, is_tombstone, canonical_text, summary, memory_type, scope, importance, confidence, created_at, updated_at, search_document)
         VALUES
-            ($1, $2, $3, $4, TRUE, '', '', 'implementation', 'project', 0, 0.0,
-             'active', now(), now(), NULL, to_tsvector('english', ''))
+            ($1, $2, $3, $4, TRUE, '', '', 'implementation', 'project', 0, 0.0, now(), now(), to_tsvector('english', ''))
         "#,
     )
     .bind(tombstone_id)

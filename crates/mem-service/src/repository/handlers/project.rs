@@ -473,7 +473,7 @@ pub(crate) async fn fetch_project_activities(
 ) -> Result<Vec<ActivityEvent>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
-        SELECT te.id, te.recorded_at, p.slug AS project, te.kind, te.memory_id, te.summary,
+        SELECT te.id, te.seq, te.recorded_at, p.slug AS project, te.kind, te.memory_id, te.summary,
                CASE WHEN $6 THEN te.details_json ELSE NULL END AS details_json,
                te.actor_id, te.actor_name, te.source, te.operation_id, te.duration_ms, te.provider, te.model,
                te.input_tokens, te.output_tokens, te.cache_read_tokens, te.cache_write_tokens, te.total_tokens
