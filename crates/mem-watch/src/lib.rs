@@ -1,12 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-extern crate self as mem_watch;
+mod daemon;
 
-#[allow(dead_code)]
-#[path = "main.rs"]
-mod cli_runtime;
-
-pub use cli_runtime::{RunArgs as WatcherRunArgs, run_loop as run_watcher_daemon};
+pub use daemon::{RunArgs as WatcherRunArgs, run_loop as run_watcher_daemon};
 
 use std::{
     collections::BTreeSet,

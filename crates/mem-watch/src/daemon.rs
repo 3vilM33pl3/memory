@@ -2,15 +2,16 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
-use clap::{Args, Parser, Subcommand};
-use mem_api::{AppConfig, read_repo_project_slug};
-use mem_platform as platform;
-use mem_watch::{
+use crate::{
     WatcherAgentOwner, build_watcher_heartbeat_request, build_watcher_unregister_request,
-    detect_hostname, fetch_service_instance_id, flush_path, heartbeat_watcher, load_state,
-    owner_session_is_alive, path_is_ignored, run_once, to_status, unregister_watcher,
+    detect_hostname, fetch_service_instance_id, heartbeat_watcher, load_state,
+    owner_session_is_alive, path_is_ignored, run_once, unregister_watcher,
 };
+use anyhow::{Context, Result};
+use clap::Args;
+use mem_api::{AppConfig, read_repo_project_slug};
+#[cfg(test)]
+use mem_platform as platform;
 use reqwest::Client;
 use uuid::Uuid;
 
@@ -24,28 +25,6 @@ enum HeartbeatState {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct BackendInstanceState {
     current: Option<String>,
-}
-
-#[derive(Debug, Parser)]
-#[command(name = "memory-watch", version)]
-struct Cli {
-    #[arg(long, env = "MEMORY_LAYER_CONFIG")]
-    config: Option<PathBuf>,
-    #[arg(
-        long = "writer-id",
-        visible_alias = "agent-id",
-        env = "MEMORY_LAYER_WRITER_ID"
-    )]
-    writer_id: Option<String>,
-    #[command(subcommand)]
-    command: WatchCommand,
-}
-
-#[derive(Debug, Subcommand)]
-enum WatchCommand {
-    Run(RunArgs),
-    Status(ProjectArgs),
-    Flush(FlushArgs),
 }
 
 #[derive(Debug, Args)]
@@ -64,49 +43,6 @@ pub struct RunArgs {
     pub agent_started_at: Option<chrono::DateTime<chrono::Utc>>,
     #[arg(long, hide = true)]
     pub service_managed: bool,
-}
-
-#[derive(Debug, Args)]
-struct ProjectArgs {
-    #[arg(long)]
-    project: Option<String>,
-    #[arg(long)]
-    repo_root: Option<PathBuf>,
-}
-
-#[derive(Debug, Args)]
-struct FlushArgs {
-    #[arg(long)]
-    project: Option<String>,
-    #[arg(long)]
-    repo_root: Option<PathBuf>,
-    #[arg(long)]
-    curate: bool,
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    if std::env::args()
-        .nth(1)
-        .is_some_and(|arg| arg == "--version" || arg == "-V")
-    {
-        println!(
-            "memory-watch {}",
-            mem_api::Profile::detect().display_version(env!("CARGO_PKG_VERSION"))
-        );
-        return Ok(());
-    }
-
-    let cli = Cli::parse();
-    let config = AppConfig::load_from_path(cli.config).context("load config")?;
-    let writer_id = resolve_writer_id(&config, cli.writer_id)?;
-    let writer_name = config.writer.name.clone();
-
-    match cli.command {
-        WatchCommand::Run(args) => run_loop(config, args, writer_id, writer_name).await,
-        WatchCommand::Status(args) => status(config, args).await,
-        WatchCommand::Flush(args) => flush(config, args, writer_id, writer_name).await,
-    }
 }
 
 pub async fn run_loop(
@@ -331,88 +267,6 @@ fn log_heartbeat_transition(
     }
 }
 
-async fn status(config: AppConfig, args: ProjectArgs) -> Result<()> {
-    let repo_root = resolve_repo_root(&config, args.repo_root)?;
-    let project = resolve_project(args.project, &repo_root)?;
-    let state = load_state(&project, &repo_root, &config.automation).await?;
-    println!("{}", serde_json::to_string_pretty(&to_status(&state))?);
-    Ok(())
-}
-
-async fn flush(
-    config: AppConfig,
-    args: FlushArgs,
-    writer_id: String,
-    writer_name: Option<String>,
-) -> Result<()> {
-    let repo_root = resolve_repo_root(&config, args.repo_root)?;
-    let project = resolve_project(args.project, &repo_root)?;
-    let client = Client::new();
-    tokio::fs::write(flush_path(&repo_root), b"flush\n")
-        .await
-        .ok();
-    run_once(
-        &config,
-        &client,
-        &project,
-        &repo_root,
-        true,
-        args.curate,
-        &writer_id,
-        writer_name.as_deref(),
-    )
-    .await
-}
-
-fn resolve_repo_root(config: &AppConfig, repo_root: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(repo_root) = repo_root {
-        return Ok(repo_root);
-    }
-    if let Some(repo_root) = &config.automation.repo_root {
-        return Ok(PathBuf::from(repo_root));
-    }
-    std::env::current_dir().context("read current directory")
-}
-
-fn resolve_project(project: Option<String>, repo_root: &std::path::Path) -> Result<String> {
-    if let Some(project) = project {
-        return Ok(project);
-    }
-    if let Some(project) = read_repo_project_slug(repo_root) {
-        return Ok(project);
-    }
-    let Some(name) = repo_root.file_name().and_then(|value| value.to_str()) else {
-        anyhow::bail!("could not determine project slug from repo root");
-    };
-    Ok(name.to_string())
-}
-
-fn resolve_writer_id(config: &AppConfig, cli_writer_id: Option<String>) -> Result<String> {
-    if let Some(writer_id) = cli_writer_id {
-        let trimmed = writer_id.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
-        }
-    }
-    if let Ok(writer_id) = std::env::var("MEMORY_LAYER_WRITER_ID") {
-        let trimmed = writer_id.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
-        }
-    }
-    if let Ok(writer_id) = std::env::var("MEMORY_LAYER_AGENT_ID") {
-        let trimmed = writer_id.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
-        }
-    }
-    let trimmed = config.writer.id.trim();
-    if !trimmed.is_empty() {
-        return Ok(trimmed.to_string());
-    }
-    Ok(platform::derive_default_writer_id("memory-watch"))
-}
-
 fn watcher_is_service_managed() -> bool {
     std::env::var("MEMORY_LAYER_WATCH_SERVICE_MANAGED")
         .ok()
@@ -439,6 +293,54 @@ async fn shutdown_signal() {
     {
         let _ = tokio::signal::ctrl_c().await;
     }
+}
+
+fn resolve_repo_root(config: &AppConfig, repo_root: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(repo_root) = repo_root {
+        return Ok(repo_root);
+    }
+    if let Some(repo_root) = &config.automation.repo_root {
+        return Ok(PathBuf::from(repo_root));
+    }
+    std::env::current_dir().context("read current directory")
+}
+fn resolve_project(project: Option<String>, repo_root: &std::path::Path) -> Result<String> {
+    if let Some(project) = project {
+        return Ok(project);
+    }
+    if let Some(project) = read_repo_project_slug(repo_root) {
+        return Ok(project);
+    }
+    let Some(name) = repo_root.file_name().and_then(|value| value.to_str()) else {
+        anyhow::bail!("could not determine project slug from repo root");
+    };
+    Ok(name.to_string())
+}
+#[cfg(test)]
+fn resolve_writer_id(config: &AppConfig, cli_writer_id: Option<String>) -> Result<String> {
+    if let Some(writer_id) = cli_writer_id {
+        let trimmed = writer_id.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    if let Ok(writer_id) = std::env::var("MEMORY_LAYER_WRITER_ID") {
+        let trimmed = writer_id.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    if let Ok(writer_id) = std::env::var("MEMORY_LAYER_AGENT_ID") {
+        let trimmed = writer_id.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    let trimmed = config.writer.id.trim();
+    if !trimmed.is_empty() {
+        return Ok(trimmed.to_string());
+    }
+    Ok(platform::derive_default_writer_id("memory-watch"))
 }
 
 #[cfg(test)]
