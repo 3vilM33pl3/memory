@@ -239,6 +239,29 @@ fn local_owner_admin() -> AuthenticatedPrincipal {
     }
 }
 
+/// Debounces last_used_at/last_seen_at writes: touching these rows on every
+/// authenticated request doubles write traffic for zero audit value at
+/// sub-minute granularity.
+fn should_touch_last_used(id: Uuid) -> bool {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static LAST_TOUCH: Mutex<Option<HashMap<Uuid, Instant>>> = Mutex::new(None);
+    let mut guard = LAST_TOUCH.lock().expect("last-touch cache lock poisoned");
+    let cache = guard.get_or_insert_with(HashMap::new);
+    let now = Instant::now();
+    match cache.get(&id) {
+        Some(last) if now.duration_since(*last) < Duration::from_secs(60) => false,
+        _ => {
+            if cache.len() > 4096 {
+                cache.clear();
+            }
+            cache.insert(id, now);
+            true
+        }
+    }
+}
+
 async fn load_service_token_principal(
     pool: &PgPool,
     state: &AppState,
@@ -265,11 +288,13 @@ async fn load_service_token_principal(
     let mut principal = principal_from_row(pool, state, &row).await?;
     principal.credential_source = CredentialSource::ServiceToken;
     principal.token_id = Some(token_id);
-    sqlx::query("UPDATE auth_service_tokens SET last_used_at = now() WHERE id = $1")
-        .bind(token_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::sql)?;
+    if should_touch_last_used(token_id) {
+        sqlx::query("UPDATE auth_service_tokens SET last_used_at = now() WHERE id = $1")
+            .bind(token_id)
+            .execute(pool)
+            .await
+            .map_err(ApiError::sql)?;
+    }
     Ok(principal)
 }
 
@@ -301,11 +326,13 @@ async fn load_session_principal(
     principal.credential_source = CredentialSource::BrowserSession;
     principal.session_id = Some(session_id);
     principal.session_csrf_hash = Some(csrf_hash);
-    sqlx::query("UPDATE auth_web_sessions SET last_seen_at = now() WHERE id = $1")
-        .bind(session_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::sql)?;
+    if should_touch_last_used(session_id) {
+        sqlx::query("UPDATE auth_web_sessions SET last_seen_at = now() WHERE id = $1")
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .map_err(ApiError::sql)?;
+    }
     Ok(principal)
 }
 
@@ -943,6 +970,47 @@ async fn insert_audit(
     .await
     .map_err(ApiError::sql)?;
     Ok(())
+}
+
+/// Records a denied or errored authorization decision. Fire-and-forget:
+/// audit must never turn a denial into a 500.
+pub(crate) fn record_denied_audit(
+    state: &AppState,
+    actor_id: Option<Uuid>,
+    outcome: &'static str,
+    method: &str,
+    path: &str,
+    reason: &str,
+    request_id: Option<String>,
+) {
+    let Ok(pool) = state.pool() else {
+        return;
+    };
+    let metadata = serde_json::json!({
+        "method": method,
+        "path": path,
+        "reason": reason,
+    });
+    let request_id = request_id.clone();
+    tokio::spawn(async move {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO auth_audit_events
+                (id, actor_principal_id, event_type, outcome, metadata_json, request_id, recorded_at)
+            VALUES ($1, $2, 'authorization.denied', $3, $4, $5, now())
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(actor_id)
+        .bind(outcome)
+        .bind(metadata)
+        .bind(request_id)
+        .execute(&pool)
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(error = %error, "failed to record denied authorization audit event");
+        }
+    });
 }
 
 async fn insert_audit_tx(

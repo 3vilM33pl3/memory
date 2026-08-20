@@ -1241,13 +1241,38 @@ pub(crate) async fn authorization_guard(
         return next.run(request).await;
     }
 
+    let request_id = request
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
     let principal =
         match resolve_request_principal(&state, request.headers(), CookiePolicy::Allow).await {
             Ok(Some(principal)) => principal,
             Ok(None) => {
+                crate::auth::record_denied_audit(
+                    &state,
+                    None,
+                    "denied",
+                    request.method().as_str(),
+                    request.uri().path(),
+                    "authentication required",
+                    request_id,
+                );
                 return ApiError::unauthorized("authentication required").into_response();
             }
-            Err(error) => return error.into_response(),
+            Err(error) => {
+                crate::auth::record_denied_audit(
+                    &state,
+                    None,
+                    "error",
+                    request.method().as_str(),
+                    request.uri().path(),
+                    &error.message,
+                    request_id,
+                );
+                return error.into_response();
+            }
         };
 
     if principal.credential_source == CredentialSource::BrowserSession
@@ -1263,8 +1288,19 @@ pub(crate) async fn authorization_guard(
     };
     let authorized = is_authorized(&principal, policy, project.as_deref());
     if !authorized {
-        return ApiError::forbidden("principal does not have the required role for this resource")
-            .into_response();
+        crate::auth::record_denied_audit(
+            &state,
+            Some(principal.id),
+            "denied",
+            request.method().as_str(),
+            request.uri().path(),
+            "missing required permission",
+            request_id,
+        );
+        return ApiError::forbidden(
+            "principal does not have the required permission for this resource",
+        )
+        .into_response();
     }
 
     request.extensions_mut().insert(principal);
