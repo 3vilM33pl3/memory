@@ -2,7 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use mem_record::{AuthPrincipalKind, AuthPrincipalResponse, AuthProjectAccess, AuthRole};
+use mem_record::{
+    AuthPrincipalKind, AuthPrincipalResponse, AuthProjectAccess, AuthRole, Permission,
+    PermissionSet,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +27,10 @@ pub(crate) struct AuthenticatedPrincipal {
     pub(crate) issuer: Option<String>,
     pub(crate) subject: Option<String>,
     pub(crate) groups: Vec<String>,
+    /// Display-level preset name of the global grant, when it came from one.
     pub(crate) global_role: Option<AuthRole>,
+    /// Effective global permissions (preset expansion or custom set).
+    pub(crate) global: PermissionSet,
     pub(crate) project_roles: BTreeMap<String, ProjectRoleGrant>,
     pub(crate) credential_source: CredentialSource,
     pub(crate) token_id: Option<Uuid>,
@@ -34,7 +40,10 @@ pub(crate) struct AuthenticatedPrincipal {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectRoleGrant {
+    /// Display-level preset name, when the grant came from one.
     pub(crate) role: AuthRole,
+    /// Effective permissions of this grant.
+    pub(crate) permissions: PermissionSet,
     pub(crate) source: String,
 }
 
@@ -43,32 +52,44 @@ impl AuthenticatedPrincipal {
         format!("{} ({})", self.display_name, self.id)
     }
 
-    pub(crate) fn role_for_project(&self, project: &str) -> Option<AuthRole> {
-        max_role(
-            self.global_role,
-            self.project_roles.get(project).map(|grant| grant.role),
-        )
+    /// Effective permissions within one project: the global set plus any
+    /// project grant.
+    pub(crate) fn permissions_for_project(&self, project: &str) -> PermissionSet {
+        self.project_roles
+            .get(project)
+            .map(|grant| grant.permissions)
+            .unwrap_or(PermissionSet::EMPTY)
+            .union(self.global)
     }
 
-    pub(crate) fn has_any_role(&self, required: AuthRole) -> bool {
-        self.global_role.is_some_and(|role| role >= required)
+    pub(crate) fn has_for_project(&self, project: &str, permission: Permission) -> bool {
+        self.permissions_for_project(project).contains(permission)
+    }
+
+    /// Whether ANY grant (global or any project) carries the permission.
+    /// Only valid for unscoped resources; project resources must use
+    /// `has_for_project`.
+    pub(crate) fn has_anywhere(&self, permission: Permission) -> bool {
+        self.global.contains(permission)
             || self
                 .project_roles
                 .values()
-                .any(|grant| grant.role >= required)
+                .any(|grant| grant.permissions.contains(permission))
     }
 
-    pub(crate) fn has_global_role(&self, required: AuthRole) -> bool {
-        self.global_role.is_some_and(|role| role >= required)
+    pub(crate) fn has_global(&self, permission: Permission) -> bool {
+        self.global.contains(permission)
     }
 
-    pub(crate) fn authorized_projects(&self, required: AuthRole) -> Vec<String> {
-        if self.global_role.is_some_and(|role| role >= required) {
+    /// Projects explicitly granted the permission. Empty means "no project
+    /// filter": the caller holds it globally.
+    pub(crate) fn projects_with(&self, permission: Permission) -> Vec<String> {
+        if self.global.contains(permission) {
             return Vec::new();
         }
         self.project_roles
             .iter()
-            .filter(|(_, grant)| grant.role >= required)
+            .filter(|(_, grant)| grant.permissions.contains(permission))
             .map(|(project, _)| project.clone())
             .collect()
     }
@@ -83,12 +104,14 @@ impl AuthenticatedPrincipal {
             subject: self.subject.clone(),
             groups: self.groups.clone(),
             global_role: self.global_role,
+            global_permissions: self.global.names(),
             projects: self
                 .project_roles
                 .iter()
                 .map(|(project, grant)| AuthProjectAccess {
                     project: project.clone(),
                     role: grant.role,
+                    permissions: grant.permissions.names(),
                     source: grant.source.clone(),
                 })
                 .collect(),
@@ -140,6 +163,7 @@ mod tests {
             subject: None,
             groups: Vec::new(),
             global_role: Some(AuthRole::Admin),
+            global: AuthRole::Admin.permissions(),
             project_roles: BTreeMap::new(),
             credential_source: CredentialSource::BrowserSession,
             token_id: None,

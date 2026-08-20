@@ -3,7 +3,7 @@
 use crate::prelude::*;
 use crate::*;
 use axum::Extension;
-use mem_record::AuthRole;
+use mem_record::Permission;
 
 #[derive(Default)]
 pub(crate) struct ConnectionSubscriptions {
@@ -250,7 +250,7 @@ pub(crate) async fn process_stream_request(
                     .await
                     .map_err(|error| anyhow::anyhow!(error.message))?
                     .ok_or_else(|| anyhow::anyhow!("stream authentication required"))?;
-            if !authenticated.has_any_role(AuthRole::Reader) {
+            if !authenticated.has_anywhere(Permission::MemoryRead) {
                 anyhow::bail!("stream principal does not have reader access");
             }
             *principal = Some(authenticated);
@@ -262,13 +262,13 @@ pub(crate) async fn process_stream_request(
             value: health_payload(state).await?,
         }),
         StreamRequest::ProjectOverview { project } => {
-            require_stream_project_role(principal.as_ref(), &project, AuthRole::Reader)?;
+            require_stream_project_role(principal.as_ref(), &project, Permission::MemoryRead)?;
             responses.push(StreamResponse::ProjectOverview {
                 value: fetch_project_overview_with_watchers(state, &project).await?,
             });
         }
         StreamRequest::ProjectMemories { project } => {
-            require_stream_project_role(principal.as_ref(), &project, AuthRole::Reader)?;
+            require_stream_project_role(principal.as_ref(), &project, Permission::MemoryRead)?;
             let pool = state
                 .pool()
                 .map_err(|error| anyhow::anyhow!(error.message))?;
@@ -282,12 +282,16 @@ pub(crate) async fn process_stream_request(
                 .map_err(|error| anyhow::anyhow!(error.message))?;
             let value = fetch_memory_entry(&pool, memory_id).await?;
             if let Some(memory) = value.as_ref() {
-                require_stream_project_role(principal.as_ref(), &memory.project, AuthRole::Reader)?;
+                require_stream_project_role(
+                    principal.as_ref(),
+                    &memory.project,
+                    Permission::MemoryRead,
+                )?;
             }
             responses.push(StreamResponse::MemoryDetail { value });
         }
         StreamRequest::SubscribeProject { project } => {
-            require_stream_project_role(principal.as_ref(), &project, AuthRole::Reader)?;
+            require_stream_project_role(principal.as_ref(), &project, Permission::MemoryRead)?;
             let pool = state
                 .pool()
                 .map_err(|error| anyhow::anyhow!(error.message))?;
@@ -303,7 +307,11 @@ pub(crate) async fn process_stream_request(
                 .map_err(|error| anyhow::anyhow!(error.message))?;
             let detail = fetch_memory_entry(&pool, memory_id).await?;
             if let Some(memory) = detail.as_ref() {
-                require_stream_project_role(principal.as_ref(), &memory.project, AuthRole::Reader)?;
+                require_stream_project_role(
+                    principal.as_ref(),
+                    &memory.project,
+                    Permission::MemoryRead,
+                )?;
             }
             subscriptions.memory_id = Some(memory_id);
             responses.push(StreamResponse::MemorySnapshot { detail });
@@ -331,9 +339,7 @@ pub(crate) async fn render_subscription_updates(
     let mut responses = Vec::new();
     if let Some(project) = &subscriptions.project
         && project == &event.project
-        && principal
-            .role_for_project(project)
-            .is_some_and(|role| role >= AuthRole::Reader)
+        && principal.has_for_project(project, Permission::MemoryRead)
     {
         if event.include_activity {
             responses.push(stream_activity_response(event.clone()));
@@ -348,9 +354,7 @@ pub(crate) async fn render_subscription_updates(
     {
         let detail = fetch_memory_entry(&pool, memory_id).await?;
         if detail.as_ref().is_some_and(|memory| {
-            principal
-                .role_for_project(&memory.project)
-                .is_some_and(|role| role >= AuthRole::Reader)
+            principal.has_for_project(&memory.project, Permission::MemoryRead)
         }) {
             responses.push(StreamResponse::MemoryChanged { detail });
         }
@@ -362,13 +366,10 @@ pub(crate) async fn render_subscription_updates(
 fn require_stream_project_role(
     principal: Option<&crate::auth::AuthenticatedPrincipal>,
     project: &str,
-    required: AuthRole,
+    required: Permission,
 ) -> Result<()> {
     let principal = principal.ok_or_else(|| anyhow::anyhow!("stream authentication required"))?;
-    if principal
-        .role_for_project(project)
-        .is_some_and(|role| role >= required)
-    {
+    if principal.has_for_project(project, required) {
         Ok(())
     } else {
         anyhow::bail!("stream principal does not have {required:?} access to project {project}")

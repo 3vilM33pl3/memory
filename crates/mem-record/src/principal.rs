@@ -61,6 +61,8 @@ pub enum AuthPrincipalKind {
 pub struct AuthProjectAccess {
     pub project: String,
     pub role: AuthRole,
+    #[serde(default)]
+    pub permissions: Vec<String>,
     pub source: String,
 }
 
@@ -79,6 +81,8 @@ pub struct AuthPrincipalResponse {
     pub groups: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global_role: Option<AuthRole>,
+    #[serde(default)]
+    pub global_permissions: Vec<String>,
     #[serde(default)]
     pub projects: Vec<AuthProjectAccess>,
 }
@@ -134,4 +138,162 @@ pub struct AuthMembershipResponse {
     pub role: AuthRole,
     pub source: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// One grantable capability. Routes require exactly one permission;
+/// role names survive as named permission-set presets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Permission {
+    MemoryRead,
+    ActivityCapture,
+    MemoryCurate,
+    MemoryDelete,
+    LoopsRun,
+    LoopsConfigure,
+    BundleExport,
+    BundleImport,
+    EmbeddingsManage,
+    AuthManage,
+    SystemAdmin,
+}
+
+impl Permission {
+    pub const ALL: [Permission; 11] = [
+        Permission::MemoryRead,
+        Permission::ActivityCapture,
+        Permission::MemoryCurate,
+        Permission::MemoryDelete,
+        Permission::LoopsRun,
+        Permission::LoopsConfigure,
+        Permission::BundleExport,
+        Permission::BundleImport,
+        Permission::EmbeddingsManage,
+        Permission::AuthManage,
+        Permission::SystemAdmin,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Permission::MemoryRead => "memory_read",
+            Permission::ActivityCapture => "activity_capture",
+            Permission::MemoryCurate => "memory_curate",
+            Permission::MemoryDelete => "memory_delete",
+            Permission::LoopsRun => "loops_run",
+            Permission::LoopsConfigure => "loops_configure",
+            Permission::BundleExport => "bundle_export",
+            Permission::BundleImport => "bundle_import",
+            Permission::EmbeddingsManage => "embeddings_manage",
+            Permission::AuthManage => "auth_manage",
+            Permission::SystemAdmin => "system_admin",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Permission> {
+        Permission::ALL
+            .into_iter()
+            .find(|permission| permission.as_str() == value)
+    }
+
+    const fn bit(self) -> u16 {
+        1 << (self as u16)
+    }
+}
+
+/// A set of permissions. Grants are unions of sets - there is no ordering
+/// between permissions, unlike the old Reader<Writer<Operator<Admin ladder.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PermissionSet(u16);
+
+impl PermissionSet {
+    pub const EMPTY: PermissionSet = PermissionSet(0);
+
+    pub const fn contains(self, permission: Permission) -> bool {
+        self.0 & permission.bit() != 0
+    }
+
+    pub const fn with(self, permission: Permission) -> PermissionSet {
+        PermissionSet(self.0 | permission.bit())
+    }
+
+    pub const fn union(self, other: PermissionSet) -> PermissionSet {
+        PermissionSet(self.0 | other.0)
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn from_permissions(permissions: &[Permission]) -> PermissionSet {
+        permissions
+            .iter()
+            .fold(PermissionSet::EMPTY, |set, permission| {
+                set.with(*permission)
+            })
+    }
+
+    pub fn names(self) -> Vec<String> {
+        Permission::ALL
+            .into_iter()
+            .filter(|permission| self.contains(*permission))
+            .map(|permission| permission.as_str().to_string())
+            .collect()
+    }
+}
+
+impl AuthRole {
+    /// The permission-set preset this role name expands to.
+    pub fn permissions(self) -> PermissionSet {
+        let reader = PermissionSet::EMPTY
+            .with(Permission::MemoryRead)
+            .with(Permission::BundleExport);
+        let writer = reader.with(Permission::ActivityCapture);
+        let operator = writer
+            .with(Permission::MemoryCurate)
+            .with(Permission::LoopsRun)
+            .with(Permission::BundleImport);
+        match self {
+            AuthRole::Reader => reader,
+            AuthRole::Writer => writer,
+            AuthRole::Operator => operator,
+            AuthRole::Admin => PermissionSet::from_permissions(&Permission::ALL),
+        }
+    }
+}
+
+#[cfg(test)]
+mod permission_tests {
+    use super::*;
+
+    #[test]
+    fn presets_expand_exactly() {
+        let reader = AuthRole::Reader.permissions();
+        assert!(reader.contains(Permission::MemoryRead));
+        assert!(reader.contains(Permission::BundleExport));
+        assert!(!reader.contains(Permission::ActivityCapture));
+
+        let writer = AuthRole::Writer.permissions();
+        assert!(writer.contains(Permission::ActivityCapture));
+        assert!(!writer.contains(Permission::MemoryCurate));
+
+        let operator = AuthRole::Operator.permissions();
+        assert!(operator.contains(Permission::MemoryCurate));
+        assert!(operator.contains(Permission::LoopsRun));
+        assert!(operator.contains(Permission::BundleImport));
+        assert!(!operator.contains(Permission::MemoryDelete));
+        assert!(!operator.contains(Permission::LoopsConfigure));
+        assert!(!operator.contains(Permission::AuthManage));
+
+        let admin = AuthRole::Admin.permissions();
+        for permission in Permission::ALL {
+            assert!(admin.contains(permission));
+        }
+    }
+
+    #[test]
+    fn permission_names_round_trip() {
+        for permission in Permission::ALL {
+            assert_eq!(Permission::parse(permission.as_str()), Some(permission));
+        }
+    }
 }

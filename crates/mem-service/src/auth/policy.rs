@@ -7,7 +7,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use mem_record::AuthRole;
+use mem_record::Permission;
 use serde_json::Value;
 use sqlx::Row;
 use uuid::Uuid;
@@ -39,7 +39,7 @@ pub(crate) enum ProjectScope {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RoutePolicy {
-    pub(crate) role: AuthRole,
+    pub(crate) permission: Permission,
     pub(crate) scope: ProjectScope,
     /// Allowed in read-only (student) mode even though the method mutates:
     /// queries, resume/up-to-speed briefings, and bundle exports are
@@ -58,7 +58,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Public,
                     semantic_read: false,
                 },
@@ -69,7 +69,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Public,
                     semantic_read: false,
                 },
@@ -80,7 +80,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Unscoped,
                     semantic_read: false,
                 },
@@ -91,7 +91,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Public,
                     semantic_read: false,
                 },
@@ -102,7 +102,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Public,
                     semantic_read: false,
                 },
@@ -113,7 +113,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Public,
                     semantic_read: false,
                 },
@@ -124,7 +124,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Unscoped,
                     semantic_read: false,
                 },
@@ -135,7 +135,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Unscoped,
                     semantic_read: false,
                 },
@@ -147,7 +147,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::GET,
                     RoutePolicy {
-                        role: AuthRole::Admin,
+                        permission: Permission::AuthManage,
                         scope: ProjectScope::Global,
                         semantic_read: false,
                     },
@@ -155,7 +155,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::POST,
                     RoutePolicy {
-                        role: AuthRole::Admin,
+                        permission: Permission::AuthManage,
                         scope: ProjectScope::Global,
                         semantic_read: false,
                     },
@@ -167,7 +167,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::AuthManage,
                     scope: ProjectScope::Global,
                     semantic_read: false,
                 },
@@ -178,7 +178,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::AuthManage,
                     scope: ProjectScope::Global,
                     semantic_read: false,
                 },
@@ -190,7 +190,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::GET,
                     RoutePolicy {
-                        role: AuthRole::Admin,
+                        permission: Permission::AuthManage,
                         scope: ProjectScope::Global,
                         semantic_read: false,
                     },
@@ -198,7 +198,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::POST,
                     RoutePolicy {
-                        role: AuthRole::Admin,
+                        permission: Permission::AuthManage,
                         scope: ProjectScope::Global,
                         semantic_read: false,
                     },
@@ -210,7 +210,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::DELETE,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::AuthManage,
                     scope: ProjectScope::Global,
                     semantic_read: false,
                 },
@@ -221,7 +221,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::SystemAdmin,
                     scope: ProjectScope::Global,
                     semantic_read: false,
                 },
@@ -232,7 +232,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::QueryProjectOrGlobal,
                     semantic_read: false,
                 },
@@ -243,7 +243,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Unscoped,
                     semantic_read: false,
                 },
@@ -254,7 +254,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::SystemAdmin,
                     scope: ProjectScope::Global,
                     semantic_read: false,
                 },
@@ -265,7 +265,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Unscoped,
                     semantic_read: false,
                 },
@@ -276,7 +276,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::BodyProject,
                     semantic_read: true,
                 },
@@ -287,7 +287,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Unscoped,
                     semantic_read: true,
                 },
@@ -298,7 +298,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -309,7 +309,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -320,7 +320,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -331,7 +331,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -342,7 +342,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -353,7 +353,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -364,7 +364,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -375,7 +375,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -386,7 +386,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -397,7 +397,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -408,7 +408,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -419,7 +419,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Unscoped,
                     semantic_read: false,
                 },
@@ -430,7 +430,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::EmbeddingsManage,
                     scope: ProjectScope::Global,
                     semantic_read: false,
                 },
@@ -441,7 +441,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::EmbeddingsManage,
                     scope: ProjectScope::Global,
                     semantic_read: false,
                 },
@@ -452,7 +452,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::EmbeddingsManage,
                     scope: ProjectScope::Global,
                     semantic_read: false,
                 },
@@ -464,7 +464,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::GET,
                     RoutePolicy {
-                        role: AuthRole::Reader,
+                        permission: Permission::MemoryRead,
                         scope: ProjectScope::Unscoped,
                         semantic_read: false,
                     },
@@ -472,7 +472,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::POST,
                     RoutePolicy {
-                        role: AuthRole::Admin,
+                        permission: Permission::SystemAdmin,
                         scope: ProjectScope::Global,
                         semantic_read: false,
                     },
@@ -484,7 +484,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::Unscoped,
                     semantic_read: false,
                 },
@@ -496,7 +496,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::GET,
                     RoutePolicy {
-                        role: AuthRole::Reader,
+                        permission: Permission::MemoryRead,
                         scope: ProjectScope::Unscoped,
                         semantic_read: false,
                     },
@@ -504,7 +504,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::POST,
                     RoutePolicy {
-                        role: AuthRole::Admin,
+                        permission: Permission::LoopsConfigure,
                         scope: ProjectScope::Global,
                         semantic_read: false,
                     },
@@ -516,7 +516,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::QueryProjectOrGlobal,
                     semantic_read: false,
                 },
@@ -527,7 +527,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::LoopRunResource,
                     semantic_read: false,
                 },
@@ -538,7 +538,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::LoopRunResource,
                     semantic_read: false,
                 },
@@ -549,7 +549,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::LoopsRun,
                     scope: ProjectScope::LoopRunResource,
                     semantic_read: false,
                 },
@@ -560,7 +560,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::LoopsRun,
                     scope: ProjectScope::LoopRunResource,
                     semantic_read: false,
                 },
@@ -571,7 +571,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::QueryProjectOrGlobal,
                     semantic_read: false,
                 },
@@ -583,7 +583,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::GET,
                     RoutePolicy {
-                        role: AuthRole::Reader,
+                        permission: Permission::MemoryRead,
                         scope: ProjectScope::QueryProjectOrGlobal,
                         semantic_read: false,
                     },
@@ -591,7 +591,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::POST,
                     RoutePolicy {
-                        role: AuthRole::Operator,
+                        permission: Permission::LoopsRun,
                         scope: ProjectScope::QueryProjectOrGlobal,
                         semantic_read: false,
                     },
@@ -603,7 +603,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::LoopsRun,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -614,7 +614,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::LoopsRun,
                     scope: ProjectScope::LoopApprovalResource,
                     semantic_read: false,
                 },
@@ -625,7 +625,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::LoopsRun,
                     scope: ProjectScope::LoopApprovalResource,
                     semantic_read: false,
                 },
@@ -636,7 +636,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::LoopsRun,
                     scope: ProjectScope::LoopApprovalResource,
                     semantic_read: false,
                 },
@@ -647,7 +647,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::LoopsRun,
                     scope: ProjectScope::LoopProposalResource,
                     semantic_read: false,
                 },
@@ -658,7 +658,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::LoopsRun,
                     scope: ProjectScope::LoopProposalResource,
                     semantic_read: false,
                 },
@@ -669,7 +669,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::LoopsRun,
                     scope: ProjectScope::LoopProposalResource,
                     semantic_read: false,
                 },
@@ -680,7 +680,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::QueryProjectOrGlobal,
                     semantic_read: false,
                 },
@@ -691,7 +691,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::LoopsConfigure,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -702,7 +702,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::LoopsConfigure,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -713,7 +713,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::LoopsConfigure,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -724,7 +724,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::LoopsConfigure,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -735,7 +735,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::LoopsRun,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -746,7 +746,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::QueryProjectOrGlobal,
                     semantic_read: false,
                 },
@@ -757,7 +757,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::MemoryResource,
                     semantic_read: false,
                 },
@@ -768,7 +768,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::MemoryResource,
                     semantic_read: false,
                 },
@@ -779,7 +779,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::ValidationResource,
                     semantic_read: false,
                 },
@@ -790,7 +790,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::MemoryResource,
                     semantic_read: false,
                 },
@@ -801,7 +801,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::MemoryResource,
                     semantic_read: false,
                 },
@@ -812,7 +812,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::DELETE,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::MemoryDelete,
                     scope: ProjectScope::BodyMemoryResource,
                     semantic_read: false,
                 },
@@ -823,7 +823,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -834,7 +834,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -845,7 +845,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -856,7 +856,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -867,7 +867,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -878,7 +878,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -889,7 +889,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::BundleExport,
                     scope: ProjectScope::PathProject,
                     semantic_read: true,
                 },
@@ -900,7 +900,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::BundleExport,
                     scope: ProjectScope::PathProject,
                     semantic_read: true,
                 },
@@ -911,7 +911,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::BundleImport,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -922,7 +922,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::BundleImport,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -933,7 +933,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -944,7 +944,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -955,7 +955,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -967,7 +967,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::GET,
                     RoutePolicy {
-                        role: AuthRole::Reader,
+                        permission: Permission::MemoryRead,
                         scope: ProjectScope::PathProject,
                         semantic_read: false,
                     },
@@ -975,7 +975,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::POST,
                     RoutePolicy {
-                        role: AuthRole::Operator,
+                        permission: Permission::MemoryCurate,
                         scope: ProjectScope::PathProject,
                         semantic_read: false,
                     },
@@ -983,7 +983,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
                 (
                     Method::PUT,
                     RoutePolicy {
-                        role: AuthRole::Operator,
+                        permission: Permission::MemoryCurate,
                         scope: ProjectScope::PathProject,
                         semantic_read: false,
                     },
@@ -995,7 +995,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -1006,7 +1006,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -1017,7 +1017,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -1028,7 +1028,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -1039,7 +1039,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -1050,7 +1050,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -1061,7 +1061,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: true,
                 },
@@ -1072,7 +1072,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: false,
                 },
@@ -1083,7 +1083,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Reader,
+                    permission: Permission::MemoryRead,
                     scope: ProjectScope::PathProject,
                     semantic_read: true,
                 },
@@ -1094,7 +1094,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -1105,7 +1105,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -1116,7 +1116,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -1127,7 +1127,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Operator,
+                    permission: Permission::MemoryCurate,
                     scope: ProjectScope::BodyProject,
                     semantic_read: false,
                 },
@@ -1138,7 +1138,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::SystemAdmin,
                     scope: ProjectScope::Global,
                     semantic_read: false,
                 },
@@ -1149,7 +1149,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::GET,
                 RoutePolicy {
-                    role: AuthRole::Admin,
+                    permission: Permission::SystemAdmin,
                     scope: ProjectScope::Global,
                     semantic_read: false,
                 },
@@ -1160,7 +1160,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::WorkspaceResource,
                     semantic_read: false,
                 },
@@ -1171,7 +1171,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::WorkspaceResource,
                     semantic_read: false,
                 },
@@ -1182,7 +1182,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             &[(
                 Method::POST,
                 RoutePolicy {
-                    role: AuthRole::Writer,
+                    permission: Permission::ActivityCapture,
                     scope: ProjectScope::WorkspaceResource,
                     semantic_read: false,
                 },
@@ -1282,13 +1282,11 @@ fn is_authorized(
 ) -> bool {
     match policy.scope {
         ProjectScope::Public => true,
-        ProjectScope::Global => principal.has_global_role(policy.role),
-        ProjectScope::Unscoped => principal.has_any_role(policy.role),
+        ProjectScope::Global => principal.has_global(policy.permission),
+        ProjectScope::Unscoped => principal.has_anywhere(policy.permission),
         _ => match project {
-            Some(project) => principal
-                .role_for_project(project)
-                .is_some_and(|role| role >= policy.role),
-            None => principal.has_global_role(policy.role),
+            Some(project) => principal.has_for_project(project, policy.permission),
+            None => principal.has_global(policy.permission),
         },
     }
 }
@@ -1559,7 +1557,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use axum::http::Method;
-    use mem_record::{AuthPrincipalKind, AuthRole};
+    use mem_record::{AuthPrincipalKind, AuthRole, Permission, PermissionSet};
     use uuid::Uuid;
 
     use super::{
@@ -1574,6 +1572,7 @@ mod tests {
             project.to_string(),
             ProjectRoleGrant {
                 role: AuthRole::Admin,
+                permissions: AuthRole::Admin.permissions(),
                 source: "test".to_string(),
             },
         );
@@ -1586,6 +1585,7 @@ mod tests {
             subject: None,
             groups: Vec::new(),
             global_role: None,
+            global: PermissionSet::EMPTY,
             project_roles,
             credential_source: CredentialSource::BrowserSession,
             token_id: None,
@@ -1608,7 +1608,7 @@ mod tests {
     fn project_scoped_admin_cannot_act_across_projects() {
         let principal = project_admin("project-a");
         let delete_policy = RoutePolicy {
-            role: AuthRole::Admin,
+            permission: Permission::MemoryDelete,
             scope: ProjectScope::BodyMemoryResource,
             semantic_read: false,
         };
@@ -1620,7 +1620,7 @@ mod tests {
         // project on a BodyProject route) requires a GLOBAL grant.
         assert!(!is_authorized(&principal, delete_policy, None));
         let prune_policy = RoutePolicy {
-            role: AuthRole::Operator,
+            permission: Permission::MemoryCurate,
             scope: ProjectScope::BodyProject,
             semantic_read: false,
         };
@@ -1632,8 +1632,9 @@ mod tests {
     fn global_admin_still_authorized_without_project() {
         let mut principal = project_admin("project-a");
         principal.global_role = Some(AuthRole::Admin);
+        principal.global = AuthRole::Admin.permissions();
         let delete_policy = RoutePolicy {
-            role: AuthRole::Admin,
+            permission: Permission::MemoryDelete,
             scope: ProjectScope::BodyMemoryResource,
             semantic_read: false,
         };
@@ -1646,20 +1647,20 @@ mod tests {
         assert_eq!(
             policy_for(&Method::POST, "/v1/capture/task")
                 .expect("policy")
-                .role,
-            AuthRole::Writer
+                .permission,
+            Permission::ActivityCapture
         );
         assert_eq!(
             policy_for(&Method::POST, "/v1/curate")
                 .expect("policy")
-                .role,
-            AuthRole::Operator
+                .permission,
+            Permission::MemoryCurate
         );
         assert_eq!(
             policy_for(&Method::DELETE, "/v1/memory")
                 .expect("policy")
-                .role,
-            AuthRole::Admin
+                .permission,
+            Permission::MemoryDelete
         );
         assert_eq!(
             policy_for(&Method::GET, "/v1/projects/demo/overview")
@@ -1680,8 +1681,8 @@ mod tests {
         assert_eq!(
             policy_for(&Method::POST, "/v1/auth/tokens")
                 .expect("policy")
-                .role,
-            AuthRole::Admin
+                .permission,
+            Permission::AuthManage
         );
     }
 

@@ -8,7 +8,7 @@ use chrono::{Duration, Utc};
 use mem_record::{
     AuthMembershipGrantRequest, AuthMembershipResponse, AuthMode, AuthPrincipalKind,
     AuthPrincipalResponse, AuthProjectAccess, AuthRole, AuthServiceTokenCreateRequest,
-    AuthServiceTokenResponse,
+    AuthServiceTokenResponse, PermissionSet,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -166,6 +166,7 @@ fn single_user_reader() -> AuthenticatedPrincipal {
         subject: None,
         groups: Vec::new(),
         global_role: Some(AuthRole::Reader),
+        global: AuthRole::Reader.permissions(),
         project_roles: BTreeMap::new(),
         credential_source: CredentialSource::AnonymousSingleUser,
         token_id: None,
@@ -184,6 +185,7 @@ fn legacy_principal() -> AuthenticatedPrincipal {
         subject: None,
         groups: Vec::new(),
         global_role: Some(AuthRole::Admin),
+        global: AuthRole::Admin.permissions(),
         project_roles: BTreeMap::new(),
         credential_source: CredentialSource::LegacyServiceToken,
         token_id: None,
@@ -199,7 +201,7 @@ async fn load_service_token_principal(
 ) -> Result<AuthenticatedPrincipal, ApiError> {
     let row = sqlx::query(
         r#"
-        SELECT p.id, p.kind, p.display_name, p.email, p.issuer, p.subject, p.groups_json, p.global_role,
+        SELECT p.id, p.kind, p.display_name, p.email, p.issuer, p.subject, p.groups_json, p.global_role, p.global_permissions_json,
                t.id AS token_id
         FROM auth_service_tokens t
         JOIN auth_principals p ON p.id = t.principal_id
@@ -233,7 +235,7 @@ async fn load_session_principal(
 ) -> Result<AuthenticatedPrincipal, ApiError> {
     let row = sqlx::query(
         r#"
-        SELECT p.id, p.kind, p.display_name, p.email, p.issuer, p.subject, p.groups_json, p.global_role,
+        SELECT p.id, p.kind, p.display_name, p.email, p.issuer, p.subject, p.groups_json, p.global_role, p.global_permissions_json,
                s.id AS session_id, s.csrf_hash
         FROM auth_web_sessions s
         JOIN auth_principals p ON p.id = s.principal_id
@@ -291,7 +293,12 @@ async fn principal_from_row(
     } else {
         stored_global_role
     };
+    let stored_global_permissions = permission_set_override(
+        row.try_get::<Option<serde_json::Value>, _>("global_permissions_json")
+            .map_err(ApiError::sql)?,
+    )?;
     let mut project_roles = load_memberships(pool, id).await?;
+    let mut group_global_roles: Vec<AuthRole> = Vec::new();
 
     for rule in &state.config.auth.group_mappings.rules {
         if !groups.iter().any(|group| group == &rule.group) {
@@ -299,11 +306,34 @@ async fn principal_from_row(
         }
         if rule.global {
             global_role = max_role(global_role, Some(rule.role));
+            group_global_roles.push(rule.role);
         }
         if let Some(project) = rule.project.as_deref() {
-            merge_project_role(&mut project_roles, project, rule.role, "oidc_group");
+            merge_project_grant(
+                &mut project_roles,
+                project,
+                rule.role,
+                rule.role.permissions(),
+                "oidc_group",
+            );
         }
     }
+
+    // Effective global set: explicit permissions override the preset when
+    // present; group-mapping rules always union their presets on top.
+    let global_permissions = stored_global_permissions
+        .unwrap_or_else(|| {
+            global_role
+                .map(AuthRole::permissions)
+                .unwrap_or(PermissionSet::EMPTY)
+        })
+        .union(
+            group_global_roles
+                .iter()
+                .fold(PermissionSet::EMPTY, |set, role| {
+                    set.union(role.permissions())
+                }),
+        );
 
     Ok(AuthenticatedPrincipal {
         id,
@@ -314,6 +344,7 @@ async fn principal_from_row(
         subject,
         groups,
         global_role,
+        global: global_permissions,
         project_roles,
         credential_source: CredentialSource::ServiceToken,
         token_id: None,
@@ -328,7 +359,7 @@ async fn load_memberships(
 ) -> Result<BTreeMap<String, ProjectRoleGrant>, ApiError> {
     let rows = sqlx::query(
         r#"
-        SELECT p.slug, m.role, m.source
+        SELECT p.slug, m.role, m.source, m.permissions_json
         FROM auth_project_memberships m
         JOIN projects p ON p.id = m.project_id
         WHERE m.principal_id = $1
@@ -343,36 +374,69 @@ async fn load_memberships(
     for row in rows {
         let project: String = row.try_get("slug").map_err(ApiError::sql)?;
         let role_value: String = row.try_get("role").map_err(ApiError::sql)?;
+        if role_value == "custom" {
+            return Err(ApiError::internal(
+                "custom memberships are not supported by this build yet",
+            ));
+        }
         let role = parse_role(&role_value)
             .ok_or_else(|| ApiError::internal("invalid project role in database"))?;
+        let permissions = permission_set_override(
+            row.try_get::<Option<serde_json::Value>, _>("permissions_json")
+                .map_err(ApiError::sql)?,
+        )?
+        .unwrap_or_else(|| role.permissions());
         let source: String = row.try_get("source").map_err(ApiError::sql)?;
-        merge_project_role(&mut roles, &project, role, &source);
+        merge_project_grant(&mut roles, &project, role, permissions, &source);
     }
     Ok(roles)
 }
 
-fn merge_project_role(
+fn merge_project_grant(
     roles: &mut BTreeMap<String, ProjectRoleGrant>,
     project: &str,
     role: AuthRole,
+    permissions: PermissionSet,
     source: &str,
 ) {
     match roles.get_mut(project) {
         Some(existing) if existing.role < role => {
             existing.role = role;
+            existing.permissions = existing.permissions.union(permissions);
             existing.source = source.to_string();
+        }
+        Some(existing) => {
+            existing.permissions = existing.permissions.union(permissions);
         }
         None => {
             roles.insert(
                 project.to_string(),
                 ProjectRoleGrant {
                     role,
+                    permissions,
                     source: source.to_string(),
                 },
             );
         }
-        Some(_) => {}
     }
+}
+
+/// Parses an optional permissions_json array into a set; None passes through.
+fn permission_set_override(
+    value: Option<serde_json::Value>,
+) -> Result<Option<PermissionSet>, ApiError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let names: Vec<String> = serde_json::from_value(value)
+        .map_err(|_| ApiError::internal("invalid permissions_json in database"))?;
+    let mut set = PermissionSet::EMPTY;
+    for name in names {
+        let permission = mem_record::Permission::parse(&name)
+            .ok_or_else(|| ApiError::internal("unknown permission name in permissions_json"))?;
+        set = set.with(permission);
+    }
+    Ok(Some(set))
 }
 
 pub(crate) async fn list_principals(
@@ -518,6 +582,7 @@ pub(crate) async fn create_service_token(
         projects: vec![AuthProjectAccess {
             project: project.to_string(),
             role: request.role,
+            permissions: request.role.permissions().names(),
             source: "bootstrap".to_string(),
         }],
     })
@@ -783,6 +848,7 @@ async fn project_access_for_principal(
         .map(|(project, grant)| AuthProjectAccess {
             project,
             role: grant.role,
+            permissions: grant.permissions.names(),
             source: grant.source,
         })
         .collect())

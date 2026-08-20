@@ -89,8 +89,8 @@ pub(crate) async fn query_global(
     let pool = &state.pool()?;
     let embedders = state.embedders.read().await;
     let reinforcement = mem_search::ReinforcementRankParams::from(&state.config.reinforcement);
-    let allowed_projects = principal.authorized_projects(mem_record::AuthRole::Reader);
-    let result = if principal.has_global_role(mem_record::AuthRole::Reader) {
+    let allowed_projects = principal.projects_with(mem_record::Permission::MemoryRead);
+    let result = if principal.has_global(mem_record::Permission::MemoryRead) {
         mem_search::query_memory_global_with_configs(
             pool,
             &request,

@@ -9,7 +9,7 @@ use axum::{
     middleware::{self, Next},
     response::Response,
 };
-use mem_record::{AuthMode, AuthRole};
+use mem_record::AuthMode;
 use rmcp::transport::{
     StreamableHttpServerConfig, StreamableHttpService,
     streamable_http_server::session::local::LocalSessionManager,
@@ -62,7 +62,7 @@ async fn mcp_http_auth_middleware(
     {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    if !principal.has_any_role(AuthRole::Reader) {
+    if !principal.has_anywhere(mem_record::Permission::MemoryRead) {
         return Err(StatusCode::FORBIDDEN);
     }
     Ok(next.run(request).await)
