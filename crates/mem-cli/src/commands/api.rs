@@ -25,9 +25,7 @@ use mem_record::{
 use reqwest::Client;
 use uuid::Uuid;
 
-use crate::commands::{
-    output::{service_url, write_headers},
-};
+use crate::commands::output::{service_url, write_headers};
 
 #[derive(Clone)]
 pub(crate) struct ApiClient {
