@@ -5,10 +5,8 @@ use crate::*;
 
 pub(crate) async fn sync_commits(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<CommitSyncRequest>,
 ) -> Result<Json<CommitSyncResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
     let response = if request.dry_run {

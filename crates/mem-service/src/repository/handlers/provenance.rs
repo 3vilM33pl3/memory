@@ -5,10 +5,8 @@ use crate::*;
 
 pub(crate) async fn verify_provenance(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<ProvenanceVerificationRequest>,
 ) -> Result<Json<ProvenanceVerificationResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     verify_project_provenance_with_volatility(
         &state.pool()?,

@@ -911,7 +911,7 @@ fn mcp_origin_validation_rejects_cross_origin() {
 fn api_auth_requires_explicit_token_even_for_local_origins() {
     let mut headers = HeaderMap::new();
     assert_eq!(
-        require_token(&headers, "service-token", "127.0.0.1:4040")
+        require_strict_token(&headers, "service-token")
             .expect_err("missing token should fail")
             .message,
         "missing x-api-token header"
@@ -919,7 +919,7 @@ fn api_auth_requires_explicit_token_even_for_local_origins() {
 
     headers.insert(header::ORIGIN, "http://127.0.0.1".parse().unwrap());
     assert_eq!(
-        require_token(&headers, "service-token", "127.0.0.1:4040")
+        require_strict_token(&headers, "service-token")
             .expect_err("local origin should not authenticate")
             .message,
         "missing x-api-token header"
@@ -928,7 +928,7 @@ fn api_auth_requires_explicit_token_even_for_local_origins() {
     headers.clear();
     headers.insert(header::REFERER, "http://localhost/app".parse().unwrap());
     assert_eq!(
-        require_token(&headers, "service-token", "127.0.0.1:4040")
+        require_strict_token(&headers, "service-token")
             .expect_err("local referer should not authenticate")
             .message,
         "missing x-api-token header"
@@ -939,11 +939,11 @@ fn api_auth_requires_explicit_token_even_for_local_origins() {
 fn api_auth_accepts_only_matching_x_api_token() {
     let mut headers = HeaderMap::new();
     headers.insert("x-api-token", "service-token".parse().unwrap());
-    require_token(&headers, "service-token", "127.0.0.1:4040").expect("matching token");
+    require_strict_token(&headers, "service-token").expect("matching token");
 
     headers.insert("x-api-token", "wrong".parse().unwrap());
     assert_eq!(
-        require_token(&headers, "service-token", "127.0.0.1:4040")
+        require_strict_token(&headers, "service-token")
             .expect_err("wrong token should fail")
             .message,
         "invalid api token"

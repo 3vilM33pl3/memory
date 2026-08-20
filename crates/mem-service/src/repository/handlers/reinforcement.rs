@@ -316,11 +316,9 @@ pub(crate) async fn memory_scores(
 
 pub(crate) async fn validate_memory(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(id): Path<Uuid>,
     Json(request): Json<mem_api::ValidateMemoryRequest>,
 ) -> Result<Json<mem_api::ValidationRunInfo>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     if !state.is_primary() {
         return Err(ApiError::service_unavailable(
             "memory validation runs only on the primary node",
@@ -456,11 +454,9 @@ pub(crate) async fn validation_runs(
 
 pub(crate) async fn review_validation_run(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(run_id): Path<Uuid>,
     Json(request): Json<mem_api::ReviewValidationRequest>,
 ) -> Result<Json<mem_api::ReviewValidationResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     if !state.is_primary() {
         return Err(ApiError::service_unavailable(
             "validation review runs only on the primary node",

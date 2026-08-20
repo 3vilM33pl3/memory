@@ -425,11 +425,9 @@ pub async fn upsert_project_slug(pool: &PgPool, slug: &str) -> Result<Uuid, sqlx
 
 pub(crate) async fn project_bundle_export_preview(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(slug): Path<String>,
     Json(options): Json<ProjectMemoryExportOptions>,
 ) -> Result<Json<ProjectMemoryBundlePreview>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     let pool = &state.pool()?;
     let memories = load_project_bundle_entries(pool, &slug, &options).await?;
     let (manifest, warnings) = build_bundle_manifest(&slug, &options, &memories)?;
@@ -438,11 +436,9 @@ pub(crate) async fn project_bundle_export_preview(
 
 pub(crate) async fn project_bundle_export(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(slug): Path<String>,
     Json(options): Json<ProjectMemoryExportOptions>,
 ) -> Result<Response, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     let pool = &state.pool()?;
     let memories = load_project_bundle_entries(pool, &slug, &options).await?;
     let (manifest, _) = build_bundle_manifest(&slug, &options, &memories)?;
@@ -475,11 +471,9 @@ pub(crate) async fn project_bundle_export(
 
 pub(crate) async fn project_bundle_import_preview(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(slug): Path<String>,
     body: Bytes,
 ) -> Result<Json<ProjectMemoryImportPreview>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     let loaded = load_bundle_archive(&body)?;
     let preview =
         preview_bundle_import(&state.pool()?, &slug, &loaded.manifest, loaded.warnings).await?;
@@ -488,11 +482,9 @@ pub(crate) async fn project_bundle_import_preview(
 
 pub(crate) async fn project_bundle_import(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(slug): Path<String>,
     body: Bytes,
 ) -> Result<Json<ProjectMemoryImportResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     let loaded = load_bundle_archive(&body)?;
     let pool = &state.pool()?;
     let target_project_id = upsert_project_slug(pool, &slug)

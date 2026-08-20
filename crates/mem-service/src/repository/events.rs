@@ -53,10 +53,8 @@ pub(crate) fn watcher_health_label(health: &WatcherHealth) -> &'static str {
 
 pub(crate) async fn watcher_heartbeat(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<WatcherHeartbeatRequest>,
 ) -> Result<Json<WatcherPresenceSummary>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
     let (summary, changed, transition) = register_watcher_heartbeat(&state.watchers, request);
@@ -78,10 +76,8 @@ pub(crate) async fn watcher_heartbeat(
 
 pub(crate) async fn watcher_unregister(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<WatcherUnregisterRequest>,
 ) -> Result<Json<WatcherPresenceSummary>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
     let (summary, changed) = unregister_watcher(&state.watchers, &request);
@@ -93,10 +89,8 @@ pub(crate) async fn watcher_unregister(
 
 pub(crate) async fn watcher_restart_local(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<WatcherRestartRequest>,
 ) -> Result<Json<WatcherRestartResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     if request.host_service_id != state.config.cluster.service_id {
         return Err(ApiError::status_message(

@@ -251,10 +251,8 @@ pub(crate) async fn get_memory_history(
 
 pub(crate) async fn archive(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<ArchiveRequest>,
 ) -> Result<Json<ArchiveResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let project = request.project.clone();
     let archived_count = if request.dry_run {
@@ -328,10 +326,8 @@ pub(crate) async fn archive(
 
 pub(crate) async fn archive_memory(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ArchiveMemoryResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     if id.is_nil() {
         return Err(ApiError::validation(ValidationError::new(
             "memory id must be non-nil",
@@ -380,10 +376,8 @@ pub(crate) async fn archive_memory(
 
 pub(crate) async fn delete_memory(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<DeleteMemoryRequest>,
 ) -> Result<Json<DeleteMemoryResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
 
     // Memories are immutable. Delete writes a tombstone version — a row with
@@ -462,10 +456,8 @@ pub(crate) async fn delete_memory(
 
 pub(crate) async fn prune_history(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<PruneHistoryRequest>,
 ) -> Result<Json<PruneHistoryResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     // Fill missing thresholds from server config so the caller can rely on
     // either source without duplicating the logic in every client.
     let tombstone_after = request

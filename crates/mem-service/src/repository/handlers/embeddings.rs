@@ -5,10 +5,8 @@ use crate::*;
 
 pub(crate) async fn reindex(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<ReindexRequest>,
 ) -> Result<Json<ReindexResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let embedders = state.embedders.read().await;
     let selected_keys: Vec<String> = if let Some(name) = request.backend.as_deref() {
@@ -88,10 +86,8 @@ pub(crate) async fn reindex(
 
 pub(crate) async fn reembed(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<ReembedRequest>,
 ) -> Result<Json<ReembedResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let embedders = state.embedders.read().await;
     if embedders.is_empty() {
@@ -200,10 +196,8 @@ pub(crate) async fn count_missing_embedding_chunks(
 
 pub(crate) async fn prune_embeddings(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<PruneEmbeddingsRequest>,
 ) -> Result<Json<PruneEmbeddingsResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let embedders = state.embedders.read().await;
     if embedders.is_empty() {
@@ -416,10 +410,8 @@ pub(crate) fn equivalent_openai_embedding_space_key(space: &str) -> Option<Strin
 
 pub(crate) async fn activate_embedding_backend(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<ActivateEmbeddingBackendRequest>,
 ) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
 
     let previous_active = {
@@ -445,11 +437,8 @@ pub(crate) async fn activate_embedding_backend(
 
 pub(crate) async fn deactivate_embedding_backend(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(_request): Json<mem_api::DeactivateEmbeddingBackendRequest>,
 ) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-
     let previous_active = {
         let mut embedders = state.embedders.write().await;
         let previous = embedders.active_name().map(|s| s.to_string());
@@ -470,11 +459,8 @@ pub(crate) async fn deactivate_embedding_backend(
 
 pub(crate) async fn set_embedding_creation_enabled(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<SetEmbeddingCreationRequest>,
 ) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-
     let name = request.name.trim();
     if name.is_empty() {
         return Err(ApiError::validation(ValidationError::new(
@@ -595,11 +581,8 @@ pub(crate) async fn llm_audit_status(
 
 pub(crate) async fn set_llm_audit_enabled(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<SetLlmAuditRequest>,
 ) -> Result<Json<LlmAuditStatusResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
-
     let previous = state
         .llm_audit
         .read()

@@ -3,7 +3,7 @@
 use axum::{
     body::{Body, to_bytes},
     extract::{Request, State},
-    http::{HeaderValue, Method, StatusCode, header},
+    http::{Method, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -309,17 +309,6 @@ pub(crate) async fn authorization_guard(
     }
 
     request.extensions_mut().insert(principal);
-    if is_mutating(request.method()) {
-        let header_value = match HeaderValue::from_str(&state.api_token) {
-            Ok(value) => value,
-            Err(_) => {
-                return ApiError::internal("configured api token is not a valid header value")
-                    .into_response();
-            }
-        };
-        request.headers_mut().insert("x-api-token", header_value);
-        request.headers_mut().remove(header::AUTHORIZATION);
-    }
     next.run(request).await
 }
 

@@ -7,10 +7,8 @@ use axum::Extension;
 pub(crate) async fn capture_task(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
-    headers: HeaderMap,
     Json(mut request): Json<CaptureTaskRequest>,
 ) -> Result<Json<mem_api::CaptureTaskResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     if state.config.auth.mode == mem_api::AuthMode::MultiUser {
         request.writer_id = principal.id.to_string();
         request.writer_name = Some(principal.display_name.clone());
@@ -92,10 +90,8 @@ async fn queue_capture_offline(
 
 pub(crate) async fn scan_activity(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<ScanActivityRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
 
     let summary = if request.dry_run {
@@ -142,10 +138,8 @@ pub(crate) async fn scan_activity(
 
 pub(crate) async fn graph_activity(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<GraphActivityRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
 
     let summary = graph_activity_summary(&request);
@@ -209,10 +203,8 @@ pub(crate) fn graph_activity_details(request: &GraphActivityRequest) -> Activity
 
 pub(crate) async fn checkpoint_activity(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<CheckpointActivityRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
 
     let summary = if let Some(note) = request.checkpoint.note.as_deref() {
@@ -250,10 +242,8 @@ pub(crate) async fn checkpoint_activity(
 
 pub(crate) async fn plan_activity(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<PlanActivityRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
 
     let remaining_count = request.remaining_items.len();

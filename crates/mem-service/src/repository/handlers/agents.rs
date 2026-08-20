@@ -37,10 +37,8 @@ pub(crate) async fn list_agent_workspaces(
 pub(crate) async fn start_agent_workspace(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
-    headers: HeaderMap,
     Json(mut request): Json<AgentWorkspaceStartRequest>,
 ) -> Result<Json<AgentWorkspaceRecord>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     if state.config.auth.mode == mem_api::AuthMode::MultiUser {
         request.writer_id = Some(principal.id.to_string());
     }
@@ -54,11 +52,9 @@ pub(crate) async fn start_agent_workspace(
 
 pub(crate) async fn heartbeat_agent_workspace(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(workspace_id): Path<Uuid>,
     Json(request): Json<AgentWorkspaceHeartbeatRequest>,
 ) -> Result<Json<AgentWorkspaceRecord>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     update_agent_workspace_heartbeat(&state.pool()?, workspace_id, &request)
         .await
         .map_err(ApiError::sql)?
@@ -68,11 +64,9 @@ pub(crate) async fn heartbeat_agent_workspace(
 
 pub(crate) async fn finish_agent_workspace(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(workspace_id): Path<Uuid>,
     Json(request): Json<AgentWorkspaceFinishRequest>,
 ) -> Result<Json<AgentWorkspaceRecord>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     finish_agent_workspace_record(&state.pool()?, workspace_id, &request)
         .await
         .map_err(ApiError::sql)?

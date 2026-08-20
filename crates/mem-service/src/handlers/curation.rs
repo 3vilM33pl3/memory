@@ -5,10 +5,8 @@ use crate::*;
 
 pub(crate) async fn curate_memory(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<CurateRequest>,
 ) -> Result<Json<mem_api::CurateResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let response = if request.dry_run {
         preview_curate(&state.pool()?, &request)
@@ -250,9 +248,7 @@ pub(crate) async fn project_replacement_proposals(
 pub(crate) async fn project_replacement_proposal_approve(
     State(state): State<AppState>,
     Path((slug, proposal_id)): Path<(String, Uuid)>,
-    headers: HeaderMap,
 ) -> Result<Json<ReplacementProposalResolutionResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     let response = approve_replacement_proposal(&state.pool()?, &slug, proposal_id)
         .await
         .map_err(ApiError::sql)?;
@@ -283,9 +279,7 @@ pub(crate) async fn project_replacement_proposal_approve(
 pub(crate) async fn project_replacement_proposal_reject(
     State(state): State<AppState>,
     Path((slug, proposal_id)): Path<(String, Uuid)>,
-    headers: HeaderMap,
 ) -> Result<Json<ReplacementProposalResolutionResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     let response = reject_replacement_proposal(&state.pool()?, &slug, proposal_id)
         .await
         .map_err(ApiError::sql)?;
@@ -319,10 +313,8 @@ pub(crate) async fn project_replacement_policy(
 pub(crate) async fn project_replacement_policy_update(
     State(state): State<AppState>,
     Path(slug): Path<String>,
-    headers: HeaderMap,
     Json(request): Json<ReplacementPolicyRequest>,
 ) -> Result<Json<ReplacementPolicyResponse>, ApiError> {
-    require_token(&headers, &state.api_token, &state.config.service.bind_addr)?;
     request.validate().map_err(ApiError::validation)?;
     let repo_root = request
         .repo_root
