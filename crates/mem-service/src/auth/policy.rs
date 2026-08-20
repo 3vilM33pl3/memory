@@ -41,219 +41,1177 @@ pub(crate) enum ProjectScope {
 pub(crate) struct RoutePolicy {
     pub(crate) role: AuthRole,
     pub(crate) scope: ProjectScope,
+    /// Allowed in read-only (student) mode even though the method mutates:
+    /// queries, resume/up-to-speed briefings, and bundle exports are
+    /// semantic reads carried over POST.
+    pub(crate) semantic_read: bool,
 }
 
-pub(crate) fn route_policy(method: &Method, path: &str) -> RoutePolicy {
-    if matches!(
-        path,
-        "/healthz"
-            | "/v1/openapi.yaml"
-            | "/v1/web/auth-token"
-            | "/v1/auth/login"
-            | "/v1/auth/callback"
-    ) {
-        return RoutePolicy {
-            role: AuthRole::Reader,
-            scope: ProjectScope::Public,
-        };
+/// The single authoritative route -> policy table. Registered together with
+/// the axum routes by `PolicyRouter`; a path or method with no entry is
+/// DENIED by the authorization guard (fail closed).
+pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>> {
+    let mut table = matchit::Router::new();
+    let entries: &[(&str, &[(Method, RoutePolicy)])] = &[
+        (
+            "/healthz",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Public,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/openapi.yaml",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Public,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/ws",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Unscoped,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/web/auth-token",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Public,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/auth/login",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Public,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/auth/callback",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Public,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/auth/me",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Unscoped,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/auth/logout",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Unscoped,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/auth/tokens",
+            &[
+                (
+                    Method::GET,
+                    RoutePolicy {
+                        role: AuthRole::Admin,
+                        scope: ProjectScope::Global,
+                        semantic_read: false,
+                    },
+                ),
+                (
+                    Method::POST,
+                    RoutePolicy {
+                        role: AuthRole::Admin,
+                        scope: ProjectScope::Global,
+                        semantic_read: false,
+                    },
+                ),
+            ],
+        ),
+        (
+            "/v1/auth/tokens/{p}/revoke",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::Global,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/auth/principals",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::Global,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/auth/memberships",
+            &[
+                (
+                    Method::GET,
+                    RoutePolicy {
+                        role: AuthRole::Admin,
+                        scope: ProjectScope::Global,
+                        semantic_read: false,
+                    },
+                ),
+                (
+                    Method::POST,
+                    RoutePolicy {
+                        role: AuthRole::Admin,
+                        scope: ProjectScope::Global,
+                        semantic_read: false,
+                    },
+                ),
+            ],
+        ),
+        (
+            "/v1/auth/memberships/{p}",
+            &[(
+                Method::DELETE,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::Global,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/admin/shutdown",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::Global,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/runtime/status",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::QueryProjectOrGlobal,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/skills",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Unscoped,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/skills/repair",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::Global,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/skills/{p}",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Unscoped,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/query",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: true,
+                },
+            )],
+        ),
+        (
+            "/v1/query/global",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Unscoped,
+                    semantic_read: true,
+                },
+            )],
+        ),
+        (
+            "/v1/checkpoint/activity",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/plan/activity",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/scan/activity",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/graph/activity",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/commits/sync",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/capture/task",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/curate",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/provenance/verify",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/reindex",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/reembed",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/prune-embeddings",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/embeddings/backends",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Unscoped,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/embeddings/activate",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::Global,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/embeddings/deactivate",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::Global,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/embeddings/create-enabled",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::Global,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/config/llm-audit",
+            &[
+                (
+                    Method::GET,
+                    RoutePolicy {
+                        role: AuthRole::Reader,
+                        scope: ProjectScope::Unscoped,
+                        semantic_read: false,
+                    },
+                ),
+                (
+                    Method::POST,
+                    RoutePolicy {
+                        role: AuthRole::Admin,
+                        scope: ProjectScope::Global,
+                        semantic_read: false,
+                    },
+                ),
+            ],
+        ),
+        (
+            "/v1/loops",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::Unscoped,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/global-kill-switch",
+            &[
+                (
+                    Method::GET,
+                    RoutePolicy {
+                        role: AuthRole::Reader,
+                        scope: ProjectScope::Unscoped,
+                        semantic_read: false,
+                    },
+                ),
+                (
+                    Method::POST,
+                    RoutePolicy {
+                        role: AuthRole::Admin,
+                        scope: ProjectScope::Global,
+                        semantic_read: false,
+                    },
+                ),
+            ],
+        ),
+        (
+            "/v1/loops/runs",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::QueryProjectOrGlobal,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/runs/{p}",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::LoopRunResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/runs/{p}/context-pack",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::LoopRunResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/runs/{p}/cancel",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::LoopRunResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/runs/{p}/feedback",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::LoopRunResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/approvals",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::QueryProjectOrGlobal,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/memory-proposals",
+            &[
+                (
+                    Method::GET,
+                    RoutePolicy {
+                        role: AuthRole::Reader,
+                        scope: ProjectScope::QueryProjectOrGlobal,
+                        semantic_read: false,
+                    },
+                ),
+                (
+                    Method::POST,
+                    RoutePolicy {
+                        role: AuthRole::Operator,
+                        scope: ProjectScope::QueryProjectOrGlobal,
+                        semantic_read: false,
+                    },
+                ),
+            ],
+        ),
+        (
+            "/v1/loops/triggers/route",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/approvals/{p}/approve",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::LoopApprovalResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/approvals/{p}/reject",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::LoopApprovalResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/approvals/{p}/edit",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::LoopApprovalResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/memory-proposals/{p}/approve",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::LoopProposalResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/memory-proposals/{p}/reject",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::LoopProposalResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/memory-proposals/{p}/edit",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::LoopProposalResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/{p}",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::QueryProjectOrGlobal,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/{p}/enable",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/{p}/disable",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/{p}/pause",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/{p}/snooze",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/{p}/run",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/loops/{p}/context-pack",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::QueryProjectOrGlobal,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/memory/{p}",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::MemoryResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/memory/{p}/validate",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::MemoryResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/validation-runs/{p}/review",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::ValidationResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/memory/{p}/archive",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::MemoryResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/memory/{p}/history",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::MemoryResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/memory",
+            &[(
+                Method::DELETE,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::BodyMemoryResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/prune-history",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/memory-scores",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/structure",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/validation-runs",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/commits",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/commits/{p}",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/bundle/export/preview",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: true,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/bundle/export",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: true,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/bundle/import/preview",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/bundle/import",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/replacement-proposals",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/replacement-proposals/{p}/approve",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/replacement-proposals/{p}/reject",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/replacement-policy",
+            &[
+                (
+                    Method::GET,
+                    RoutePolicy {
+                        role: AuthRole::Reader,
+                        scope: ProjectScope::PathProject,
+                        semantic_read: false,
+                    },
+                ),
+                (
+                    Method::POST,
+                    RoutePolicy {
+                        role: AuthRole::Operator,
+                        scope: ProjectScope::PathProject,
+                        semantic_read: false,
+                    },
+                ),
+                (
+                    Method::PUT,
+                    RoutePolicy {
+                        role: AuthRole::Operator,
+                        scope: ProjectScope::PathProject,
+                        semantic_read: false,
+                    },
+                ),
+            ],
+        ),
+        (
+            "/v1/projects/{p}/memories",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/memory-graph",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/overview",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/graph/status",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/graph/extract",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/graph",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/resume",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: true,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/activities",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/projects/{p}/up-to-speed",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Reader,
+                    scope: ProjectScope::PathProject,
+                    semantic_read: true,
+                },
+            )],
+        ),
+        (
+            "/v1/watchers/heartbeat",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/watchers/unregister",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/watchers/restart-local",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/archive",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Operator,
+                    scope: ProjectScope::BodyProject,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/agents",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::Global,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/agents/workspaces",
+            &[(
+                Method::GET,
+                RoutePolicy {
+                    role: AuthRole::Admin,
+                    scope: ProjectScope::Global,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/agents/workspaces/start",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::WorkspaceResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/agents/workspaces/{p}/heartbeat",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::WorkspaceResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+        (
+            "/v1/agents/workspaces/{p}/finish",
+            &[(
+                Method::POST,
+                RoutePolicy {
+                    role: AuthRole::Writer,
+                    scope: ProjectScope::WorkspaceResource,
+                    semantic_read: false,
+                },
+            )],
+        ),
+    ];
+    for (path, policies) in entries {
+        table
+            .insert(path.to_string(), policies.to_vec())
+            .expect("route policy table entries are unique");
     }
-    if path == "/v1/auth/me" || path == "/v1/auth/logout" {
-        return unscoped(AuthRole::Reader);
-    }
-    if path.starts_with("/v1/auth/") || path == "/v1/admin/shutdown" {
-        return global(AuthRole::Admin);
-    }
-    if path.starts_with("/v1/projects/") {
-        let role = if path.contains("/bundle/import")
-            || path.contains("/replacement-proposals/")
-            || path.ends_with("/graph/extract")
-            || (path.ends_with("/replacement-policy") && *method != Method::GET)
-        {
-            AuthRole::Operator
-        } else {
-            AuthRole::Reader
-        };
-        return RoutePolicy {
-            role,
-            scope: ProjectScope::PathProject,
-        };
-    }
-    if path == "/v1/query/global" {
-        return unscoped(AuthRole::Reader);
-    }
-    if path == "/v1/query" {
-        return body(AuthRole::Reader);
-    }
-    if path == "/v1/memory" && *method == Method::DELETE {
-        // DeleteMemoryRequest carries no project field; authorize against the
-        // project that owns the referenced memory, not "any admin grant".
-        return RoutePolicy {
-            role: AuthRole::Admin,
-            scope: ProjectScope::BodyMemoryResource,
-        };
-    }
-    if path.starts_with("/v1/memory/") {
-        return RoutePolicy {
-            role: if path.ends_with("/history") || *method == Method::GET {
-                AuthRole::Reader
-            } else {
-                AuthRole::Operator
-            },
-            scope: ProjectScope::MemoryResource,
-        };
-    }
-    if path.starts_with("/v1/validation-runs/") {
-        return RoutePolicy {
-            role: AuthRole::Operator,
-            scope: ProjectScope::ValidationResource,
-        };
-    }
-    if path == "/v1/agents" || path == "/v1/agents/workspaces" || path == "/v1/skills/repair" {
-        return global(AuthRole::Admin);
-    }
-    if path == "/v1/runtime/status" {
-        // Returns per-project watcher and workspace state for ?project=…;
-        // without the parameter it reports service-wide state.
-        return RoutePolicy {
-            role: AuthRole::Reader,
-            scope: ProjectScope::QueryProjectOrGlobal,
-        };
-    }
-    if path.starts_with("/v1/skills")
-        || path == "/ws"
-        || path == "/v1/embeddings/backends"
-        || (path == "/v1/config/llm-audit" && *method == Method::GET)
-    {
-        return unscoped(AuthRole::Reader);
-    }
-    if path == "/v1/loops/runs"
-        || path == "/v1/loops/approvals"
-        || path == "/v1/loops/memory-proposals"
-    {
-        return RoutePolicy {
-            role: if *method == Method::GET {
-                AuthRole::Reader
-            } else {
-                AuthRole::Operator
-            },
-            scope: ProjectScope::QueryProjectOrGlobal,
-        };
-    }
-    if path.starts_with("/v1/loops/runs/") {
-        return RoutePolicy {
-            role: if *method == Method::GET {
-                AuthRole::Reader
-            } else {
-                AuthRole::Operator
-            },
-            scope: ProjectScope::LoopRunResource,
-        };
-    }
-    if path.starts_with("/v1/loops/approvals/") {
-        return RoutePolicy {
-            role: AuthRole::Operator,
-            scope: ProjectScope::LoopApprovalResource,
-        };
-    }
-    if path.starts_with("/v1/loops/memory-proposals/") {
-        return RoutePolicy {
-            role: AuthRole::Operator,
-            scope: ProjectScope::LoopProposalResource,
-        };
-    }
-    if path == "/v1/loops/global-kill-switch" {
-        return if *method == Method::GET {
-            unscoped(AuthRole::Reader)
-        } else {
-            global(AuthRole::Admin)
-        };
-    }
-    if path.starts_with("/v1/loops/") {
-        if *method == Method::GET {
-            return RoutePolicy {
-                role: AuthRole::Reader,
-                scope: ProjectScope::QueryProjectOrGlobal,
-            };
-        }
-        if path.ends_with("/enable")
-            || path.ends_with("/disable")
-            || path.ends_with("/pause")
-            || path.ends_with("/snooze")
-        {
-            return body(AuthRole::Admin);
-        }
-        return body(AuthRole::Operator);
-    }
-    if path == "/v1/loops" {
-        return unscoped(AuthRole::Reader);
-    }
-    if path.starts_with("/v1/agents/workspaces/") {
-        return RoutePolicy {
-            role: AuthRole::Writer,
-            scope: ProjectScope::WorkspaceResource,
-        };
-    }
-    if path == "/v1/embeddings/activate"
-        || path == "/v1/embeddings/deactivate"
-        || path == "/v1/embeddings/create-enabled"
-        || (path == "/v1/config/llm-audit" && *method != Method::GET)
-    {
-        return global(AuthRole::Admin);
-    }
-    if matches!(
-        path,
-        "/v1/curate"
-            | "/v1/provenance/verify"
-            | "/v1/reindex"
-            | "/v1/reembed"
-            | "/v1/prune-embeddings"
-            | "/v1/prune-history"
-            | "/v1/archive"
-    ) {
-        return body(AuthRole::Operator);
-    }
-    if matches!(
-        path,
-        "/v1/checkpoint/activity"
-            | "/v1/plan/activity"
-            | "/v1/scan/activity"
-            | "/v1/graph/activity"
-            | "/v1/commits/sync"
-            | "/v1/capture/task"
-            | "/v1/watchers/heartbeat"
-            | "/v1/watchers/unregister"
-            | "/v1/watchers/restart-local"
-            | "/v1/agents/workspaces/start"
-    ) {
-        return body(AuthRole::Writer);
-    }
-
-    if *method == Method::GET || *method == Method::HEAD {
-        unscoped(AuthRole::Reader)
-    } else {
-        global(AuthRole::Admin)
-    }
+    table
 }
 
-const fn unscoped(role: AuthRole) -> RoutePolicy {
-    RoutePolicy {
-        role,
-        scope: ProjectScope::Unscoped,
-    }
+fn policy_table() -> &'static matchit::Router<Vec<(Method, RoutePolicy)>> {
+    static TABLE: std::sync::OnceLock<matchit::Router<Vec<(Method, RoutePolicy)>>> =
+        std::sync::OnceLock::new();
+    TABLE.get_or_init(build_policy_table)
 }
 
-const fn global(role: AuthRole) -> RoutePolicy {
-    RoutePolicy {
-        role,
-        scope: ProjectScope::Global,
-    }
-}
-
-const fn body(role: AuthRole) -> RoutePolicy {
-    RoutePolicy {
-        role,
-        scope: ProjectScope::BodyProject,
-    }
+/// Policy for a concrete request path and method. `None` means the request
+/// has no registered policy and MUST be denied.
+pub(crate) fn policy_for(method: &Method, path: &str) -> Option<RoutePolicy> {
+    let matched = policy_table().at(path).ok()?;
+    matched
+        .value
+        .iter()
+        .find(|(m, _)| m == method)
+        .map(|(_, policy)| *policy)
 }
 
 #[axum::debug_middleware]
@@ -274,7 +1232,11 @@ pub(crate) async fn authorization_guard(
         }
     }
 
-    let policy = route_policy(request.method(), request.uri().path());
+    let Some(policy) = policy_for(request.method(), request.uri().path()) else {
+        // Fail closed: a route without an explicit policy entry is denied.
+        return ApiError::forbidden("no authorization policy registered for this route")
+            .into_response();
+    };
     if policy.scope == ProjectScope::Public {
         return next.run(request).await;
     }
@@ -565,25 +1527,14 @@ fn resource_id(request: &Request) -> Option<Uuid> {
         .find_map(|part| Uuid::parse_str(part).ok())
 }
 
-/// Whether a request is allowed while the service runs in read-only mode.
-/// Queries and briefing/export POST routes are semantic reads.
+/// Whether a request is allowed while the service runs in read-only mode:
+/// plain reads always, mutating methods only when their policy entry marks
+/// them as semantic reads.
 pub(crate) fn read_only_request_allowed(method: &Method, path: &str) -> bool {
     if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
         return true;
     }
-    if *method != Method::POST {
-        return false;
-    }
-    match path {
-        "/v1/query" | "/v1/query/global" => true,
-        _ => {
-            path.starts_with("/v1/projects/")
-                && (path.ends_with("/resume")
-                    || path.ends_with("/up-to-speed")
-                    || path.ends_with("/bundle/export")
-                    || path.ends_with("/bundle/export/preview"))
-        }
-    }
+    policy_for(method, path).is_some_and(|policy| policy.semantic_read)
 }
 
 pub(crate) async fn read_only_guard(
@@ -613,7 +1564,7 @@ mod tests {
 
     use super::{
         AuthenticatedPrincipal, CredentialSource, ProjectScope, RoutePolicy, is_authorized,
-        read_only_request_allowed, route_policy,
+        policy_for, read_only_request_allowed,
     };
     use crate::auth::ProjectRoleGrant;
 
@@ -646,7 +1597,9 @@ mod tests {
     #[test]
     fn delete_memory_resolves_the_owning_project() {
         assert_eq!(
-            route_policy(&Method::DELETE, "/v1/memory").scope,
+            policy_for(&Method::DELETE, "/v1/memory")
+                .expect("policy")
+                .scope,
             ProjectScope::BodyMemoryResource
         );
     }
@@ -657,6 +1610,7 @@ mod tests {
         let delete_policy = RoutePolicy {
             role: AuthRole::Admin,
             scope: ProjectScope::BodyMemoryResource,
+            semantic_read: false,
         };
         // Memory resolved to another project: denied.
         assert!(!is_authorized(&principal, delete_policy, Some("project-b")));
@@ -668,6 +1622,7 @@ mod tests {
         let prune_policy = RoutePolicy {
             role: AuthRole::Operator,
             scope: ProjectScope::BodyProject,
+            semantic_read: false,
         };
         assert!(!is_authorized(&principal, prune_policy, None));
         assert!(is_authorized(&principal, prune_policy, Some("project-a")));
@@ -680,6 +1635,7 @@ mod tests {
         let delete_policy = RoutePolicy {
             role: AuthRole::Admin,
             scope: ProjectScope::BodyMemoryResource,
+            semantic_read: false,
         };
         assert!(is_authorized(&principal, delete_policy, None));
         assert!(is_authorized(&principal, delete_policy, Some("project-b")));
@@ -688,31 +1644,43 @@ mod tests {
     #[test]
     fn route_roles_cover_role_boundaries() {
         assert_eq!(
-            route_policy(&Method::POST, "/v1/capture/task").role,
+            policy_for(&Method::POST, "/v1/capture/task")
+                .expect("policy")
+                .role,
             AuthRole::Writer
         );
         assert_eq!(
-            route_policy(&Method::POST, "/v1/curate").role,
+            policy_for(&Method::POST, "/v1/curate")
+                .expect("policy")
+                .role,
             AuthRole::Operator
         );
         assert_eq!(
-            route_policy(&Method::DELETE, "/v1/memory").role,
+            policy_for(&Method::DELETE, "/v1/memory")
+                .expect("policy")
+                .role,
             AuthRole::Admin
         );
         assert_eq!(
-            route_policy(&Method::GET, "/v1/projects/demo/overview").scope,
+            policy_for(&Method::GET, "/v1/projects/demo/overview")
+                .expect("policy")
+                .scope,
             ProjectScope::PathProject
         );
         assert_eq!(
-            route_policy(&Method::GET, "/healthz").scope,
+            policy_for(&Method::GET, "/healthz").expect("policy").scope,
             ProjectScope::Public
         );
         assert_eq!(
-            route_policy(&Method::GET, "/v1/loops/context_pack_refresh/context-pack").scope,
+            policy_for(&Method::GET, "/v1/loops/context_pack_refresh/context-pack")
+                .expect("policy")
+                .scope,
             ProjectScope::QueryProjectOrGlobal
         );
         assert_eq!(
-            route_policy(&Method::POST, "/v1/auth/tokens").role,
+            policy_for(&Method::POST, "/v1/auth/tokens")
+                .expect("policy")
+                .role,
             AuthRole::Admin
         );
     }
@@ -773,5 +1741,77 @@ mod tests {
             &Method::POST,
             "/v1/admin/shutdown"
         ));
+    }
+
+    #[test]
+    fn unregistered_routes_are_denied() {
+        assert!(policy_for(&Method::GET, "/v1/not-a-route").is_none());
+        assert!(policy_for(&Method::DELETE, "/v1/query").is_none());
+        assert!(!read_only_request_allowed(&Method::POST, "/v1/not-a-route"));
+    }
+
+    /// Every route registered in routes.rs must have a policy entry for each of
+    /// its methods. A missing entry is fail-closed at runtime, but this test
+    /// makes the drift loud at build time instead of at first request.
+    #[test]
+    fn every_registered_route_has_a_policy() {
+        let source = include_str!("../routes.rs");
+        let mut missing = Vec::new();
+        let mut index = 0;
+        while let Some(offset) = source[index..].find(".route(") {
+            let start = index + offset + ".route(".len();
+            let rest = &source[start..];
+            let Some(open_quote) = rest.find('"') else {
+                break;
+            };
+            let after = &rest[open_quote + 1..];
+            let Some(close_quote) = after.find('"') else {
+                break;
+            };
+            let path = &after[..close_quote];
+            // capture handler expression up to the matching close paren
+            let mut depth = 1;
+            let mut end = start;
+            let bytes = source.as_bytes();
+            while depth > 0 && end < source.len() {
+                match bytes[end] {
+                    b'(' => depth += 1,
+                    b')' => depth -= 1,
+                    _ => {}
+                }
+                end += 1;
+            }
+            let handlers = &source[start..end - 1];
+            for (needle, method) in [
+                ("get(", Method::GET),
+                ("post(", Method::POST),
+                ("put(", Method::PUT),
+                ("delete(", Method::DELETE),
+                ("patch(", Method::PATCH),
+            ] {
+                if handlers.contains(needle) && policy_for(&method, &sample_path(path)).is_none() {
+                    missing.push(format!("{method} {path}"));
+                }
+            }
+            index = end;
+        }
+        assert!(
+            missing.is_empty(),
+            "routes without a policy entry (add them to build_policy_table): {missing:?}"
+        );
+    }
+
+    fn sample_path(template: &str) -> String {
+        template
+            .split('/')
+            .map(|segment| {
+                if segment.starts_with('{') {
+                    "0be04b5e-0000-4000-8000-000000000000"
+                } else {
+                    segment
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/")
     }
 }

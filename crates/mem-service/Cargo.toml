@@ -9,6 +9,7 @@ autobins = false
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+matchit.workspace = true
 chrono.workspace = true
 config.workspace = true
 mem-agenttop = { path = "../mem-agenttop" }
