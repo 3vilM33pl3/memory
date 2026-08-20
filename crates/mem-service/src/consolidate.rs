@@ -7,7 +7,7 @@
 //! accepted cluster into a proposal via the shared strict-JSON LLM helper.
 
 use anyhow::Result;
-use mem_api::LoopMemoryProposalCreateRequest;
+use mem_record::LoopMemoryProposalCreateRequest;
 use serde::Deserialize;
 use uuid::Uuid;
 

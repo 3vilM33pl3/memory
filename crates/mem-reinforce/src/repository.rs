@@ -483,8 +483,8 @@ pub struct SelectionParams {
     pub volatility_factor: f64,
 }
 
-impl From<&mem_api::ReinforcementConfig> for SelectionParams {
-    fn from(config: &mem_api::ReinforcementConfig) -> Self {
+impl From<&mem_config::ReinforcementConfig> for SelectionParams {
+    fn from(config: &mem_config::ReinforcementConfig) -> Self {
         Self {
             threshold: config.validation_threshold,
             half_life_secs: config.half_life.as_secs_f64().max(1.0),

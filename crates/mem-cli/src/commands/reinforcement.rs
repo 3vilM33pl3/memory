@@ -112,7 +112,7 @@ pub(super) async fn handle_review(args: ReviewArgs, api: &ApiClient) -> Result<(
     Ok(())
 }
 
-fn print_run(run: &mem_api::ValidationRunInfo) {
+fn print_run(run: &mem_record::ValidationRunInfo) {
     println!(
         "run {} [{}] memory {} — {}",
         run.id,

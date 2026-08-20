@@ -39,7 +39,7 @@ pub(crate) async fn start_agent_workspace(
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Json(mut request): Json<AgentWorkspaceStartRequest>,
 ) -> Result<Json<AgentWorkspaceRecord>, ApiError> {
-    if state.config.auth.mode == mem_api::AuthMode::MultiUser {
+    if state.config.auth.mode == mem_record::AuthMode::MultiUser {
         request.writer_id = Some(principal.id.to_string());
     }
     request.validate().map_err(ApiError::validation)?;

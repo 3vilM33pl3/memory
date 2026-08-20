@@ -6,7 +6,7 @@ For the domain terminology and safety model, see [ADR 0001](../adr/0001-loop-aut
 
 ## Runtime Boundaries
 
-- `crates/mem-api` owns the public request and response types for loop definitions, settings, runs, approvals, and trigger routing.
+- `crates/mem-record` (`loops` module) owns the public request and response types for loop definitions, settings, runs, approvals, and trigger routing.
 - `crates/mem-loops` owns pure loop domain logic: built-in definitions, effective-setting resolution, policy decisions, budget checks, and trigger eligibility decisions.
 - `crates/mem-service/src/repository/handlers/loops.rs` owns database-backed registration, settings mutation, trigger-event persistence, run ledger writes, approval records, and route handlers.
 - `crates/mem-cli/src/commands/loops.rs` is the operator CLI over the service API.

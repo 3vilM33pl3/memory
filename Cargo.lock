@@ -2504,14 +2504,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mem-api"
-version = "1.0.3"
-dependencies = [
- "mem-config",
- "mem-record",
-]
-
-[[package]]
 name = "mem-cli"
 version = "1.0.3"
 dependencies = [
@@ -2524,11 +2516,12 @@ dependencies = [
  "humantime",
  "mem-agenttop",
  "mem-analyze",
- "mem-api",
+ "mem-config",
  "mem-eval",
  "mem-graph",
  "mem-mcp",
  "mem-platform",
+ "mem-record",
  "mem-service",
  "mem-skills",
  "mem-watch",
@@ -2577,7 +2570,7 @@ name = "mem-curate"
 version = "1.0.3"
 dependencies = [
  "chrono",
- "mem-api",
+ "mem-record",
  "mem-test-support",
  "serde",
  "serde_json",
@@ -2593,7 +2586,7 @@ version = "1.0.3"
 dependencies = [
  "anyhow",
  "chrono",
- "mem-api",
+ "mem-record",
  "serde",
  "serde_json",
  "sha2",
@@ -2608,7 +2601,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "mem-analyze",
- "mem-api",
+ "mem-record",
  "mem-test-support",
  "serde",
  "serde_json",
@@ -2622,7 +2615,7 @@ name = "mem-loops"
 version = "1.0.3"
 dependencies = [
  "chrono",
- "mem-api",
+ "mem-record",
  "serde",
  "serde_json",
  "uuid",
@@ -2636,8 +2629,9 @@ dependencies = [
  "axum",
  "chrono",
  "http",
- "mem-api",
+ "mem-config",
  "mem-platform",
+ "mem-record",
  "reqwest",
  "rmcp",
  "serde",
@@ -2674,8 +2668,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "mem-api",
+ "mem-config",
  "mem-curate",
+ "mem-record",
  "mem-test-support",
  "serde",
  "serde_json",
@@ -2692,7 +2687,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "mem-api",
+ "mem-config",
+ "mem-record",
  "mem-reinforce",
  "mem-test-support",
  "pgvector",
@@ -2721,13 +2717,14 @@ dependencies = [
  "futures-util",
  "libc",
  "mem-agenttop",
- "mem-api",
+ "mem-config",
  "mem-consolidate",
  "mem-curate",
  "mem-graph",
  "mem-loops",
  "mem-mcp",
  "mem-platform",
+ "mem-record",
  "mem-reinforce",
  "mem-search",
  "mem-skills",
@@ -2761,7 +2758,7 @@ version = "1.0.3"
 dependencies = [
  "anyhow",
  "chrono",
- "mem-api",
+ "mem-config",
  "mem-platform",
  "reqwest",
  "semver",
@@ -2787,8 +2784,9 @@ dependencies = [
  "chrono",
  "clap",
  "libc",
- "mem-api",
+ "mem-config",
  "mem-platform",
+ "mem-record",
  "notify",
  "reqwest",
  "serde",

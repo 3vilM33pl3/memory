@@ -18,7 +18,7 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use mem_api::{EmbeddingBackendConfig, resolve_secret_value};
+use mem_config::{EmbeddingBackendConfig, resolve_secret_value};
 use pgvector::Vector;
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};

@@ -8,8 +8,8 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use mem_api::ResumeCheckpoint;
 use mem_platform::preferred_user_state_dir;
+use mem_record::ResumeCheckpoint;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -8,7 +8,7 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-mem-api = { path = "../mem-api" }
+mem-config = { path = "../mem-config" }
 mem-platform = { path = "../mem-platform" }
 reqwest.workspace = true
 semver.workspace = true

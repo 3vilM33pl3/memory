@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::{Context, Result};
-use mem_api::AppConfig;
+use mem_config::AppConfig;
 use mem_watch::{flush_path, load_state, run_once, to_status};
 use reqwest::Client;
 use std::{env, path::PathBuf};

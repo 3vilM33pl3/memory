@@ -10,7 +10,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use mem_api::{
+use mem_config::{
     AppConfig, Profile, discover_global_config_path, discover_repo_env_path,
     effective_llm_base_url, is_ollama_provider, llm_requires_api_key, resolve_llm_api_key,
 };
@@ -1881,7 +1881,7 @@ pub(crate) fn automation_runtime_dir(config: &AppConfig, repo_root: &Path) -> Pa
 }
 
 pub(crate) fn default_automation_runtime_dir(repo_root: &Path) -> PathBuf {
-    mem_api::project_paths_for_repo(repo_root)
+    mem_config::project_paths_for_repo(repo_root)
         .map(|paths| paths.runtime_dir())
         .unwrap_or_else(|| repo_root.join(".mem").join("runtime"))
 }
@@ -1904,7 +1904,7 @@ pub(crate) fn default_local_service_overrides(_repo_root: &Path) -> LocalService
 }
 
 pub(crate) fn read_local_service_overrides(repo_root: &Path) -> Option<LocalServiceOverrides> {
-    let config_path = mem_api::project_paths_for_repo(repo_root)
+    let config_path = mem_config::project_paths_for_repo(repo_root)
         .map(|paths| paths.config_path())
         .filter(|path| path.is_file())
         .unwrap_or_else(|| repo_root.join(".mem").join("config.toml"));

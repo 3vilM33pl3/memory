@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use clap::Args;
-use mem_api::{AppConfig, read_repo_project_slug};
+use mem_config::{AppConfig, read_repo_project_slug};
 #[cfg(test)]
 use mem_platform as platform;
 use reqwest::Client;
@@ -242,7 +242,7 @@ fn update_backend_instance_state(
 
 fn log_heartbeat_transition(
     previous: HeartbeatState,
-    result: Result<mem_api::WatcherPresenceSummary>,
+    result: Result<mem_record::WatcherPresenceSummary>,
 ) -> HeartbeatState {
     match result {
         Ok(summary) => {
@@ -349,8 +349,8 @@ mod tests {
         BackendInstanceState, HeartbeatState, log_heartbeat_transition, resolve_project,
         resolve_writer_id, update_backend_instance_state,
     };
-    use mem_api::AppConfig;
-    use mem_api::WatcherPresenceSummary;
+    use mem_config::AppConfig;
+    use mem_record::WatcherPresenceSummary;
     use std::{fs, sync::Mutex};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());

@@ -10,9 +10,10 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use mem_api::{
-    AppConfig, CaptureTaskRequest, CheckpointActivityRequest, CurateResponse, MemoryType,
-    PlanActivityAction, PlanActivityRequest, TestResult, read_repo_project_slug,
+use mem_config::{AppConfig, read_repo_project_slug};
+use mem_record::{
+    CaptureTaskRequest, CheckpointActivityRequest, CurateResponse, MemoryType, PlanActivityAction,
+    PlanActivityRequest, TestResult,
 };
 use mem_watch::{
     build_capture_request as build_automation_capture_request,
@@ -152,7 +153,7 @@ pub(crate) async fn save_checkpoint_with_activity(
     project: &str,
     repo_root: &Path,
     note: Option<String>,
-) -> Result<(mem_api::ResumeCheckpoint, PathBuf)> {
+) -> Result<(mem_record::ResumeCheckpoint, PathBuf)> {
     let (checkpoint, path) = resume::save_checkpoint(project, repo_root, note)?;
     let request = CheckpointActivityRequest {
         project: project.to_string(),
@@ -168,7 +169,7 @@ pub(crate) fn preview_checkpoint(
     project: &str,
     repo_root: &Path,
     note: Option<String>,
-) -> Result<(mem_api::ResumeCheckpoint, PathBuf)> {
+) -> Result<(mem_record::ResumeCheckpoint, PathBuf)> {
     Ok((
         resume::build_checkpoint(project, repo_root, note),
         resume::checkpoint_store_location()?,
@@ -259,7 +260,7 @@ pub(crate) struct PlanExecutionFinishReport {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ImplementationMemoryPreview {
     pub(crate) summary: String,
-    pub(crate) memory_type: mem_api::MemoryType,
+    pub(crate) memory_type: mem_record::MemoryType,
     pub(crate) tags: Vec<String>,
     pub(crate) canonical_text: String,
 }
@@ -271,7 +272,7 @@ pub(crate) struct ImplementationMemoryResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) preview: Option<ImplementationMemoryPreview>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) capture: Option<mem_api::CaptureTaskResponse>,
+    pub(crate) capture: Option<mem_record::CaptureTaskResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) curate: Option<CurateResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -287,8 +288,8 @@ pub(crate) async fn resolve_active_plan_selection(
     let mut plans = memories
         .items
         .into_iter()
-        .filter(|item| item.status == mem_api::MemoryStatus::Active)
-        .filter(|item| item.memory_type == mem_api::MemoryType::Plan)
+        .filter(|item| item.status == mem_record::MemoryStatus::Active)
+        .filter(|item| item.memory_type == mem_record::MemoryType::Plan)
         .filter_map(|item| {
             extract_plan_thread_key(&item.tags).map(|key| ActivePlanSelection {
                 memory_id: item.id,
@@ -383,18 +384,18 @@ pub(crate) fn build_plan_execution_request(
 ) -> CaptureTaskRequest {
     let normalized_plan = normalize_plan_markdown_for_hash(plan_markdown);
     let mut sources = vec![
-        mem_api::CaptureCandidateSourceInput {
+        mem_record::CaptureCandidateSourceInput {
             file_path: None,
             symbol_name: None,
             symbol_kind: None,
-            source_kind: mem_api::SourceKind::TaskPrompt,
+            source_kind: mem_record::SourceKind::TaskPrompt,
             excerpt: Some("Approved execution plan entered implementation.".to_string()),
         },
-        mem_api::CaptureCandidateSourceInput {
+        mem_record::CaptureCandidateSourceInput {
             file_path: None,
             symbol_name: None,
             symbol_kind: None,
-            source_kind: mem_api::SourceKind::Note,
+            source_kind: mem_record::SourceKind::Note,
             excerpt: Some(normalized_plan.clone()),
         },
     ];
@@ -403,11 +404,11 @@ pub(crate) fn build_plan_execution_request(
     {
         sources.insert(
             0,
-            mem_api::CaptureCandidateSourceInput {
+            mem_record::CaptureCandidateSourceInput {
                 file_path: Some(source_path.display().to_string()),
                 symbol_name: None,
                 symbol_kind: None,
-                source_kind: mem_api::SourceKind::File,
+                source_kind: mem_record::SourceKind::File,
                 excerpt: Some(format!(
                     "Approved plan source file: {}",
                     source_path.display()
@@ -427,10 +428,10 @@ pub(crate) fn build_plan_execution_request(
         git_diff_summary: git_head.map(|head| format!("Execution started from git HEAD {head}")),
         tests: Vec::new(),
         notes: Vec::new(),
-        structured_candidates: vec![mem_api::CaptureCandidateInput {
+        structured_candidates: vec![mem_record::CaptureCandidateInput {
             canonical_text: normalized_plan.clone(),
             summary: title.to_string(),
-            memory_type: mem_api::MemoryType::Plan,
+            memory_type: mem_record::MemoryType::Plan,
             confidence: 0.95,
             importance: 4,
             tags: vec![
@@ -516,10 +517,10 @@ pub(crate) fn build_task_start_request(
         git_diff_summary: git_head.map(|head| format!("Task started from git HEAD {head}")),
         tests: Vec::new(),
         notes: Vec::new(),
-        structured_candidates: vec![mem_api::CaptureCandidateInput {
+        structured_candidates: vec![mem_record::CaptureCandidateInput {
             canonical_text,
             summary: title.trim().to_string(),
-            memory_type: mem_api::MemoryType::Task,
+            memory_type: mem_record::MemoryType::Task,
             confidence: 0.95,
             importance: 3,
             tags: vec![
@@ -529,18 +530,18 @@ pub(crate) fn build_task_start_request(
                 "no-approved-plan".to_string(),
             ],
             sources: vec![
-                mem_api::CaptureCandidateSourceInput {
+                mem_record::CaptureCandidateSourceInput {
                     file_path: None,
                     symbol_name: None,
                     symbol_kind: None,
-                    source_kind: mem_api::SourceKind::TaskPrompt,
+                    source_kind: mem_record::SourceKind::TaskPrompt,
                     excerpt: Some(prompt.trim().to_string()),
                 },
-                mem_api::CaptureCandidateSourceInput {
+                mem_record::CaptureCandidateSourceInput {
                     file_path: None,
                     symbol_name: None,
                     symbol_kind: None,
-                    source_kind: mem_api::SourceKind::Note,
+                    source_kind: mem_record::SourceKind::Note,
                     excerpt: Some("Direct no-plan task entered execution.".to_string()),
                 },
             ],
@@ -557,15 +558,15 @@ pub(crate) async fn verify_task_start_memory(
     api: &ApiClient,
     project: &str,
     thread_key: &str,
-) -> Result<mem_api::ProjectMemoryListItem> {
+) -> Result<mem_record::ProjectMemoryListItem> {
     let thread_tag = format!("task-thread:{thread_key}");
     let memories = api.project_memories(project).await?;
     memories
         .items
         .into_iter()
         .find(|item| {
-            item.status == mem_api::MemoryStatus::Active
-                && item.memory_type == mem_api::MemoryType::Task
+            item.status == mem_record::MemoryStatus::Active
+                && item.memory_type == mem_record::MemoryType::Task
                 && item.tags.iter().any(|tag| tag == &thread_tag)
         })
         .ok_or_else(|| {
@@ -581,14 +582,14 @@ pub(crate) fn implementation_sources(
     files_changed: &[String],
     tests: &[TestResult],
     command_output: Option<&str>,
-) -> Vec<mem_api::CaptureCandidateSourceInput> {
+) -> Vec<mem_record::CaptureCandidateSourceInput> {
     let mut sources = Vec::new();
     if !prompt.trim().is_empty() {
-        sources.push(mem_api::CaptureCandidateSourceInput {
+        sources.push(mem_record::CaptureCandidateSourceInput {
             file_path: None,
             symbol_name: None,
             symbol_kind: None,
-            source_kind: mem_api::SourceKind::TaskPrompt,
+            source_kind: mem_record::SourceKind::TaskPrompt,
             excerpt: Some(prompt.trim().to_string()),
         });
     }
@@ -597,29 +598,29 @@ pub(crate) fn implementation_sources(
         if trimmed.is_empty() {
             continue;
         }
-        sources.push(mem_api::CaptureCandidateSourceInput {
+        sources.push(mem_record::CaptureCandidateSourceInput {
             file_path: None,
             symbol_name: None,
             symbol_kind: None,
-            source_kind: mem_api::SourceKind::Note,
+            source_kind: mem_record::SourceKind::Note,
             excerpt: Some(trimmed.to_string()),
         });
     }
     for file in files_changed {
-        sources.push(mem_api::CaptureCandidateSourceInput {
+        sources.push(mem_record::CaptureCandidateSourceInput {
             file_path: Some(file.clone()),
             symbol_name: None,
             symbol_kind: None,
-            source_kind: mem_api::SourceKind::File,
+            source_kind: mem_record::SourceKind::File,
             excerpt: Some(format!("Changed file during task: {file}")),
         });
     }
     for test in tests {
-        sources.push(mem_api::CaptureCandidateSourceInput {
+        sources.push(mem_record::CaptureCandidateSourceInput {
             file_path: None,
             symbol_name: None,
             symbol_kind: None,
-            source_kind: mem_api::SourceKind::Test,
+            source_kind: mem_record::SourceKind::Test,
             excerpt: Some(format!("{}: {}", test.command, test.status)),
         });
     }
@@ -627,11 +628,11 @@ pub(crate) fn implementation_sources(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        sources.push(mem_api::CaptureCandidateSourceInput {
+        sources.push(mem_record::CaptureCandidateSourceInput {
             file_path: None,
             symbol_name: None,
             symbol_kind: None,
-            source_kind: mem_api::SourceKind::CommandOutput,
+            source_kind: mem_record::SourceKind::CommandOutput,
             excerpt: Some(output.to_string()),
         });
     }
@@ -775,15 +776,15 @@ pub(crate) fn build_remember_implementation_candidate(
     files_changed: &[String],
     tests: &[TestResult],
     command_output: Option<&str>,
-) -> mem_api::CaptureCandidateInput {
+) -> mem_record::CaptureCandidateInput {
     let canonical_text = build_implementation_canonical_text("", summary, &[], notes);
     let memory_type = if is_refactor_completion(title, summary, prompt, notes, &[]) {
-        mem_api::MemoryType::Refactor
+        mem_record::MemoryType::Refactor
     } else {
-        mem_api::MemoryType::Implementation
+        mem_record::MemoryType::Implementation
     };
     let mut tags = match memory_type {
-        mem_api::MemoryType::Refactor => vec!["refactor".to_string(), "refactored".to_string()],
+        mem_record::MemoryType::Refactor => vec!["refactor".to_string(), "refactored".to_string()],
         _ => vec!["implementation".to_string(), "implemented".to_string()],
     };
     for file in files_changed {
@@ -794,7 +795,7 @@ pub(crate) fn build_remember_implementation_candidate(
     tags.sort();
     tags.dedup();
 
-    mem_api::CaptureCandidateInput {
+    mem_record::CaptureCandidateInput {
         canonical_text,
         summary: summary.trim().to_string(),
         memory_type,
@@ -883,12 +884,12 @@ pub(crate) fn build_finish_execution_implementation_request(
         notes,
         &report.completed_item_texts,
     ) {
-        mem_api::MemoryType::Refactor
+        mem_record::MemoryType::Refactor
     } else {
-        mem_api::MemoryType::Implementation
+        mem_record::MemoryType::Implementation
     };
     let mut tags = match memory_type {
-        mem_api::MemoryType::Refactor => vec!["refactor".to_string(), "refactored".to_string()],
+        mem_record::MemoryType::Refactor => vec!["refactor".to_string(), "refactored".to_string()],
         _ => vec!["implementation".to_string(), "implemented".to_string()],
     };
     tags.push(format!("plan-thread:{}", report.thread_key));
@@ -910,7 +911,7 @@ pub(crate) fn build_finish_execution_implementation_request(
             .map(|head| format!("Implementation verified from git HEAD {head}")),
         tests: Vec::new(),
         notes: Vec::new(),
-        structured_candidates: vec![mem_api::CaptureCandidateInput {
+        structured_candidates: vec![mem_record::CaptureCandidateInput {
             canonical_text: canonical_text.clone(),
             summary: summary.to_string(),
             memory_type,
@@ -938,7 +939,7 @@ pub(crate) fn build_finish_execution_implementation_request(
 
 pub(crate) fn build_plan_execution_finish_report(
     project: &str,
-    detail: &mem_api::MemoryEntryResponse,
+    detail: &mem_record::MemoryEntryResponse,
 ) -> Result<PlanExecutionFinishReport> {
     let items = parse_plan_checkboxes(&detail.canonical_text);
     ensure_checkbox_plan(&items)?;
@@ -973,17 +974,17 @@ pub(crate) fn plan_detail_from_markdown(
     selection: &ActivePlanSelection,
     markdown: &str,
     memory_id: Uuid,
-) -> Result<mem_api::MemoryEntryResponse> {
+) -> Result<mem_record::MemoryEntryResponse> {
     let items = parse_plan_checkboxes(markdown);
     ensure_checkbox_plan(&items)?;
-    Ok(mem_api::MemoryEntryResponse {
+    Ok(mem_record::MemoryEntryResponse {
         id: memory_id,
         canonical_text: normalize_plan_markdown_for_hash(markdown),
         summary: selection.title.clone(),
-        memory_type: mem_api::MemoryType::Plan,
+        memory_type: mem_record::MemoryType::Plan,
         importance: 4,
         confidence: 0.95,
-        status: mem_api::MemoryStatus::Active,
+        status: mem_record::MemoryStatus::Active,
         tags: vec![
             "plan".to_string(),
             format!("plan-thread:{}", selection.thread_key),
@@ -1079,16 +1080,16 @@ pub(crate) trait SourceKindString {
     fn source_kind_string(&self) -> &'static str;
 }
 
-impl SourceKindString for mem_api::SourceKind {
+impl SourceKindString for mem_record::SourceKind {
     fn source_kind_string(&self) -> &'static str {
         match self {
-            mem_api::SourceKind::TaskPrompt => "task_prompt",
-            mem_api::SourceKind::File => "file",
-            mem_api::SourceKind::GitCommit => "git_commit",
-            mem_api::SourceKind::CommandOutput => "command_output",
-            mem_api::SourceKind::Test => "test",
-            mem_api::SourceKind::Note => "note",
-            mem_api::SourceKind::Memory => "memory",
+            mem_record::SourceKind::TaskPrompt => "task_prompt",
+            mem_record::SourceKind::File => "file",
+            mem_record::SourceKind::GitCommit => "git_commit",
+            mem_record::SourceKind::CommandOutput => "command_output",
+            mem_record::SourceKind::Test => "test",
+            mem_record::SourceKind::Note => "note",
+            mem_record::SourceKind::Memory => "memory",
         }
     }
 }

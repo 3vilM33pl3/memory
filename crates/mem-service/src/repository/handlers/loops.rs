@@ -3,7 +3,6 @@
 use crate::prelude::*;
 use crate::*;
 use axum::Extension;
-use mem_api::{AuthMode, EffectiveLoopSettings, LoopActionKind};
 use mem_loops::{
     ContextPackBuildInput, MockLoopRunner, RunnerBudget, RunnerCapabilityProfile, RunnerInvocation,
     RunnerTaskPack, RunnerWorkspaceRef, TriggerRouteCandidate, WorktreeSandboxManager,
@@ -11,6 +10,7 @@ use mem_loops::{
     estimate_tokens, evaluate_action, invoke_runner_with_policy, resolve_effective_settings,
     route_trigger_event, validate_definition,
 };
+use mem_record::{AuthMode, EffectiveLoopSettings, LoopActionKind};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -130,7 +130,7 @@ pub(crate) async fn list_loop_definitions(
             .into_iter()
             .map(|snapshot| {
                 let recommendation = mem_reinforce::utility_recommendation(&snapshot, &thresholds);
-                mem_api::LoopUtilityInfo {
+                mem_record::LoopUtilityInfo {
                     loop_id: snapshot.producer_id,
                     utility: snapshot.utility,
                     update_count: snapshot.update_count,
@@ -1681,7 +1681,7 @@ async fn create_control_plane_loop_run_with_trigger(
             // Deterministic clustering always runs and is stored as a report.
             // LLM synthesis + proposal emission happens separately where an
             // AppState (and thus the LLM client) is available.
-            let cfg = mem_api::ConsolidationConfig::default();
+            let cfg = mem_config::ConsolidationConfig::default();
             let project = request
                 .project
                 .as_deref()
@@ -1996,7 +1996,7 @@ pub async fn queue_semantic_dedup_proposals(
 
 pub async fn record_loop_memory_proposal_decision(
     pool: &PgPool,
-    procedural: &mem_api::ProceduralConfig,
+    procedural: &mem_config::ProceduralConfig,
     proposal_id: Uuid,
     status: &str,
     request: &LoopMemoryProposalDecisionRequest,
@@ -2099,7 +2099,7 @@ async fn edit_loop_memory_proposal_record(
 
 async fn resolve_loop_memory_proposal_decision(
     pool: &PgPool,
-    procedural: &mem_api::ProceduralConfig,
+    procedural: &mem_config::ProceduralConfig,
     proposal_id: Uuid,
     status: &str,
     request: &LoopMemoryProposalDecisionRequest,
@@ -2200,7 +2200,7 @@ async fn resolve_loop_memory_proposal_decision(
 /// never touches loop modes or permission gates.
 async fn emit_proposal_reward(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    procedural: &mem_api::ProceduralConfig,
+    procedural: &mem_config::ProceduralConfig,
     proposal: &LockedMemoryProposal,
     event: mem_reinforce::RewardEvent,
 ) -> Result<(), ApiError> {
@@ -4237,7 +4237,7 @@ async fn emit_reviewer_drift_report(
         .filter(|memory| {
             matches!(
                 memory.memory_type,
-                mem_api::MemoryType::Architecture | mem_api::MemoryType::Convention
+                mem_record::MemoryType::Architecture | mem_record::MemoryType::Convention
             ) || memory
                 .source_refs
                 .iter()

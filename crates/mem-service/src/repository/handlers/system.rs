@@ -21,7 +21,7 @@ pub(crate) struct WebAuthTokenResponse {
 pub(crate) async fn web_auth_token(
     State(state): State<AppState>,
 ) -> Result<Json<WebAuthTokenResponse>, ApiError> {
-    if state.config.auth.mode == mem_api::AuthMode::MultiUser {
+    if state.config.auth.mode == mem_record::AuthMode::MultiUser {
         return Err(ApiError::not_found(
             "the shared browser token endpoint is disabled in multiuser mode",
         ));

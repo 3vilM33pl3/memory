@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::Result;
-use mem_api::{
+use mem_config::AppConfig;
+use mem_record::{
     ActivityListResponse, AgentWorkspaceFinishRequest, AgentWorkspaceHeartbeatRequest,
-    AgentWorkspaceListResponse, AgentWorkspaceRecord, AgentWorkspaceStartRequest, AppConfig,
+    AgentWorkspaceListResponse, AgentWorkspaceRecord, AgentWorkspaceStartRequest,
     ArchiveMemoryResponse, ArchiveRequest, ArchiveResponse, CaptureTaskRequest,
     CheckpointActivityRequest, CommitDetailResponse, CommitSyncRequest, CommitSyncResponse,
     CurateRequest, CurateResponse, DeleteMemoryRequest, DeleteMemoryResponse, GraphActivityRequest,
@@ -79,7 +80,7 @@ impl ApiClient {
     pub(crate) async fn replacement_proposals(
         &self,
         project: &str,
-    ) -> Result<mem_api::ReplacementProposalListResponse> {
+    ) -> Result<mem_record::ReplacementProposalListResponse> {
         get_json(
             self.client
                 .get(service_url(
@@ -97,7 +98,7 @@ impl ApiClient {
         project: &str,
         needs_review: bool,
         limit: i64,
-    ) -> Result<mem_api::MemoryScoresResponse> {
+    ) -> Result<mem_record::MemoryScoresResponse> {
         get_json(
             self.client
                 .get(service_url(
@@ -116,8 +117,8 @@ impl ApiClient {
         &self,
         memory_id: Uuid,
         dry_run: Option<bool>,
-        proof_scope: Option<mem_api::ValidationProofScope>,
-    ) -> Result<mem_api::ValidationRunInfo> {
+        proof_scope: Option<mem_record::ValidationProofScope>,
+    ) -> Result<mem_record::ValidationRunInfo> {
         get_json(
             self.client
                 .post(service_url(
@@ -125,7 +126,7 @@ impl ApiClient {
                     &format!("/v1/memory/{memory_id}/validate"),
                 ))
                 .headers(write_headers(&self.config)?)
-                .json(&mem_api::ValidateMemoryRequest {
+                .json(&mem_record::ValidateMemoryRequest {
                     dry_run,
                     proof_scope,
                 })
@@ -140,7 +141,7 @@ impl ApiClient {
         project: &str,
         pending_only: bool,
         limit: i64,
-    ) -> Result<mem_api::ValidationRunsResponse> {
+    ) -> Result<mem_record::ValidationRunsResponse> {
         let review = if pending_only { "pending" } else { "" };
         get_json(
             self.client
@@ -160,7 +161,7 @@ impl ApiClient {
         &self,
         run_id: Uuid,
         action: &str,
-    ) -> Result<mem_api::ReviewValidationResponse> {
+    ) -> Result<mem_record::ReviewValidationResponse> {
         get_json(
             self.client
                 .post(service_url(
@@ -168,7 +169,7 @@ impl ApiClient {
                     &format!("/v1/validation-runs/{run_id}/review"),
                 ))
                 .headers(write_headers(&self.config)?)
-                .json(&mem_api::ReviewValidationRequest {
+                .json(&mem_record::ReviewValidationRequest {
                     action: action.to_string(),
                 })
                 .send()
@@ -181,7 +182,7 @@ impl ApiClient {
         &self,
         project: &str,
         proposal_id: Uuid,
-    ) -> Result<mem_api::ReplacementProposalResolutionResponse> {
+    ) -> Result<mem_record::ReplacementProposalResolutionResponse> {
         get_json(
             self.client
                 .post(service_url(
@@ -200,7 +201,7 @@ impl ApiClient {
         &self,
         project: &str,
         proposal_id: Uuid,
-    ) -> Result<mem_api::ReplacementProposalResolutionResponse> {
+    ) -> Result<mem_record::ReplacementProposalResolutionResponse> {
         get_json(
             self.client
                 .post(service_url(
@@ -563,7 +564,7 @@ impl ApiClient {
     pub(crate) async fn list_embedding_backends(
         &self,
         project: Option<&str>,
-    ) -> Result<mem_api::EmbeddingBackendsResponse> {
+    ) -> Result<mem_record::EmbeddingBackendsResponse> {
         let mut request = self
             .client
             .get(service_url(&self.config, "/v1/embeddings/backends"));
@@ -576,12 +577,12 @@ impl ApiClient {
     pub(crate) async fn activate_embedding_backend(
         &self,
         name: &str,
-    ) -> Result<mem_api::EmbeddingBackendsResponse> {
+    ) -> Result<mem_record::EmbeddingBackendsResponse> {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/embeddings/activate"))
                 .headers(write_headers(&self.config)?)
-                .json(&mem_api::ActivateEmbeddingBackendRequest {
+                .json(&mem_record::ActivateEmbeddingBackendRequest {
                     name: name.to_string(),
                 })
                 .send()
@@ -592,12 +593,12 @@ impl ApiClient {
 
     pub(crate) async fn deactivate_embedding_backend(
         &self,
-    ) -> Result<mem_api::EmbeddingBackendsResponse> {
+    ) -> Result<mem_record::EmbeddingBackendsResponse> {
         let response = self
             .client
             .post(service_url(&self.config, "/v1/embeddings/deactivate"))
             .headers(write_headers(&self.config)?)
-            .json(&mem_api::DeactivateEmbeddingBackendRequest::default())
+            .json(&mem_record::DeactivateEmbeddingBackendRequest::default())
             .send()
             .await?;
         if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
@@ -612,12 +613,12 @@ impl ApiClient {
         &self,
         name: &str,
         enabled: bool,
-    ) -> Result<mem_api::EmbeddingBackendsResponse> {
+    ) -> Result<mem_record::EmbeddingBackendsResponse> {
         let response = self
             .client
             .post(service_url(&self.config, "/v1/embeddings/create-enabled"))
             .headers(write_headers(&self.config)?)
-            .json(&mem_api::SetEmbeddingCreationRequest {
+            .json(&mem_record::SetEmbeddingCreationRequest {
                 name: name.to_string(),
                 enabled,
             })
@@ -631,7 +632,7 @@ impl ApiClient {
         get_json(response).await
     }
 
-    pub(crate) async fn llm_audit_status(&self) -> Result<mem_api::LlmAuditStatusResponse> {
+    pub(crate) async fn llm_audit_status(&self) -> Result<mem_record::LlmAuditStatusResponse> {
         get_json(
             self.client
                 .get(service_url(&self.config, "/v1/config/llm-audit"))
@@ -644,12 +645,12 @@ impl ApiClient {
     pub(crate) async fn set_llm_audit_enabled(
         &self,
         enabled: bool,
-    ) -> Result<mem_api::LlmAuditStatusResponse> {
+    ) -> Result<mem_record::LlmAuditStatusResponse> {
         let response = self
             .client
             .post(service_url(&self.config, "/v1/config/llm-audit"))
             .headers(write_headers(&self.config)?)
-            .json(&mem_api::SetLlmAuditRequest { enabled })
+            .json(&mem_record::SetLlmAuditRequest { enabled })
             .send()
             .await?;
         if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
@@ -663,7 +664,7 @@ impl ApiClient {
     pub(crate) async fn memory_history(
         &self,
         memory_id: &str,
-    ) -> Result<mem_api::MemoryHistoryResponse> {
+    ) -> Result<mem_record::MemoryHistoryResponse> {
         get_json(
             self.client
                 .get(service_url(
@@ -694,7 +695,7 @@ impl ApiClient {
     pub(crate) async fn capture_task(
         &self,
         request: &CaptureTaskRequest,
-    ) -> Result<mem_api::CaptureTaskResponse> {
+    ) -> Result<mem_record::CaptureTaskResponse> {
         get_json(
             self.client
                 .post(service_url(&self.config, "/v1/capture/task"))
@@ -899,7 +900,7 @@ impl ApiClient {
         &self,
         loop_id: &str,
         request: &LoopSettingsUpdateRequest,
-    ) -> Result<mem_api::LoopSettingResponse> {
+    ) -> Result<mem_record::LoopSettingResponse> {
         get_json(
             self.client
                 .post(service_url(
@@ -918,7 +919,7 @@ impl ApiClient {
         &self,
         loop_id: &str,
         request: &LoopSettingsUpdateRequest,
-    ) -> Result<mem_api::LoopSettingResponse> {
+    ) -> Result<mem_record::LoopSettingResponse> {
         get_json(
             self.client
                 .post(service_url(
@@ -937,7 +938,7 @@ impl ApiClient {
         &self,
         loop_id: &str,
         request: &LoopSettingsUpdateRequest,
-    ) -> Result<mem_api::LoopSettingResponse> {
+    ) -> Result<mem_record::LoopSettingResponse> {
         get_json(
             self.client
                 .post(service_url(
@@ -956,7 +957,7 @@ impl ApiClient {
         &self,
         loop_id: &str,
         request: &LoopSettingsUpdateRequest,
-    ) -> Result<mem_api::LoopSettingResponse> {
+    ) -> Result<mem_record::LoopSettingResponse> {
         get_json(
             self.client
                 .post(service_url(
@@ -1204,7 +1205,7 @@ impl ApiClient {
     pub(crate) async fn project_structure(
         &self,
         project: &str,
-    ) -> Result<mem_api::ProjectStructureResponse> {
+    ) -> Result<mem_record::ProjectStructureResponse> {
         get_json(
             self.client
                 .get(service_url(
@@ -1355,7 +1356,7 @@ pub(crate) fn format_api_error(status: reqwest::StatusCode, body: &str) -> Strin
     parts.join("\n")
 }
 
-pub(crate) fn print_embedding_backends(payload: &mem_api::EmbeddingBackendsResponse) {
+pub(crate) fn print_embedding_backends(payload: &mem_record::EmbeddingBackendsResponse) {
     if payload.backends.is_empty() {
         println!("No embedding backends configured.");
         return;
@@ -1421,7 +1422,7 @@ pub(crate) fn print_embedding_backends(payload: &mem_api::EmbeddingBackendsRespo
     }
 }
 
-pub(crate) fn print_memory_history(payload: &mem_api::MemoryHistoryResponse) {
+pub(crate) fn print_memory_history(payload: &mem_record::MemoryHistoryResponse) {
     println!(
         "Canonical {} in project {} — {} version(s)",
         payload.canonical_id,
@@ -1435,8 +1436,8 @@ pub(crate) fn print_memory_history(payload: &mem_api::MemoryHistoryResponse) {
             ""
         };
         let status_label = match version.status {
-            mem_api::MemoryStatus::Active => "active",
-            mem_api::MemoryStatus::Archived => "archived",
+            mem_record::MemoryStatus::Active => "active",
+            mem_record::MemoryStatus::Archived => "archived",
         };
         println!(
             "\nv{} — {} ({}){}\n  id: {}\n  updated: {}",
@@ -1621,7 +1622,7 @@ pub(crate) fn print_provenance_verification_response(response: &ProvenanceVerifi
     let problem_items: Vec<_> = response
         .items
         .iter()
-        .filter(|item| item.status != mem_api::SourceProvenanceStatus::Verified)
+        .filter(|item| item.status != mem_record::SourceProvenanceStatus::Verified)
         .take(25)
         .collect();
     if !problem_items.is_empty() {
@@ -1640,11 +1641,11 @@ pub(crate) fn print_provenance_verification_response(response: &ProvenanceVerifi
     }
 }
 
-pub(crate) fn diagnostic_severity_name(severity: &mem_api::DiagnosticSeverity) -> &'static str {
+pub(crate) fn diagnostic_severity_name(severity: &mem_record::DiagnosticSeverity) -> &'static str {
     match severity {
-        mem_api::DiagnosticSeverity::Info => "info",
-        mem_api::DiagnosticSeverity::Warning => "warning",
-        mem_api::DiagnosticSeverity::Error => "error",
+        mem_record::DiagnosticSeverity::Info => "info",
+        mem_record::DiagnosticSeverity::Warning => "warning",
+        mem_record::DiagnosticSeverity::Error => "error",
     }
 }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::Result;
-use mem_api::AppConfig;
+use mem_config::AppConfig;
 use reqwest::Client;
 
 use crate::commands::{api::print_json_response, output::service_url};

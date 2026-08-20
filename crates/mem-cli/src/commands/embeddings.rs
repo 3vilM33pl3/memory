@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::Result;
-use mem_api::{AppConfig, ReembedRequest, ReindexRequest};
+use mem_config::AppConfig;
+use mem_record::{ReembedRequest, ReindexRequest};
 use reqwest::Client;
 
 use crate::commands::{

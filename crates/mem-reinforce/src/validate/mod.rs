@@ -89,7 +89,7 @@ pub async fn run_validation(
         provider,
         policy,
         trigger,
-        mem_api::ValidationProofScope::SourceFilesFirst,
+        mem_record::ValidationProofScope::SourceFilesFirst,
     )
     .await
 }
@@ -100,7 +100,7 @@ pub async fn run_validation_with_scope(
     provider: &dyn VerdictProvider,
     policy: &ValidationPolicy,
     trigger: ValidationTrigger,
-    proof_scope: mem_api::ValidationProofScope,
+    proof_scope: mem_record::ValidationProofScope,
 ) -> Result<ValidationOutcome> {
     let run_id = insert_validation_run(
         pool,
@@ -131,7 +131,7 @@ async fn execute_validation(
     provider: &dyn VerdictProvider,
     policy: &ValidationPolicy,
     run_id: Uuid,
-    proof_scope: mem_api::ValidationProofScope,
+    proof_scope: mem_record::ValidationProofScope,
 ) -> Result<ValidationOutcome> {
     let started = std::time::Instant::now();
     let mut context = gather_context(pool, candidate.memory_id, proof_scope, false).await?;
@@ -140,7 +140,7 @@ async fn execute_validation(
         .await
         .context("verdict provider failed")?;
     let mut verdict = validate_verdict(raw, &context).context("verdict failed validation")?;
-    if proof_scope == mem_api::ValidationProofScope::HybridFallback
+    if proof_scope == mem_record::ValidationProofScope::HybridFallback
         && matches!(
             verdict.verdict,
             verdict::Verdict::Ambiguous | verdict::Verdict::Unsupported
@@ -562,7 +562,7 @@ pub mod test_support {
             prior_runs: Vec::new(),
             git_log: Vec::new(),
             allowed_refs: Default::default(),
-            proof_scope: mem_api::ValidationProofScope::SourceFilesFirst,
+            proof_scope: mem_record::ValidationProofScope::SourceFilesFirst,
             proof_fallback_used: false,
         };
         for path in allowed_paths {

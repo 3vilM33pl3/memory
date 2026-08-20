@@ -3,12 +3,12 @@
 use crate::prelude::*;
 use crate::*;
 use axum::Extension;
-use mem_api::GlobalQueryRequest;
+use mem_record::GlobalQueryRequest;
 
 pub(crate) async fn query(
     State(state): State<AppState>,
     Json(request): Json<QueryRequest>,
-) -> Result<Json<mem_api::QueryResponse>, ApiError> {
+) -> Result<Json<mem_record::QueryResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
     let pool = &state.pool()?;
     let embedders = state.embedders.read().await;
@@ -84,13 +84,13 @@ pub(crate) async fn query_global(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Json(request): Json<GlobalQueryRequest>,
-) -> Result<Json<mem_api::QueryResponse>, ApiError> {
+) -> Result<Json<mem_record::QueryResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
     let pool = &state.pool()?;
     let embedders = state.embedders.read().await;
     let reinforcement = mem_search::ReinforcementRankParams::from(&state.config.reinforcement);
-    let allowed_projects = principal.authorized_projects(mem_api::AuthRole::Reader);
-    let result = if principal.has_global_role(mem_api::AuthRole::Reader) {
+    let allowed_projects = principal.authorized_projects(mem_record::AuthRole::Reader);
+    let result = if principal.has_global_role(mem_record::AuthRole::Reader) {
         mem_search::query_memory_global_with_configs(
             pool,
             &request,

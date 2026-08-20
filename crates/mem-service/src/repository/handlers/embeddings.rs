@@ -437,7 +437,7 @@ pub(crate) async fn activate_embedding_backend(
 
 pub(crate) async fn deactivate_embedding_backend(
     State(state): State<AppState>,
-    Json(_request): Json<mem_api::DeactivateEmbeddingBackendRequest>,
+    Json(_request): Json<mem_record::DeactivateEmbeddingBackendRequest>,
 ) -> Result<Json<EmbeddingBackendsResponse>, ApiError> {
     let previous_active = {
         let mut embedders = state.embedders.write().await;

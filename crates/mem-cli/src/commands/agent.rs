@@ -7,9 +7,10 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use mem_api::{
+use mem_config::Profile;
+use mem_record::{
     AgentWorkspaceFinishRequest, AgentWorkspaceHeartbeatRequest, AgentWorkspaceListResponse,
-    AgentWorkspaceRecord, AgentWorkspaceStartRequest, AgentWorkspaceStatus, Profile,
+    AgentWorkspaceRecord, AgentWorkspaceStartRequest, AgentWorkspaceStatus,
 };
 use serde::Serialize;
 use uuid::Uuid;

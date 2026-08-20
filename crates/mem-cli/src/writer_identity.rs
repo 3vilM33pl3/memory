@@ -3,7 +3,7 @@
 use std::env;
 
 use anyhow::Result;
-use mem_api::AppConfig;
+use mem_config::AppConfig;
 use mem_platform as platform;
 
 #[derive(Debug, Clone)]

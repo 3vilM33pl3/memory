@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
-use mem_api::{QueryResponse, TokenUsage, UpToSpeedResponse};
+use mem_record::{QueryResponse, TokenUsage, UpToSpeedResponse};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -1902,25 +1902,25 @@ mod tests {
         let response = QueryResponse {
             answer: String::new(),
             confidence: 1.0,
-            results: vec![mem_api::QueryResult {
+            results: vec![mem_record::QueryResult {
                 memory_id: Uuid::new_v4(),
                 project: None,
                 project_name: None,
                 repo_root: None,
                 summary: "Graph retrieval".to_string(),
-                memory_type: mem_api::MemoryType::Reference,
+                memory_type: mem_record::MemoryType::Reference,
                 score: 1.0,
                 snippet: "graph".to_string(),
-                match_kind: mem_api::QueryMatchKind::Lexical,
+                match_kind: mem_record::QueryMatchKind::Lexical,
                 score_explanation: Vec::new(),
-                debug: mem_api::QueryResultDebug::default(),
+                debug: mem_record::QueryResultDebug::default(),
                 tags: vec!["graph".to_string()],
-                sources: vec![mem_api::QuerySource {
+                sources: vec![mem_record::QuerySource {
                     task_id: None,
                     file_path: Some("crates/mem-search/src/lib.rs".to_string()),
                     symbol_name: None,
                     symbol_kind: None,
-                    source_kind: mem_api::SourceKind::File,
+                    source_kind: mem_record::SourceKind::File,
                     excerpt: None,
                     provenance: None,
                 }],
@@ -1928,9 +1928,9 @@ mod tests {
                 needs_review: false,
             }],
             insufficient_evidence: false,
-            answer_generation: mem_api::QueryAnswerGeneration::default(),
+            answer_generation: mem_record::QueryAnswerGeneration::default(),
             answer_citations: Vec::new(),
-            diagnostics: mem_api::QueryDiagnostics::default(),
+            diagnostics: mem_record::QueryDiagnostics::default(),
         };
 
         let result = score_retrieval_qa(&item, EvalCondition::FullMemory, &response);
@@ -1940,19 +1940,19 @@ mod tests {
         assert_eq!(result.scores["file_recall_at_k"], 1.0);
     }
 
-    fn tagged_result(memory_id: Uuid, tag: &str) -> mem_api::QueryResult {
-        mem_api::QueryResult {
+    fn tagged_result(memory_id: Uuid, tag: &str) -> mem_record::QueryResult {
+        mem_record::QueryResult {
             memory_id,
             project: None,
             project_name: None,
             repo_root: None,
             summary: format!("{tag} memory"),
-            memory_type: mem_api::MemoryType::Reference,
+            memory_type: mem_record::MemoryType::Reference,
             score: 1.0,
             snippet: String::new(),
-            match_kind: mem_api::QueryMatchKind::Lexical,
+            match_kind: mem_record::QueryMatchKind::Lexical,
             score_explanation: Vec::new(),
-            debug: mem_api::QueryResultDebug::default(),
+            debug: mem_record::QueryResultDebug::default(),
             tags: vec![tag.to_string()],
             sources: Vec::new(),
             graph_connections: Vec::new(),
@@ -1960,14 +1960,14 @@ mod tests {
         }
     }
 
-    fn citation(memory_id: Uuid) -> mem_api::QueryAnswerCitation {
-        mem_api::QueryAnswerCitation {
+    fn citation(memory_id: Uuid) -> mem_record::QueryAnswerCitation {
+        mem_record::QueryAnswerCitation {
             result_number: 1,
             memory_id,
             project: None,
             project_name: None,
             repo_root: None,
-            memory_type: mem_api::MemoryType::Reference,
+            memory_type: mem_record::MemoryType::Reference,
             summary: String::new(),
             snippet: String::new(),
         }
@@ -2003,9 +2003,9 @@ mod tests {
                 tagged_result(fresh_id, "mq-fresh"),
             ],
             insufficient_evidence,
-            answer_generation: mem_api::QueryAnswerGeneration::default(),
+            answer_generation: mem_record::QueryAnswerGeneration::default(),
             answer_citations: cited.iter().copied().map(citation).collect(),
-            diagnostics: mem_api::QueryDiagnostics::default(),
+            diagnostics: mem_record::QueryDiagnostics::default(),
         }
     }
 

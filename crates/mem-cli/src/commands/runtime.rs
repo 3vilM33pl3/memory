@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
-use mem_api::{AppConfig, Profile};
+use mem_config::{AppConfig, Profile};
 use mem_platform as platform;
 use reqwest::Client;
 use serde::Serialize;
@@ -1611,7 +1611,7 @@ pub(in crate::commands) enum ServiceAuthRole {
     Operator,
 }
 
-impl From<ServiceAuthRole> for mem_api::AuthRole {
+impl From<ServiceAuthRole> for mem_record::AuthRole {
     fn from(value: ServiceAuthRole) -> Self {
         match value {
             ServiceAuthRole::Reader => Self::Reader,

@@ -10,7 +10,8 @@ autobins = false
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
-mem-api = { path = "../mem-api" }
+mem-config = { path = "../mem-config" }
+mem-record = { path = "../mem-record" }
 mem-platform = { path = "../mem-platform" }
 notify.workspace = true
 reqwest.workspace = true

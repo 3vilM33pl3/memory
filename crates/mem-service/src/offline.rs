@@ -3,9 +3,9 @@
 use crate::prelude::*;
 
 use duckdb::{Connection, params};
-use mem_api::CaptureTaskResponse;
+use mem_record::CaptureTaskResponse;
 #[cfg(test)]
-use mem_api::{OfflinePendingItem, OfflinePendingResponse};
+use mem_record::{OfflinePendingItem, OfflinePendingResponse};
 use std::path::Path as StdPath;
 
 #[derive(Clone, Debug)]

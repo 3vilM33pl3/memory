@@ -6,7 +6,7 @@
 //! and renders the stored report.
 
 use anyhow::Result;
-use mem_api::{LoopRunDetail, LoopRunRequest};
+use mem_record::{LoopRunDetail, LoopRunRequest};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

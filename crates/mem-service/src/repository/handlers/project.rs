@@ -569,7 +569,7 @@ pub(crate) async fn fetch_project_commits_since(
     slug: &str,
     since: Option<chrono::DateTime<chrono::Utc>>,
     limit: usize,
-) -> Result<Vec<mem_api::CommitRecord>, sqlx::Error> {
+) -> Result<Vec<mem_record::CommitRecord>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
         SELECT pc.commit_hash, pc.short_hash, pc.subject, pc.body, pc.author_name, pc.author_email,
@@ -598,7 +598,7 @@ pub(crate) async fn fetch_recent_project_memories(
     slug: &str,
     since: Option<chrono::DateTime<chrono::Utc>>,
     limit: usize,
-) -> Result<Vec<mem_api::ProjectMemoryListItem>, sqlx::Error> {
+) -> Result<Vec<mem_record::ProjectMemoryListItem>, sqlx::Error> {
     let response = fetch_project_memories(pool, slug, None, limit as i64, 0).await?;
     Ok(response
         .items
@@ -611,7 +611,7 @@ pub(crate) async fn fetch_durable_resume_context(
     pool: &PgPool,
     slug: &str,
     limit: usize,
-) -> Result<Vec<mem_api::ProjectMemoryListItem>, sqlx::Error> {
+) -> Result<Vec<mem_record::ProjectMemoryListItem>, sqlx::Error> {
     let response = fetch_project_memories(pool, slug, Some("active"), 200, 0).await?;
     let mut items = response.items;
     items.sort_by(|left, right| {
@@ -629,11 +629,11 @@ pub(crate) async fn fetch_durable_resume_context(
     items.retain(|item| {
         matches!(
             item.memory_type,
-            mem_api::MemoryType::Architecture
-                | mem_api::MemoryType::Convention
-                | mem_api::MemoryType::Documentation
-                | mem_api::MemoryType::Environment
-                | mem_api::MemoryType::Refactor
+            mem_record::MemoryType::Architecture
+                | mem_record::MemoryType::Convention
+                | mem_record::MemoryType::Documentation
+                | mem_record::MemoryType::Environment
+                | mem_record::MemoryType::Refactor
         )
     });
     items.truncate(limit);
@@ -643,7 +643,7 @@ pub(crate) async fn fetch_durable_resume_context(
 pub(crate) async fn fetch_latest_active_plan_memory(
     pool: &PgPool,
     slug: &str,
-) -> Result<Option<mem_api::ProjectMemoryListItem>, sqlx::Error> {
+) -> Result<Option<mem_record::ProjectMemoryListItem>, sqlx::Error> {
     let row = sqlx::query(
         r#"
         SELECT
@@ -693,14 +693,14 @@ pub(crate) async fn fetch_latest_active_plan_memory(
     .await?;
 
     row.map(|row| {
-        Ok(mem_api::ProjectMemoryListItem {
+        Ok(mem_record::ProjectMemoryListItem {
             id: row.try_get("id")?,
             summary: row.try_get("summary")?,
             preview: row.try_get("preview")?,
             memory_type: mem_search::parse_memory_type(&row.try_get::<String, _>("memory_type")?),
             status: match row.try_get::<String, _>("status")?.as_str() {
-                "archived" => mem_api::MemoryStatus::Archived,
-                _ => mem_api::MemoryStatus::Active,
+                "archived" => mem_record::MemoryStatus::Archived,
+                _ => mem_record::MemoryStatus::Active,
             },
             confidence: row.try_get("confidence")?,
             importance: row.try_get("importance")?,
@@ -753,10 +753,10 @@ pub(crate) fn resume_warnings(overview: &ProjectOverviewResponse) -> Vec<String>
 
 pub(crate) fn resume_actions(
     project: &str,
-    checkpoint: Option<&mem_api::ResumeCheckpoint>,
+    checkpoint: Option<&mem_record::ResumeCheckpoint>,
     overview: &ProjectOverviewResponse,
     timeline: &[ActivityEvent],
-    changed_memories: &[mem_api::ProjectMemoryListItem],
+    changed_memories: &[mem_record::ProjectMemoryListItem],
 ) -> Vec<ResumeAction> {
     let mut actions = Vec::new();
     let active_task_title = latest_capture_task_title(timeline);
@@ -839,12 +839,12 @@ pub(crate) fn resume_actions(
 }
 
 pub(crate) fn infer_current_thread(
-    checkpoint: Option<&mem_api::ResumeCheckpoint>,
+    checkpoint: Option<&mem_record::ResumeCheckpoint>,
     overview: &ProjectOverviewResponse,
     timeline: &[ActivityEvent],
-    commits: &[mem_api::CommitRecord],
-    changed_memories: &[mem_api::ProjectMemoryListItem],
-    active_plan: Option<&mem_api::ProjectMemoryListItem>,
+    commits: &[mem_record::CommitRecord],
+    changed_memories: &[mem_record::ProjectMemoryListItem],
+    active_plan: Option<&mem_record::ProjectMemoryListItem>,
 ) -> Option<String> {
     if let Some(plan) = active_plan {
         if overview.pending_replacement_proposals > 0 {
@@ -980,8 +980,8 @@ pub(crate) fn infer_current_thread(
 
 pub(crate) fn build_change_summary(
     timeline: &[ActivityEvent],
-    commits: &[mem_api::CommitRecord],
-    changed_memories: &[mem_api::ProjectMemoryListItem],
+    commits: &[mem_record::CommitRecord],
+    changed_memories: &[mem_record::ProjectMemoryListItem],
 ) -> Vec<String> {
     let mut items = Vec::new();
     let mut seen_titles = Vec::new();
@@ -1176,10 +1176,10 @@ pub(crate) fn build_attention_items(
 }
 
 pub(crate) fn select_resume_context(
-    changed_memories: &[mem_api::ProjectMemoryListItem],
-    durable_context: &[mem_api::ProjectMemoryListItem],
-    active_plan: Option<&mem_api::ProjectMemoryListItem>,
-) -> Vec<mem_api::ProjectMemoryListItem> {
+    changed_memories: &[mem_record::ProjectMemoryListItem],
+    durable_context: &[mem_record::ProjectMemoryListItem],
+    active_plan: Option<&mem_record::ProjectMemoryListItem>,
+) -> Vec<mem_record::ProjectMemoryListItem> {
     let mut selected = Vec::new();
 
     if let Some(plan) = active_plan {
@@ -1187,38 +1187,38 @@ pub(crate) fn select_resume_context(
     }
 
     if let Some(item) = changed_memories.iter().find(|item| {
-        item.status == mem_api::MemoryStatus::Active
+        item.status == mem_record::MemoryStatus::Active
             && matches!(
                 item.memory_type,
-                mem_api::MemoryType::Task
-                    | mem_api::MemoryType::Plan
-                    | mem_api::MemoryType::Decision
-                    | mem_api::MemoryType::Architecture
-                    | mem_api::MemoryType::Convention
-                    | mem_api::MemoryType::Documentation
-                    | mem_api::MemoryType::Debugging
-                    | mem_api::MemoryType::Refactor
+                mem_record::MemoryType::Task
+                    | mem_record::MemoryType::Plan
+                    | mem_record::MemoryType::Decision
+                    | mem_record::MemoryType::Architecture
+                    | mem_record::MemoryType::Convention
+                    | mem_record::MemoryType::Documentation
+                    | mem_record::MemoryType::Debugging
+                    | mem_record::MemoryType::Refactor
             )
             && !selected.iter().any(|existing| existing.id == item.id)
     }) {
         selected.push(item.clone());
     } else if let Some(item) = changed_memories.iter().find(|item| {
-        item.status == mem_api::MemoryStatus::Active
+        item.status == mem_record::MemoryStatus::Active
             && !selected.iter().any(|existing| existing.id == item.id)
     }) {
         selected.push(item.clone());
     }
 
     if let Some(item) = durable_context.iter().find(|item| {
-        item.status == mem_api::MemoryStatus::Active
+        item.status == mem_record::MemoryStatus::Active
             && matches!(
                 item.memory_type,
-                mem_api::MemoryType::Decision
-                    | mem_api::MemoryType::Architecture
-                    | mem_api::MemoryType::Convention
-                    | mem_api::MemoryType::Documentation
-                    | mem_api::MemoryType::Environment
-                    | mem_api::MemoryType::Refactor
+                mem_record::MemoryType::Decision
+                    | mem_record::MemoryType::Architecture
+                    | mem_record::MemoryType::Convention
+                    | mem_record::MemoryType::Documentation
+                    | mem_record::MemoryType::Environment
+                    | mem_record::MemoryType::Refactor
             )
             && !selected.iter().any(|existing| existing.id == item.id)
     }) {
@@ -1226,7 +1226,7 @@ pub(crate) fn select_resume_context(
     }
 
     if let Some(item) = durable_context.iter().find(|item| {
-        item.status == mem_api::MemoryStatus::Active
+        item.status == mem_record::MemoryStatus::Active
             && !selected.iter().any(|existing| existing.id == item.id)
     }) {
         selected.push(item.clone());
@@ -1239,13 +1239,13 @@ pub(crate) fn select_resume_context(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_resume_briefing(
     project: &str,
-    checkpoint: Option<&mem_api::ResumeCheckpoint>,
+    checkpoint: Option<&mem_record::ResumeCheckpoint>,
     current_thread: Option<&str>,
     change_summary: &[String],
     attention_items: &[String],
     primary_next_step: Option<&ResumeAction>,
     secondary_next_steps: &[ResumeAction],
-    context_items: &[mem_api::ProjectMemoryListItem],
+    context_items: &[mem_record::ProjectMemoryListItem],
 ) -> String {
     let mut lines = Vec::new();
     lines.push(format!("Resume briefing for project `{project}`."));
@@ -1541,11 +1541,11 @@ mod tests {
 
     fn memory_item(
         summary: &str,
-        memory_type: mem_api::MemoryType,
-        status: mem_api::MemoryStatus,
-    ) -> mem_api::ProjectMemoryListItem {
+        memory_type: mem_record::MemoryType,
+        status: mem_record::MemoryStatus,
+    ) -> mem_record::ProjectMemoryListItem {
         let id = Uuid::new_v4();
-        mem_api::ProjectMemoryListItem {
+        mem_record::ProjectMemoryListItem {
             id,
             summary: summary.to_string(),
             preview: summary.to_string(),
@@ -1567,13 +1567,13 @@ mod tests {
     fn resume_context_ignores_archived_changed_plans() {
         let archived_plan = memory_item(
             "Reference Section Overhaul",
-            mem_api::MemoryType::Plan,
-            mem_api::MemoryStatus::Archived,
+            mem_record::MemoryType::Plan,
+            mem_record::MemoryStatus::Archived,
         );
         let active_refactor = memory_item(
             "Current refactor context",
-            mem_api::MemoryType::Refactor,
-            mem_api::MemoryStatus::Active,
+            mem_record::MemoryType::Refactor,
+            mem_record::MemoryStatus::Active,
         );
 
         let selected = select_resume_context(
@@ -1584,6 +1584,6 @@ mod tests {
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].id, active_refactor.id);
-        assert_eq!(selected[0].status, mem_api::MemoryStatus::Active);
+        assert_eq!(selected[0].status, mem_record::MemoryStatus::Active);
     }
 }

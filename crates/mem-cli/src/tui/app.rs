@@ -16,11 +16,12 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use futures_util::{SinkExt, StreamExt, stream::SplitSink};
 #[cfg(test)]
 pub(in crate::tui) use mem_agenttop::AgentSnapshot;
-use mem_api::{
-    ActivityDetails, ActivityEvent, LoopApprovalStatus, MemoryEntryResponse, Profile,
+use mem_config::{Profile, load_repo_replacement_policy};
+use mem_record::{
+    ActivityDetails, ActivityEvent, LoopApprovalStatus, MemoryEntryResponse,
     ProjectMemoriesResponse, QueryFilters, QueryRequest, QueryResponse, QueryResult,
     ReplacementPolicy, ResumeCheckpoint, ResumeRequest, StreamRequest, StreamResponse,
-    UpToSpeedRequest, load_repo_replacement_policy,
+    UpToSpeedRequest,
 };
 use ratatui::{layout::Rect, widgets::TableState};
 use tokio::{net::TcpStream, sync::mpsc};
@@ -2136,7 +2137,7 @@ impl App {
                 .validate_memory(
                     memory_id,
                     Some(true),
-                    Some(mem_api::ValidationProofScope::HybridFallback),
+                    Some(mem_record::ValidationProofScope::HybridFallback),
                 )
                 .await
                 .map_err(|error| error.to_string());
@@ -2150,7 +2151,7 @@ impl App {
     fn apply_memory_validation_completed(
         &mut self,
         memory_id: uuid::Uuid,
-        result: Result<mem_api::ValidationRunInfo, String>,
+        result: Result<mem_record::ValidationRunInfo, String>,
     ) {
         if Some(memory_id) != self.selected_memory_id() {
             return;

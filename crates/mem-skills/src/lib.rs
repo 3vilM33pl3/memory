@@ -739,7 +739,7 @@ pub fn upgrade_project_skills_with_template(
         }) {
         None
     } else {
-        let runtime_dir = mem_api::project_paths_for_repo(repo_root)
+        let runtime_dir = mem_config::project_paths_for_repo(repo_root)
             .map(|paths| paths.runtime_dir())
             .unwrap_or_else(|| repo_root.join(".mem").join("runtime"));
         Some(

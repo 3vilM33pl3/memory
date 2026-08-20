@@ -8,7 +8,7 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-mem-api = { path = "../mem-api" }
+mem-record = { path = "../mem-record" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

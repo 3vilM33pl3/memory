@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::{Context, Result};
-use mem_api::{
-    AppConfig, AuthMeResponse, AuthMembershipGrantRequest, AuthMembershipResponse,
-    AuthPrincipalResponse, AuthServiceTokenCreateRequest, AuthServiceTokenResponse,
+use mem_config::AppConfig;
+use mem_record::{
+    AuthMeResponse, AuthMembershipGrantRequest, AuthMembershipResponse, AuthPrincipalResponse,
+    AuthServiceTokenCreateRequest, AuthServiceTokenResponse,
 };
 use reqwest::Client;
 

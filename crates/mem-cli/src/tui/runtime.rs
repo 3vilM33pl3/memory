@@ -14,8 +14,9 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use mem_api::{NamedCount, Profile, ProjectOverviewResponse};
+use mem_config::Profile;
 use mem_platform::preferred_user_state_dir;
+use mem_record::{NamedCount, ProjectOverviewResponse};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 pub(super) fn should_quit(key: KeyEvent, app: &App) -> bool {

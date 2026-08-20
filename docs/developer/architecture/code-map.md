@@ -4,7 +4,8 @@ Use this map to find the right PR boundary before opening the large files.
 
 ## Crates
 
-- `crates/mem-api`: shared request/response types, config loading, validation helpers, and public API contracts.
+- `crates/mem-record`: shared request/response and domain record types (pure serde, no I/O).
+- `crates/mem-config`: configuration loading, discovery, and validation helpers.
 - `crates/mem-cli`: the `memory` binary, CLI command routing, TUI, setup wizard, eval runner orchestration, and local service tooling.
 - `crates/mem-service`: HTTP service runtime, routes, repository reads, migrations entrypoint, activity persistence, and service-mounted MCP.
 - `crates/mem-search`: query retrieval, lexical/semantic/graph merging, answer synthesis, citations, and query diagnostics.

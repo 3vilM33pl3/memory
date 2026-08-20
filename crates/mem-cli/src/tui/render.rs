@@ -8,11 +8,11 @@ use mem_agenttop::{
     AgentSession, AgentSnapshot, ChildProcess as AgentChildProcess,
     SessionStatus as AgentSessionStatus,
 };
-use mem_api::{
+use mem_config::{Profile, repo_agent_settings_path};
+use mem_record::{
     ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity, MemoryStatus,
-    MemoryType, PlanActivityAction, Profile, ProjectMemoryListItem, QueryAnswerMethod,
-    QueryFilters, QueryMatchKind, QueryResponse, QueryResult, ReplacementPolicy, WatcherHealth,
-    repo_agent_settings_path,
+    MemoryType, PlanActivityAction, ProjectMemoryListItem, QueryAnswerMethod, QueryFilters,
+    QueryMatchKind, QueryResponse, QueryResult, ReplacementPolicy, WatcherHealth,
 };
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -38,7 +38,9 @@ use super::{
     theme::{Theme, themed_block, themed_focus_block},
 };
 
-pub(super) fn build_history_lines(history: &mem_api::MemoryHistoryResponse) -> Vec<Line<'static>> {
+pub(super) fn build_history_lines(
+    history: &mem_record::MemoryHistoryResponse,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     lines.push(Line::from(vec![
         label_span("Canonical: "),
@@ -325,7 +327,7 @@ pub(super) fn build_memory_detail_lines(app: &App) -> Vec<Line<'static>> {
 
 pub(super) fn build_memory_validation_lines(
     app: &App,
-    detail: &mem_api::MemoryEntryResponse,
+    detail: &mem_record::MemoryEntryResponse,
 ) -> Vec<Line<'static>> {
     let validation = &app.memories.validation;
     if validation.memory_id != Some(detail.id)
@@ -541,13 +543,13 @@ pub(super) fn truncate_for_list(s: &str, max: usize) -> String {
 }
 
 pub(super) fn active_embedding_backend_index(
-    snapshot: &mem_api::EmbeddingBackendsResponse,
+    snapshot: &mem_record::EmbeddingBackendsResponse,
 ) -> Option<usize> {
     snapshot.backends.iter().position(|backend| backend.active)
 }
 
 pub(super) fn embedding_backend_index_by_name(
-    snapshot: &mem_api::EmbeddingBackendsResponse,
+    snapshot: &mem_record::EmbeddingBackendsResponse,
     name: &str,
 ) -> Option<usize> {
     snapshot
@@ -558,7 +560,7 @@ pub(super) fn embedding_backend_index_by_name(
 
 pub(super) fn clamped_embedding_backend_index(
     current: usize,
-    snapshot: &mem_api::EmbeddingBackendsResponse,
+    snapshot: &mem_record::EmbeddingBackendsResponse,
 ) -> Option<usize> {
     (!snapshot.backends.is_empty()).then(|| current.min(snapshot.backends.len().saturating_sub(1)))
 }
@@ -2717,13 +2719,13 @@ pub(super) fn display_filter(value: &str) -> String {
     }
 }
 
-pub(super) fn format_automation_status(status: &mem_api::AutomationStatus) -> String {
+pub(super) fn format_automation_status(status: &mem_record::AutomationStatus) -> String {
     format!(
         "enabled={} mode={} dirty_files={} last_decision={}",
         status.enabled,
         match status.mode {
-            mem_api::AutomationMode::Suggest => "suggest",
-            mem_api::AutomationMode::Auto => "auto",
+            mem_record::AutomationMode::Suggest => "suggest",
+            mem_record::AutomationMode::Auto => "auto",
         },
         status.dirty_file_count.unwrap_or(0),
         status

@@ -3,7 +3,7 @@
 use std::io::{IsTerminal, Write};
 
 use anyhow::Result;
-use mem_api::AppConfig;
+use mem_config::AppConfig;
 use reqwest::Client;
 
 use crate::commands::runtime::{QueryArgs, RememberArgs, ResumeArgs, TourArgs};

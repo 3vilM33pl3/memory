@@ -3,7 +3,7 @@
 use std::fs;
 
 use anyhow::{Context, Result};
-use mem_api::ProjectMemoryExportOptions;
+use mem_record::ProjectMemoryExportOptions;
 
 use crate::commands::{
     api::ApiClient,

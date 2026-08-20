@@ -5,7 +5,7 @@ use std::{future::Future, pin::Pin};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_analyze::{ResolutionStatus, ResolvedAnalysisReport, resolve_analysis};
-use mem_api::{CodeGraphResponse, CodeGraphStatusResponse, CodeGraphViewFilters};
+use mem_record::{CodeGraphResponse, CodeGraphStatusResponse, CodeGraphViewFilters};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;

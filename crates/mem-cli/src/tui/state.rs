@@ -9,10 +9,11 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use mem_agenttop::AgentSnapshot;
-use mem_api::{
+use mem_config::Profile;
+use mem_record::{
     ActivityEvent, EffectiveLoopSettings, LlmAuditStatusResponse, LoopApprovalRequestRecord,
     LoopDefinitionRecord, LoopGlobalStateResponse, LoopRunSummary, MemoryEntryResponse,
-    MemoryStatus, MemoryType, Profile, ProjectMemoriesResponse, ProjectMemoryListItem,
+    MemoryStatus, MemoryType, ProjectMemoriesResponse, ProjectMemoryListItem,
     ProjectOverviewResponse, QueryRequest, QueryResponse, ReplacementPolicy,
     ReplacementProposalListResponse, ReplacementProposalRecord, ResumeResponse, UpToSpeedResponse,
     ValidationRunInfo,
@@ -85,7 +86,7 @@ pub(super) struct MemoriesTabState {
     pub(in crate::tui) filtered_memories: Vec<ProjectMemoryListItem>,
     pub(in crate::tui) total_memories: i64,
     pub(in crate::tui) selected_detail: Option<MemoryEntryResponse>,
-    pub(in crate::tui) selected_history: Option<mem_api::MemoryHistoryResponse>,
+    pub(in crate::tui) selected_history: Option<mem_record::MemoryHistoryResponse>,
     pub(in crate::tui) selected_index: usize,
     pub(in crate::tui) table_state: TableState,
     pub(in crate::tui) memories_focus: MemoriesFocus,
@@ -273,7 +274,7 @@ pub(super) struct ReviewTabState {
 }
 
 pub(super) struct EmbeddingsTabState {
-    pub(in crate::tui) embedding_backends_snapshot: Option<mem_api::EmbeddingBackendsResponse>,
+    pub(in crate::tui) embedding_backends_snapshot: Option<mem_record::EmbeddingBackendsResponse>,
     pub(in crate::tui) embedding_backends_error: Option<String>,
     pub(in crate::tui) embeddings_selected_index: usize,
     pub(in crate::tui) embeddings_table_state: TableState,
@@ -417,7 +418,7 @@ pub(super) enum BackgroundEvent {
         restart_notice: Option<TuiRestartNotice>,
     },
     ActivitiesLoaded {
-        response: Box<Result<mem_api::ActivityListResponse, String>>,
+        response: Box<Result<mem_record::ActivityListResponse, String>>,
     },
     LlmAuditStatusLoaded {
         response: Result<LlmAuditStatusResponse, String>,
@@ -430,27 +431,39 @@ pub(super) enum BackgroundEvent {
         response: Box<Result<UpToSpeedResponse, String>>,
     },
     EmbeddingBackendsLoaded {
-        snapshot: Result<mem_api::EmbeddingBackendsResponse, String>,
+        snapshot: Result<mem_record::EmbeddingBackendsResponse, String>,
     },
     EmbeddingBackendToggled {
         name: String,
-        result: Result<mem_api::EmbeddingBackendsResponse, String>,
+        result: Result<mem_record::EmbeddingBackendsResponse, String>,
     },
     EmbeddingCreationToggled {
         name: String,
         enabled: bool,
-        result: Result<mem_api::EmbeddingBackendsResponse, String>,
+        result: Result<mem_record::EmbeddingBackendsResponse, String>,
     },
     EmbeddingReembedCompleted {
         name: String,
-        result: Result<(mem_api::ReembedResponse, mem_api::EmbeddingBackendsResponse), String>,
+        result: Result<
+            (
+                mem_record::ReembedResponse,
+                mem_record::EmbeddingBackendsResponse,
+            ),
+            String,
+        >,
     },
     SkillsRepairCompleted {
         result: Result<mem_skills::SkillUpgradeReport, String>,
     },
     EmbeddingReindexCompleted {
         name: String,
-        result: Result<(mem_api::ReindexResponse, mem_api::EmbeddingBackendsResponse), String>,
+        result: Result<
+            (
+                mem_record::ReindexResponse,
+                mem_record::EmbeddingBackendsResponse,
+            ),
+            String,
+        >,
     },
     QueryCompleted {
         request_id: u64,

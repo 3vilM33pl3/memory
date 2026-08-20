@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use mem_api::{AuthPrincipalKind, AuthPrincipalResponse, AuthProjectAccess, AuthRole};
+use mem_record::{AuthPrincipalKind, AuthPrincipalResponse, AuthProjectAccess, AuthRole};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

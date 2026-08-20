@@ -3,8 +3,8 @@
 use mem_analyze::{
     AnalysisReport, AnalyzerLanguage, AnalyzerSummary, CallFact, Span, SymbolFact, SymbolKind,
 };
-use mem_api::CodeGraphViewRequest;
 use mem_graph::{GraphExtractionRequest, PostgresGraphRepository};
+use mem_record::CodeGraphViewRequest;
 use sqlx::PgPool;
 use uuid::Uuid;
 

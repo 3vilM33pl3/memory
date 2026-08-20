@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Duration, Utc};
-use mem_api::ConsolidationConfig;
+use mem_config::ConsolidationConfig;
 use mem_consolidate::{
     DetectParams, FuseWeights, GateOutcome, MemberStat, TriggerReason, ValueGateConfig,
     detect_communities, evaluate_cluster, fuse_edges,
@@ -82,10 +82,10 @@ pub(crate) struct ConsolidationReport {
 
 impl ConsolidationReport {
     /// Maps accepted clusters to the curate-response accumulator view.
-    pub(crate) fn due_infos(&self) -> Vec<mem_api::ConsolidationDueInfo> {
+    pub(crate) fn due_infos(&self) -> Vec<mem_record::ConsolidationDueInfo> {
         self.accepted
             .iter()
-            .map(|cluster| mem_api::ConsolidationDueInfo {
+            .map(|cluster| mem_record::ConsolidationDueInfo {
                 cluster_seed: cluster
                     .members
                     .iter()
@@ -512,7 +512,7 @@ struct SummarizesEdge {
 pub(crate) async fn fetch_insight_tree(
     pool: &PgPool,
     project: &str,
-) -> Result<Vec<mem_api::StructureInsightNode>, ApiError> {
+) -> Result<Vec<mem_record::StructureInsightNode>, ApiError> {
     let rows = sqlx::query(
         r#"
         SELECT DISTINCT
@@ -558,7 +558,7 @@ pub(crate) async fn fetch_insight_tree(
 /// Pure tree assembly from `summarizes` edges: roots are insights that never
 /// appear as a member of another insight; children sort by summary for stable
 /// output. A visited-set guards against relation cycles.
-fn build_insight_tree(edges: &[SummarizesEdge]) -> Vec<mem_api::StructureInsightNode> {
+fn build_insight_tree(edges: &[SummarizesEdge]) -> Vec<mem_record::StructureInsightNode> {
     let mut members: BTreeMap<Uuid, Vec<&SummarizesEdge>> = BTreeMap::new();
     let mut summaries: BTreeMap<Uuid, &str> = BTreeMap::new();
     let mut summarized: BTreeSet<Uuid> = BTreeSet::new();
@@ -572,11 +572,11 @@ fn build_insight_tree(edges: &[SummarizesEdge]) -> Vec<mem_api::StructureInsight
         insight_id: Uuid,
         members: &BTreeMap<Uuid, Vec<&SummarizesEdge>>,
         visited: &mut BTreeSet<Uuid>,
-    ) -> Vec<mem_api::StructureInsightNode> {
+    ) -> Vec<mem_record::StructureInsightNode> {
         let Some(edges) = members.get(&insight_id) else {
             return Vec::new();
         };
-        let mut children: Vec<mem_api::StructureInsightNode> = edges
+        let mut children: Vec<mem_record::StructureInsightNode> = edges
             .iter()
             .map(|edge| {
                 let grandchildren =
@@ -587,7 +587,7 @@ fn build_insight_tree(edges: &[SummarizesEdge]) -> Vec<mem_api::StructureInsight
                     } else {
                         Vec::new()
                     };
-                mem_api::StructureInsightNode {
+                mem_record::StructureInsightNode {
                     canonical_id: edge.member_id,
                     summary: edge.member_summary.clone(),
                     memory_type: edge.member_type.clone(),
@@ -603,12 +603,12 @@ fn build_insight_tree(edges: &[SummarizesEdge]) -> Vec<mem_api::StructureInsight
         children
     }
 
-    let mut roots: Vec<mem_api::StructureInsightNode> = members
+    let mut roots: Vec<mem_record::StructureInsightNode> = members
         .keys()
         .filter(|id| !summarized.contains(id))
         .map(|&id| {
             let mut visited = BTreeSet::from([id]);
-            mem_api::StructureInsightNode {
+            mem_record::StructureInsightNode {
                 canonical_id: id,
                 summary: summaries.get(&id).copied().unwrap_or_default().to_string(),
                 memory_type: "insight".to_string(),
@@ -626,7 +626,7 @@ fn build_insight_tree(edges: &[SummarizesEdge]) -> Vec<mem_api::StructureInsight
             }
             visited.insert(id);
             let mut inner = BTreeSet::from([id]);
-            roots.push(mem_api::StructureInsightNode {
+            roots.push(mem_record::StructureInsightNode {
                 canonical_id: id,
                 summary: summaries.get(&id).copied().unwrap_or_default().to_string(),
                 memory_type: "insight".to_string(),
@@ -643,7 +643,7 @@ fn build_insight_tree(edges: &[SummarizesEdge]) -> Vec<mem_api::StructureInsight
     roots
 }
 
-fn collect_ids(node: &mem_api::StructureInsightNode, into: &mut BTreeSet<Uuid>) {
+fn collect_ids(node: &mem_record::StructureInsightNode, into: &mut BTreeSet<Uuid>) {
     into.insert(node.canonical_id);
     for child in &node.children {
         collect_ids(child, into);
@@ -656,19 +656,19 @@ fn collect_ids(node: &mem_api::StructureInsightNode, into: &mut BTreeSet<Uuid>) 
 pub(crate) async fn project_structure(
     axum::extract::State(state): axum::extract::State<crate::state::AppState>,
     axum::extract::Path(project): axum::extract::Path<String>,
-) -> Result<axum::Json<mem_api::ProjectStructureResponse>, ApiError> {
+) -> Result<axum::Json<mem_record::ProjectStructureResponse>, ApiError> {
     let pool = state.pool()?;
     let half_life_secs = state.config.reinforcement.half_life.as_secs_f64().max(1.0);
     let report =
         run_memory_consolidation(&pool, &project, &state.config.consolidation, half_life_secs)
             .await?;
     let insights = fetch_insight_tree(&pool, &project).await?;
-    Ok(axum::Json(mem_api::ProjectStructureResponse {
+    Ok(axum::Json(mem_record::ProjectStructureResponse {
         project,
         groups: report
             .accepted
             .iter()
-            .map(|cluster| mem_api::StructureGroupInfo {
+            .map(|cluster| mem_record::StructureGroupInfo {
                 size: cluster.size,
                 trigger: cluster.trigger.clone(),
                 intra_density: cluster.intra_density,
@@ -677,7 +677,7 @@ pub(crate) async fn project_structure(
                 members: cluster
                     .members
                     .iter()
-                    .map(|member| mem_api::StructureMemberInfo {
+                    .map(|member| mem_record::StructureMemberInfo {
                         canonical_id: member.canonical_id,
                         summary: member.summary.clone(),
                         memory_type: member.memory_type.clone(),

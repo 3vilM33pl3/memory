@@ -46,8 +46,8 @@ pub struct ValidationPolicy {
     pub cooldown: chrono::Duration,
 }
 
-impl From<&mem_api::ReinforcementConfig> for ValidationPolicy {
-    fn from(config: &mem_api::ReinforcementConfig) -> Self {
+impl From<&mem_config::ReinforcementConfig> for ValidationPolicy {
+    fn from(config: &mem_config::ReinforcementConfig) -> Self {
         Self {
             dry_run: config.validation_dry_run,
             auto_apply_rewording: config.auto_apply_rewording,

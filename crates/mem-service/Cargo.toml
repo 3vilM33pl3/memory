@@ -12,7 +12,8 @@ axum.workspace = true
 chrono.workspace = true
 config.workspace = true
 mem-agenttop = { path = "../mem-agenttop" }
-mem-api = { path = "../mem-api" }
+mem-config = { path = "../mem-config" }
+mem-record = { path = "../mem-record" }
 async-trait = "0.1"
 mem-consolidate = { path = "../mem-consolidate" }
 mem-curate = { path = "../mem-curate" }

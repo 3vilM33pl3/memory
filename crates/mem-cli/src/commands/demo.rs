@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::{Context, Result};
-use mem_api::{AppConfig, CaptureTaskRequest, CurateRequest};
+use mem_config::AppConfig;
+use mem_record::{CaptureTaskRequest, CurateRequest};
 use reqwest::Client;
 
 use crate::{
@@ -46,7 +47,7 @@ pub(super) async fn seed_demo_corpus(
         let body = capture.text().await.unwrap_or_default();
         anyhow::bail!("capture failed ({status}): {body}");
     }
-    let capture: mem_api::CaptureTaskResponse =
+    let capture: mem_record::CaptureTaskResponse =
         capture.json().await.context("parse capture response")?;
 
     // Curate only the capture just created: whole-project curation can

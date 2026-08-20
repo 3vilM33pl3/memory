@@ -8,7 +8,8 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-mem-api = { path = "../mem-api" }
+mem-config = { path = "../mem-config" }
+mem-record = { path = "../mem-record" }
 mem-reinforce = { path = "../mem-reinforce" }
 reqwest.workspace = true
 serde.workspace = true

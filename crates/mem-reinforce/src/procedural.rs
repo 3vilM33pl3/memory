@@ -98,8 +98,8 @@ impl RewardEvent {
     }
 }
 
-impl From<&mem_api::ProceduralConfig> for UtilityParams {
-    fn from(config: &mem_api::ProceduralConfig) -> Self {
+impl From<&mem_config::ProceduralConfig> for UtilityParams {
+    fn from(config: &mem_config::ProceduralConfig) -> Self {
         Self {
             alpha: config.alpha,
             initial_utility: config.initial_utility,
@@ -109,8 +109,8 @@ impl From<&mem_api::ProceduralConfig> for UtilityParams {
     }
 }
 
-impl From<&mem_api::ProceduralConfig> for ProceduralRewards {
-    fn from(config: &mem_api::ProceduralConfig) -> Self {
+impl From<&mem_config::ProceduralConfig> for ProceduralRewards {
+    fn from(config: &mem_config::ProceduralConfig) -> Self {
         Self {
             approved: config.reward_approved,
             edited_approved: config.reward_edited_approved,
@@ -121,8 +121,8 @@ impl From<&mem_api::ProceduralConfig> for ProceduralRewards {
     }
 }
 
-impl From<&mem_api::ProceduralConfig> for RecommendationThresholds {
-    fn from(config: &mem_api::ProceduralConfig) -> Self {
+impl From<&mem_config::ProceduralConfig> for RecommendationThresholds {
+    fn from(config: &mem_config::ProceduralConfig) -> Self {
         Self {
             min_samples: config.min_samples,
             snooze_threshold: config.snooze_threshold,

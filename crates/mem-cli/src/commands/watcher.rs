@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::{Context, Result};
-use mem_api::{AppConfig, Profile};
+use mem_config::{AppConfig, Profile};
 use mem_watch::{WatcherRunArgs, run_watcher_daemon};
 use std::{env, path::PathBuf};
 

@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use mem_api::{AppConfig, Profile, discover_global_config_path};
+use mem_config::{AppConfig, Profile, discover_global_config_path};
 use mem_platform as platform;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};

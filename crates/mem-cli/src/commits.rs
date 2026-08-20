@@ -4,7 +4,7 @@ use std::{path::Path, process::Command as ProcessCommand};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use mem_api::CommitSyncItem;
+use mem_record::CommitSyncItem;
 
 pub(crate) fn collect_git_commits(
     repo_root: &Path,

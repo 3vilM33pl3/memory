@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::{Context, Result};
-use mem_api::AppConfig;
+use mem_config::AppConfig;
 use reqwest::Client;
 
 use crate::commands::{
@@ -11,7 +11,7 @@ use crate::commands::{
 };
 
 pub(super) async fn handle(args: HistoryArgs, client: Client, config: AppConfig) -> Result<()> {
-    let payload: mem_api::MemoryHistoryResponse = get_json(
+    let payload: mem_record::MemoryHistoryResponse = get_json(
         client
             .get(service_url(
                 &config,

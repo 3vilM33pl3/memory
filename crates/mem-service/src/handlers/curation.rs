@@ -6,7 +6,7 @@ use crate::*;
 pub(crate) async fn curate_memory(
     State(state): State<AppState>,
     Json(request): Json<CurateRequest>,
-) -> Result<Json<mem_api::CurateResponse>, ApiError> {
+) -> Result<Json<mem_record::CurateResponse>, ApiError> {
     request.validate().map_err(ApiError::validation)?;
     let response = if request.dry_run {
         preview_curate(&state.pool()?, &request)
@@ -39,8 +39,8 @@ pub(crate) async fn curate_memory(
 async fn finish_curate(
     state: AppState,
     request: CurateRequest,
-    mut response: mem_api::CurateResponse,
-) -> Result<mem_api::CurateResponse, ApiError> {
+    mut response: mem_record::CurateResponse,
+) -> Result<mem_record::CurateResponse, ApiError> {
     let project = request.project.clone();
     let embedders = state.embedders.read().await;
     if !embedders.is_empty() {

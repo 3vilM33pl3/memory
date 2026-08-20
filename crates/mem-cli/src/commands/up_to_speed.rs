@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::{Context, Result};
-use mem_api::{AppConfig, UpToSpeedRequest};
+use mem_config::AppConfig;
+use mem_record::UpToSpeedRequest;
 use reqwest::Client;
 use std::env;
 

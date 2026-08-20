@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use mem_api::QueryResponse;
+use mem_record::QueryResponse;
 use mem_reinforce::{AccessBatch, AccessKind, ScoreParams};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -32,7 +32,7 @@ pub(crate) struct ReinforcementRuntime {
 /// Builds the channel pair when reinforcement is enabled. The receiver is
 /// handed to [`spawn_access_worker`] once the full `AppState` exists.
 pub(crate) fn build_runtime(
-    config: &mem_api::ReinforcementConfig,
+    config: &mem_config::ReinforcementConfig,
 ) -> Option<(ReinforcementRuntime, mpsc::Receiver<AccessBatch>)> {
     if !config.enabled {
         return None;
@@ -366,7 +366,7 @@ pub(crate) fn build_validation_prompt(context: &mem_reinforce::ValidationContext
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mem_api::{MemoryType, QueryMatchKind, QueryResult, QueryResultDebug};
+    use mem_record::{MemoryType, QueryMatchKind, QueryResult, QueryResultDebug};
 
     fn response_with_result(memory_id: Uuid) -> QueryResponse {
         QueryResponse {
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn validation_output_cap_does_not_clamp_below_default_llm_budget() {
         assert!(
-            VALIDATION_MAX_OUTPUT_TOKENS_CAP >= mem_api::LlmConfig::default().max_output_tokens
+            VALIDATION_MAX_OUTPUT_TOKENS_CAP >= mem_config::LlmConfig::default().max_output_tokens
         );
     }
 }

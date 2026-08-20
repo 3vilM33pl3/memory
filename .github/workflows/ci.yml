@@ -38,7 +38,8 @@ jobs:
             db:
               - "Cargo.toml"
               - "Cargo.lock"
-              - "crates/mem-api/**"
+              - "crates/mem-record/**"
+              - "crates/mem-config/**"
               - "crates/mem-curate/**"
               - "crates/mem-graph/**"
               - "crates/mem-search/**"
@@ -54,7 +55,8 @@ jobs:
               - "Cargo.lock"
               - "crates/mem-cli/**"
               - "crates/mem-eval/**"
-              - "crates/mem-api/**"
+              - "crates/mem-record/**"
+              - "crates/mem-config/**"
               - "evals/**"
             package:
               - "Cargo.toml"

@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::*;
-use mem_api::{
+use mem_record::{
     CodeGraphEdge, CodeGraphNode, CodeGraphResponse, CodeGraphStats, CodeGraphStatusResponse,
     CodeGraphViewFilters,
 };

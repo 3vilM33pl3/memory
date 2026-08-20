@@ -67,7 +67,7 @@ That split is what keeps the system auditable. Memory Layer does not pretend tha
 
 The repository is a Rust workspace with these crates:
 
-- `crates/mem-api`
+- `crates/mem-record` / `crates/mem-config`
   Shared DTOs, config loading, enums, and transport message types.
 - `crates/mem-cli`
   The user-facing CLI, TUI, wizard, doctor, scan flow, and repo bootstrap logic.

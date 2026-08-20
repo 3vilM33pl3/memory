@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
     if std::env::args().any(|arg| arg == "--version" || arg == "-V") {
         println!(
             "memory service {}",
-            mem_api::Profile::detect().display_version(env!("CARGO_PKG_VERSION"))
+            mem_config::Profile::detect().display_version(env!("CARGO_PKG_VERSION"))
         );
         return Ok(());
     }

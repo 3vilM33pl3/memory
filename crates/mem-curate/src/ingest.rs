@@ -6,7 +6,7 @@
 // Tests may unwrap; production code must not (workspace lints deny it).
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-use mem_api::{CaptureTaskRequest, MemoryType, SourceKind};
+use mem_record::{CaptureTaskRequest, MemoryType, SourceKind};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -469,7 +469,7 @@ mod tests {
     fn structured_plan_candidates_preserve_multiline_markdown() {
         let mut request = sample_request();
         request.notes.clear();
-        request.structured_candidates = vec![mem_api::CaptureCandidateInput {
+        request.structured_candidates = vec![mem_record::CaptureCandidateInput {
             canonical_text: "# Plan\n\n- Step one\n- Step two\n".to_string(),
             summary: "Approved plan".to_string(),
             memory_type: MemoryType::Plan,
@@ -492,7 +492,7 @@ mod tests {
     fn structured_documentation_candidates_preserve_multiline_markdown() {
         let mut request = sample_request();
         request.notes.clear();
-        request.structured_candidates = vec![mem_api::CaptureCandidateInput {
+        request.structured_candidates = vec![mem_record::CaptureCandidateInput {
             canonical_text: "# Quickstart\n\n- Install PostgreSQL\n- Run setup\n".to_string(),
             summary: "Document quickstart".to_string(),
             memory_type: MemoryType::Documentation,
@@ -530,7 +530,7 @@ mod tests {
         request.task_title = "Finish implementation".to_string();
         request.agent_summary = "Implemented the manager status footer".to_string();
         request.notes = vec!["Fixed stale manager footer status bug".to_string()];
-        request.structured_candidates = vec![mem_api::CaptureCandidateInput {
+        request.structured_candidates = vec![mem_record::CaptureCandidateInput {
             canonical_text: "Implemented the manager status footer.".to_string(),
             summary: "Implemented manager footer".to_string(),
             memory_type: MemoryType::Implementation,

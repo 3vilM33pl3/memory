@@ -5,9 +5,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use mem_api::{
-    AppConfig, CaptureCandidateInput, CaptureCandidateSourceInput, CaptureTaskRequest,
-    CurateRequest, MemoryType, SourceKind,
+use mem_config::AppConfig;
+use mem_record::{
+    CaptureCandidateInput, CaptureCandidateSourceInput, CaptureTaskRequest, CurateRequest,
+    MemoryType, SourceKind,
 };
 use reqwest::Client;
 
@@ -141,7 +142,7 @@ pub(super) async fn handle(
             let body = response.text().await.unwrap_or_default();
             anyhow::bail!("ingest capture failed ({status}): {body}");
         }
-        let response: mem_api::CaptureTaskResponse = response
+        let response: mem_record::CaptureTaskResponse = response
             .json()
             .await
             .context("parse ingest capture response")?;

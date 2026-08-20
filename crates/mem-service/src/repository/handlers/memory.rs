@@ -102,8 +102,8 @@ pub async fn fetch_memory_entry(
         importance: row.try_get("importance")?,
         confidence: row.try_get("confidence")?,
         status: match row.try_get::<String, _>("status")?.as_str() {
-            "archived" => mem_api::MemoryStatus::Archived,
-            _ => mem_api::MemoryStatus::Active,
+            "archived" => mem_record::MemoryStatus::Archived,
+            _ => mem_record::MemoryStatus::Active,
         },
         tags,
         sources,
@@ -144,7 +144,7 @@ pub(crate) fn parse_source_provenance_status(value: &str) -> SourceProvenanceSta
 pub(crate) async fn fetch_memory_embedding_spaces(
     pool: &PgPool,
     memory_id: Uuid,
-) -> Result<Vec<mem_api::MemoryEmbeddingSpace>, sqlx::Error> {
+) -> Result<Vec<mem_record::MemoryEmbeddingSpace>, sqlx::Error> {
     let rows = sqlx::query(
         r#"
         SELECT mce.embedding_provider,
@@ -167,7 +167,7 @@ pub(crate) async fn fetch_memory_embedding_spaces(
 
     rows.into_iter()
         .map(|row| {
-            Ok(mem_api::MemoryEmbeddingSpace {
+            Ok(mem_record::MemoryEmbeddingSpace {
                 provider: row.try_get("embedding_provider")?,
                 model: row.try_get("embedding_model")?,
                 base_url: row.try_get("embedding_base_url")?,

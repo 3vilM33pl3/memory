@@ -13,10 +13,11 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use mem_api::{
-    AppConfig, AutomationConfig, AutomationMode, AutomationStatus, CaptureTaskRequest,
-    CurateRequest, CurateResponse, ProjectOverviewResponse, TestResult, WatcherHeartbeatRequest,
-    WatcherPresenceSummary, WatcherUnregisterRequest, load_repo_replacement_policy,
+use mem_config::{AppConfig, AutomationConfig, load_repo_replacement_policy};
+use mem_record::{
+    AutomationMode, AutomationStatus, CaptureTaskRequest, CurateRequest, CurateResponse,
+    ProjectOverviewResponse, TestResult, WatcherHeartbeatRequest, WatcherPresenceSummary,
+    WatcherUnregisterRequest,
 };
 use reqwest::{Client, header::HeaderMap};
 use serde::{Deserialize, Serialize};
@@ -80,7 +81,7 @@ impl AutomationState {
 }
 
 pub fn default_runtime_dir(repo_root: &Path) -> PathBuf {
-    mem_api::project_paths_for_repo(repo_root)
+    mem_config::project_paths_for_repo(repo_root)
         .map(|paths| paths.runtime_dir())
         .unwrap_or_else(|| repo_root.join(".memory-layer"))
 }
@@ -926,34 +927,34 @@ mod tests {
 
     fn test_app_config() -> AppConfig {
         AppConfig {
-            service: mem_api::ServiceConfig {
+            service: mem_config::ServiceConfig {
                 bind_addr: "127.0.0.1:4040".to_string(),
                 web_root: None,
                 api_token: "ml_testtoken".to_string(),
                 request_timeout: std::time::Duration::from_secs(30),
                 read_only: false,
             },
-            auth: mem_api::AuthConfig::default(),
-            mcp: mem_api::McpConfig::default(),
-            database: mem_api::DatabaseConfig {
+            auth: mem_config::AuthConfig::default(),
+            mcp: mem_config::McpConfig::default(),
+            database: mem_config::DatabaseConfig {
                 url: "postgresql://memory:test@localhost:5432/memory".to_string(),
             },
-            offline: mem_api::OfflineConfig::default(),
-            features: mem_api::FeatureFlags::default(),
-            llm: mem_api::LlmConfig::default(),
-            llm_audit: mem_api::LlmAuditConfig::default(),
-            embeddings: mem_api::EmbeddingsConfig::default(),
-            cluster: mem_api::ClusterConfig::default(),
-            writer: mem_api::WriterConfig::default(),
-            automation: mem_api::AutomationConfig::default(),
-            retention: mem_api::RetentionConfig::default(),
-            provenance: mem_api::ProvenanceConfig::default(),
-            reinforcement: mem_api::ReinforcementConfig::default(),
-            curation: mem_api::CurationConfig::default(),
-            consolidation: mem_api::ConsolidationConfig::default(),
-            procedural: mem_api::ProceduralConfig::default(),
-            telemetry: mem_api::TelemetryConfig::default(),
-            profile: mem_api::Profile::Prod,
+            offline: mem_config::OfflineConfig::default(),
+            features: mem_config::FeatureFlags::default(),
+            llm: mem_config::LlmConfig::default(),
+            llm_audit: mem_config::LlmAuditConfig::default(),
+            embeddings: mem_config::EmbeddingsConfig::default(),
+            cluster: mem_config::ClusterConfig::default(),
+            writer: mem_config::WriterConfig::default(),
+            automation: mem_config::AutomationConfig::default(),
+            retention: mem_config::RetentionConfig::default(),
+            provenance: mem_config::ProvenanceConfig::default(),
+            reinforcement: mem_config::ReinforcementConfig::default(),
+            curation: mem_config::CurationConfig::default(),
+            consolidation: mem_config::ConsolidationConfig::default(),
+            procedural: mem_config::ProceduralConfig::default(),
+            telemetry: mem_config::TelemetryConfig::default(),
+            profile: mem_config::Profile::Prod,
             resolved_config_path: None,
             resolved_dev_overlay_path: None,
         }

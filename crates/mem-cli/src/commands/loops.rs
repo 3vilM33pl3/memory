@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use mem_api::{
+use mem_record::{
     LoopApprovalDecisionRequest, LoopApprovalStatus, LoopCancelRequest, LoopContextPackResponse,
     LoopFeedbackRequest, LoopGlobalStateUpdateRequest, LoopMemoryProposalCreateRequest,
     LoopMemoryProposalDecisionRequest, LoopMode, LoopRunRequest, LoopRunStatus, LoopScopeType,
@@ -344,7 +344,7 @@ pub(super) async fn handle(args: LoopsArgs, api: &ApiClient) -> Result<()> {
     Ok(())
 }
 
-async fn run_loop(api: &ApiClient, args: LoopRunArgs) -> Result<mem_api::LoopRunResponse> {
+async fn run_loop(api: &ApiClient, args: LoopRunArgs) -> Result<mem_record::LoopRunResponse> {
     let repo_root = args
         .repo_root
         .as_ref()
@@ -482,7 +482,7 @@ fn print_setting_response(
     Ok(())
 }
 
-fn print_loop_definitions(response: &mem_api::LoopDefinitionsResponse) {
+fn print_loop_definitions(response: &mem_record::LoopDefinitionsResponse) {
     if response.definitions.is_empty() {
         println!("No loop definitions registered.");
         return;
@@ -514,7 +514,7 @@ fn print_loop_definitions(response: &mem_api::LoopDefinitionsResponse) {
     }
 }
 
-fn print_loop_definition(response: &mem_api::LoopDefinitionResponse) {
+fn print_loop_definition(response: &mem_record::LoopDefinitionResponse) {
     let definition = &response.definition;
     println!("Loop: {} v{}", definition.loop_id, definition.version);
     println!("Name: {}", definition.name);
@@ -533,7 +533,7 @@ fn print_loop_definition(response: &mem_api::LoopDefinitionResponse) {
     }
 }
 
-fn print_loop_runs(response: &mem_api::LoopRunsResponse) {
+fn print_loop_runs(response: &mem_record::LoopRunsResponse) {
     if response.runs.is_empty() {
         println!("No loop runs found.");
         return;
@@ -558,7 +558,7 @@ fn print_loop_runs(response: &mem_api::LoopRunsResponse) {
     }
 }
 
-fn print_loop_run(response: &mem_api::LoopRunResponse, include_traces: bool) {
+fn print_loop_run(response: &mem_record::LoopRunResponse, include_traces: bool) {
     let run = &response.run.summary;
     println!("Run: {}", run.id);
     println!("Loop: {} v{}", run.loop_id, run.definition_version);
@@ -653,7 +653,7 @@ fn print_context_pack(response: &LoopContextPackResponse) {
     }
 }
 
-fn print_loop_approvals(response: &mem_api::LoopApprovalsResponse) {
+fn print_loop_approvals(response: &mem_record::LoopApprovalsResponse) {
     if response.approvals.is_empty() {
         println!("No loop approvals found.");
         return;
@@ -684,7 +684,7 @@ fn print_loop_approvals(response: &mem_api::LoopApprovalsResponse) {
     }
 }
 
-fn print_loop_memory_proposals(response: &mem_api::LoopMemoryProposalsResponse) {
+fn print_loop_memory_proposals(response: &mem_record::LoopMemoryProposalsResponse) {
     if response.proposals.is_empty() {
         println!("No loop memory proposals found.");
         return;
@@ -717,7 +717,7 @@ fn print_loop_memory_proposals(response: &mem_api::LoopMemoryProposalsResponse) 
 
 fn print_memory_proposal_decision(
     action: &str,
-    response: &mem_api::LoopMemoryProposalDecisionResponse,
+    response: &mem_record::LoopMemoryProposalDecisionResponse,
 ) {
     println!(
         "{} memory proposal {} [{}].",
@@ -732,7 +732,7 @@ fn print_memory_proposal_decision(
     }
 }
 
-fn print_global_state(response: &mem_api::LoopGlobalStateResponse) {
+fn print_global_state(response: &mem_record::LoopGlobalStateResponse) {
     println!(
         "Global kill switch: {}",
         if response.kill_switch_enabled {

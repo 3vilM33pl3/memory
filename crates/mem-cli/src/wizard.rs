@@ -12,10 +12,9 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use mem_api::{
-    AppConfig, AutomationMode, Profile, discover_global_config_path, read_repo_project_slug,
-};
+use mem_config::{AppConfig, Profile, discover_global_config_path, read_repo_project_slug};
 use mem_platform as platform;
+use mem_record::AutomationMode;
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
@@ -329,7 +328,7 @@ impl WizardDraft {
                 .unwrap_or_else(|| "openai_compatible".to_string()),
             llm_base_url: global_config
                 .as_ref()
-                .map(|config| mem_api::effective_llm_base_url(&config.llm))
+                .map(|config| mem_config::effective_llm_base_url(&config.llm))
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             llm_api_key_env,
             llm_model_choice: LlmModelChoice::from_model(&llm_model),
@@ -791,7 +790,7 @@ impl WizardApp {
                 if self.draft.llm_provider.trim() == "ollama"
                     && self.draft.llm_base_url.trim().is_empty()
                 {
-                    self.draft.llm_base_url = mem_api::OLLAMA_BASE_URL.to_string();
+                    self.draft.llm_base_url = mem_config::OLLAMA_BASE_URL.to_string();
                 }
             }
             FieldKey::LlmBaseUrl => self.draft.llm_base_url = value,
@@ -2177,7 +2176,8 @@ mod tests {
         FieldKey, Step, WizardDraft, default_include_global, ensure_runnable_profile,
         field_description, field_label, next_step, read_project_slug, render_global_config,
     };
-    use mem_api::{AutomationMode, Profile};
+    use mem_config::Profile;
+    use mem_record::AutomationMode;
 
     #[test]
     fn ensure_runnable_profile_allows_prod() {

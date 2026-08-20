@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::{Context, Result};
-use mem_api::{AppConfig, ResumeRequest};
+use mem_config::AppConfig;
+use mem_record::ResumeRequest;
 use reqwest::Client;
 use std::env;
 

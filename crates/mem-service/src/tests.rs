@@ -2,7 +2,7 @@
 
 use crate::prelude::*;
 use crate::*;
-use mem_api::AutomationMode;
+use mem_record::AutomationMode;
 
 #[test]
 fn llm_audit_redacts_common_secret_shapes() {
@@ -321,13 +321,13 @@ fn reinforcement_batch_upgrades_citations_and_skips_empty_responses() {
         vec![(retrieved, mem_reinforce::AccessKind::Retrieval)]
     );
 
-    response.answer_citations = vec![mem_api::QueryAnswerCitation {
+    response.answer_citations = vec![mem_record::QueryAnswerCitation {
         result_number: 1,
         memory_id: retrieved,
         project: None,
         project_name: None,
         repo_root: None,
-        memory_type: mem_api::MemoryType::Architecture,
+        memory_type: mem_record::MemoryType::Architecture,
         summary: "Primary memory".to_string(),
         snippet: "Primary evidence snippet".to_string(),
     }];
@@ -348,18 +348,18 @@ fn test_query_response() -> QueryResponse {
     QueryResponse {
         answer: "fallback answer".to_string(),
         confidence: 0.5,
-        results: vec![mem_api::QueryResult {
+        results: vec![mem_record::QueryResult {
             memory_id: uuid::Uuid::new_v4(),
             project: None,
             project_name: None,
             repo_root: None,
             summary: "Primary memory".to_string(),
-            memory_type: mem_api::MemoryType::Architecture,
+            memory_type: mem_record::MemoryType::Architecture,
             score: 12.0,
             snippet: "Primary evidence snippet".to_string(),
-            match_kind: mem_api::QueryMatchKind::Hybrid,
+            match_kind: mem_record::QueryMatchKind::Hybrid,
             score_explanation: Vec::new(),
-            debug: mem_api::QueryResultDebug::default(),
+            debug: mem_record::QueryResultDebug::default(),
             tags: Vec::new(),
             sources: Vec::new(),
             graph_connections: Vec::new(),
@@ -368,7 +368,7 @@ fn test_query_response() -> QueryResponse {
         insufficient_evidence: false,
         answer_generation: QueryAnswerGeneration::default(),
         answer_citations: Vec::new(),
-        diagnostics: mem_api::QueryDiagnostics::default(),
+        diagnostics: mem_record::QueryDiagnostics::default(),
     }
 }
 
@@ -715,7 +715,7 @@ fn llm_query_answer_content_rejects_unavailable_citation() {
 #[test]
 fn query_answer_prompt_includes_graph_connections() {
     let mut response = test_query_response();
-    response.results[0].graph_connections = vec![mem_api::QueryGraphConnection {
+    response.results[0].graph_connections = vec![mem_record::QueryGraphConnection {
         file_path: "src/lib.rs".to_string(),
         symbol: Some("GraphTarget".to_string()),
         symbol_kind: Some("function".to_string()),
@@ -756,7 +756,7 @@ fn query_activity_details_include_graph_diagnostics() {
     response.diagnostics.total_duration_ms = 91;
     response.results[0].debug.graph_boost = 1.25;
     response.results[0].graph_connections = vec![
-        mem_api::QueryGraphConnection {
+        mem_record::QueryGraphConnection {
             file_path: "src/lib.rs".to_string(),
             symbol: Some("GraphTarget".to_string()),
             symbol_kind: Some("function".to_string()),
@@ -766,7 +766,7 @@ fn query_activity_details_include_graph_diagnostics() {
             score_boost: 1.25,
             reason: "code symbol match".to_string(),
         },
-        mem_api::QueryGraphConnection {
+        mem_record::QueryGraphConnection {
             file_path: "src/other.rs".to_string(),
             symbol: Some("OtherTarget".to_string()),
             symbol_kind: Some("struct".to_string()),

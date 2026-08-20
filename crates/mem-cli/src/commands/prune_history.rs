@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::{Context, Result};
-use mem_api::AppConfig;
+use mem_config::AppConfig;
 use reqwest::Client;
 
 use crate::commands::{
@@ -15,13 +15,13 @@ pub(super) async fn handle(
     client: Client,
     config: AppConfig,
 ) -> Result<()> {
-    let request = mem_api::PruneHistoryRequest {
+    let request = mem_record::PruneHistoryRequest {
         project: args.project,
         tombstone_after: args.tombstone_after,
         superseded_after: args.superseded_after,
         dry_run: args.dry_run,
     };
-    let payload: mem_api::PruneHistoryResponse = get_json(
+    let payload: mem_record::PruneHistoryResponse = get_json(
         client
             .post(service_url(&config, "/v1/prune-history"))
             .headers(write_headers(&config)?)

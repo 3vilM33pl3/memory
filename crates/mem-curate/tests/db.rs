@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use mem_api::{
+use mem_curate::{curate, preview_curate, refresh_semantic_relations, store_capture};
+use mem_record::{
     CaptureCandidateInput, CaptureCandidateSourceInput, CaptureTaskRequest, CurateRequest,
     MemoryType, ReplacementPolicy, SourceKind,
 };
-use mem_curate::{curate, preview_curate, refresh_semantic_relations, store_capture};
 use sqlx::Row;
 use uuid::Uuid;
 

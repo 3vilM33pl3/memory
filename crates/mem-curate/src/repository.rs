@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use crate::ingest::{CandidateAssertion, extract_candidates, idempotency_key};
-use mem_api::{
+use mem_record::{
     AppliedMemoryReplacement, CaptureTaskResponse, CurateRequest, CurateResponse,
     MemoryRelationType, ReplacementPolicy, ReplacementProposalListResponse,
     ReplacementProposalRecord, ReplacementProposalResolutionResponse,
@@ -9,7 +9,7 @@ use mem_api::{
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use mem_api::CaptureTaskRequest;
+use mem_record::CaptureTaskRequest;
 
 pub async fn store_capture(
     pool: &PgPool,
@@ -398,7 +398,7 @@ async fn determine_replacement_decision(
     candidate: &CandidateAssertion,
     policy: ReplacementPolicy,
 ) -> Result<ReplacementDecision, sqlx::Error> {
-    if candidate.memory_type == mem_api::MemoryType::Plan
+    if candidate.memory_type == mem_record::MemoryType::Plan
         && let Some(thread_tag) = plan_thread_tag(candidate)
         && let Some(target) =
             load_existing_plan_for_thread(tx, project_id, thread_tag, candidate).await?
@@ -429,7 +429,7 @@ async fn determine_replacement_decision(
         .iter()
         .any(|reason| reason == "explicit update language");
 
-    let auto = if candidate.memory_type == mem_api::MemoryType::Refactor {
+    let auto = if candidate.memory_type == mem_record::MemoryType::Refactor {
         best.score >= 8 && margin >= 2
     } else {
         match policy {
@@ -589,15 +589,15 @@ async fn load_candidate_replacement_targets(
 }
 
 fn replacement_target_types(candidate: &CandidateAssertion) -> Vec<String> {
-    if candidate.memory_type == mem_api::MemoryType::Refactor {
+    if candidate.memory_type == mem_record::MemoryType::Refactor {
         return vec![
-            mem_api::MemoryType::Refactor.to_string(),
-            mem_api::MemoryType::Implementation.to_string(),
-            mem_api::MemoryType::Architecture.to_string(),
-            mem_api::MemoryType::Convention.to_string(),
-            mem_api::MemoryType::Documentation.to_string(),
-            mem_api::MemoryType::Debugging.to_string(),
-            mem_api::MemoryType::Environment.to_string(),
+            mem_record::MemoryType::Refactor.to_string(),
+            mem_record::MemoryType::Implementation.to_string(),
+            mem_record::MemoryType::Architecture.to_string(),
+            mem_record::MemoryType::Convention.to_string(),
+            mem_record::MemoryType::Documentation.to_string(),
+            mem_record::MemoryType::Debugging.to_string(),
+            mem_record::MemoryType::Environment.to_string(),
         ];
     }
     vec![candidate.memory_type.to_string()]
@@ -1017,13 +1017,13 @@ trait SourceKindSql {
 impl SourceKindSql for crate::ingest::CandidateSource {
     fn source_kind_to_string(&self) -> String {
         match self.source_kind {
-            mem_api::SourceKind::TaskPrompt => "task_prompt",
-            mem_api::SourceKind::File => "file",
-            mem_api::SourceKind::GitCommit => "git_commit",
-            mem_api::SourceKind::CommandOutput => "command_output",
-            mem_api::SourceKind::Test => "test",
-            mem_api::SourceKind::Note => "note",
-            mem_api::SourceKind::Memory => "memory",
+            mem_record::SourceKind::TaskPrompt => "task_prompt",
+            mem_record::SourceKind::File => "file",
+            mem_record::SourceKind::GitCommit => "git_commit",
+            mem_record::SourceKind::CommandOutput => "command_output",
+            mem_record::SourceKind::Test => "test",
+            mem_record::SourceKind::Note => "note",
+            mem_record::SourceKind::Memory => "memory",
         }
         .to_string()
     }
@@ -1197,7 +1197,7 @@ fn classify_relation(current: &MemoryProfile, other: &MemoryProfile) -> Option<M
         return Some(MemoryRelationType::Duplicates);
     }
 
-    if current.memory_type == mem_api::MemoryType::Refactor.to_string()
+    if current.memory_type == mem_record::MemoryType::Refactor.to_string()
         && is_refactor_affected_target(current, other, similarity, shared_tags, shared_files)
     {
         return Some(MemoryRelationType::Supersedes);
@@ -1235,7 +1235,7 @@ fn score_replacement_candidate(
     }
     let same_type = target.memory_type == candidate.memory_type.to_string();
     let refactor_target =
-        candidate.memory_type == mem_api::MemoryType::Refactor && refactor_can_affect(&target);
+        candidate.memory_type == mem_record::MemoryType::Refactor && refactor_can_affect(&target);
     if !same_type && !refactor_target {
         return None;
     }
@@ -1326,7 +1326,7 @@ fn refactor_can_affect(target: &MemoryProfile) -> bool {
 }
 
 fn is_refactor_candidate_text(candidate: &CandidateAssertion) -> bool {
-    candidate.memory_type == mem_api::MemoryType::Refactor
+    candidate.memory_type == mem_record::MemoryType::Refactor
         || has_refactor_language(&candidate.summary)
         || has_refactor_language(&candidate.canonical_text)
 }
@@ -1678,7 +1678,7 @@ mod tests {
             canonical_text: "Refactored query ranking helpers with no functional change."
                 .to_string(),
             summary: "Refactored query ranking helpers".to_string(),
-            memory_type: mem_api::MemoryType::Refactor,
+            memory_type: mem_record::MemoryType::Refactor,
             confidence: 0.9,
             importance: 3,
             tags: vec!["search".to_string(), "refactor".to_string()],
@@ -1686,7 +1686,7 @@ mod tests {
                 file_path: Some("crates/mem-search/src/lib.rs".to_string()),
                 symbol_name: None,
                 symbol_kind: None,
-                source_kind: mem_api::SourceKind::File,
+                source_kind: mem_record::SourceKind::File,
                 excerpt: None,
             }],
         }
@@ -1774,7 +1774,7 @@ mod tests {
         let candidate = CandidateAssertion {
             canonical_text: "Approved plan".to_string(),
             summary: "Approved plan".to_string(),
-            memory_type: mem_api::MemoryType::Plan,
+            memory_type: mem_record::MemoryType::Plan,
             confidence: 0.95,
             importance: 4,
             tags: vec![

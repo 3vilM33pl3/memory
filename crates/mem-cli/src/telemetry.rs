@@ -10,7 +10,7 @@
 use std::fs;
 use std::time::Duration;
 
-use mem_api::AppConfig;
+use mem_config::AppConfig;
 use mem_platform::preferred_user_state_dir;
 
 const SEND_TIMEOUT: Duration = Duration::from_secs(3);

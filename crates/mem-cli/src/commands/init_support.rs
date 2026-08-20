@@ -7,7 +7,8 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use mem_api::{ReplacementPolicy, load_repo_replacement_policy};
+use mem_config::load_repo_replacement_policy;
+use mem_record::ReplacementPolicy;
 
 use crate::commands::{
     runtime::DevInitArgs,
@@ -131,7 +132,7 @@ pub(in crate::commands) fn initialize_dev_overlay(
     repo_root: &Path,
     args: &DevInitArgs,
 ) -> Result<String> {
-    let project = mem_api::project_slug_for_repo(repo_root);
+    let project = mem_config::project_slug_for_repo(repo_root);
     let project_paths = mem_platform::project_paths(repo_root, &project)
         .ok_or_else(|| anyhow::anyhow!("could not resolve user project config paths"))?;
     let base_config_path = project_paths.config_path();
@@ -210,7 +211,7 @@ pub(in crate::commands) fn initialize_dev_overlay(
 const SHARED_GLOBAL_SECTIONS: &[&str] = &["database", "llm", "embeddings", "features", "writer"];
 
 fn resolve_shared_global_snippet(args: &DevInitArgs) -> Result<String> {
-    let Some(global_path) = mem_api::discover_global_config_path() else {
+    let Some(global_path) = mem_config::discover_global_config_path() else {
         if args.copy_from_global {
             anyhow::bail!(
                 "--copy-from-global was set but no global config was found \

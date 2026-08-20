@@ -52,8 +52,8 @@ impl Default for ScoreParams {
     }
 }
 
-impl From<&mem_api::ReinforcementConfig> for ScoreParams {
-    fn from(config: &mem_api::ReinforcementConfig) -> Self {
+impl From<&mem_config::ReinforcementConfig> for ScoreParams {
+    fn from(config: &mem_config::ReinforcementConfig) -> Self {
         Self {
             half_life: Duration::from_std(config.half_life).unwrap_or_else(|_| Duration::days(30)),
             direct_boost: config.direct_access_boost,

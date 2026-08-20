@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use axum::http::{HeaderMap, header};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
-use mem_api::{
+use mem_record::{
     AuthMembershipGrantRequest, AuthMembershipResponse, AuthMode, AuthPrincipalKind,
     AuthPrincipalResponse, AuthProjectAccess, AuthRole, AuthServiceTokenCreateRequest,
     AuthServiceTokenResponse,
@@ -381,17 +381,17 @@ pub(crate) async fn create_service_token(
     let name = request.name.trim();
     let project = request.project.trim();
     if name.is_empty() {
-        return Err(ApiError::validation(mem_api::ValidationError::new(
+        return Err(ApiError::validation(mem_record::ValidationError::new(
             "token name must be non-empty",
         )));
     }
     if project.is_empty() {
-        return Err(ApiError::validation(mem_api::ValidationError::new(
+        return Err(ApiError::validation(mem_record::ValidationError::new(
             "project must be non-empty",
         )));
     }
     if request.role == AuthRole::Admin {
-        return Err(ApiError::validation(mem_api::ValidationError::new(
+        return Err(ApiError::validation(mem_record::ValidationError::new(
             "service tokens cannot receive the admin role",
         )));
     }
@@ -399,12 +399,12 @@ pub(crate) async fn create_service_token(
         .expires_in_seconds
         .map(|seconds| {
             if seconds == 0 || seconds > 366 * 24 * 60 * 60 {
-                return Err(ApiError::validation(mem_api::ValidationError::new(
+                return Err(ApiError::validation(mem_record::ValidationError::new(
                     "token ttl must be between 1 second and 366 days",
                 )));
             }
             let seconds = i64::try_from(seconds).map_err(|_| {
-                ApiError::validation(mem_api::ValidationError::new("token ttl is too large"))
+                ApiError::validation(mem_record::ValidationError::new("token ttl is too large"))
             })?;
             Ok(Utc::now() + Duration::seconds(seconds))
         })
@@ -539,7 +539,7 @@ pub(crate) async fn revoke_service_token(
 ) -> Result<AuthServiceTokenResponse, ApiError> {
     let selector = selector.trim();
     if selector.is_empty() {
-        return Err(ApiError::validation(mem_api::ValidationError::new(
+        return Err(ApiError::validation(mem_record::ValidationError::new(
             "token id or prefix must be non-empty",
         )));
     }
@@ -610,7 +610,7 @@ pub(crate) async fn grant_membership(
 ) -> Result<AuthMembershipResponse, ApiError> {
     let project = request.project.trim();
     if project.is_empty() {
-        return Err(ApiError::validation(mem_api::ValidationError::new(
+        return Err(ApiError::validation(mem_record::ValidationError::new(
             "project must be non-empty",
         )));
     }
@@ -623,7 +623,7 @@ pub(crate) async fn grant_membership(
         .try_get("kind")
         .map_err(ApiError::sql)?;
     if principal_kind == "service_token" && request.role == AuthRole::Admin {
-        return Err(ApiError::validation(mem_api::ValidationError::new(
+        return Err(ApiError::validation(mem_record::ValidationError::new(
             "service principals cannot receive the admin role",
         )));
     }

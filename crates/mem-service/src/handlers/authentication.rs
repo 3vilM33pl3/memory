@@ -6,7 +6,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
 };
-use mem_api::{
+use mem_record::{
     AuthMeResponse, AuthMembershipGrantRequest, AuthMembershipResponse, AuthPrincipalResponse,
     AuthServiceTokenCreateRequest, AuthServiceTokenResponse,
 };

@@ -8,8 +8,8 @@ pub(crate) async fn capture_task(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Json(mut request): Json<CaptureTaskRequest>,
-) -> Result<Json<mem_api::CaptureTaskResponse>, ApiError> {
-    if state.config.auth.mode == mem_api::AuthMode::MultiUser {
+) -> Result<Json<mem_record::CaptureTaskResponse>, ApiError> {
+    if state.config.auth.mode == mem_record::AuthMode::MultiUser {
         request.writer_id = principal.id.to_string();
         request.writer_name = Some(principal.display_name.clone());
     }
@@ -57,7 +57,7 @@ pub(crate) async fn capture_task(
 async fn queue_capture_offline(
     state: &AppState,
     request: &CaptureTaskRequest,
-) -> Result<mem_api::CaptureTaskResponse, ApiError> {
+) -> Result<mem_record::CaptureTaskResponse, ApiError> {
     if request.dry_run {
         return Err(ApiError::service_unavailable(
             "dry-run capture requires PostgreSQL; service is in offline degraded mode",

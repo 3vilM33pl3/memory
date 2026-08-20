@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::path::{Component, Path};
 
 use anyhow::{Context, Result};
-use mem_api::ValidationProofScope;
+use mem_record::ValidationProofScope;
 use sqlx::PgPool;
 use uuid::Uuid;
 

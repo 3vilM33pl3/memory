@@ -4,10 +4,11 @@ use crate::{resume, scan};
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use mem_api::{
-    ActivityListResponse, AppConfig, CommitDetailResponse, CommitSyncResponse,
-    GraphActivityRequest, ProjectCommitsResponse, ProjectMemoryImportPreview,
-    ProjectMemoryImportResponse, ResumeResponse, UpToSpeedResponse,
+use mem_config::AppConfig;
+use mem_record::{
+    ActivityListResponse, CommitDetailResponse, CommitSyncResponse, GraphActivityRequest,
+    ProjectCommitsResponse, ProjectMemoryImportPreview, ProjectMemoryImportResponse,
+    ResumeResponse, UpToSpeedResponse,
 };
 use reqwest::header::HeaderMap;
 use sqlx::postgres::PgPoolOptions;
@@ -39,9 +40,9 @@ pub(crate) fn print_activities_response(response: &ActivityListResponse) {
     }
 }
 
-pub(crate) fn activity_graph_suffix(event: &mem_api::ActivityEvent) -> String {
+pub(crate) fn activity_graph_suffix(event: &mem_record::ActivityEvent) -> String {
     match &event.details {
-        Some(mem_api::ActivityDetails::Query {
+        Some(mem_record::ActivityDetails::Query {
             graph_status: Some(status),
             graph_candidates,
             graph_augmented_candidates,
@@ -72,29 +73,29 @@ pub(crate) fn print_up_to_speed_response(response: &UpToSpeedResponse) {
     }
 }
 
-pub(crate) fn activity_kind_text(kind: &mem_api::ActivityKind) -> &'static str {
+pub(crate) fn activity_kind_text(kind: &mem_record::ActivityKind) -> &'static str {
     match kind {
-        mem_api::ActivityKind::Checkpoint => "checkpoint",
-        mem_api::ActivityKind::Scan => "scan",
-        mem_api::ActivityKind::Plan => "plan",
-        mem_api::ActivityKind::CommitSync => "commit_sync",
-        mem_api::ActivityKind::BundleExport => "bundle_export",
-        mem_api::ActivityKind::BundleImport => "bundle_import",
-        mem_api::ActivityKind::GraphExtract => "graph_extract",
-        mem_api::ActivityKind::Query => "query",
-        mem_api::ActivityKind::QueryError => "query_error",
-        mem_api::ActivityKind::WatcherHealth => "watcher_health",
-        mem_api::ActivityKind::MemoryReplacement => "replacement",
-        mem_api::ActivityKind::CaptureTask => "capture",
-        mem_api::ActivityKind::Curate => "curate",
-        mem_api::ActivityKind::Reindex => "reindex",
-        mem_api::ActivityKind::Reembed => "reembed",
-        mem_api::ActivityKind::Archive => "archive",
-        mem_api::ActivityKind::DeleteMemory => "delete",
-        mem_api::ActivityKind::Briefing => "briefing",
-        mem_api::ActivityKind::Diagnostic => "diagnostic",
-        mem_api::ActivityKind::LlmAudit => "llm_audit",
-        mem_api::ActivityKind::MemoryValidation => "memory_validation",
+        mem_record::ActivityKind::Checkpoint => "checkpoint",
+        mem_record::ActivityKind::Scan => "scan",
+        mem_record::ActivityKind::Plan => "plan",
+        mem_record::ActivityKind::CommitSync => "commit_sync",
+        mem_record::ActivityKind::BundleExport => "bundle_export",
+        mem_record::ActivityKind::BundleImport => "bundle_import",
+        mem_record::ActivityKind::GraphExtract => "graph_extract",
+        mem_record::ActivityKind::Query => "query",
+        mem_record::ActivityKind::QueryError => "query_error",
+        mem_record::ActivityKind::WatcherHealth => "watcher_health",
+        mem_record::ActivityKind::MemoryReplacement => "replacement",
+        mem_record::ActivityKind::CaptureTask => "capture",
+        mem_record::ActivityKind::Curate => "curate",
+        mem_record::ActivityKind::Reindex => "reindex",
+        mem_record::ActivityKind::Reembed => "reembed",
+        mem_record::ActivityKind::Archive => "archive",
+        mem_record::ActivityKind::DeleteMemory => "delete",
+        mem_record::ActivityKind::Briefing => "briefing",
+        mem_record::ActivityKind::Diagnostic => "diagnostic",
+        mem_record::ActivityKind::LlmAudit => "llm_audit",
+        mem_record::ActivityKind::MemoryValidation => "memory_validation",
     }
 }
 
@@ -612,20 +613,20 @@ pub(crate) fn print_commit_detail(response: &CommitDetailResponse) {
     }
 }
 
-pub(crate) fn parse_memory_type(input: String) -> Result<mem_api::MemoryType> {
+pub(crate) fn parse_memory_type(input: String) -> Result<mem_record::MemoryType> {
     match input.as_str() {
-        "architecture" => Ok(mem_api::MemoryType::Architecture),
-        "convention" => Ok(mem_api::MemoryType::Convention),
-        "decision" => Ok(mem_api::MemoryType::Decision),
-        "incident" => Ok(mem_api::MemoryType::Incident),
-        "debugging" => Ok(mem_api::MemoryType::Debugging),
-        "environment" => Ok(mem_api::MemoryType::Environment),
-        "domain_fact" => Ok(mem_api::MemoryType::DomainFact),
-        "documentation" => Ok(mem_api::MemoryType::Documentation),
-        "task" => Ok(mem_api::MemoryType::Task),
-        "plan" => Ok(mem_api::MemoryType::Plan),
-        "implementation" => Ok(mem_api::MemoryType::Implementation),
-        "refactor" => Ok(mem_api::MemoryType::Refactor),
+        "architecture" => Ok(mem_record::MemoryType::Architecture),
+        "convention" => Ok(mem_record::MemoryType::Convention),
+        "decision" => Ok(mem_record::MemoryType::Decision),
+        "incident" => Ok(mem_record::MemoryType::Incident),
+        "debugging" => Ok(mem_record::MemoryType::Debugging),
+        "environment" => Ok(mem_record::MemoryType::Environment),
+        "domain_fact" => Ok(mem_record::MemoryType::DomainFact),
+        "documentation" => Ok(mem_record::MemoryType::Documentation),
+        "task" => Ok(mem_record::MemoryType::Task),
+        "plan" => Ok(mem_record::MemoryType::Plan),
+        "implementation" => Ok(mem_record::MemoryType::Implementation),
+        "refactor" => Ok(mem_record::MemoryType::Refactor),
         _ => anyhow::bail!("unknown memory type: {input}"),
     }
 }

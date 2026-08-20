@@ -5,7 +5,7 @@
 //! deterministic consolidation scan discovers right now.
 
 use anyhow::Result;
-use mem_api::{ProjectStructureResponse, StructureInsightNode};
+use mem_record::{ProjectStructureResponse, StructureInsightNode};
 use serde::Serialize;
 
 use crate::commands::{api::ApiClient, memory_ops::resolve_project_slug, runtime::StructureArgs};
@@ -132,7 +132,7 @@ fn print_json<T: Serialize>(value: &T) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mem_api::{StructureGroupInfo, StructureMemberInfo};
+    use mem_record::{StructureGroupInfo, StructureMemberInfo};
     use uuid::Uuid;
 
     fn node(

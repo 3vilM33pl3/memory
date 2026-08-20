@@ -9,7 +9,7 @@ use std::{
     path::PathBuf,
 };
 
-use mem_api::{
+use mem_record::{
     CommitRecord, CommitSyncRequest, CommitSyncResponse, MemoryStatus, MemoryTypeCount, NamedCount,
     ProjectCommitsResponse, ProjectMemoriesResponse, ProjectMemoryGraphEdge,
     ProjectMemoryGraphEdgeKind, ProjectMemoryGraphNode, ProjectMemoryGraphNodeKind,
@@ -388,7 +388,7 @@ fn source_node_id(
 }
 
 fn source_node_label(
-    source_kind: &mem_api::SourceKind,
+    source_kind: &mem_record::SourceKind,
     file_path: Option<&str>,
     git_commit: Option<&str>,
     symbol_name: Option<&str>,
@@ -406,13 +406,13 @@ fn source_node_label(
         return symbol_name.to_string();
     }
     match source_kind {
-        mem_api::SourceKind::TaskPrompt => "task prompt",
-        mem_api::SourceKind::File => "file",
-        mem_api::SourceKind::GitCommit => "git commit",
-        mem_api::SourceKind::CommandOutput => "command output",
-        mem_api::SourceKind::Test => "test",
-        mem_api::SourceKind::Note => "note",
-        mem_api::SourceKind::Memory => "memory",
+        mem_record::SourceKind::TaskPrompt => "task prompt",
+        mem_record::SourceKind::File => "file",
+        mem_record::SourceKind::GitCommit => "git commit",
+        mem_record::SourceKind::CommandOutput => "command output",
+        mem_record::SourceKind::Test => "test",
+        mem_record::SourceKind::Note => "note",
+        mem_record::SourceKind::Memory => "memory",
     }
     .to_string()
 }
@@ -420,8 +420,8 @@ fn source_node_label(
 pub async fn fetch_project_overview(
     pool: &PgPool,
     slug: &str,
-    automation: &mem_api::AutomationConfig,
-    embeddings: Option<&mem_api::EmbeddingBackendConfig>,
+    automation: &mem_config::AutomationConfig,
+    embeddings: Option<&mem_config::EmbeddingBackendConfig>,
 ) -> Result<ProjectOverviewResponse, sqlx::Error> {
     let project_exists_fut = project_exists(pool, slug);
     let memory_stats_fut = fetch_memory_stats(pool, slug);
@@ -1018,8 +1018,8 @@ fn empty_overview(
     source_kind_breakdown: Vec<SourceKindCount>,
     top_tags: Vec<NamedCount>,
     top_files: Vec<NamedCount>,
-    embeddings: Option<&mem_api::EmbeddingBackendConfig>,
-    automation: Option<mem_api::AutomationStatus>,
+    embeddings: Option<&mem_config::EmbeddingBackendConfig>,
+    automation: Option<mem_record::AutomationStatus>,
 ) -> ProjectOverviewResponse {
     ProjectOverviewResponse {
         project: slug.to_string(),
@@ -1096,7 +1096,7 @@ struct EmbeddingHealth {
 async fn fetch_embedding_health(
     pool: &PgPool,
     slug: &str,
-    config: Option<&mem_api::EmbeddingBackendConfig>,
+    config: Option<&mem_config::EmbeddingBackendConfig>,
 ) -> Result<EmbeddingHealth, sqlx::Error> {
     let active_provider = config.map(|c| c.provider.trim()).unwrap_or("");
     let active_model = config.map(|c| c.model.trim()).unwrap_or("");
@@ -1179,8 +1179,8 @@ async fn fetch_embedding_health(
 
 async fn load_automation_status(
     slug: &str,
-    config: &mem_api::AutomationConfig,
-) -> Option<mem_api::AutomationStatus> {
+    config: &mem_config::AutomationConfig,
+) -> Option<mem_record::AutomationStatus> {
     let repo_root = config.repo_root.as_ref().map(PathBuf::from)?;
     let state = load_state(slug, &repo_root, config).await.ok()?;
     Some(to_status(&state))
@@ -1229,7 +1229,7 @@ mod tests {
         seed_project(&pool, &slug).await.unwrap();
 
         let overview =
-            fetch_project_overview(&pool, &slug, &mem_api::AutomationConfig::default(), None)
+            fetch_project_overview(&pool, &slug, &mem_config::AutomationConfig::default(), None)
                 .await
                 .unwrap();
         assert_eq!(overview.project, slug);
@@ -1314,7 +1314,7 @@ mod tests {
         assert!(!memories.items[0].tags.contains(&"alpha".to_string()));
 
         let overview =
-            fetch_project_overview(&pool, &slug, &mem_api::AutomationConfig::default(), None)
+            fetch_project_overview(&pool, &slug, &mem_config::AutomationConfig::default(), None)
                 .await
                 .unwrap();
         assert_eq!(overview.memory_entries_total, 1);
@@ -1322,7 +1322,7 @@ mod tests {
         assert_eq!(overview.memory_type_breakdown.len(), 1);
         assert_eq!(
             overview.memory_type_breakdown[0].memory_type,
-            mem_api::MemoryType::Decision
+            mem_record::MemoryType::Decision
         );
         assert_eq!(overview.top_tags[0].name, "beta");
         assert_eq!(overview.top_files[0].name, "docs/updated.md");

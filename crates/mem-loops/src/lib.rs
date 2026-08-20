@@ -4,7 +4,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 use chrono::{DateTime, Utc};
-use mem_api::{
+use mem_record::{
     EffectiveLoopSettings, LoopActionKind, LoopContextExclusion, LoopContextInstructionRef,
     LoopContextMemory, LoopContextPack, LoopContextPackDiff, LoopContextSourceRef,
     LoopDefinitionRecord, LoopMode, LoopRiskLevel, LoopScopeType, LoopSettingRecord,
@@ -896,7 +896,7 @@ fn memory_is_contradictory(memory: &MemoryEntryResponse) -> bool {
         || memory
             .related_memories
             .iter()
-            .any(|related| related.relation_type == mem_api::MemoryRelationType::Duplicates)
+            .any(|related| related.relation_type == mem_record::MemoryRelationType::Duplicates)
         || memory.summary.to_lowercase().contains("contradict")
 }
 
@@ -1000,19 +1000,19 @@ mod tests {
             project: "memory".to_string(),
             canonical_text: format!("{summary}\nDetailed context for {summary}."),
             summary: summary.to_string(),
-            memory_type: mem_api::MemoryType::Architecture,
+            memory_type: mem_record::MemoryType::Architecture,
             importance,
             confidence,
             status: MemoryStatus::Active,
             tags: vec!["context".to_string()],
-            sources: vec![mem_api::MemorySourceRecord {
+            sources: vec![mem_record::MemorySourceRecord {
                 id: Uuid::new_v4(),
                 task_id: None,
                 file_path: Some("AGENTS.md".to_string()),
                 git_commit: None,
                 symbol_name: None,
                 symbol_kind: None,
-                source_kind: mem_api::SourceKind::File,
+                source_kind: mem_record::SourceKind::File,
                 excerpt: None,
                 provenance: None,
             }],
@@ -1262,7 +1262,7 @@ mod tests {
     #[test]
     fn context_pack_flags_stale_and_diff_changes() {
         let mut old = memory("Old convention", 4, 0.9, 365);
-        old.sources[0].provenance = Some(mem_api::SourceProvenanceRecord {
+        old.sources[0].provenance = Some(mem_record::SourceProvenanceRecord {
             status: SourceProvenanceStatus::Stale,
             checked_at: Utc::now(),
             reason: Some("file changed".to_string()),

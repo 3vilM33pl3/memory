@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-use mem_api::{
+use mem_record::{
     AgentWorkspaceFinishRequest, AgentWorkspaceStartRequest, AgentWorkspaceStatus,
     LoopApprovalDecisionRequest, LoopApprovalStatus, LoopMemoryProposalCreateRequest,
     LoopMemoryProposalDecisionRequest, LoopMode, LoopRunRequest, LoopRunStatus,
@@ -612,7 +612,7 @@ async fn loop_repository_approves_memory_proposal_and_writes_provenance() {
 
     let approved = mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
         &pool,
-        &mem_api::ProceduralConfig::default(),
+        &mem_config::ProceduralConfig::default(),
         created.proposal.id,
         "approved",
         &LoopMemoryProposalDecisionRequest {
@@ -717,7 +717,7 @@ async fn loop_repository_applies_consolidate_proposal_atomically() {
             .expect("create consolidate proposal");
     let approved = mem_service::repository::handlers::loops::record_loop_memory_proposal_decision(
         &pool,
-        &mem_api::ProceduralConfig::default(),
+        &mem_config::ProceduralConfig::default(),
         created.proposal.id,
         "approved",
         &LoopMemoryProposalDecisionRequest {
@@ -736,7 +736,7 @@ async fn loop_repository_applies_consolidate_proposal_atomically() {
         .await
         .expect("fetch insight memory")
         .expect("insight exists");
-    assert_eq!(meta.memory_type, mem_api::MemoryType::Insight);
+    assert_eq!(meta.memory_type, mem_record::MemoryType::Insight);
 
     // Exactly three summarizes relations to the members' latest version ids.
     let relation_count: i64 = sqlx::query_scalar(
@@ -783,7 +783,7 @@ async fn procedural_utility_learns_from_proposal_decisions() {
     mem_test_support::cleanup_project(&pool, &project)
         .await
         .expect("cleanup old test project");
-    let procedural = mem_api::ProceduralConfig::default();
+    let procedural = mem_config::ProceduralConfig::default();
 
     let make_request = |summary: &str| LoopMemoryProposalCreateRequest {
         project: project.clone(),

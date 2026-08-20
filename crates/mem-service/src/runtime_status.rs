@@ -515,7 +515,7 @@ pub(crate) async fn agents_snapshot() -> Result<Json<serde_json::Value>, ApiErro
 }
 
 pub(crate) fn runtime_manager_status(
-    profile: &mem_api::Profile,
+    profile: &mem_config::Profile,
     version: &str,
 ) -> RuntimeManagerStatus {
     let unit_installed = manager_unit_path(profile).is_some_and(|path| path.exists());
@@ -588,18 +588,18 @@ pub(crate) fn plural(count: usize) -> &'static str {
 }
 
 pub(crate) fn load_manager_state_file(
-    profile: &mem_api::Profile,
+    profile: &mem_config::Profile,
 ) -> Option<ManagerRuntimeStateFile> {
     let filename = match profile {
-        mem_api::Profile::Dev => "watcher-manager-state-dev.json",
-        mem_api::Profile::Prod => "watcher-manager-state.json",
+        mem_config::Profile::Dev => "watcher-manager-state-dev.json",
+        mem_config::Profile::Prod => "watcher-manager-state.json",
     };
     let path = preferred_user_state_dir()?.join(filename);
     let content = fs::read_to_string(path).ok()?;
     serde_json::from_str(&content).ok()
 }
 
-pub(crate) fn foreground_manager_process_running(profile: &mem_api::Profile) -> bool {
+pub(crate) fn foreground_manager_process_running(profile: &mem_config::Profile) -> bool {
     #[cfg(target_os = "windows")]
     {
         mem_platform::process_snapshots().iter().any(|process| {
@@ -646,7 +646,7 @@ pub(crate) fn foreground_manager_process_running(profile: &mem_api::Profile) -> 
     }
 }
 
-pub(crate) fn command_is_manager_for_profile(command: &str, profile: &mem_api::Profile) -> bool {
+pub(crate) fn command_is_manager_for_profile(command: &str, profile: &mem_config::Profile) -> bool {
     if !(command.contains(" watcher manager run")
         || command.ends_with("watcher manager run")
         || command.contains("watcher manager run "))
@@ -654,8 +654,8 @@ pub(crate) fn command_is_manager_for_profile(command: &str, profile: &mem_api::P
         return false;
     }
     match profile {
-        mem_api::Profile::Prod => !command_looks_dev_stack(command),
-        mem_api::Profile::Dev => command_looks_dev_stack(command),
+        mem_config::Profile::Prod => !command_looks_dev_stack(command),
+        mem_config::Profile::Dev => command_looks_dev_stack(command),
     }
 }
 
@@ -687,8 +687,8 @@ pub(crate) fn linux_manager_unit_path() -> Option<PathBuf> {
     )
 }
 
-pub(crate) fn manager_unit_path(profile: &mem_api::Profile) -> Option<PathBuf> {
-    if matches!(profile, mem_api::Profile::Dev) {
+pub(crate) fn manager_unit_path(profile: &mem_config::Profile) -> Option<PathBuf> {
+    if matches!(profile, mem_config::Profile::Dev) {
         return None;
     }
 
@@ -708,8 +708,8 @@ pub(crate) fn manager_unit_path(profile: &mem_api::Profile) -> Option<PathBuf> {
     }
 }
 
-pub(crate) fn manager_service_enabled(profile: &mem_api::Profile) -> bool {
-    if matches!(profile, mem_api::Profile::Dev) {
+pub(crate) fn manager_service_enabled(profile: &mem_config::Profile) -> bool {
+    if matches!(profile, mem_config::Profile::Dev) {
         return false;
     }
 
@@ -729,8 +729,8 @@ pub(crate) fn manager_service_enabled(profile: &mem_api::Profile) -> bool {
     }
 }
 
-pub(crate) fn manager_service_running(profile: &mem_api::Profile) -> bool {
-    if matches!(profile, mem_api::Profile::Dev) {
+pub(crate) fn manager_service_running(profile: &mem_config::Profile) -> bool {
+    if matches!(profile, mem_config::Profile::Dev) {
         return false;
     }
 

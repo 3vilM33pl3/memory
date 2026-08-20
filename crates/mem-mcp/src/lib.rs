@@ -7,8 +7,9 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use mem_api::{
-    ActivityListResponse, AppConfig, GlobalQueryRequest, LoopApprovalDecisionRequest,
+use mem_config::{AppConfig, read_repo_project_slug};
+use mem_record::{
+    ActivityListResponse, GlobalQueryRequest, LoopApprovalDecisionRequest,
     LoopApprovalDecisionResponse, LoopApprovalStatus, LoopApprovalsResponse, LoopCancelRequest,
     LoopDefinitionResponse, LoopDefinitionsResponse, LoopFeedbackRequest, LoopGlobalStateResponse,
     LoopGlobalStateUpdateRequest, LoopMode, LoopRunRequest, LoopRunResponse, LoopRunStatus,
@@ -16,7 +17,7 @@ use mem_api::{
     MemoryEntryResponse, MemoryHistoryResponse, MemoryType, ProjectMemoriesResponse,
     ProjectOverviewResponse, QueryAnswerMode, QueryFilters, QueryRequest, QueryResponse,
     ReplacementProposalListResponse, ResumeCheckpoint, ResumeRequest, ResumeResponse,
-    UpToSpeedRequest, UpToSpeedResponse, read_repo_project_slug,
+    UpToSpeedRequest, UpToSpeedResponse,
 };
 use reqwest::Client;
 use rmcp::{
@@ -1605,7 +1606,7 @@ fn invalid_params(message: impl Into<String>) -> McpError {
     McpError::invalid_params(message.into(), None)
 }
 
-fn validation(error: mem_api::ValidationError) -> McpError {
+fn validation(error: mem_record::ValidationError) -> McpError {
     invalid_params(error.to_string())
 }
 

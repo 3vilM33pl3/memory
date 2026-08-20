@@ -13,12 +13,14 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use mem_api::{
-    AppConfig, MemoryType, QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod,
-    QueryDiagnostics, QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult,
-    QueryResultDebug, QuerySource, SourceKind, TokenUsage, UpToSpeedRequest,
-    effective_llm_base_url, is_supported_llm_provider, llm_max_output_tokens_field,
+use mem_config::{
+    AppConfig, effective_llm_base_url, is_supported_llm_provider, llm_max_output_tokens_field,
     llm_requires_api_key, resolve_llm_api_key,
+};
+use mem_record::{
+    MemoryType, QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics,
+    QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult, QueryResultDebug,
+    QuerySource, SourceKind, TokenUsage, UpToSpeedRequest,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -720,7 +722,7 @@ pub(crate) async fn run_eval_suite(
                             include_stale: false,
                             history: false,
                             retrieval_mode: Some(eval_condition_retrieval_mode(condition)),
-                            answer_mode: Some(mem_api::QueryAnswerMode::Deterministic),
+                            answer_mode: Some(mem_record::QueryAnswerMode::Deterministic),
                         })
                         .await?;
                     mem_eval::score_retrieval_qa(item, condition, &response)
@@ -758,9 +760,9 @@ pub(crate) async fn run_eval_suite(
                             history: false,
                             retrieval_mode: Some(eval_condition_retrieval_mode(condition)),
                             answer_mode: Some(match context.profile {
-                                mem_eval::EvalProfile::Llm => mem_api::QueryAnswerMode::Llm,
+                                mem_eval::EvalProfile::Llm => mem_record::QueryAnswerMode::Llm,
                                 mem_eval::EvalProfile::Offline => {
-                                    mem_api::QueryAnswerMode::Deterministic
+                                    mem_record::QueryAnswerMode::Deterministic
                                 }
                             }),
                         })
@@ -788,7 +790,7 @@ pub(crate) async fn run_eval_suite(
                             include_stale: false,
                             history: false,
                             retrieval_mode: Some(eval_condition_retrieval_mode(condition)),
-                            answer_mode: Some(mem_api::QueryAnswerMode::Deterministic),
+                            answer_mode: Some(mem_record::QueryAnswerMode::Deterministic),
                         })
                         .await?;
                     mem_eval::score_adversarial_stale(item, condition, &response)
@@ -1228,7 +1230,7 @@ pub(crate) fn external_retriever_response_to_query_response(
         },
         answer_citations,
         diagnostics: QueryDiagnostics {
-            retrieval_mode: mem_api::QueryRetrievalMode::FullMemory,
+            retrieval_mode: mem_record::QueryRetrievalMode::FullMemory,
             lexical_enabled: false,
             semantic_enabled: false,
             graph_enabled: false,
@@ -1356,14 +1358,14 @@ pub(crate) fn no_memory_retrieval_result(
 
 pub(crate) fn eval_condition_retrieval_mode(
     condition: mem_eval::EvalCondition,
-) -> mem_api::QueryRetrievalMode {
+) -> mem_record::QueryRetrievalMode {
     match condition {
         mem_eval::EvalCondition::NoMemory | mem_eval::EvalCondition::FullMemory => {
-            mem_api::QueryRetrievalMode::FullMemory
+            mem_record::QueryRetrievalMode::FullMemory
         }
-        mem_eval::EvalCondition::Lexical => mem_api::QueryRetrievalMode::Lexical,
-        mem_eval::EvalCondition::Semantic => mem_api::QueryRetrievalMode::Semantic,
-        mem_eval::EvalCondition::Graph => mem_api::QueryRetrievalMode::Graph,
+        mem_eval::EvalCondition::Lexical => mem_record::QueryRetrievalMode::Lexical,
+        mem_eval::EvalCondition::Semantic => mem_record::QueryRetrievalMode::Semantic,
+        mem_eval::EvalCondition::Graph => mem_record::QueryRetrievalMode::Graph,
     }
 }
 
@@ -3041,7 +3043,7 @@ pub(crate) fn eval_memory_config_path(cwd: &Path) -> Option<PathBuf> {
         .or_else(|| env::var_os("MEMORY_LAYER_CONFIG").map(PathBuf::from))
         .or_else(|| {
             mem_platform::discover_project_root(cwd)
-                .and_then(|repo_root| mem_api::project_paths_for_repo(&repo_root))
+                .and_then(|repo_root| mem_config::project_paths_for_repo(&repo_root))
                 .map(|paths| paths.config_path())
                 .filter(|path| path.exists())
         })

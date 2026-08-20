@@ -6,7 +6,7 @@
 
 use crate::prelude::*;
 use crate::*;
-use mem_api::ValidationDueInfo;
+use mem_record::ValidationDueInfo;
 use mem_reinforce::repository::{
     SelectionParams, compact_scores, count_validation_runs_since, fetch_due_candidates,
     insert_score_audit, last_compaction_at, prune_access_events,
@@ -155,7 +155,7 @@ async fn validate_candidate(
         &provider,
         &policy,
         mem_reinforce::ValidationTrigger::Scheduled,
-        mem_api::ValidationProofScope::SourceFilesFirst,
+        mem_record::ValidationProofScope::SourceFilesFirst,
     )
     .await?;
     tracing::info!(
@@ -296,7 +296,7 @@ pub(crate) async fn memory_scores(
     State(state): State<AppState>,
     Path(project): Path<String>,
     Query(params): Query<MemoryScoresQuery>,
-) -> Result<Json<mem_api::MemoryScoresResponse>, ApiError> {
+) -> Result<Json<mem_record::MemoryScoresResponse>, ApiError> {
     let pool = state.pool()?;
     let project_id = resolve_project_id(&pool, &project).await?;
     let scores = mem_reinforce::repository::list_memory_scores(
@@ -308,7 +308,7 @@ pub(crate) async fn memory_scores(
     )
     .await
     .map_err(ApiError::io)?;
-    Ok(Json(mem_api::MemoryScoresResponse {
+    Ok(Json(mem_record::MemoryScoresResponse {
         project,
         scores: scores.into_iter().map(score_listing_to_info).collect(),
     }))
@@ -317,8 +317,8 @@ pub(crate) async fn memory_scores(
 pub(crate) async fn validate_memory(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Json(request): Json<mem_api::ValidateMemoryRequest>,
-) -> Result<Json<mem_api::ValidationRunInfo>, ApiError> {
+    Json(request): Json<mem_record::ValidateMemoryRequest>,
+) -> Result<Json<mem_record::ValidationRunInfo>, ApiError> {
     if !state.is_primary() {
         return Err(ApiError::service_unavailable(
             "memory validation runs only on the primary node",
@@ -432,7 +432,7 @@ pub(crate) async fn validation_runs(
     State(state): State<AppState>,
     Path(project): Path<String>,
     Query(params): Query<ValidationRunsQuery>,
-) -> Result<Json<mem_api::ValidationRunsResponse>, ApiError> {
+) -> Result<Json<mem_record::ValidationRunsResponse>, ApiError> {
     let pool = state.pool()?;
     let project_id = resolve_project_id(&pool, &project).await?;
     let runs = mem_reinforce::repository::list_validation_runs(
@@ -443,7 +443,7 @@ pub(crate) async fn validation_runs(
     )
     .await
     .map_err(ApiError::io)?;
-    Ok(Json(mem_api::ValidationRunsResponse {
+    Ok(Json(mem_record::ValidationRunsResponse {
         project,
         runs: runs
             .into_iter()
@@ -455,8 +455,8 @@ pub(crate) async fn validation_runs(
 pub(crate) async fn review_validation_run(
     State(state): State<AppState>,
     Path(run_id): Path<Uuid>,
-    Json(request): Json<mem_api::ReviewValidationRequest>,
-) -> Result<Json<mem_api::ReviewValidationResponse>, ApiError> {
+    Json(request): Json<mem_record::ReviewValidationRequest>,
+) -> Result<Json<mem_record::ReviewValidationResponse>, ApiError> {
     if !state.is_primary() {
         return Err(ApiError::service_unavailable(
             "validation review runs only on the primary node",
@@ -483,7 +483,7 @@ pub(crate) async fn review_validation_run(
                     None,
                 );
             }
-            return Ok(Json(mem_api::ReviewValidationResponse {
+            return Ok(Json(mem_record::ReviewValidationResponse {
                 run_id,
                 action: request.action,
                 new_memory_id: resolution.new_memory_id,
@@ -515,7 +515,7 @@ pub(crate) async fn review_validation_run(
             None,
         );
     }
-    Ok(Json(mem_api::ReviewValidationResponse {
+    Ok(Json(mem_record::ReviewValidationResponse {
         run_id,
         action: request.action,
         new_memory_id: resolution.new_memory_id,
@@ -543,8 +543,8 @@ async fn project_slug_for_id(pool: &PgPool, project_id: Uuid) -> Result<Option<S
 
 fn score_listing_to_info(
     listing: mem_reinforce::repository::ScoreListing,
-) -> mem_api::MemoryScoreInfo {
-    mem_api::MemoryScoreInfo {
+) -> mem_record::MemoryScoreInfo {
+    mem_record::MemoryScoreInfo {
         canonical_id: listing.canonical_id,
         memory_id: listing.memory_id,
         summary: listing.summary,
@@ -565,7 +565,7 @@ fn score_listing_to_info(
 fn validation_run_to_info(
     run: mem_reinforce::repository::ValidationRunRow,
     evidence_rows: Vec<mem_reinforce::repository::EvidenceRow>,
-) -> mem_api::ValidationRunInfo {
+) -> mem_record::ValidationRunInfo {
     let reasons = run
         .reasons_json
         .as_array()
@@ -587,7 +587,7 @@ fn validation_run_to_info(
         .get("proof_fallback_used")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    mem_api::ValidationRunInfo {
+    mem_record::ValidationRunInfo {
         id: run.id,
         canonical_id: run.canonical_id,
         memory_id: run.memory_id,
@@ -602,7 +602,7 @@ fn validation_run_to_info(
         reasons,
         evidence: evidence_rows
             .into_iter()
-            .map(|row| mem_api::ValidationEvidenceInfo {
+            .map(|row| mem_record::ValidationEvidenceInfo {
                 kind: row.kind,
                 evidence_ref: row.evidence_ref,
                 stance: row.stance,

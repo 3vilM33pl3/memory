@@ -24,12 +24,13 @@ use super::{
 use crate::commands::service_support::TuiRestartNotice;
 use crate::tui::state::SkillsFilter;
 use mem_agenttop::{AgentSession, SessionStatus as AgentSessionStatus};
-use mem_api::{
+use mem_config::Profile;
+use mem_record::{
     ActivityDetails, ActivityEvent, ActivityKind, DiagnosticInfo, DiagnosticSeverity,
     LlmAuditMessage, LlmAuditStatusResponse, MemoryEmbeddingSpace, MemoryEntryResponse,
-    MemoryStatus, MemoryType, Profile, ProjectMemoriesResponse, QueryAnswerGeneration,
-    QueryAnswerMethod, QueryDiagnostics, QueryFilters, QueryMatchKind, QueryRequest, QueryResponse,
-    QueryResult, QueryResultDebug, ReplacementProposalListResponse, StreamResponse, TokenUsage,
+    MemoryStatus, MemoryType, ProjectMemoriesResponse, QueryAnswerGeneration, QueryAnswerMethod,
+    QueryDiagnostics, QueryFilters, QueryMatchKind, QueryRequest, QueryResponse, QueryResult,
+    QueryResultDebug, ReplacementProposalListResponse, StreamResponse, TokenUsage,
     ValidationEvidenceInfo, ValidationProofScope, ValidationRunInfo, WatcherPresenceSummary,
 };
 use mem_skills::{
@@ -1221,9 +1222,9 @@ fn test_project_memory_list_item(
     summary: &str,
     memory_type: MemoryType,
     updated_at: chrono::DateTime<Utc>,
-) -> mem_api::ProjectMemoryListItem {
+) -> mem_record::ProjectMemoryListItem {
     let id = Uuid::new_v4();
-    mem_api::ProjectMemoryListItem {
+    mem_record::ProjectMemoryListItem {
         id,
         summary: summary.to_string(),
         preview: summary.to_string(),
@@ -1524,7 +1525,7 @@ fn backend_query_activity_detail_renders_graph_metadata() {
             graph_duration_ms: 17,
             graph_result_count: 1,
             graph_connection_count: 2,
-            graph_connections: vec![mem_api::QueryGraphConnection {
+            graph_connections: vec![mem_record::QueryGraphConnection {
                 file_path: "src/lib.rs".to_string(),
                 symbol: Some("GraphTarget".to_string()),
                 symbol_kind: Some("function".to_string()),
@@ -1937,10 +1938,10 @@ fn build_memory_detail_lines_shows_empty_state_when_no_embeddings() {
     assert!(rendered.contains("No embeddings for this memory yet."));
 }
 
-fn embeddings_test_response() -> mem_api::EmbeddingBackendsResponse {
-    mem_api::EmbeddingBackendsResponse {
+fn embeddings_test_response() -> mem_record::EmbeddingBackendsResponse {
+    mem_record::EmbeddingBackendsResponse {
         backends: vec![
-            mem_api::EmbeddingBackendInfo {
+            mem_record::EmbeddingBackendInfo {
                 name: "openai-3-small".to_string(),
                 provider: "openai_compatible".to_string(),
                 base_url: "https://api.openai.com/v1".to_string(),
@@ -1951,7 +1952,7 @@ fn embeddings_test_response() -> mem_api::EmbeddingBackendsResponse {
                 project_chunk_count: Some(12),
                 project_memory_count: Some(4),
             },
-            mem_api::EmbeddingBackendInfo {
+            mem_record::EmbeddingBackendInfo {
                 name: "voyage-code".to_string(),
                 provider: "voyage".to_string(),
                 base_url: "https://api.voyageai.com".to_string(),
@@ -2374,7 +2375,7 @@ fn embedding_reembed_completion_updates_snapshot_and_status() {
     app.apply_background_event(BackgroundEvent::EmbeddingReembedCompleted {
         name: "openai-3-small".to_string(),
         result: Ok((
-            mem_api::ReembedResponse {
+            mem_record::ReembedResponse {
                 reembedded_chunks: 6,
                 dry_run: false,
             },
@@ -2409,7 +2410,7 @@ fn embedding_reindex_completion_updates_snapshot_and_status() {
     app.apply_background_event(BackgroundEvent::EmbeddingReindexCompleted {
         name: "all backends".to_string(),
         result: Ok((
-            mem_api::ReindexResponse {
+            mem_record::ReindexResponse {
                 reindexed_entries: 4,
                 dry_run: false,
             },

@@ -11,12 +11,13 @@ use std::{
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use mem_api::{
-    DiagnosticInfo, DiagnosticSeverity, EmbeddingBackendConfig, EmbeddingsConfig,
-    GlobalQueryRequest, MemoryRelationType, MemoryType, ProvenanceConfig, QueryAnswerCitation,
-    QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics, QueryFilters, QueryGraphConnection,
-    QueryMatchKind, QueryRequest, QueryResponse, QueryResult, QueryResultDebug, QueryRetrievalMode,
-    QuerySource, SourceKind, SourceProvenanceRecord, SourceProvenanceStatus,
+use mem_config::{EmbeddingBackendConfig, EmbeddingsConfig, ProvenanceConfig};
+use mem_record::{
+    DiagnosticInfo, DiagnosticSeverity, GlobalQueryRequest, MemoryRelationType, MemoryType,
+    QueryAnswerCitation, QueryAnswerGeneration, QueryAnswerMethod, QueryDiagnostics, QueryFilters,
+    QueryGraphConnection, QueryMatchKind, QueryRequest, QueryResponse, QueryResult,
+    QueryResultDebug, QueryRetrievalMode, QuerySource, SourceKind, SourceProvenanceRecord,
+    SourceProvenanceStatus,
 };
 use pgvector::Vector;
 use sqlx::PgPool;
@@ -930,12 +931,12 @@ pub struct ReinforcementRankParams {
 
 impl Default for ReinforcementRankParams {
     fn default() -> Self {
-        Self::from(&mem_api::ReinforcementConfig::default())
+        Self::from(&mem_config::ReinforcementConfig::default())
     }
 }
 
-impl From<&mem_api::ReinforcementConfig> for ReinforcementRankParams {
-    fn from(config: &mem_api::ReinforcementConfig) -> Self {
+impl From<&mem_config::ReinforcementConfig> for ReinforcementRankParams {
+    fn from(config: &mem_config::ReinforcementConfig) -> Self {
         Self {
             enabled: config.enabled,
             weight: config.activation_rank_weight,

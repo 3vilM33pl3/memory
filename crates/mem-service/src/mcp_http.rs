@@ -9,7 +9,7 @@ use axum::{
     middleware::{self, Next},
     response::Response,
 };
-use mem_api::{AuthMode, AuthRole};
+use mem_record::{AuthMode, AuthRole};
 use rmcp::transport::{
     StreamableHttpServerConfig, StreamableHttpService,
     streamable_http_server::session::local::LocalSessionManager,

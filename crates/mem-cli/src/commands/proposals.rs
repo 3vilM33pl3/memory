@@ -61,16 +61,16 @@ pub(super) async fn handle(args: ProposalsArgs, api: &ApiClient) -> Result<()> {
 }
 
 fn find_replacement_proposal(
-    proposals: Vec<mem_api::ReplacementProposalRecord>,
+    proposals: Vec<mem_record::ReplacementProposalRecord>,
     id: Uuid,
-) -> Result<mem_api::ReplacementProposalRecord> {
+) -> Result<mem_record::ReplacementProposalRecord> {
     proposals
         .into_iter()
         .find(|proposal| proposal.id == id)
         .with_context(|| format!("pending replacement proposal {id} was not found"))
 }
 
-fn print_replacement_proposals(response: &mem_api::ReplacementProposalListResponse) {
+fn print_replacement_proposals(response: &mem_record::ReplacementProposalListResponse) {
     if response.proposals.is_empty() {
         println!(
             "No pending replacement proposals for `{}`.",
@@ -99,7 +99,7 @@ fn print_replacement_proposals(response: &mem_api::ReplacementProposalListRespon
     }
 }
 
-fn print_replacement_proposal_detail(proposal: &mem_api::ReplacementProposalRecord) {
+fn print_replacement_proposal_detail(proposal: &mem_record::ReplacementProposalRecord) {
     println!("Proposal: {}", proposal.id);
     println!("Project: {}", proposal.project);
     println!("Target memory: {}", proposal.target_memory_id);

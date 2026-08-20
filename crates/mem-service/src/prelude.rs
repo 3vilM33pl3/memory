@@ -37,16 +37,29 @@ pub(crate) use axum::{
     response::{Html, IntoResponse, Response},
 };
 pub(crate) use futures_util::{SinkExt, StreamExt};
-pub(crate) use mem_api::{
+pub(crate) use mem_config::{
+    AppConfig, LlmAuditConfig, effective_llm_base_url, is_supported_llm_provider,
+    llm_max_output_tokens_field, llm_requires_api_key, load_repo_replacement_policy,
+    repo_agent_settings_path, resolve_llm_api_key,
+};
+pub(crate) use mem_curate::{
+    approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
+    preview_curate, refresh_memory_relations, reject_replacement_proposal, store_capture,
+};
+pub(crate) use mem_platform::{
+    managed_watch_service_name, preferred_user_state_dir, restart_local_watcher_service_name,
+    watch_service_unit_name,
+};
+pub(crate) use mem_record::{
     ActivateEmbeddingBackendRequest, ActivityDetails, ActivityEvent, ActivityKind,
     ActivityListResponse, AgentWorkspaceFinishRequest, AgentWorkspaceHeartbeatRequest,
     AgentWorkspaceListResponse, AgentWorkspaceRecord, AgentWorkspaceStartRequest,
-    AgentWorkspaceStatus, AgentWorkspaceWarning, AppConfig, ArchiveMemoryResponse, ArchiveRequest,
+    AgentWorkspaceStatus, AgentWorkspaceWarning, ArchiveMemoryResponse, ArchiveRequest,
     ArchiveResponse, CaptureTaskRequest, CheckpointActivityRequest, CodeGraphResponse,
     CodeGraphStatusResponse, CodeGraphViewRequest, CommitDetailResponse, CommitSyncRequest,
     CommitSyncResponse, CurateRequest, DeleteMemoryRequest, DeleteMemoryResponse, DiagnosticInfo,
     DiagnosticSeverity, EmbeddingBackendInfo, EmbeddingBackendsResponse, GraphActivityRequest,
-    LlmAuditConfig, LlmAuditMessage, LlmAuditStatusResponse, LoopApprovalDecisionRequest,
+    LlmAuditMessage, LlmAuditStatusResponse, LoopApprovalDecisionRequest,
     LoopApprovalDecisionResponse, LoopApprovalRequestRecord, LoopApprovalStatus,
     LoopApprovalsResponse, LoopCancelRequest, LoopContextInstructionRef, LoopContextPack,
     LoopContextPackRequest, LoopContextPackResponse, LoopDefinitionRecord, LoopDefinitionResponse,
@@ -75,17 +88,6 @@ pub(crate) use mem_api::{
     TokenUsage, TokenUsageSummary, UpToSpeedRequest, UpToSpeedResponse, ValidationError,
     WatcherHealth, WatcherHeartbeatRequest, WatcherPresence, WatcherPresenceSummary,
     WatcherRestartRequest, WatcherRestartResponse, WatcherUnregisterRequest,
-    effective_llm_base_url, is_supported_llm_provider, llm_max_output_tokens_field,
-    llm_requires_api_key, load_repo_replacement_policy, repo_agent_settings_path,
-    resolve_llm_api_key,
-};
-pub(crate) use mem_curate::{
-    approve_replacement_proposal, curate, list_replacement_proposals, preview_capture,
-    preview_curate, refresh_memory_relations, reject_replacement_proposal, store_capture,
-};
-pub(crate) use mem_platform::{
-    managed_watch_service_name, preferred_user_state_dir, restart_local_watcher_service_name,
-    watch_service_unit_name,
 };
 pub(crate) use mem_search::{
     EmbeddingRegistry, effective_embedding_base_url, parse_memory_type, parse_relation_type,

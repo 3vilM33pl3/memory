@@ -60,7 +60,7 @@ Explicit maintenance commands such as `memory reembed`, `memory reindex`, and em
 ## Reviewed Paths
 
 - `crates/mem-service/src/main.rs`: API error conversion, diagnostic classification, activity persistence, curate/reindex/reembed behavior.
-- `crates/mem-api/src/lib.rs`: shared diagnostic model, diagnostic activity type, curation warnings.
+- `crates/mem-record/src/query.rs` and `event.rs`: shared diagnostic model, diagnostic activity type, curation warnings.
 - `crates/mem-cli/src/main.rs`: CLI formatting for structured HTTP errors.
 - `crates/mem-cli/src/tui.rs`: Errors tab, diagnostic activity rendering, footer error count.
 

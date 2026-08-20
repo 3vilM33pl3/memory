@@ -3,7 +3,7 @@
 use crate::prelude::*;
 use crate::*;
 use axum::Extension;
-use mem_api::AuthRole;
+use mem_record::AuthRole;
 
 #[derive(Default)]
 pub(crate) struct ConnectionSubscriptions {

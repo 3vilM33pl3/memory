@@ -64,9 +64,9 @@ use super::{
     Cli, DEV_API_TOKEN, RememberArgs, SERVICE_API_TOKEN_KEY, ServiceApiTokenAction, WatcherCommand,
     WatcherManagerArgs, WatcherManagerCommand, ensure_shared_service_api_token, shared_env_lookup,
 };
-use mem_api::AppConfig;
+use mem_config::AppConfig;
 #[cfg(unix)]
-use mem_api::Profile;
+use mem_config::Profile;
 use mem_skills::{
     SkillSourceKind as SharedSkillSourceKind, SkillUpgradeAction as SharedSkillUpgradeAction,
     SkillVersionStatus as SharedSkillVersionStatus,
@@ -1059,7 +1059,7 @@ fn remember_request_uses_defaults() {
     assert_eq!(request.structured_candidates.len(), 1);
     assert_eq!(
         request.structured_candidates[0].memory_type,
-        mem_api::MemoryType::Implementation
+        mem_record::MemoryType::Implementation
     );
 }
 
@@ -1115,7 +1115,7 @@ fn plan_execution_request_uses_plan_type_and_thread_tag() {
     assert_eq!(request.task_title, "Approved plan: Resume Redesign");
     assert_eq!(request.structured_candidates.len(), 1);
     let candidate = &request.structured_candidates[0];
-    assert_eq!(candidate.memory_type, mem_api::MemoryType::Plan);
+    assert_eq!(candidate.memory_type, mem_record::MemoryType::Plan);
     assert!(candidate.tags.contains(&"plan".to_string()));
     assert!(
         candidate
@@ -1128,15 +1128,15 @@ fn plan_execution_request_uses_plan_type_and_thread_tag() {
 fn newer_memory_types_parse_from_cli_args() {
     assert_eq!(
         parse_memory_type_arg("task").unwrap(),
-        mem_api::MemoryType::Task
+        mem_record::MemoryType::Task
     );
     assert_eq!(
         parse_memory_type_arg("documentation").unwrap(),
-        mem_api::MemoryType::Documentation
+        mem_record::MemoryType::Documentation
     );
     assert_eq!(
         parse_memory_type_arg("refactor").unwrap(),
-        mem_api::MemoryType::Refactor
+        mem_record::MemoryType::Refactor
     );
 }
 
@@ -1165,7 +1165,7 @@ fn task_start_request_uses_task_type_and_prompt_source() {
             .is_some_and(|key| key.starts_with("task-start:"))
     );
     let candidate = &request.structured_candidates[0];
-    assert_eq!(candidate.memory_type, mem_api::MemoryType::Task);
+    assert_eq!(candidate.memory_type, mem_record::MemoryType::Task);
     assert!(candidate.canonical_text.contains("# Task: Fix query input"));
     assert!(candidate.canonical_text.contains("Status: started"));
     assert!(candidate.canonical_text.contains("Git head: abc123"));
@@ -1178,7 +1178,7 @@ fn task_start_request_uses_task_type_and_prompt_source() {
     assert!(candidate.tags.contains(&"direct-execution".to_string()));
     assert!(candidate.tags.contains(&"no-approved-plan".to_string()));
     assert!(candidate.sources.iter().any(|source| {
-        source.source_kind == mem_api::SourceKind::TaskPrompt
+        source.source_kind == mem_record::SourceKind::TaskPrompt
             && source
                 .excerpt
                 .as_deref()
@@ -1272,7 +1272,7 @@ fn plan_execution_request_omits_outside_repo_plan_file_source() {
         !request.structured_candidates[0]
             .sources
             .iter()
-            .any(|source| source.source_kind == mem_api::SourceKind::File)
+            .any(|source| source.source_kind == mem_record::SourceKind::File)
     );
 
     let _ = fs::remove_dir_all(repo_root);
@@ -1540,15 +1540,15 @@ fn ensure_checkbox_plan_rejects_plans_without_checkboxes() {
 fn finish_report_lists_remaining_items() {
     let report = build_plan_execution_finish_report(
         "memory",
-        &mem_api::MemoryEntryResponse {
+        &mem_record::MemoryEntryResponse {
             id: Uuid::new_v4(),
             project: "memory".to_string(),
             canonical_text: "# Plan\n\n- [x] done\n- [ ] remaining".to_string(),
             summary: "Execution plan".to_string(),
-            memory_type: mem_api::MemoryType::Plan,
+            memory_type: mem_record::MemoryType::Plan,
             importance: 4,
             confidence: 0.95,
-            status: mem_api::MemoryStatus::Active,
+            status: mem_record::MemoryStatus::Active,
             tags: vec![
                 "plan".to_string(),
                 "plan-thread:resume-redesign".to_string(),
@@ -1603,7 +1603,10 @@ fn finish_execution_implementation_request_uses_completed_items() {
 
     assert_eq!(request.structured_candidates.len(), 1);
     let candidate = &request.structured_candidates[0];
-    assert_eq!(candidate.memory_type, mem_api::MemoryType::Implementation);
+    assert_eq!(
+        candidate.memory_type,
+        mem_record::MemoryType::Implementation
+    );
     assert!(candidate.tags.contains(&"implemented".to_string()));
     assert!(candidate.canonical_text.contains("Implemented items:"));
     assert!(
@@ -1636,7 +1639,7 @@ fn remember_request_auto_detects_refactor_type() {
 
     assert_eq!(
         request.structured_candidates[0].memory_type,
-        mem_api::MemoryType::Refactor
+        mem_record::MemoryType::Refactor
     );
     assert!(
         request.structured_candidates[0]
@@ -1666,7 +1669,7 @@ fn mixed_fix_and_refactor_remember_request_stays_implementation() {
 
     assert_eq!(
         request.structured_candidates[0].memory_type,
-        mem_api::MemoryType::Implementation
+        mem_record::MemoryType::Implementation
     );
 }
 
@@ -1698,7 +1701,7 @@ fn finish_execution_request_auto_detects_refactor_type() {
 
     assert_eq!(
         request.structured_candidates[0].memory_type,
-        mem_api::MemoryType::Refactor
+        mem_record::MemoryType::Refactor
     );
 }
 
@@ -2495,12 +2498,12 @@ fn write_headers_prefers_scoped_client_token_environment_variable() {
 #[test]
 fn direct_llm_eval_accepts_ollama_without_api_key() {
     let mut config = test_app_config();
-    config.llm = mem_api::LlmConfig {
+    config.llm = mem_config::LlmConfig {
         provider: "ollama".to_string(),
         base_url: String::new(),
         api_key_env: "OPENAI_API_KEY".to_string(),
         model: "llama3.2".to_string(),
-        ..mem_api::LlmConfig::default()
+        ..mem_config::LlmConfig::default()
     };
 
     assert!(ensure_direct_llm_eval_config(&config).is_ok());
@@ -2532,34 +2535,34 @@ fn write_file_if_changed_skips_identical_content() {
 
 fn test_app_config() -> AppConfig {
     AppConfig {
-        service: mem_api::ServiceConfig {
+        service: mem_config::ServiceConfig {
             bind_addr: "127.0.0.1:4040".to_string(),
             web_root: None,
             api_token: "ml_testtoken".to_string(),
             request_timeout: Duration::from_secs(30),
             read_only: false,
         },
-        auth: mem_api::AuthConfig::default(),
-        mcp: mem_api::McpConfig::default(),
-        database: mem_api::DatabaseConfig {
+        auth: mem_config::AuthConfig::default(),
+        mcp: mem_config::McpConfig::default(),
+        database: mem_config::DatabaseConfig {
             url: "postgresql://memory:test@localhost:5432/memory".to_string(),
         },
-        offline: mem_api::OfflineConfig::default(),
-        features: mem_api::FeatureFlags::default(),
-        llm: mem_api::LlmConfig::default(),
-        llm_audit: mem_api::LlmAuditConfig::default(),
-        embeddings: mem_api::EmbeddingsConfig::default(),
-        cluster: mem_api::ClusterConfig::default(),
-        writer: mem_api::WriterConfig::default(),
-        automation: mem_api::AutomationConfig::default(),
-        retention: mem_api::RetentionConfig::default(),
-        provenance: mem_api::ProvenanceConfig::default(),
-        reinforcement: mem_api::ReinforcementConfig::default(),
-        curation: mem_api::CurationConfig::default(),
-        consolidation: mem_api::ConsolidationConfig::default(),
-        procedural: mem_api::ProceduralConfig::default(),
-        telemetry: mem_api::TelemetryConfig::default(),
-        profile: mem_api::Profile::Prod,
+        offline: mem_config::OfflineConfig::default(),
+        features: mem_config::FeatureFlags::default(),
+        llm: mem_config::LlmConfig::default(),
+        llm_audit: mem_config::LlmAuditConfig::default(),
+        embeddings: mem_config::EmbeddingsConfig::default(),
+        cluster: mem_config::ClusterConfig::default(),
+        writer: mem_config::WriterConfig::default(),
+        automation: mem_config::AutomationConfig::default(),
+        retention: mem_config::RetentionConfig::default(),
+        provenance: mem_config::ProvenanceConfig::default(),
+        reinforcement: mem_config::ReinforcementConfig::default(),
+        curation: mem_config::CurationConfig::default(),
+        consolidation: mem_config::ConsolidationConfig::default(),
+        procedural: mem_config::ProceduralConfig::default(),
+        telemetry: mem_config::TelemetryConfig::default(),
+        profile: mem_config::Profile::Prod,
         resolved_config_path: None,
         resolved_dev_overlay_path: None,
     }

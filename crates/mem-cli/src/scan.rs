@@ -10,12 +10,15 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::Utc;
 use mem_analyze::{AnalysisReport, AnalyzerSummary};
-use mem_api::{
-    AgentProjectConfig, AppConfig, CaptureCandidateInput, CaptureCandidateSourceInput,
-    CaptureTaskRequest, MemoryType, ScanActivityRequest, SourceKind, discover_global_config_path,
-    discover_repo_env_path, effective_llm_base_url, is_supported_llm_provider,
-    llm_max_output_tokens_field, load_repo_agent_settings, load_repo_replacement_policy,
-    project_paths_for_repo, resolve_llm_api_key,
+use mem_config::{
+    AgentProjectConfig, AppConfig, discover_global_config_path, discover_repo_env_path,
+    effective_llm_base_url, is_supported_llm_provider, llm_max_output_tokens_field,
+    load_repo_agent_settings, load_repo_replacement_policy, project_paths_for_repo,
+    resolve_llm_api_key,
+};
+use mem_record::{
+    CaptureCandidateInput, CaptureCandidateSourceInput, CaptureTaskRequest, MemoryType,
+    ScanActivityRequest, SourceKind,
 };
 use reqwest::{Client, header};
 use serde::{Deserialize, Serialize};
@@ -331,7 +334,7 @@ fn ensure_llm_config(config: &AppConfig) -> Result<()> {
     if config.llm.model.trim().is_empty() {
         anyhow::bail!("missing [llm].model in config");
     }
-    if mem_api::llm_requires_api_key(&config.llm) && llm_api_key(config).is_none() {
+    if mem_config::llm_requires_api_key(&config.llm) && llm_api_key(config).is_none() {
         let repo_env = discover_repo_env_path()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "<repo-local env file not found>".to_string());
@@ -1275,7 +1278,7 @@ mod tests {
     #[test]
     fn file_score_respects_agent_include_and_ignore_paths() {
         let settings = AgentProjectConfig {
-            capture: mem_api::AgentCaptureConfig {
+            capture: mem_config::AgentCaptureConfig {
                 include_paths: vec!["ops/".to_string()],
                 ignore_paths: vec!["docs/private/".to_string()],
             },

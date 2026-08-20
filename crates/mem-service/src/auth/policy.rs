@@ -7,7 +7,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use mem_api::AuthRole;
+use mem_record::AuthRole;
 use serde_json::Value;
 use sqlx::Row;
 use uuid::Uuid;
@@ -606,7 +606,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use axum::http::Method;
-    use mem_api::{AuthPrincipalKind, AuthRole};
+    use mem_record::{AuthPrincipalKind, AuthRole};
     use uuid::Uuid;
 
     use super::{

@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use mem_agenttop::LightweightAgentSession;
-use mem_api::{AppConfig, Profile, read_repo_project_slug};
+use mem_config::{AppConfig, Profile, read_repo_project_slug};
 use mem_platform as platform;
 use serde::{Deserialize, Serialize};
 
