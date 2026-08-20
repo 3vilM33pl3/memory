@@ -474,6 +474,24 @@ pub(crate) async fn prune_history(
     };
     effective.validate().map_err(ApiError::validation)?;
 
+    // Operational timeline events (queries, watcher heartbeats) accrue fast
+    // and carry no institutional value beyond their window; prune them here
+    // so the durable log stays dominated by mutation and provenance events.
+    if let Some(after) = state.config.retention.operational_events_after
+        && !effective.dry_run
+    {
+        let cutoff = chrono::Utc::now()
+            - chrono::Duration::from_std(after)
+                .map_err(|_| ApiError::internal("retention window too large"))?;
+        sqlx::query(
+            "DELETE FROM project_timeline_events              WHERE kind IN ('query', 'watcher_health') AND recorded_at < $1",
+        )
+        .bind(cutoff)
+        .execute(&state.pool()?)
+        .await
+        .map_err(ApiError::sql)?;
+    }
+
     let pool = &state.pool()?;
     let mut tx = pool.begin().await.map_err(ApiError::sql)?;
 

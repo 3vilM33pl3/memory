@@ -371,6 +371,11 @@ pub struct RetentionConfig {
     /// prune superseded versions".
     #[serde(default, with = "humantime_serde::option")]
     pub superseded_after: Option<Duration>,
+    /// Delete high-frequency operational timeline events (query,
+    /// watcher_health) older than this duration. Mutation and provenance
+    /// events are always kept. Default None means "never prune".
+    #[serde(default, with = "humantime_serde::option")]
+    pub operational_events_after: Option<Duration>,
 }
 
 /// Access-driven memory reinforcement: activation scoring, spreading
