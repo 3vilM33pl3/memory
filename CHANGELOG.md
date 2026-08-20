@@ -1,6 +1,80 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 - Unreleased
+
+Pre-ATProto refactor: six waves of simplification, boundary work, and record
+model changes preparing the codebase for AT Protocol federation. This is a
+breaking release for config, HTTP API, CLI flags, bundles, and the stream
+protocol. Databases migrate in place (migrations 0027–0032); bundle v1
+imports remain supported.
+
+### Security
+
+- `DELETE /v1/memory` now resolves the owning project from the request body
+  and requires project-scoped Admin; the route-policy fallback no longer
+  grants access based on membership in any project.
+- `GET /v1/runtime/status` is project-scoped instead of unscoped.
+- Route authorization is a fail-closed registration-time policy table:
+  unknown path/method combinations are denied instead of defaulting to
+  read access. Denied and errored authorizations are audited with request ids.
+
+### Added
+
+- Permission sets replace the ordinal role ladder: principals carry an
+  explicit permission bitset; role names survive as presets and
+  `/v1/auth/me` exposes expanded permissions (migration 0027).
+- Single-user installs get a persistent local-owner principal and
+  `POST /v1/auth/session/bootstrap` (loopback-only) replaces the
+  `GET /v1/web/auth-token` handoff.
+- Per-canonical memory state table; version rows are immutable and query
+  results/citations carry `canonical_id`/`version_no` (migrations 0028–0032).
+- The project timeline is an ordered, durable event log with a monotonic
+  `seq`, transactional appends, and 12 new activity kinds covering the loop,
+  provenance, consolidation, workspace, and auth planes.
+- The stream (`/ws`) pushes deltas (`memory_upserted`/`memory_removed`/
+  `overview_changed`) with `Resync` instead of refetching snapshots.
+- Append-only provenance (`memory_source_checks`) with git commit, line
+  range, and content-hash anchors; content drift is detected by re-hashing.
+- Deterministic content-addressed bundles (schema v2): same content, same
+  bytes, same `bundle_id`; v1 imports still accepted.
+- Graph extraction runs through `POST /v1/projects/{slug}/graph/extract`;
+  the CLI no longer links sqlx.
+- `/v1/runtime/status` reports server-side database, LLM, and embeddings
+  facts; `memory doctor` relays them (`backend.llm_report`,
+  `backend.embeddings_report`).
+
+### Changed (breaking)
+
+- The Cap'n Proto socket transport is gone; the TUI and clients use the
+  `/ws` websocket. Config keys `capnp_unix_socket`/`capnp_tcp_addr` removed.
+- `mem-api` is deleted; wire types live in `mem-record`, configuration in
+  `mem-config`.
+- Feature gates: `memory` builds with `tui` by default; `memory service run`
+  needs `--features embedded-service` (packaged builds use `full`);
+  mem-service's bundled DuckDB offline store is behind `offline` (default on).
+- Writer identity is derived from the authenticated principal; client
+  `writer_id` is advisory metadata.
+- Four loop-settings routes collapse into
+  `POST /v1/loops/{loop_id}/settings`; four activity routes into
+  `POST /v1/activity`.
+- `memory automation` folds into `memory watcher flush`;
+  `memory capture task` becomes `memory capture`; `memory dev init` becomes
+  `memory dev`; `memory setup` (duplicate of `wizard`) is removed.
+- `memory_entries.status`/`archived_at` are dropped in favor of the
+  canonical state table; relation edges live on canonical endpoints with
+  `asserted`/`derived` origin.
+- `/v1/stats`, `/v1/offline/pending`, and the web auth-token route are
+  removed; watcher restart and shutdown are in-process calls.
+- SDK clients (`clients/`) and the Skyrim integration left the main branch
+  (history preserves them).
+
+### Deferred
+
+- Shared clap `OutputArgs`/`ScopeArgs` flatten and a global `--json`
+  polarity flip (eval keeps JSON-default output): high churn, no behavior
+  change, revisit if the CLI surface grows.
+- TUI agents tab still collects locally; `mem-agenttop` is dependency-light
+  and the watcher manager needs the local collector regardless.
 
 ## 1.0.1 - 2026-07-17
 

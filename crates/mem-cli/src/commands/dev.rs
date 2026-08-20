@@ -4,9 +4,7 @@ use anyhow::{Context, Result};
 use std::env;
 
 use crate::commands::{
-    init_support::initialize_dev_overlay,
-    runtime::DevInitArgs,
-    skill_support::resolve_repo_root,
+    init_support::initialize_dev_overlay, runtime::DevInitArgs, skill_support::resolve_repo_root,
 };
 
 pub(super) async fn handle(args: &DevInitArgs) -> Result<()> {

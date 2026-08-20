@@ -141,7 +141,7 @@ export function authLoginUrl(returnTo = window.location.pathname + window.locati
 export async function logout(): Promise<void> {
   await parseJson(await apiFetch("/v1/auth/logout", { method: "POST" }));
   authMePromise = null;
-  webAuthTokenPromise = null;
+  sessionBootstrapPromise = null;
 }
 
 export async function listAuthPrincipals(): Promise<AuthPrincipalResponse[]> {

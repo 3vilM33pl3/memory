@@ -22,7 +22,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.0.3"
+version = "2.0.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 authors = ["Olivier Van Acker"]
