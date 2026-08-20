@@ -311,8 +311,22 @@ pub struct EffectiveLoopSettings {
     pub snoozed_until: Option<DateTime<Utc>>,
 }
 
+/// What a settings update intends; the server derives mode/enabled and
+/// approval requirements from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopSettingAction {
+    Enable,
+    Disable,
+    Pause,
+    Snooze,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopSettingsUpdateRequest {
+    /// Intent of this update. Required on POST /v1/loops/{id}/settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<LoopSettingAction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope_type: Option<LoopScopeType>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -653,10 +653,16 @@ impl MemoryMcpServer {
         arguments: Map<String, Value>,
     ) -> Result<CallToolResult, McpError> {
         let args: LoopSettingArgs = from_args(arguments)?;
-        let request = args.to_update_request(Some(true), args.mode.clone(), None, None);
+        let request = args.to_update_request(
+            mem_record::LoopSettingAction::Enable,
+            Some(true),
+            args.mode.clone(),
+            None,
+            None,
+        );
         let response = self
             .client
-            .loop_enable(&args.loop_id, &request)
+            .loop_update_settings(&args.loop_id, &request)
             .await
             .map_err(api_error)?;
         let text = format_loop_setting_text("enable", &response);
@@ -668,10 +674,16 @@ impl MemoryMcpServer {
         arguments: Map<String, Value>,
     ) -> Result<CallToolResult, McpError> {
         let args: LoopSettingArgs = from_args(arguments)?;
-        let request = args.to_update_request(Some(false), Some(LoopMode::Off), None, None);
+        let request = args.to_update_request(
+            mem_record::LoopSettingAction::Disable,
+            Some(false),
+            Some(LoopMode::Off),
+            None,
+            None,
+        );
         let response = self
             .client
-            .loop_disable(&args.loop_id, &request)
+            .loop_update_settings(&args.loop_id, &request)
             .await
             .map_err(api_error)?;
         let text = format_loop_setting_text("disable", &response);
@@ -684,6 +696,7 @@ impl MemoryMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let args: LoopPauseArgs = from_args(arguments)?;
         let request = args.setting.to_update_request(
+            mem_record::LoopSettingAction::Pause,
             None,
             Some(LoopMode::Paused),
             Some(args.paused_until),
@@ -691,7 +704,7 @@ impl MemoryMcpServer {
         );
         let response = self
             .client
-            .loop_pause(&args.setting.loop_id, &request)
+            .loop_update_settings(&args.setting.loop_id, &request)
             .await
             .map_err(api_error)?;
         let text = format_loop_setting_text("pause", &response);
@@ -704,6 +717,7 @@ impl MemoryMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let args: LoopSnoozeArgs = from_args(arguments)?;
         let request = args.setting.to_update_request(
+            mem_record::LoopSettingAction::Snooze,
             None,
             Some(LoopMode::Snoozed),
             None,
@@ -711,7 +725,7 @@ impl MemoryMcpServer {
         );
         let response = self
             .client
-            .loop_snooze(&args.setting.loop_id, &request)
+            .loop_update_settings(&args.setting.loop_id, &request)
             .await
             .map_err(api_error)?;
         let text = format_loop_setting_text("snooze", &response);
@@ -1136,39 +1150,12 @@ impl MemoryApiClient {
         self.get(&format!("/v1/loops/{loop_id}{suffix}")).await
     }
 
-    pub async fn loop_enable(
+    pub async fn loop_update_settings(
         &self,
         loop_id: &str,
         request: &LoopSettingsUpdateRequest,
     ) -> Result<LoopSettingResponse> {
-        self.post(&format!("/v1/loops/{loop_id}/enable"), request)
-            .await
-    }
-
-    pub async fn loop_disable(
-        &self,
-        loop_id: &str,
-        request: &LoopSettingsUpdateRequest,
-    ) -> Result<LoopSettingResponse> {
-        self.post(&format!("/v1/loops/{loop_id}/disable"), request)
-            .await
-    }
-
-    pub async fn loop_pause(
-        &self,
-        loop_id: &str,
-        request: &LoopSettingsUpdateRequest,
-    ) -> Result<LoopSettingResponse> {
-        self.post(&format!("/v1/loops/{loop_id}/pause"), request)
-            .await
-    }
-
-    pub async fn loop_snooze(
-        &self,
-        loop_id: &str,
-        request: &LoopSettingsUpdateRequest,
-    ) -> Result<LoopSettingResponse> {
-        self.post(&format!("/v1/loops/{loop_id}/snooze"), request)
+        self.post(&format!("/v1/loops/{loop_id}/settings"), request)
             .await
     }
 
@@ -1479,12 +1466,14 @@ struct LoopSettingArgs {
 impl LoopSettingArgs {
     fn to_update_request(
         &self,
+        action: mem_record::LoopSettingAction,
         enabled: Option<bool>,
         mode: Option<LoopMode>,
         paused_until: Option<DateTime<Utc>>,
         snoozed_until: Option<DateTime<Utc>>,
     ) -> LoopSettingsUpdateRequest {
         LoopSettingsUpdateRequest {
+            action: Some(action),
             scope_type: self.scope_type.clone(),
             scope_id: self.scope_id.clone(),
             project: self.project.clone(),

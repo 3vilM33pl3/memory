@@ -335,65 +335,14 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/QueryResponse' }
-  /v1/checkpoint/activity:
+  /v1/activity:
     post:
-      operationId: post_v1_checkpoint_activity
-      summary: "Record a checkpoint activity event."
-      tags: ["Activity & commits"]
-      x-stability: internal
+      operationId: post_v1_activity
+      summary: "Record a typed activity event (checkpoint, plan, scan, or graph via the activity tag)."
+      tags: ["Activity"]
+      x-stability: core
       requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-  /v1/plan/activity:
-    post:
-      operationId: post_v1_plan_activity
-      summary: "Record a plan lifecycle activity event."
-      tags: ["Activity & commits"]
-      x-stability: internal
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-  /v1/scan/activity:
-    post:
-      operationId: post_v1_scan_activity
-      summary: "Record a scan activity event."
-      tags: ["Activity & commits"]
-      x-stability: internal
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-  /v1/graph/activity:
-    post:
-      operationId: post_v1_graph_activity
-      summary: "Record a graph-extraction activity event."
-      tags: ["Activity & commits"]
-      x-stability: internal
-      requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema: { type: object, additionalProperties: true }
@@ -949,85 +898,16 @@ paths:
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
-  /v1/loops/{loop_id}/enable:
+  /v1/loops/{loop_id}/settings:
     parameters:
-      - name: loop_id
-        in: path
-        required: true
-        schema: { type: string }
+      - { name: loop_id, in: path, required: true, schema: { type: string } }
     post:
-      operationId: post_v1_loops_loop_id_enable
-      summary: "enable"
-      tags: ["Loops (control plane)"]
+      operationId: post_v1_loops_loop_id_settings
+      summary: "Update a loop's settings: enable, disable, pause, or snooze (action field)."
+      tags: ["Loops"]
       x-stability: internal
       requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-  /v1/loops/{loop_id}/disable:
-    parameters:
-      - name: loop_id
-        in: path
         required: true
-        schema: { type: string }
-    post:
-      operationId: post_v1_loops_loop_id_disable
-      summary: "disable"
-      tags: ["Loops (control plane)"]
-      x-stability: internal
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-  /v1/loops/{loop_id}/pause:
-    parameters:
-      - name: loop_id
-        in: path
-        required: true
-        schema: { type: string }
-    post:
-      operationId: post_v1_loops_loop_id_pause
-      summary: "pause"
-      tags: ["Loops (control plane)"]
-      x-stability: internal
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-  /v1/loops/{loop_id}/snooze:
-    parameters:
-      - name: loop_id
-        in: path
-        required: true
-        schema: { type: string }
-    post:
-      operationId: post_v1_loops_loop_id_snooze
-      summary: "snooze"
-      tags: ["Loops (control plane)"]
-      x-stability: internal
-      requestBody:
-        required: false
         content:
           application/json:
             schema: { type: object, additionalProperties: true }

@@ -294,40 +294,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             )],
         ),
         (
-            "/v1/checkpoint/activity",
-            &[(
-                Method::POST,
-                RoutePolicy {
-                    permission: Permission::ActivityCapture,
-                    scope: ProjectScope::BodyProject,
-                    semantic_read: false,
-                },
-            )],
-        ),
-        (
-            "/v1/plan/activity",
-            &[(
-                Method::POST,
-                RoutePolicy {
-                    permission: Permission::ActivityCapture,
-                    scope: ProjectScope::BodyProject,
-                    semantic_read: false,
-                },
-            )],
-        ),
-        (
-            "/v1/scan/activity",
-            &[(
-                Method::POST,
-                RoutePolicy {
-                    permission: Permission::ActivityCapture,
-                    scope: ProjectScope::BodyProject,
-                    semantic_read: false,
-                },
-            )],
-        ),
-        (
-            "/v1/graph/activity",
+            "/v1/activity",
             &[(
                 Method::POST,
                 RoutePolicy {
@@ -687,40 +654,7 @@ pub(crate) fn build_policy_table() -> matchit::Router<Vec<(Method, RoutePolicy)>
             )],
         ),
         (
-            "/v1/loops/{p}/enable",
-            &[(
-                Method::POST,
-                RoutePolicy {
-                    permission: Permission::LoopsConfigure,
-                    scope: ProjectScope::BodyProject,
-                    semantic_read: false,
-                },
-            )],
-        ),
-        (
-            "/v1/loops/{p}/disable",
-            &[(
-                Method::POST,
-                RoutePolicy {
-                    permission: Permission::LoopsConfigure,
-                    scope: ProjectScope::BodyProject,
-                    semantic_read: false,
-                },
-            )],
-        ),
-        (
-            "/v1/loops/{p}/pause",
-            &[(
-                Method::POST,
-                RoutePolicy {
-                    permission: Permission::LoopsConfigure,
-                    scope: ProjectScope::BodyProject,
-                    semantic_read: false,
-                },
-            )],
-        ),
-        (
-            "/v1/loops/{p}/snooze",
+            "/v1/loops/{p}/settings",
             &[(
                 Method::POST,
                 RoutePolicy {

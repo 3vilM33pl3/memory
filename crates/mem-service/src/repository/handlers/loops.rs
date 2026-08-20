@@ -189,63 +189,52 @@ pub(crate) async fn update_loop_global_state(
     ))
 }
 
-pub(crate) async fn enable_loop(
+pub(crate) async fn update_loop_settings(
     State(state): State<AppState>,
     Extension(principal): Extension<AuthenticatedPrincipal>,
     Path(loop_id): Path<String>,
     Json(mut request): Json<LoopSettingsUpdateRequest>,
 ) -> Result<Json<LoopSettingResponse>, ApiError> {
     stamp_actor(&principal, &mut request.updated_by);
-    request.enabled = Some(true);
-    if request.mode.is_none() {
-        let definition = fetch_loop_definition(&state.pool()?, &loop_id).await?;
-        request.mode = Some(definition.default_mode);
-    }
-    mutate_loop_setting(state, loop_id, request, true).await
-}
-
-pub(crate) async fn disable_loop(
-    State(state): State<AppState>,
-    Extension(principal): Extension<AuthenticatedPrincipal>,
-    Path(loop_id): Path<String>,
-    Json(mut request): Json<LoopSettingsUpdateRequest>,
-) -> Result<Json<LoopSettingResponse>, ApiError> {
-    stamp_actor(&principal, &mut request.updated_by);
-    request.enabled = Some(false);
-    request.mode = Some(LoopMode::Off);
-    mutate_loop_setting(state, loop_id, request, false).await
-}
-
-pub(crate) async fn pause_loop(
-    State(state): State<AppState>,
-    Extension(principal): Extension<AuthenticatedPrincipal>,
-    Path(loop_id): Path<String>,
-    Json(mut request): Json<LoopSettingsUpdateRequest>,
-) -> Result<Json<LoopSettingResponse>, ApiError> {
-    stamp_actor(&principal, &mut request.updated_by);
-    if request.paused_until.is_none() {
-        return Err(ApiError::validation(ValidationError::new(
-            "paused_until is required",
-        )));
-    }
-    request.mode = Some(LoopMode::Paused);
-    mutate_loop_setting(state, loop_id, request, false).await
-}
-
-pub(crate) async fn snooze_loop(
-    State(state): State<AppState>,
-    Extension(principal): Extension<AuthenticatedPrincipal>,
-    Path(loop_id): Path<String>,
-    Json(mut request): Json<LoopSettingsUpdateRequest>,
-) -> Result<Json<LoopSettingResponse>, ApiError> {
-    stamp_actor(&principal, &mut request.updated_by);
-    if request.snoozed_until.is_none() {
-        return Err(ApiError::validation(ValidationError::new(
-            "snoozed_until is required",
-        )));
-    }
-    request.mode = Some(LoopMode::Snoozed);
-    mutate_loop_setting(state, loop_id, request, false).await
+    let action = request.action.ok_or_else(|| {
+        ApiError::validation(ValidationError::new(
+            "action is required: enable, disable, pause, or snooze",
+        ))
+    })?;
+    let requires_explicit_approval = match action {
+        mem_record::LoopSettingAction::Enable => {
+            request.enabled = Some(true);
+            if request.mode.is_none() {
+                let definition = fetch_loop_definition(&state.pool()?, &loop_id).await?;
+                request.mode = Some(definition.default_mode);
+            }
+            true
+        }
+        mem_record::LoopSettingAction::Disable => {
+            request.enabled = Some(false);
+            request.mode = Some(LoopMode::Off);
+            false
+        }
+        mem_record::LoopSettingAction::Pause => {
+            if request.paused_until.is_none() {
+                return Err(ApiError::validation(ValidationError::new(
+                    "paused_until is required",
+                )));
+            }
+            request.mode = Some(LoopMode::Paused);
+            false
+        }
+        mem_record::LoopSettingAction::Snooze => {
+            if request.snoozed_until.is_none() {
+                return Err(ApiError::validation(ValidationError::new(
+                    "snoozed_until is required",
+                )));
+            }
+            request.mode = Some(LoopMode::Snoozed);
+            false
+        }
+    };
+    mutate_loop_setting(state, loop_id, request, requires_explicit_approval).await
 }
 
 async fn mutate_loop_setting(

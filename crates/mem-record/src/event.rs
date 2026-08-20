@@ -452,3 +452,13 @@ impl CheckpointActivityRequest {
         Ok(())
     }
 }
+
+/// One typed activity ingestion request; replaces the four per-kind routes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "activity", rename_all = "snake_case")]
+pub enum ActivityIngestRequest {
+    Checkpoint(CheckpointActivityRequest),
+    Plan(PlanActivityRequest),
+    Scan(ScanActivityRequest),
+    Graph(GraphActivityRequest),
+}

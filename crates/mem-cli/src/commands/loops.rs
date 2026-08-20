@@ -46,40 +46,57 @@ pub(super) async fn handle(args: LoopsArgs, api: &ApiClient) -> Result<()> {
         LoopsCommand::Enable(args) => {
             let request = setting_request(
                 &args.setting,
+                mem_record::LoopSettingAction::Enable,
                 Some(true),
                 args.mode.as_deref().map(parse_loop_mode).transpose()?,
                 None,
                 None,
             )?;
-            let response = api.loop_enable(&args.setting.loop_id, &request).await?;
+            let response = api
+                .loop_update_settings(&args.setting.loop_id, &request)
+                .await?;
             print_setting_response(&response, args.setting.json, "enable")?;
         }
         LoopsCommand::Disable(args) => {
-            let request =
-                setting_request(&args.setting, Some(false), Some(LoopMode::Off), None, None)?;
-            let response = api.loop_disable(&args.setting.loop_id, &request).await?;
+            let request = setting_request(
+                &args.setting,
+                mem_record::LoopSettingAction::Disable,
+                Some(false),
+                Some(LoopMode::Off),
+                None,
+                None,
+            )?;
+            let response = api
+                .loop_update_settings(&args.setting.loop_id, &request)
+                .await?;
             print_setting_response(&response, args.setting.json, "disable")?;
         }
         LoopsCommand::Pause(args) => {
             let request = setting_request(
                 &args.setting,
+                mem_record::LoopSettingAction::Pause,
                 None,
                 Some(LoopMode::Paused),
                 Some(args.until),
                 None,
             )?;
-            let response = api.loop_pause(&args.setting.loop_id, &request).await?;
+            let response = api
+                .loop_update_settings(&args.setting.loop_id, &request)
+                .await?;
             print_setting_response(&response, args.setting.json, "pause")?;
         }
         LoopsCommand::Snooze(args) => {
             let request = setting_request(
                 &args.setting,
+                mem_record::LoopSettingAction::Snooze,
                 None,
                 Some(LoopMode::Snoozed),
                 None,
                 Some(args.until),
             )?;
-            let response = api.loop_snooze(&args.setting.loop_id, &request).await?;
+            let response = api
+                .loop_update_settings(&args.setting.loop_id, &request)
+                .await?;
             print_setting_response(&response, args.setting.json, "snooze")?;
         }
         LoopsCommand::Run(args) => {
@@ -374,12 +391,14 @@ async fn run_loop(api: &ApiClient, args: LoopRunArgs) -> Result<mem_record::Loop
 
 fn setting_request(
     args: &LoopSettingArgs,
+    action: mem_record::LoopSettingAction,
     enabled: Option<bool>,
     mode: Option<LoopMode>,
     paused_until: Option<DateTime<Utc>>,
     snoozed_until: Option<DateTime<Utc>>,
 ) -> Result<LoopSettingsUpdateRequest> {
     let request = LoopSettingsUpdateRequest {
+        action: Some(action),
         scope_type: args
             .scope_type
             .as_deref()

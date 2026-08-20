@@ -484,9 +484,9 @@ impl ApiClient {
     pub(crate) async fn log_scan_activity(&self, request: &ScanActivityRequest) -> Result<()> {
         let response = self
             .client
-            .post(service_url(&self.config, "/v1/scan/activity"))
+            .post(service_url(&self.config, "/v1/activity"))
             .headers(write_headers(&self.config)?)
-            .json(request)
+            .json(&mem_record::ActivityIngestRequest::Scan(request.clone()))
             .send()
             .await?;
         let status = response.status();
@@ -535,9 +535,11 @@ impl ApiClient {
     ) -> Result<()> {
         let response = self
             .client
-            .post(service_url(&self.config, "/v1/checkpoint/activity"))
+            .post(service_url(&self.config, "/v1/activity"))
             .headers(write_headers(&self.config)?)
-            .json(request)
+            .json(&mem_record::ActivityIngestRequest::Checkpoint(
+                request.clone(),
+            ))
             .send()
             .await?;
         let status = response.status();
@@ -551,9 +553,9 @@ impl ApiClient {
     pub(crate) async fn log_plan_activity(&self, request: &PlanActivityRequest) -> Result<()> {
         let response = self
             .client
-            .post(service_url(&self.config, "/v1/plan/activity"))
+            .post(service_url(&self.config, "/v1/activity"))
             .headers(write_headers(&self.config)?)
-            .json(request)
+            .json(&mem_record::ActivityIngestRequest::Plan(request.clone()))
             .send()
             .await?;
         let status = response.status();
@@ -912,7 +914,7 @@ impl ApiClient {
         get_json(request.send().await?).await
     }
 
-    pub(crate) async fn loop_enable(
+    pub(crate) async fn loop_update_settings(
         &self,
         loop_id: &str,
         request: &LoopSettingsUpdateRequest,
@@ -921,7 +923,7 @@ impl ApiClient {
             self.client
                 .post(service_url(
                     &self.config,
-                    &format!("/v1/loops/{loop_id}/enable"),
+                    &format!("/v1/loops/{loop_id}/settings"),
                 ))
                 .headers(write_headers(&self.config)?)
                 .json(request)
@@ -930,64 +932,6 @@ impl ApiClient {
         )
         .await
     }
-
-    pub(crate) async fn loop_disable(
-        &self,
-        loop_id: &str,
-        request: &LoopSettingsUpdateRequest,
-    ) -> Result<mem_record::LoopSettingResponse> {
-        get_json(
-            self.client
-                .post(service_url(
-                    &self.config,
-                    &format!("/v1/loops/{loop_id}/disable"),
-                ))
-                .headers(write_headers(&self.config)?)
-                .json(request)
-                .send()
-                .await?,
-        )
-        .await
-    }
-
-    pub(crate) async fn loop_pause(
-        &self,
-        loop_id: &str,
-        request: &LoopSettingsUpdateRequest,
-    ) -> Result<mem_record::LoopSettingResponse> {
-        get_json(
-            self.client
-                .post(service_url(
-                    &self.config,
-                    &format!("/v1/loops/{loop_id}/pause"),
-                ))
-                .headers(write_headers(&self.config)?)
-                .json(request)
-                .send()
-                .await?,
-        )
-        .await
-    }
-
-    pub(crate) async fn loop_snooze(
-        &self,
-        loop_id: &str,
-        request: &LoopSettingsUpdateRequest,
-    ) -> Result<mem_record::LoopSettingResponse> {
-        get_json(
-            self.client
-                .post(service_url(
-                    &self.config,
-                    &format!("/v1/loops/{loop_id}/snooze"),
-                ))
-                .headers(write_headers(&self.config)?)
-                .json(request)
-                .send()
-                .await?,
-        )
-        .await
-    }
-
     pub(crate) async fn loop_run(
         &self,
         loop_id: &str,

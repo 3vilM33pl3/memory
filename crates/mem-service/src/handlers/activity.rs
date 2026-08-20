@@ -88,6 +88,28 @@ async fn queue_capture_offline(
     Ok(response)
 }
 
+/// Single ingestion route for typed activity events; the tagged request
+/// replaces /v1/{checkpoint,plan,scan,graph}/activity.
+pub(crate) async fn ingest_activity(
+    state: State<AppState>,
+    Json(request): Json<mem_record::ActivityIngestRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    match request {
+        mem_record::ActivityIngestRequest::Checkpoint(request) => {
+            checkpoint_activity(state, Json(request)).await
+        }
+        mem_record::ActivityIngestRequest::Plan(request) => {
+            plan_activity(state, Json(request)).await
+        }
+        mem_record::ActivityIngestRequest::Scan(request) => {
+            scan_activity(state, Json(request)).await
+        }
+        mem_record::ActivityIngestRequest::Graph(request) => {
+            graph_activity(state, Json(request)).await
+        }
+    }
+}
+
 pub(crate) async fn scan_activity(
     State(state): State<AppState>,
     Json(request): Json<ScanActivityRequest>,
