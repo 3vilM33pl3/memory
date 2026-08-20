@@ -6,6 +6,7 @@
 pub mod admin;
 pub mod bundle;
 pub mod capture;
+pub mod compose;
 pub mod error;
 pub mod event;
 pub mod graph;
@@ -20,6 +21,7 @@ pub mod watcher;
 pub use admin::*;
 pub use bundle::*;
 pub use capture::*;
+pub use compose::*;
 pub use error::*;
 pub use event::*;
 pub use graph::*;
