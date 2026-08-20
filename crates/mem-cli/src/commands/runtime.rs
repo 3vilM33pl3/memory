@@ -3575,9 +3575,17 @@ pub(super) async fn run() -> Result<()> {
     }
 
     match &command {
+        #[cfg(feature = "tui")]
         Command::Wizard(args) => {
             crate::commands::wizard::handle(args).await?;
             return Ok(());
+        }
+        #[cfg(not(feature = "tui"))]
+        Command::Wizard(_) => {
+            anyhow::bail!(
+                "this build of memory was compiled without the `tui` feature; \
+                 run the wizard from a full build or edit the config file directly"
+            );
         }
         Command::Init(args) => {
             crate::commands::init::handle(args).await?;
@@ -3722,7 +3730,12 @@ pub(super) async fn run() -> Result<()> {
         Command::Watcher(args) => {
             crate::commands::watcher::handle(args, config, cli_config_path, cli_writer_id).await?
         }
+        #[cfg(feature = "tui")]
         Command::Tui(args) => crate::commands::tui::handle(args, client, config).await?,
+        #[cfg(not(feature = "tui"))]
+        Command::Tui(_) => anyhow::bail!(
+            "this build of memory was compiled without the `tui` feature; use the web UI or a full build"
+        ),
     }
 
     Ok(())

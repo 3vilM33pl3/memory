@@ -219,7 +219,7 @@ if (-not $SkipBuild) {
         $env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS = '16'
     }
     Write-Host "Using Windows Cargo release overrides: LTO=$env:CARGO_PROFILE_RELEASE_LTO CODEGEN_UNITS=$env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS"
-    cargo build --release --locked --bin memory --target $Target --manifest-path (Join-Path $RootDir 'Cargo.toml')
+    cargo build --release --locked --features full --bin memory --target $Target --manifest-path (Join-Path $RootDir 'Cargo.toml')
 }
 
 $StageDir = Assert-BuildPath $StageDir

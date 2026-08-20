@@ -29,7 +29,7 @@ cargo run --bin memory -- init
 cargo run --bin memory -- dev init --copy-from-global
 
 # 3. Run each piece in its own shell. All three target the dev stack.
-cargo run --bin memory -- service run            # backend (4250 HTTP)
+cargo run --bin memory --features embedded-service -- service run            # backend (4250 HTTP)
 cargo run --bin memory -- watcher manager run    # optional: project watchers
 cargo run --bin memory -- tui                    # TUI shows [dev] in the header
 ```

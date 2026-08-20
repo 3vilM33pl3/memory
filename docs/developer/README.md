@@ -16,7 +16,7 @@ Run a fully isolated dev copy of Memory Layer alongside any packaged install on 
 ```bash
 cargo run --bin memory -- init
 cargo run --bin memory -- dev init --copy-from-global
-cargo run --bin memory -- service run            # 4250 HTTP
+cargo run --bin memory --features embedded-service -- service run            # 4250 HTTP
 cargo run --bin memory -- tui                    # header reads [dev]
 ```
 

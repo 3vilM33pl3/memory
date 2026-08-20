@@ -26,7 +26,7 @@ COPY . .
 # we make the index dimension-safe so migrations apply cleanly on boot. This
 # mirrors evals/docker/app-build-sequence/Dockerfile.
 RUN sed -i 's/ON memory_chunks USING hnsw (embedding vector_cosine_ops);/ON memory_chunks USING hnsw ((embedding::vector(1536)) vector_cosine_ops) WHERE embedding IS NOT NULL AND vector_dims(embedding) = 1536;/' migrations/0004_pgvector.sql
-RUN cargo build --release --bin memory
+RUN cargo build --release --features full --bin memory
 
 # --- Stage 3: runtime ---
 FROM debian:bookworm-slim AS runtime

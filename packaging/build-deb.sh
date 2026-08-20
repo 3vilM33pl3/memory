@@ -70,7 +70,7 @@ mkdir -p \
   "$PKG_ROOT/usr/share/fish/vendor_completions.d"
 
 echo "Building release binary for $DEB_ARCH ($RUST_TARGET)..."
-cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin memory --target "$RUST_TARGET"
+cargo build --release --features full --manifest-path "$ROOT_DIR/Cargo.toml" --bin memory --target "$RUST_TARGET"
 echo "Building web UI..."
 npm --prefix "$ROOT_DIR/web" ci
 npm --prefix "$ROOT_DIR/web" run build

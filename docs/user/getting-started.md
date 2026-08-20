@@ -830,7 +830,7 @@ npm --prefix web run build
 Then start the backend:
 
 ```bash
-cargo run --bin memory -- service run
+cargo run --bin memory --features embedded-service -- service run
 ```
 
 ## Importing Commit History
@@ -863,7 +863,7 @@ If you are developing Memory Layer itself, a `cargo` checkout runs as a **dev** 
 ```bash
 cargo run --bin memory -- init
 cargo run --bin memory -- dev init --copy-from-global
-cargo run --bin memory -- service run            # in its own shell
+cargo run --bin memory --features embedded-service -- service run            # in its own shell
 cargo run --bin memory -- tui                    # header reads [dev]
 ```
 

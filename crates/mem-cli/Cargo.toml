@@ -11,7 +11,7 @@ anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
-crossterm.workspace = true
+crossterm = { workspace = true, optional = true }
 mem-agenttop = { path = "../mem-agenttop" }
 mem-analyze = { path = "../mem-analyze" }
 mem-config = { path = "../mem-config" }
@@ -20,11 +20,11 @@ mem-eval = { path = "../mem-eval" }
 mem-graph = { path = "../mem-graph" }
 mem-mcp = { path = "../mem-mcp" }
 mem-platform = { path = "../mem-platform" }
-mem-service = { path = "../mem-service" }
+mem-service = { path = "../mem-service", optional = true }
 mem-skills = { path = "../mem-skills" }
 mem-watch = { path = "../mem-watch" }
 notify.workspace = true
-ratatui.workspace = true
+ratatui = { workspace = true, optional = true }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -38,6 +38,13 @@ uuid.workspace = true
 toml.workspace = true
 humantime = "2"
 zip.workspace = true
+
+
+[features]
+default = ["tui"]
+tui = ["dep:ratatui", "dep:crossterm"]
+embedded-service = ["dep:mem-service"]
+full = ["tui", "embedded-service"]
 
 [[bin]]
 name = "memory"

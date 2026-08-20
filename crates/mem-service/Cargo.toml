@@ -26,7 +26,7 @@ mem-search = { path = "../mem-search" }
 mem-skills = { path = "../mem-skills" }
 mem-watch = { path = "../mem-watch" }
 futures-util.workspace = true
-duckdb.workspace = true
+duckdb = { workspace = true, optional = true }
 reqwest.workspace = true
 rmcp.workspace = true
 serde.workspace = true
@@ -49,6 +49,11 @@ sha2.workspace = true
 zip.workspace = true
 toml_edit = "0.23"
 libc = "0.2"
+
+
+[features]
+default = ["offline"]
+offline = ["dep:duckdb"]
 
 [dev-dependencies]
 mem-test-support = { path = "../mem-test-support" }

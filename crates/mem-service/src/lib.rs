@@ -9,6 +9,10 @@ mod error;
 mod handlers;
 mod llm;
 mod mcp_http;
+#[cfg(feature = "offline")]
+mod offline;
+#[cfg(not(feature = "offline"))]
+#[path = "offline_stub.rs"]
 mod offline;
 mod prelude;
 mod reinforcement;

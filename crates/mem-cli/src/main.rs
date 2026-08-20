@@ -10,7 +10,9 @@ mod plan_execution;
 mod resume;
 mod scan;
 mod telemetry;
+#[cfg(feature = "tui")]
 mod tui;
+#[cfg(feature = "tui")]
 mod wizard;
 mod writer_identity;
 

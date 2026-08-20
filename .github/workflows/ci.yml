@@ -133,6 +133,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p mem-test-support -p mem-graph -p mem-curate -p mem-reinforce -p mem-search -p mem-service --locked
 
+
+  feature-matrix:
+    name: Feature Matrix
+    runs-on: ubuntu-latest
+    needs: [changes, rust-test]
+    if: needs.changes.outputs.rust == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p mem-cli --no-default-features --locked
+      - run: cargo check -p mem-cli --features full --locked
+      - run: cargo check -p mem-service --no-default-features --locked
+      - run: cargo clippy -p mem-cli --features full --all-targets --locked -- -D warnings
+      - run: ./scripts/check-boundaries.sh
+
   offline-eval:
     name: Offline Eval Smoke
     runs-on: ubuntu-latest

@@ -11,7 +11,7 @@ class MemoryLayer < Formula
   def install
     system "npm", "--prefix", "web", "ci"
     system "npm", "--prefix", "web", "run", "build"
-    system "cargo", "build", "--release", "--locked", "--manifest-path", "Cargo.toml",
+    system "cargo", "build", "--release", "--locked", "--features", "full", "--manifest-path", "Cargo.toml",
            "--package", "mem-cli", "--bin", "memory"
 
     bin.install "target/release/memory"

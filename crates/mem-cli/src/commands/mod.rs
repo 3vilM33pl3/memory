@@ -45,12 +45,14 @@ mod status;
 pub(crate) mod status_support;
 mod structure;
 mod tour;
+#[cfg(feature = "tui")]
 mod tui;
 mod up_to_speed;
 mod upgrade;
 mod verify_provenance;
 pub(crate) mod watch_support;
 mod watcher;
+#[cfg(feature = "tui")]
 mod wizard;
 
 pub(crate) async fn run() -> anyhow::Result<()> {

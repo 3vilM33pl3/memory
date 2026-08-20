@@ -140,7 +140,7 @@ mkdir -p \
 
 # --- Build -----------------------------------------------------------------
 echo "Building release binary for $PKG_ARCH ($RUST_TARGET)..."
-cargo build --release --manifest-path "$ROOT_DIR/Cargo.toml" --bin memory --target "$RUST_TARGET"
+cargo build --release --features full --manifest-path "$ROOT_DIR/Cargo.toml" --bin memory --target "$RUST_TARGET"
 
 echo "Building web UI..."
 npm --prefix "$ROOT_DIR/web" ci

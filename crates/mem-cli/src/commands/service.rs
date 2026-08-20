@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use anyhow::Result;
+#[cfg(feature = "embedded-service")]
 use mem_service as service_runtime;
 use std::path::PathBuf;
 
@@ -21,8 +22,17 @@ pub(super) async fn handle(args: &ServiceArgs, cli_config: Option<PathBuf>) -> R
         .clone()
         .unwrap_or_else(default_global_config_path);
     match &args.command {
+        #[cfg(feature = "embedded-service")]
         ServiceCommand::Run => {
             service_runtime::run_service(cli_config).await?;
+        }
+        #[cfg(not(feature = "embedded-service"))]
+        ServiceCommand::Run => {
+            anyhow::bail!(
+                "`memory service run` requires a build with the embedded-service feature \
+                 (packaged builds include it); enable/disable/status/restart-all still \
+                 manage the installed service"
+            );
         }
         ServiceCommand::Enable(args) => {
             if args.dry_run {

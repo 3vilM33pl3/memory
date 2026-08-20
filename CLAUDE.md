@@ -35,7 +35,7 @@ binary in a separate shell:
 ```bash
 cargo run --bin memory -- dev init      # prompts to copy DB/LLM settings
                                         # from the global config
-cargo run --bin memory -- service run   # dev service
+cargo run --bin memory --features embedded-service -- service run   # dev service
 cargo run --bin memory -- tui           # dev TUI
 ```
 

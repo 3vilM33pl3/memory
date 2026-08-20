@@ -263,6 +263,18 @@ mod migration_compat_tests {
     }
 }
 
+#[cfg(not(feature = "offline"))]
+async fn build_offline_runtime(config: &AppConfig) -> Result<Option<OfflineRuntime>> {
+    if config.offline.enabled {
+        tracing::warn!(
+            "config enables [offline] but this build was compiled without the offline feature; \
+             offline capture is disabled"
+        );
+    }
+    Ok(None)
+}
+
+#[cfg(feature = "offline")]
 async fn build_offline_runtime(config: &AppConfig) -> Result<Option<OfflineRuntime>> {
     if !config.offline.enabled {
         return Ok(None);
