@@ -113,7 +113,7 @@ fn archive_experiment(args: EvalArchiveArgs) -> Result<()> {
         "cli_version": env!("CARGO_PKG_VERSION"),
         "git_commit": git_commit,
         "created_at": chrono::Utc::now().to_rfc3339(),
-        "reproduce_with": format!("memory eval reproduce --suite suite/"),
+        "reproduce_with": "memory eval reproduce --suite suite/".to_string(),
         "files": file_entries,
     });
     std::fs::write(
