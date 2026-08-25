@@ -9,16 +9,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: memory-self-hosted-runners
+  cancel-in-progress: false
 
 jobs:
   changes:
     name: Detect Changes
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
@@ -75,9 +72,6 @@ jobs:
   rust-fmt:
     name: Rust Format
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.evals == 'true' || needs.changes.outputs.package == 'true'
     steps:
@@ -90,9 +84,6 @@ jobs:
   rust-test:
     name: Rust Tests
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.evals == 'true' || needs.changes.outputs.package == 'true'
     steps:
@@ -103,9 +94,6 @@ jobs:
   rust-clippy:
     name: Rust Clippy
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     needs: [changes, rust-test]
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.evals == 'true' || needs.changes.outputs.package == 'true'
     steps:
@@ -118,9 +106,6 @@ jobs:
   db-integration:
     name: DB Integration
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     needs: changes
     if: needs.changes.outputs.db == 'true'
     services:
@@ -149,9 +134,6 @@ jobs:
   feature-matrix:
     name: Feature Matrix
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     needs: [changes, rust-test]
     if: needs.changes.outputs.rust == 'true'
     steps:
@@ -170,9 +152,6 @@ jobs:
   offline-eval:
     name: Offline Eval Smoke
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     needs: [changes, rust-test]
     if: needs.changes.outputs.evals == 'true'
     steps:
@@ -193,9 +172,6 @@ jobs:
   web-build:
     name: Web Build
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     needs: changes
     if: needs.changes.outputs.web == 'true' || needs.changes.outputs.package == 'true'
     steps:
@@ -209,9 +185,6 @@ jobs:
   docs-site:
     name: Docs Site
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     needs: changes
     if: needs.changes.outputs.docs_site == 'true'
     steps:
@@ -227,9 +200,6 @@ jobs:
   package-smoke:
     name: Debian Package Smoke (amd64)
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     needs: [changes, rust-test, web-build]
     if: needs.changes.outputs.package == 'true'
     steps:

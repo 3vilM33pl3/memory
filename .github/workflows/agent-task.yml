@@ -31,16 +31,13 @@ permissions:
   issues: write
 
 concurrency:
-  group: agent-task-${{ inputs.task_id }}-${{ inputs.branch_slug }}
+  group: memory-self-hosted-runners
   cancel-in-progress: false
 
 jobs:
   feature-agent:
     name: Feature Agent
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
         with:

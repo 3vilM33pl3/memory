@@ -12,7 +12,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: agent-pr-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: memory-self-hosted-runners
   cancel-in-progress: false
 
 env:
@@ -24,9 +24,6 @@ jobs:
   review-agent:
     name: Codex Review Agent
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     if: >
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft == false &&
@@ -67,9 +64,6 @@ jobs:
   resolver-agent:
     name: Codex Resolver Agent
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     needs: review-agent
     if: >
       github.event_name == 'pull_request' &&
@@ -130,9 +124,6 @@ jobs:
   discussion-agent:
     name: Codex Discussion Agent
     runs-on: [self-hosted, memory, Linux, X64]
-    concurrency:
-      group: memory-runner-linux-x64
-      cancel-in-progress: false
     if: >
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request &&

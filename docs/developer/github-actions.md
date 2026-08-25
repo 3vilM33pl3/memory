@@ -44,10 +44,12 @@ repository associations. Self-hosted jobs still execute with the host account's
 permissions; changes to workflow triggers and shell commands require security
 review.
 
-Each job also uses a platform-specific concurrency group such as
-`memory-runner-linux-x64`. This prevents separate workflow runs from assigning
-overlapping jobs to the same runner while still allowing different platform
-runners to build release artifacts in parallel.
+Repository workflows share the `memory-self-hosted-runners` concurrency group.
+This prevents separate workflow runs from assigning overlapping jobs to the
+same runner. GitHub keeps at most one pending run in a concurrency group, so a
+newer queued run can supersede an older queued run; the active run is never
+canceled. Jobs inside the active workflow can still use the available platform
+runners in parallel.
 
 ## Required Repository Secrets
 
