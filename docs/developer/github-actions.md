@@ -9,8 +9,8 @@ Linux x86_64 runner is `Monolith_Memory`, registered with the labels
 
 ## Self-hosted runner operation
 
-On Monolith, the runner is installed in
-`/home/olivier/actions-runner-memory` and managed by:
+On Monolith, the runner is installed in `~/actions-runner-memory` and managed
+by:
 
 ```bash
 systemctl status actions.runner.3vilM33pl3-memory.Monolith_Memory.service
@@ -20,11 +20,11 @@ journalctl -u actions.runner.3vilM33pl3-memory.Monolith_Memory.service -f
 Persistent build caches live outside the disposable Actions checkout:
 
 ```text
-/home/olivier/.cache/memory-actions/cargo-target
-/home/olivier/.cache/memory-actions/npm
+~/.cache/memory-actions/cargo-target
+~/.cache/memory-actions/npm
 ```
 
-The runner exports these paths from `/home/olivier/actions-runner-memory/.env`.
+The runner exports these paths from `~/actions-runner-memory/.env`.
 The first workflow after provisioning is a cold build; later jobs and runs reuse
 the Cargo target and npm download caches. Do not commit the runner registration
 token, `.credentials`, `.runner`, or host environment file.
@@ -43,6 +43,11 @@ same-repository branch, and comment-triggered agent work is limited to trusted
 repository associations. Self-hosted jobs still execute with the host account's
 permissions; changes to workflow triggers and shell commands require security
 review.
+
+Each job also uses a platform-specific concurrency group such as
+`memory-runner-linux-x64`. This prevents separate workflow runs from assigning
+overlapping jobs to the same runner while still allowing different platform
+runners to build release artifacts in parallel.
 
 ## Required Repository Secrets
 
