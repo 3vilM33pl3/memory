@@ -16,6 +16,9 @@ jobs:
   validate-release:
     name: Validate Release
     runs-on: [self-hosted, memory, Linux, X64]
+    concurrency:
+      group: memory-runner-linux-x64
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
         with:
@@ -57,6 +60,9 @@ jobs:
   source-release:
     name: Build Source Archive
     runs-on: [self-hosted, memory, Linux, X64]
+    concurrency:
+      group: memory-runner-linux-x64
+      cancel-in-progress: false
     needs: validate-release
     steps:
       - uses: actions/checkout@v7
@@ -84,15 +90,20 @@ jobs:
   linux-release:
     name: Build Linux ${{ matrix.deb_arch }} Package
     runs-on: ${{ fromJSON(matrix.runner) }}
+    concurrency:
+      group: ${{ matrix.runner_lock }}
+      cancel-in-progress: false
     needs: validate-release
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: '["self-hosted", "memory", "Linux", "X64"]'
+            runner_lock: memory-runner-linux-x64
             deb_arch: amd64
             rust_target: x86_64-unknown-linux-gnu
           - runner: '["self-hosted", "memory", "Linux", "ARM64"]'
+            runner_lock: memory-runner-linux-arm64
             deb_arch: arm64
             rust_target: aarch64-unknown-linux-gnu
     steps:
@@ -125,15 +136,20 @@ jobs:
   macos-release:
     name: Build macOS ${{ matrix.pkg_arch }} Package
     runs-on: ${{ fromJSON(matrix.runner) }}
+    concurrency:
+      group: ${{ matrix.runner_lock }}
+      cancel-in-progress: false
     needs: validate-release
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: '["self-hosted", "memory", "macOS", "X64"]'
+            runner_lock: memory-runner-macos-x64
             pkg_arch: x86_64
             rust_target: x86_64-apple-darwin
           - runner: '["self-hosted", "memory", "macOS", "ARM64"]'
+            runner_lock: memory-runner-macos-arm64
             pkg_arch: aarch64
             rust_target: aarch64-apple-darwin
     steps:
@@ -166,6 +182,9 @@ jobs:
   windows-release:
     name: Build Windows x86_64 Package
     runs-on: [self-hosted, memory, Windows, X64]
+    concurrency:
+      group: memory-runner-windows-x64
+      cancel-in-progress: false
     needs: validate-release
     steps:
       - uses: actions/checkout@v7
@@ -198,6 +217,9 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     runs-on: [self-hosted, memory, Linux, X64]
+    concurrency:
+      group: memory-runner-linux-x64
+      cancel-in-progress: false
     needs:
       - source-release
       - linux-release
