@@ -23,8 +23,11 @@ env:
 jobs:
   review-agent:
     name: Codex Review Agent
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: [self-hosted, memory, Linux, X64]
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v7
         with:
@@ -60,7 +63,7 @@ jobs:
 
   resolver-agent:
     name: Codex Resolver Agent
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
     needs: review-agent
     if: >
       github.event_name == 'pull_request' &&
@@ -90,6 +93,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
@@ -114,16 +118,17 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "Fix: address agent review findings"
-          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          git push origin "HEAD:${HEAD_REF}"
           gh pr comment "$PR_NUMBER" --body "Codex resolver pushed fixes to this PR branch."
 
   discussion-agent:
     name: Codex Discussion Agent
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
     if: >
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request &&
-      startsWith(github.event.comment.body, '/agent-discuss')
+      startsWith(github.event.comment.body, '/agent-discuss') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     steps:
       - name: Resolve PR metadata
         id: pr

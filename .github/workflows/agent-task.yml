@@ -37,7 +37,7 @@ concurrency:
 jobs:
   feature-agent:
     name: Feature Agent
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
     steps:
       - uses: actions/checkout@v7
         with:

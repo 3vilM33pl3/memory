@@ -15,7 +15,8 @@ concurrency:
 jobs:
   changes:
     name: Detect Changes
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       db: ${{ steps.filter.outputs.db }}
@@ -70,7 +71,7 @@ jobs:
 
   rust-fmt:
     name: Rust Format
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.evals == 'true' || needs.changes.outputs.package == 'true'
     steps:
@@ -78,23 +79,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
 
   rust-test:
     name: Rust Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.evals == 'true' || needs.changes.outputs.package == 'true'
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --all-targets --locked
 
   rust-clippy:
     name: Rust Clippy
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
     needs: [changes, rust-test]
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.evals == 'true' || needs.changes.outputs.package == 'true'
     steps:
@@ -102,12 +101,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   db-integration:
     name: DB Integration
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
     needs: changes
     if: needs.changes.outputs.db == 'true'
     services:
@@ -118,25 +116,24 @@ jobs:
           POSTGRES_PASSWORD: memory
           POSTGRES_DB: memory_test
         ports:
-          - 5432:5432
+          - 55432:5432
         options: >-
           --health-cmd "pg_isready -U memory -d memory_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
     env:
-      MEMORY_LAYER_TEST_DATABASE_URL: postgres://memory:memory@localhost:5432/memory_test
+      MEMORY_LAYER_TEST_DATABASE_URL: postgres://memory:memory@localhost:55432/memory_test
       MEMORY_LAYER_TEST_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - run: cargo test -p mem-test-support -p mem-graph -p mem-curate -p mem-reinforce -p mem-search -p mem-service --locked
 
 
   feature-matrix:
     name: Feature Matrix
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
     needs: [changes, rust-test]
     if: needs.changes.outputs.rust == 'true'
     steps:
@@ -144,7 +141,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: Swatinem/rust-cache@v2
       - run: cargo check -p mem-cli --no-default-features --locked
       - run: cargo check -p mem-cli --no-default-features --features tui --locked
       - run: cargo check -p mem-cli --locked
@@ -155,13 +151,12 @@ jobs:
 
   offline-eval:
     name: Offline Eval Smoke
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
     needs: [changes, rust-test]
     if: needs.changes.outputs.evals == 'true'
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - run: |
           cp memory-layer.toml.example "$RUNNER_TEMP/memory-layer.toml"
           cargo run --locked --bin memory -- \
@@ -176,7 +171,7 @@ jobs:
 
   web-build:
     name: Web Build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
     needs: changes
     if: needs.changes.outputs.web == 'true' || needs.changes.outputs.package == 'true'
     steps:
@@ -184,14 +179,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
       - run: npm --prefix web ci
       - run: npm --prefix web run build
 
   docs-site:
     name: Docs Site
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, memory, Linux, X64]
     needs: changes
     if: needs.changes.outputs.docs_site == 'true'
     steps:
@@ -199,42 +192,27 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: docs-site/package-lock.json
       - run: npm --prefix docs-site ci
       - run: npm --prefix docs-site run build
       - run: npm --prefix docs-site run lint:links
       - run: npm --prefix docs-site run check:assets
 
   package-smoke:
-    name: Debian Package Smoke (${{ matrix.deb_arch }})
-    runs-on: ${{ matrix.runner }}
+    name: Debian Package Smoke (amd64)
+    runs-on: [self-hosted, memory, Linux, X64]
     needs: [changes, rust-test, web-build]
     if: needs.changes.outputs.package == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            deb_arch: amd64
-            rust_target: x86_64-unknown-linux-gnu
-          - runner: ubuntu-24.04-arm
-            deb_arch: arm64
-            rust_target: aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust_target }}
-      - uses: Swatinem/rust-cache@v2
+          targets: x86_64-unknown-linux-gnu
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: ./packaging/build-deb.sh --arch "${{ matrix.deb_arch }}" --target "${{ matrix.rust_target }}"
+      - run: ./packaging/build-deb.sh --arch amd64 --target x86_64-unknown-linux-gnu
       - uses: actions/upload-artifact@v4
         with:
-          name: memory-layer-deb-${{ matrix.deb_arch }}
-          path: target/debian/*_${{ matrix.deb_arch }}.deb
+          name: memory-layer-deb-amd64
+          path: target/debian/*_amd64.deb
           if-no-files-found: error

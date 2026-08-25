@@ -15,18 +15,15 @@ concurrency:
 jobs:
   quality:
     name: Nightly Quality Sweep
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, memory, Linux, X64]
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
 
       - name: Rust validation
         run: |
@@ -60,29 +57,16 @@ jobs:
           cargo audit
 
   debian-package-smoke:
-    name: Debian Package Smoke (${{ matrix.deb_arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            deb_arch: amd64
-            rust_target: x86_64-unknown-linux-gnu
-          - runner: ubuntu-24.04-arm
-            deb_arch: arm64
-            rust_target: aarch64-unknown-linux-gnu
+    name: Debian Package Smoke (amd64)
+    runs-on: [self-hosted, memory, Linux, X64]
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust_target }}
-      - uses: Swatinem/rust-cache@v2
+          targets: x86_64-unknown-linux-gnu
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
 
       - name: Debian package smoke
-        run: ./packaging/build-deb.sh --arch "${{ matrix.deb_arch }}" --target "${{ matrix.rust_target }}"
+        run: ./packaging/build-deb.sh --arch amd64 --target x86_64-unknown-linux-gnu
