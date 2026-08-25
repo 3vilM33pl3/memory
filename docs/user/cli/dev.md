@@ -16,10 +16,10 @@ memory dev --no-copy-from-global
 
 `memory dev` creates the user-local project `config.dev.toml` and dev runtime directory. Dev-profile binaries use separate defaults from installed packages:
 
-| Stack | HTTP | Cap'n Proto TCP |
-|---|---|---|
-| installed package | `127.0.0.1:4040` | `127.0.0.1:4041` |
-| dev/cargo run | `127.0.0.1:4250` | `127.0.0.1:4251` |
+| Stack | HTTP |
+|---|---|
+| installed package | `127.0.0.1:4040` |
+| dev/cargo run | `127.0.0.1:4250` |
 
 `--copy-from-global` copies database, LLM, and embedding endpoints from the global config into the dev overlay so a checkout can run without duplicating secrets by hand.
 

@@ -279,7 +279,7 @@ Most mutating `memory` commands support `--dry-run` so agents can preview writes
 
 ## Quick Start (Developers)
 
-If you are working on Memory Layer itself, you can run a development copy from a `cargo` checkout that is **fully isolated** from any packaged install on the same machine — separate ports, separate Cap'n Proto socket, separate runtime directory. The TUI shows `[dev]` in its header so you cannot mistake one for the other.
+If you are working on Memory Layer itself, you can run a development copy from a `cargo` checkout that is **fully isolated** from any packaged install on the same machine: a separate HTTP port and runtime directory. The TUI shows `[dev]` in its header so you cannot mistake one for the other.
 
 The mechanism: any `memory` binary launched from `target/{debug,release}/` activates the `dev` profile, which layers the user-local project `config.dev.toml` on top of the user-local project `config.toml` and ignores the global config entirely. Override with `MEMORY_LAYER_PROFILE=dev|prod` when needed.
 
@@ -293,7 +293,7 @@ cargo run --bin memory -- init
 cargo run --bin memory -- dev --copy-from-global
 
 # Each piece in its own shell, all on the dev stack.
-cargo run --bin memory --features embedded-service -- service run            # backend (4250 HTTP)
+cargo run --bin memory -- service run            # backend (4250 HTTP)
 cargo run --bin memory -- watcher manager run    # optional
 cargo run --bin memory -- tui                    # header reads [dev]
 ```

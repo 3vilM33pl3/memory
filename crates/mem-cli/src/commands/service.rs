@@ -30,8 +30,8 @@ pub(super) async fn handle(args: &ServiceArgs, cli_config: Option<PathBuf>) -> R
         ServiceCommand::Run => {
             anyhow::bail!(
                 "`memory service run` requires a build with the embedded-service feature \
-                 (packaged builds include it); enable/disable/status/restart-all still \
-                 manage the installed service"
+                 (default source and packaged builds include it; explicitly lean builds do not); \
+                 enable/disable/status/restart-all still manage the installed service"
             );
         }
         ServiceCommand::Enable(args) => {

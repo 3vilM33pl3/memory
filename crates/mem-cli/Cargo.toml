@@ -41,7 +41,7 @@ zip.workspace = true
 
 
 [features]
-default = ["tui"]
+default = ["full"]
 tui = ["dep:ratatui", "dep:crossterm"]
 embedded-service = ["dep:mem-service"]
 full = ["tui", "embedded-service"]

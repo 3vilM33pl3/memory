@@ -29,10 +29,15 @@ cargo run --bin memory -- init
 cargo run --bin memory -- dev --copy-from-global
 
 # 3. Run each piece in its own shell. All three target the dev stack.
-cargo run --bin memory --features embedded-service -- service run            # backend (4250 HTTP)
+cargo run --bin memory -- service run            # backend (4250 HTTP)
 cargo run --bin memory -- watcher manager run    # optional: project watchers
 cargo run --bin memory -- tui                    # TUI shows [dev] in the header
 ```
+
+The default source build includes both the TUI and embedded service so every
+command above works without feature flags. For an explicitly lean TUI build
+that cannot host the backend, use `cargo build -p mem-cli --no-default-features
+--features tui`.
 
 `memory dev --copy-from-global` lifts the database URL and LLM/embedding endpoints out of the installed config so the dev stack does not need its own credentials. Without `--copy-from-global` (and without a TTY) the overlay is left without shared credentials and you'll need to fill them in manually.
 

@@ -830,7 +830,7 @@ npm --prefix web run build
 Then start the backend:
 
 ```bash
-cargo run --bin memory --features embedded-service -- service run
+cargo run --bin memory -- service run
 ```
 
 ## Importing Commit History
@@ -858,12 +858,12 @@ memory commits sync --project my-project
 
 ## Running From Source
 
-If you are developing Memory Layer itself, a `cargo` checkout runs as a **dev** stack that is fully isolated from any packaged install on the same machine — separate ports (`4250`/`4251` instead of `4040`/`4041`), separate Cap'n Proto socket, and a separate runtime directory. The TUI shows `[dev]` in its header.
+If you are developing Memory Layer itself, a `cargo` checkout runs as a **dev** stack that is fully isolated from any packaged install on the same machine: a separate HTTP port (`4250` instead of `4040`) and runtime directory. The TUI shows `[dev]` in its header.
 
 ```bash
 cargo run --bin memory -- init
 cargo run --bin memory -- dev --copy-from-global
-cargo run --bin memory --features embedded-service -- service run            # in its own shell
+cargo run --bin memory -- service run            # in its own shell
 cargo run --bin memory -- tui                    # header reads [dev]
 ```
 

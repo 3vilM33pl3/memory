@@ -146,6 +146,8 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p mem-cli --no-default-features --locked
+      - run: cargo check -p mem-cli --no-default-features --features tui --locked
+      - run: cargo check -p mem-cli --locked
       - run: cargo check -p mem-cli --features full --locked
       - run: cargo check -p mem-service --no-default-features --locked
       - run: cargo clippy -p mem-cli --features full --all-targets --locked -- -D warnings

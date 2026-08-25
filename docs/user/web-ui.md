@@ -13,7 +13,7 @@ When building from source, run:
 ```bash
 npm --prefix web ci
 npm --prefix web run build
-cargo run --bin memory --features embedded-service -- service run
+cargo run --bin memory -- service run
 ```
 
 ## Tabs

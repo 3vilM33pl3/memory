@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Structural guards for the crate boundaries established by the pre-federation
-# refactor. A cosmetic re-merge of the old mem-api kitchen sink, a re-coupled
-# read path, or a fat default CLI build fails CI here.
+# refactor. A cosmetic re-merge of the old mem-api kitchen sink or a re-coupled
+# read path fails CI here. The explicitly lean CLI build is guarded separately.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -52,11 +52,13 @@ for dep in mem-reinforce mem-curate; do
   fi
 done
 
-# 6. Default CLI build stays lean: no server, no database, no DuckDB.
-cli_tree=$(cargo tree -p mem-cli -e normal --prefix none | awk '{print $1}' | sort -u)
+# 6. The explicit TUI-only CLI build stays lean: no server, database, or DuckDB.
+# The default source build is full so `cargo run --bin memory -- service run`
+# works without a feature flag.
+cli_tree=$(cargo tree -p mem-cli --no-default-features --features tui -e normal --prefix none | awk '{print $1}' | sort -u)
 for dep in mem-service axum duckdb openidconnect; do
   if echo "$cli_tree" | grep -qx "$dep"; then
-    err "default mem-cli build depends on $dep"
+    err "lean mem-cli build depends on $dep"
   fi
 done
 if grep -q '^sqlx' crates/mem-cli/Cargo.toml; then
