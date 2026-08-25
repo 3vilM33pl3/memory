@@ -6,7 +6,7 @@ verifiable state.
 
 ## Release contract
 
-The v1 line preserves:
+Each stable release preserves its documented compatibility contract for:
 
 - stable documented CLI commands and JSON output for core workflows
 - stable global and project config file ownership

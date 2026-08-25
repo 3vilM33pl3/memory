@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 - Unreleased
+## 2.0.0 - 2026-08-25
 
 Pre-ATProto refactor: six waves of simplification, boundary work, and record
 model changes preparing the codebase for AT Protocol federation. This is a
@@ -49,9 +49,10 @@ imports remain supported.
   `/ws` websocket. Config keys `capnp_unix_socket`/`capnp_tcp_addr` removed.
 - `mem-api` is deleted; wire types live in `mem-record`, configuration in
   `mem-config`.
-- Feature gates: `memory` builds with `tui` by default; `memory service run`
-  needs `--features embedded-service` (packaged builds use `full`);
-  mem-service's bundled DuckDB offline store is behind `offline` (default on).
+- Feature gates: default source and packaged CLI builds include the TUI and
+  embedded service; explicitly lean builds can select `tui` without
+  `embedded-service`. mem-service's bundled DuckDB offline store is behind
+  `offline` (default on).
 - Writer identity is derived from the authenticated principal; client
   `writer_id` is advisory metadata.
 - Four loop-settings routes collapse into
