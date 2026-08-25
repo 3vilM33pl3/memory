@@ -20,6 +20,10 @@ set -euo pipefail
 #   /usr/local/share/*             (bash, zsh, and fish completion scripts)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
+if [[ "$CARGO_TARGET_ROOT" != /* ]]; then
+  CARGO_TARGET_ROOT="$PWD/$CARGO_TARGET_ROOT"
+fi
 VERSION="$(awk -F '"' '/^version = / { print $2; exit }' "$ROOT_DIR/Cargo.toml" 2>/dev/null || true)"
 if [[ -z "${VERSION:-}" ]]; then
   VERSION="0.1.0"
@@ -126,7 +130,7 @@ STAGE_DIR="$ROOT_DIR/target/macos-pkg"
 PAYLOAD="$STAGE_DIR/payload"
 SCRIPTS="$STAGE_DIR/scripts"
 PKG_PATH="$ROOT_DIR/target/memory-layer-${VERSION}-macos-${PKG_ARCH}.pkg"
-BINARY_PATH="$ROOT_DIR/target/$RUST_TARGET/release/memory"
+BINARY_PATH="$CARGO_TARGET_ROOT/$RUST_TARGET/release/memory"
 
 rm -rf "$STAGE_DIR"
 mkdir -p \

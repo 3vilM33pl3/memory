@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
+if [[ "$CARGO_TARGET_ROOT" != /* ]]; then
+  CARGO_TARGET_ROOT="$PWD/$CARGO_TARGET_ROOT"
+fi
 INSTALL_ROOT="${INSTALL_ROOT:-$HOME/.local}"
 BIN_DIR="$INSTALL_ROOT/bin"
 if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -36,7 +40,7 @@ echo "Building web UI..."
 npm --prefix "$ROOT_DIR/web" ci
 npm --prefix "$ROOT_DIR/web" run build
 
-install -m 0755 "$ROOT_DIR/target/release/memory" "$BIN_DIR/memory"
+install -m 0755 "$CARGO_TARGET_ROOT/release/memory" "$BIN_DIR/memory"
 "$BIN_DIR/memory" completion bash > "$BASH_COMPLETION_DIR/memory"
 "$BIN_DIR/memory" completion zsh > "$ZSH_COMPLETION_DIR/_memory"
 "$BIN_DIR/memory" completion fish > "$FISH_COMPLETION_DIR/memory.fish"

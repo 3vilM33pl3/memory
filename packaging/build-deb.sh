@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
+if [[ "$CARGO_TARGET_ROOT" != /* ]]; then
+  CARGO_TARGET_ROOT="$PWD/$CARGO_TARGET_ROOT"
+fi
 VERSION="$(awk -F '\"' '/^version = / { print $2; exit }' "$ROOT_DIR/Cargo.toml" 2>/dev/null || true)"
 if [[ -z "${VERSION:-}" ]]; then
   VERSION="0.1.0"
@@ -54,7 +58,7 @@ case "$DEB_ARCH" in
 esac
 
 PKG_ROOT="$ROOT_DIR/target/debian/memory-layer-$DEB_ARCH"
-BIN_PATH="$ROOT_DIR/target/$RUST_TARGET/release/memory"
+BIN_PATH="$CARGO_TARGET_ROOT/$RUST_TARGET/release/memory"
 
 rm -rf "$PKG_ROOT"
 mkdir -p \
