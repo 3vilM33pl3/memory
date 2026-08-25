@@ -62,7 +62,6 @@ jobs:
             package:
               - "Cargo.toml"
               - "Cargo.lock"
-              - "crates/**"
               - "web/**"
               - "packaging/**"
               - ".agents/skills/**"

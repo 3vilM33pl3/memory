@@ -73,7 +73,13 @@ The workflow starts with a path filter and only runs the jobs affected by the ch
 - `DB Integration`: runs pgvector-backed migration, graph, and curation smoke tests
 - `Offline Eval Smoke`: dry-runs the bundled offline memory evaluation suite
 - `Web Build`: installs and builds the TUI/web frontend
-- `Debian Package Smoke`: builds an amd64 `.deb` package and uploads it as an artifact
+- `Debian Package Smoke`: builds an amd64 `.deb` package and uploads it when
+  packaging files or bundled assets change
+
+Ordinary Rust source changes do not run the release-profile package build.
+Rust tests, clippy, and the feature matrix cover those changes incrementally;
+Nightly still builds the complete Debian package every day. This avoids an LTO
+relink on every source-only push.
 
 The DB integration job runs when a pull request touches `migrations/**`, `mem-graph`, `mem-curate`, `mem-search`, `mem-service`, `mem-api`, or the shared DB test harness. It starts a `pgvector/pgvector:pg16` service and sets:
 
