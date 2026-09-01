@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "memory-layer": {
+      "command": "memory",
+      "args": [
+        "mcp",
+        "run"
+      ],
+      "env_vars": [
+        "MEMORY_LAYER_CLIENT_TOKEN"
+      ]
+    }
+  }
+}

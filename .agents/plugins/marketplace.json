@@ -1,0 +1,20 @@
+{
+  "name": "memory-layer",
+  "interface": {
+    "displayName": "Memory Layer"
+  },
+  "plugins": [
+    {
+      "name": "memory-layer",
+      "source": {
+        "source": "local",
+        "path": "./plugins/memory-layer"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

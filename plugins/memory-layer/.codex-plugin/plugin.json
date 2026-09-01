@@ -1,0 +1,35 @@
+{
+  "name": "memory-layer",
+  "version": "0.1.0+codex.20260901173230",
+  "description": "Evidence-backed project memory for Codex.",
+  "author": {
+    "name": "Memory Layer",
+    "url": "https://github.com/3vilM33pl3/memory"
+  },
+  "homepage": "https://github.com/3vilM33pl3/memory",
+  "repository": "https://github.com/3vilM33pl3/memory",
+  "license": "AGPL-3.0-or-later",
+  "keywords": [
+    "memory",
+    "project-context",
+    "mcp",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Memory Layer",
+    "shortDescription": "Evidence-backed project memory for Codex.",
+    "longDescription": "Connect Codex to Memory Layer for project retrieval, resume briefings, and durable workflow guidance.",
+    "developerName": "Memory Layer",
+    "category": "Productivity",
+    "capabilities": [
+      "MCP",
+      "Skills"
+    ],
+    "defaultPrompt": [
+      "Get me up to speed on this project using Memory Layer.",
+      "What does Memory Layer know about this codebase?"
+    ]
+  }
+}
