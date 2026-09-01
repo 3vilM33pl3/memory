@@ -24,6 +24,7 @@ jobs:
       docs_site: ${{ steps.filter.outputs.docs_site }}
       evals: ${{ steps.filter.outputs.evals }}
       package: ${{ steps.filter.outputs.package }}
+      plugin: ${{ steps.filter.outputs.plugin }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v3
@@ -67,6 +68,20 @@ jobs:
               - ".agents/skills/**"
               - "README.md"
               - "memory-layer.toml.example"
+            plugin:
+              - "plugins/memory-layer/**"
+              - ".agents/plugins/marketplace.json"
+              - "scripts/check-codex-plugin.py"
+              - "docs/user/codex-desktop-plugin.md"
+
+  plugin-contract:
+    name: Codex Plugin Contract
+    runs-on: [self-hosted, memory, Linux, X64]
+    needs: changes
+    if: needs.changes.outputs.plugin == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 scripts/check-codex-plugin.py
 
   rust-fmt:
     name: Rust Format

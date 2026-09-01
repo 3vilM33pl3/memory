@@ -19,7 +19,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - **Install and configure:** [Getting Started](getting-started.md), [Wizard And Bootstrap](cli/wizard.md), [Init Bootstrap](cli/init.md), [Skill Upgrade](cli/upgrade.md)
 - **Use the visual UIs:** [TUI Guide](tui/README.md), [Web UI](web-ui.md), [TUI Command](cli/tui.md), [Memories Tab](tui/memories.md), [Query Tab](tui/query.md), [Errors Tab](tui/errors.md)
 - **Ask useful questions:** [Query Command](cli/query.md), [Source Provenance Verification](cli/verify-provenance.md), [Code Graph Extraction](cli/graph.md), [Embedding Operations](cli/embeddings.md)
-- **Operate agents:** [Authentication And Access](cli/auth.md), [Agent Workspace Coordination](cli/agents.md), [Agents Tab](tui/agents.md), [Watcher Health](cli/watchers.md), [Activity Tab](tui/activity.md), [Get Up To Speed](cli/up-to-speed.md), [MCP Server](cli/mcp.md), [Loop Automations](cli/loops.md)
+- **Operate agents:** [Authentication And Access](cli/auth.md), [Agent Workspace Coordination](cli/agents.md), [Agents Tab](tui/agents.md), [Watcher Health](cli/watchers.md), [Activity Tab](tui/activity.md), [Get Up To Speed](cli/up-to-speed.md), [MCP Server](cli/mcp.md), [Codex Desktop Plugin](codex-desktop-plugin.md), [Loop Automations](cli/loops.md)
 - **Measure impact:** [Beginner Guide To Evaluations](evaluation-guide.md), [Automated Evaluation](cli/eval.md)
 - **Troubleshoot:** [Status](cli/status.md), [Doctor Diagnostics](cli/doctor.md), [Health](cli/health.md), [Errors Tab](tui/errors.md), [Release Compatibility](release-compatibility.md)
 
@@ -42,6 +42,7 @@ If you are new, start with the TUI. It shows the main product surface: cited mem
 - [Skill Upgrade](cli/upgrade.md)
 - [Service Commands](cli/service.md)
 - [Authentication And Access](cli/auth.md)
+- [Codex Desktop Plugin](codex-desktop-plugin.md)
 - [Status Command](cli/status.md)
 - [Doctor Diagnostics](cli/doctor.md)
 - [Health And Stats](cli/health.md)
