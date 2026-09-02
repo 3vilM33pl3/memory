@@ -198,6 +198,8 @@ export default function App() {
   const [serviceReadOnly, setServiceReadOnly] = useState(false);
   const [authMe, setAuthMe] = useState<AuthMeResponse | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
+  const runtimeServiceVersion = runtimeStatus?.service.version ?? serviceVersion;
+  const isDevelopmentMode = runtimeServiceVersion.endsWith("-dev");
   useEffect(() => {
     let cancelled = false;
     Promise.all([fetchServiceReadOnly(), getAuthMe()])
@@ -230,7 +232,10 @@ export default function App() {
       )}
       <header className="topbar">
         <div>
-          <h1>Memory Layer Web</h1>
+          <h1>
+            Memory Layer Web
+            {isDevelopmentMode ? <span className="dev-mode-badge">DEV MODE</span> : null}
+          </h1>
         </div>
         <div className="topbar-actions">
         <form
@@ -273,7 +278,7 @@ export default function App() {
         <span className={`status-pill status-${connectionState}`}>{connectionState}</span>
         <span><strong>{overview.project}</strong></span>
         <span>Web v{runtimeStatus?.web.version ?? serviceVersion} {runtimeStatus?.web.status ?? "ok"}</span>
-        <span>Service v{runtimeStatus?.service.version ?? serviceVersion} {runtimeStatus?.service.status ?? overview.service_status}</span>
+        <span>Service v{runtimeServiceVersion} {runtimeStatus?.service.status ?? overview.service_status}</span>
         <span>Manager v{runtimeStatus?.manager.version ?? serviceVersion} {runtimeStatus?.manager.state ?? "unknown"}{runtimeStatus?.manager.detail ? ` ${runtimeStatus.manager.detail}` : ""}</span>
         <span>Watchers v{runtimeStatus?.watchers.version ?? serviceVersion} {runtimeStatus?.watchers.status ?? "unknown"} {runtimeStatus?.watchers.detail ?? `${overview.watchers?.active_count ?? 0} active`}</span>
         <span>Provenance {runtimeStatus?.provenance.status ?? "unknown"} {runtimeStatus?.provenance.last_finished_at ? `last ${new Date(runtimeStatus.provenance.last_finished_at).toLocaleString()}` : "not run"}</span>

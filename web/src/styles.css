@@ -93,6 +93,20 @@ select {
   color: var(--accent);
 }
 
+.dev-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.55rem;
+  padding: 0.13rem 0.42rem;
+  border: 1px solid var(--accent-2);
+  border-radius: 4px;
+  background: rgba(255, 201, 107, 0.14);
+  color: var(--accent-2);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  vertical-align: middle;
+}
+
 .topbar-actions,
 .identity-control {
   display: flex;
