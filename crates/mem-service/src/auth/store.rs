@@ -21,6 +21,14 @@ use super::{
 };
 use crate::{ApiError, AppState};
 
+const LIST_PRINCIPALS_QUERY: &str = r#"
+    SELECT id, kind, display_name, email, issuer, subject, groups_json, global_role,
+           global_permissions_json
+    FROM auth_principals
+    WHERE disabled_at IS NULL
+    ORDER BY display_name, id
+"#;
+
 pub(crate) const SESSION_COOKIE_NAME: &str = "memory_session";
 pub(crate) const CSRF_COOKIE_NAME: &str = "memory_csrf";
 
@@ -515,17 +523,10 @@ pub(crate) async fn list_principals(
     pool: &PgPool,
     state: &AppState,
 ) -> Result<Vec<AuthPrincipalResponse>, ApiError> {
-    let rows = sqlx::query(
-        r#"
-        SELECT id, kind, display_name, email, groups_json, global_role
-        FROM auth_principals
-        WHERE disabled_at IS NULL
-        ORDER BY display_name, id
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(ApiError::sql)?;
+    let rows = sqlx::query(LIST_PRINCIPALS_QUERY)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::sql)?;
     let mut principals = Vec::with_capacity(rows.len());
     for row in rows {
         principals.push(principal_from_row(pool, state, &row).await?.to_response());
@@ -1134,6 +1135,26 @@ mod tests {
         assert!(left.len() >= 46);
         assert_ne!(left, right);
         assert_ne!(hash_secret(&left), hash_secret(&right));
+    }
+
+    #[test]
+    fn principal_listing_selects_every_field_used_by_principal_mapper() {
+        for column in [
+            "id",
+            "kind",
+            "display_name",
+            "email",
+            "issuer",
+            "subject",
+            "groups_json",
+            "global_role",
+            "global_permissions_json",
+        ] {
+            assert!(
+                LIST_PRINCIPALS_QUERY.contains(column),
+                "principal listing must select `{column}`"
+            );
+        }
     }
 
     #[tokio::test]
