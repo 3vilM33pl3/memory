@@ -1,0 +1,61 @@
+---
+title: "Daily workflow"
+description: "Capture, query, resume, inspect, and recover with Memory Layer."
+---
+
+# Daily workflow
+
+After install, most work falls into five actions: capture finished work, query before making a change, resume with context, inspect what is stored, and recover when something looks off.
+
+## Capture
+
+Capture completed work into project memory so the next session does not have to rediscover it.
+
+```bash
+memory remember --project <project-slug> --title "..." --summary "..." --note "..."
+```
+
+Use it for decisions, handoffs, migrations, incident notes, and any result that should survive the current session.
+
+## Query
+
+Ask before changing something when you want grounded context.
+
+```bash
+memory query --project <project-slug> --question "What should I know before changing this?"
+```
+
+The answer should tell you what matters, what is uncertain, and which evidence was used.
+
+## Resume
+
+When you return to a project, ask for a briefing instead of starting from scratch.
+
+```bash
+memory resume --project <project-slug>
+```
+
+Use this at the start of a session or after an interruption.
+
+## Inspect
+
+Inspect the stored state when you want to see more than the answer text.
+
+```bash
+memory status --project <project-slug>
+memory tui
+```
+
+The [TUI](/docs/tui) is the fastest way to inspect memories, queries, review proposals, activity, watchers, and runtime state. The [Web UI](/docs/web-ui) gives you the same data in a browser.
+
+## Recover
+
+If something feels wrong, check the service once, then move to the relevant diagnostic surface.
+
+```bash
+memory doctor
+memory health
+memory status --project <project-slug>
+```
+
+Use [Help](/docs/help) for symptom-led routes, and keep [Operations](/docs/operations) for service, database, backup, and upgrade runbooks.

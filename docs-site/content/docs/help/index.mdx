@@ -5,26 +5,36 @@ description: "Find troubleshooting routes, FAQs, common errors, and support info
 
 # Help
 
-Find the quickest route from symptom to diagnostic command.
+Start from the symptom, then open the shortest route to the fix.
+
+## Symptom-led routes
 
 <CardGroup cols={2}>
-  <Card title="Troubleshooting" href="/docs/help/troubleshooting" />
-  <Card title="FAQ" href="/docs/help/faq" />
-  <Card title="Common errors" href="/docs/help/common-errors" />
-  <Card title="Doctor and health" href="/docs/help/doctor-and-health" />
-  <Card title="Known limitations" href="/docs/help/known-limitations" />
-  <Card title="Support bundle" href="/docs/help/support-bundle" />
-  <Card title="Contributing docs" href="/docs/help/contributing-docs" />
+  <Card title="The service will not start" href="/docs/help/troubleshooting">
+    Check the quickest path for startup failures, port conflicts, and runtime setup issues.
+  </Card>
+  <Card title="A command returned an error" href="/docs/help/common-errors">
+    Match the message to a known failure and its first recovery step.
+  </Card>
+  <Card title="The answer looks wrong" href="/docs/help/faq">
+    Sort out expected behavior, stale memory, and common query questions.
+  </Card>
+  <Card title="I need to share evidence" href="/docs/help/support-bundle">
+    Gather the right logs and diagnostics before asking for help.
+  </Card>
+  <Card title="I think this is a limitation" href="/docs/help/known-limitations">
+    See the current boundaries before you spend time debugging the wrong layer.
+  </Card>
+  <Card title="I want to improve the docs" href="/docs/help/contributing-docs">
+    Use the doc-editing path when the page itself needs a fix.
+  </Card>
 </CardGroup>
 
-## First diagnostic commands
+## First check
 
 ```bash
 memory status --project <project-slug>
 memory doctor
-memory health
 ```
 
-## Next
-
-Read [Troubleshooting](/docs/help/troubleshooting).
+Use these once, then follow the symptom-specific route above instead of repeating the same checks on every page.

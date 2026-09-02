@@ -5,9 +5,9 @@ description: "Run Memory Layer safely: service, database, logs, backups, privacy
 
 # Operations
 
-Memory Layer is local-first, but it still has operational concerns: service health, database availability, backups, logs, privacy, and upgrade safety.
+Memory Layer is local-first, but it still has operational concerns: service health, database availability, backups, logs, privacy, and upgrade safety. Use this page as a runbook, not a second copy of the troubleshooting guide.
 
-## Daily commands
+## Baseline
 
 ```bash
 memory health                          # backend service
@@ -15,15 +15,7 @@ memory doctor                          # config and dependencies
 memory status --project <project-slug> # combined service, watcher, MCP, doctor
 ```
 
-## Operations checklist
-
-Before making changes to a running instance:
-
-1. Know which service instance you are operating.
-2. Check database connectivity before blaming retrieval.
-3. Back up state before upgrades or migrations.
-4. Redact secrets before sharing logs.
-5. Confirm agent and MCP integrations are scoped to the intended project.
+Run these once at the start of an incident or change. After that, move to the relevant section below instead of repeating them.
 
 ## Service
 
@@ -67,11 +59,9 @@ Do not commit secrets, API keys, local database URLs, or runtime state.
 
 ## Upgrades
 
-Before upgrading:
+Before upgrading, take a baseline and back up the database:
 
 ```bash
-memory status --project <project-slug>
-memory doctor
 pg_dump "$DATABASE_URL" > memory-layer-before-upgrade.sql
 ```
 

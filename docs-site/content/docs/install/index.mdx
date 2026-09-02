@@ -5,15 +5,15 @@ description: "Install Memory Layer, configure PostgreSQL with pgvector, and init
 
 # Install
 
-The fastest paths are the [five-minute quickstart](/docs/quickstart) (Docker, nothing else to install) or the one-line installer:
+The fastest paths are the [five-minute quickstart](/docs/quickstart) or the one-line installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/3vilM33pl3/memory/main/scripts/install.sh | sh
 ```
 
-The installer detects your platform (Homebrew on macOS, the matching `.deb` release on Debian/Ubuntu amd64 or arm64), checks whether a PostgreSQL is reachable, and points you at the bundled Docker stack when none is found.
+The installer detects your platform, checks whether PostgreSQL is reachable, and points you at the bundled Docker stack when none is found.
 
-For a manual native install, pick your platform:
+## Choose a platform
 
 <CardGroup cols={3}>
   <Card title="Linux / Debian" href="/docs/install/linux-debian">
@@ -27,7 +27,7 @@ For a manual native install, pick your platform:
   </Card>
 </CardGroup>
 
-Memory Layer runs as a native background service (`memory-layer.service` on Linux, a launchd agent on macOS) that manages the database connection, curation pipeline, and embedding backends. The `memory` CLI and TUI communicate with this service over a local socket — nothing leaves your machine unless you configure an external embedding or LLM provider.
+Memory Layer runs as a native background service (`memory-layer.service` on Linux, a launchd agent on macOS) that manages the database connection, curation pipeline, and embedding backends. The `memory` CLI and TUI communicate with this service over a local socket, so nothing leaves your machine unless you configure an external embedding or LLM provider.
 
 ## Prerequisites
 
@@ -40,29 +40,17 @@ You need a PostgreSQL database with the pgvector extension enabled. See [Postgre
 | `memory` binary | CLI, TUI launcher, service management, MCP, evals. | `memory --version` |
 | Optional LLM provider | Better curation, summaries, and answer synthesis. | `memory doctor` |
 | Optional embedding provider | Semantic search and graph-enhanced retrieval quality. | `memory embeddings status --project <slug>` |
-| Go | Required by repo-local Memory Layer skills used by agents. | `go version` |
 
-## Configure everything in one pass
+## Configure
 
 ```bash
 cd /path/to/project
 memory wizard
 ```
 
-`memory wizard` runs the setup flow once, covering both the shared machine configuration (database URL, service URL and token, optional LLM/embedding providers — all skippable) and, when run inside a repository, the repo-local project setup (`.mem/project.toml` plus the `.agents/` directory with Memory Layer skills). Secrets are written outside your repository so they are never committed. Use `memory wizard --dry-run` to preview every file and service action first.
+`memory wizard` runs the setup flow once, covering the machine configuration and, when run inside a repository, the repo-local project setup. Secrets are written outside your repository so they are never committed. Use `memory wizard --dry-run` to preview every file and service action first.
 
-The prompts answer, with strong defaults:
-
-- Which PostgreSQL database should Memory Layer use?
-- Which local service URL and API token should clients use?
-- Which LLM and embedding providers are enabled (optional)?
-- What is the project slug, and which generated files should be written?
-
-### Granular reconfiguration
-
-`memory wizard` remains available when you want to edit one layer at a time — `memory wizard --global` for machine-level settings only, `memory wizard` inside a repo for project files only. See [Global wizard](/docs/install/wizard-global) and [Project wizard](/docs/install/wizard-project). Review `--dry-run` output before accepting writes in established repositories.
-
-## Check health
+## Verify
 
 ```bash
 memory doctor
@@ -71,36 +59,6 @@ memory status --project <project-slug>
 ```
 
 `doctor` checks configuration and dependencies. `health` checks the backend service. `status` combines service, project, watcher, and MCP diagnostics.
-
-## Daily workflow
-
-After install, most users live in a small command loop:
-
-```bash
-memory tui
-memory query --project <project-slug> --question "What should I know before changing this?"
-memory resume --project <project-slug>
-memory remember --project <project-slug> --title "..." --summary "..." --note "..."
-memory status --project <project-slug>
-```
-
-Use the TUI or [Web UI](/docs/web-ui) for inspection, `query` and `resume` for agent context, and `remember` after completed work that should survive the current session.
-
-## Open the TUI
-
-```bash
-memory tui
-```
-
-Use the [Query, Memories, Project, Agents, Watchers, Activity, and Review tabs](/docs/tui) to inspect what Memory Layer knows.
-
-## Ask an evidence-backed question
-
-```bash
-memory query --project <project-slug> --question "What should a new agent know before changing this repo?"
-```
-
-A healthy setup returns answers with ranked memories, citations, and retrieval diagnostics. If answers look stale, inspect citations and run curation before trusting them.
 
 ## More install topics
 
@@ -112,19 +70,3 @@ A healthy setup returns answers with ranked memories, citations, and retrieval d
   <Card title="Update" href="/docs/install/update" />
   <Card title="Uninstall" href="/docs/install/uninstall" />
 </CardGroup>
-
-## File locations
-
-| Location | Contains | Commit? |
-|---|---|---|
-| Global Memory config | Database URL, service URL, API token, provider settings | No |
-| `.mem/project.toml` | Project slug and repo-local Memory Layer settings | Usually yes, after review |
-| `.agents/` | Agent instructions, skills, and Memory workflow config | Usually yes, after review |
-| PostgreSQL database | Captures, canonical memories, history, activity, embeddings, graph data | No |
-| Runtime state and logs | Checkpoints, service state, watcher state, diagnostics | No |
-
-Never commit database URLs, provider API keys, local service tokens, or runtime logs containing prompts/secrets.
-
-## Next
-
-Read [How it works](/docs/how-it-works), [Connect an agent](/docs/agents), or [Run an evaluation](/docs/evals).

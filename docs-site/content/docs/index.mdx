@@ -5,54 +5,83 @@ description: "Local-first memory for coding agents."
 
 # Memory Layer
 
-Memory Layer gives coding agents persistent, project-scoped memory. It captures decisions, context, and rationale from each session, curates them to remove duplicates and noise, and stores the results in a graph and vector database so future sessions can recall what matters and how it connects. Frequently used memories are re-validated against your code, so what agents recall stays accurate as the project moves. It works with Codex, Claude Code, OpenCode and the OpenAI, Voyage and Ollama embedding APIs. 
+Memory Layer gives coding agents persistent, project-scoped memory. It captures decisions, context, and rationale from each session, curates them to remove duplicates and noise, and stores the results in a graph and vector database so future sessions can recall what matters and how it connects. Frequently used memories are re-validated against your code, so what agents recall stays accurate as the project moves. It works with Codex, Claude Code, OpenCode and the OpenAI, Voyage and Ollama embedding APIs.
+
+## Try it
+
+Start with the demo stack and see the system working end to end.
+
+Go deeper: [Quickstart](/docs/quickstart).
 
 <CardGroup cols={3}>
   <Card title="Quickstart" href="/docs/quickstart">
-    From nothing to a running stack with a demo project in about five minutes, with one command and no API keys.
+    Run a single reproducible demo with Docker, seed the demo project, and ask one question.
   </Card>
   <Card title="Install" href="/docs/install">
-    Install Memory Layer, configure storage, and initialise your first project.
+    Set up Memory Layer for a real machine or repository.
+  </Card>
+  <Card title="Daily workflow" href="/docs/daily-workflow">
+    Capture, query, resume, inspect, and recover once the stack is running.
+  </Card>
+</CardGroup>
+
+## Use it in a project
+
+Go deeper: [TUI](/docs/tui), [Web UI](/docs/web-ui), [Agents](/docs/agents), [Codex plugin](/docs/install/agent-setup), [Recipes](/docs/recipes), [Help](/docs/help).
+
+<CardGroup cols={3}>
+  <Card title="TUI" href="/docs/tui">
+    Browse memory, query results, review proposals, and runtime state from the terminal.
+  </Card>
+  <Card title="Web UI" href="/docs/web-ui">
+    Inspect the same data in a browser with wider panes and the graph view.
+  </Card>
+  <Card title="Agents" href="/docs/agents">
+    Connect Codex, Claude Code, OpenCode, or your own agent to project memory.
+  </Card>
+  <Card title="Codex plugin" href="/docs/install/agent-setup">
+    Use the repo-local install and repo-init prompts from Codex or another coding agent.
+  </Card>
+  <Card title="Recipes" href="/docs/recipes">
+    Copy-ready setups for note vaults, research corpora, games, home automation, and AI chats.
+  </Card>
+  <Card title="Help" href="/docs/help">
+    Find symptom-led troubleshooting, FAQs, and support routes.
+  </Card>
+</CardGroup>
+
+## Understand it
+
+Go deeper: [How it works](/docs/how-it-works), [Watchers](/docs/watchers), [Automations](/docs/automations), [MCP](/docs/mcp), [Operations](/docs/operations), [Evals](/docs/evals), [Reference](/docs/reference), [Classroom](/docs/classroom), [Roadmap](/docs/roadmap).
+
+<CardGroup cols={3}>
+  <Card title="How it works" href="/docs/how-it-works">
+    Learn the mental model behind capture, curation, retrieval, and reinforcement.
+  </Card>
+  <Card title="Watchers" href="/docs/watchers">
+    See how background capture and automation loops stay aligned with the repository.
   </Card>
   <Card title="Automations" href="/docs/automations">
-    Review built-in loop workflows for memory hygiene, CI triage, context packs, PR review, and evaluations.
+    Review the built-in loop workflows that keep memory hygiene and triage moving.
   </Card>
-  <Card title="Let your agent set you up" href="/docs/install/agent-setup">
-    Copy a prompt and let your coding agent install and configure everything.
+  <Card title="MCP" href="/docs/mcp">
+    Use the protocol surface when an agent prefers tools over direct CLI calls.
   </Card>
-  <Card title="Self-maintaining memory" href="/docs/how-it-works/reinforcement">
-    Memories earn trust through use and are validated against your code when they run hot.
+  <Card title="Operations" href="/docs/operations">
+    Run Memory Layer safely, upgrade it, back it up, and recover it.
   </Card>
-  <Card title="How it works" href="/docs/how-it-works">
-    Understand memories, curation, evidence, retrieval, and the code graph.
+  <Card title="Evals" href="/docs/evals">
+    Check how Memory Layer is tested and scored.
   </Card>
-  <Card title="Try it now" href="/demo">
-    Search real memories and explore the graph in your browser — no install, no backend, nothing leaves the page.
+  <Card title="Reference" href="/docs/reference">
+    Look up commands, APIs, config, environment variables, and exit codes.
+  </Card>
+  <Card title="Classroom" href="/docs/classroom">
+    Follow the conceptual lessons that explain the memory model.
+  </Card>
+  <Card title="Roadmap" href="/docs/roadmap">
+    See where the project is going next.
   </Card>
 </CardGroup>
 
 ![Memory Layer system flow infographic](/images/infograph.png)
-
-## [Terminal UI](/docs/tui)
-
-Browse, search, and inspect every stored memory from the terminal. The TUI shows metadata, confidence scores, embeddings, canonical text, tags, and the original source — so you can see exactly what your agents remember and where it came from and what it relates with.
-
-[![Memory Layer terminal UI overview](/images/tui-frontpage.png)](/docs/tui)
-
-## [Web UI](/docs/web-ui)
-
-The service also serves a browser interface for dense inspection of memories, query evidence, activities, watchers, embeddings, errors, and replacement proposals. It uses the same backend APIs as the TUI, so it is useful when you want wider panes, screenshots, or a visual review surface while keeping the service local.
-
-[Open the self-contained demo](/demo) to click through a static snapshot without installing or running a backend.
-
-## [Automations](/docs/automations)
-
-Memory Layer includes built-in loop automations for context-pack refresh, memory hygiene, CI failure triage, issue triage, draft PR preparation, reviewer drift detection, skill mining, and memory evaluation. They run through the local service control plane and produce reports, approval requests, or reviewable proposals rather than bypassing Memory APIs.
-
-## [Self-maintaining memory](/docs/how-it-works/reinforcement)
-
-Every retrieval strengthens the memories that earned it; activation spreads to linked knowledge and fades with time. When a memory runs hot, Memory Layer gathers evidence from your repository and validates it: confirming it, improving unclear wording, or queueing a correction for review. Weak evidence never rewrites anything — it flags the memory instead. Inspect it all with `memory scores`, `memory validate`, and `memory review`.
-
-## Get set up by your agent
-
-Paste the [install and repo-init prompts](/docs/install/agent-setup) into Claude Code, Codex, or any coding agent and let it install and configure everything for you.

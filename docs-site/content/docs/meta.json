@@ -1,26 +1,25 @@
 {
   "title": "Memory Layer",
   "pages": [
-    "---Start here---",
+    "---Essentials---",
     "index",
     "quickstart",
     "install",
-    "how-it-works",
-    "---Daily use---",
+    "daily-workflow",
     "tui",
     "web-ui",
     "agents",
-    "---Advanced---",
-    "automations",
-    "watchers",
-    "mcp",
     "recipes",
-    "classroom",
-    "evals",
+    "help",
+    "---Deep dives---",
+    "how-it-works",
+    "watchers",
+    "automations",
+    "mcp",
     "operations",
+    "evals",
     "reference",
-    "---Project---",
-    "roadmap",
-    "help"
+    "classroom",
+    "roadmap"
   ]
 }
