@@ -1,13 +1,15 @@
 import { createMDX } from 'fumadocs-mdx/next';
 import { fileURLToPath } from 'node:url';
 
-const root = fileURLToPath(new URL('.', import.meta.url));
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
   turbopack: {
-    root,
+    // The canonical user guides live next to docs-site, and Fumadocs includes
+    // them while compiling the thin route wrappers.
+    root: repositoryRoot,
   },
 };
 

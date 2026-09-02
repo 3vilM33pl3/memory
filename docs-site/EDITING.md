@@ -52,18 +52,22 @@ Body text.
 
 MDX components are available, but use plain Markdown for normal text. Keep diagrams as fenced `mermaid` blocks and images under `public/images/`.
 
+The detailed TUI, Web UI, and Codex-plugin guides are canonical Markdown in `../docs/user/`. Their matching pages under `content/docs/` only provide frontmatter and a Fumadocs `<include>` wrapper. Update the canonical file; do not duplicate its body in the site.
+
 ## Common edits
 
 - Change website text: edit `content/docs/**/*.mdx`.
 - Change sidebar order: edit the nearest `meta.json`.
 - Add an image: put it in `public/images/` and reference `/images/name.png`.
 - Change layout or styling: edit `app/`, `components/`, or `app/global.css`.
+- Update a shared interface guide: edit `../docs/user/tui/`, `../docs/user/web-ui.md`, or `../docs/user/codex-desktop-plugin.md`.
 
 ## Validate
 
 Run these from `docs-site/`:
 
 ```bash
+npm run check:content
 npm run lint:links
 npm run check:assets
 npm run build

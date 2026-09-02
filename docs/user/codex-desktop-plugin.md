@@ -1,18 +1,13 @@
 # Codex Desktop Plugin
 
-The Memory Layer Codex plugin packages the existing stdio MCP server and one
-desktop-oriented workflow skill. It does not run a separate service, store
-credentials, or replace Memory Layer's managed repo-local skill bundle.
+The Memory Layer Codex Desktop plugin packages the supported stdio MCP connection and a desktop-oriented workflow skill. It does not run another service, store a credential value, or replace the repository-local `.agents/skills/` bundle.
 
-## Prerequisites
+## Before installing
 
-- Install the `memory` CLI and configure its local service.
-- Initialise each repository with `memory wizard` or `memory init`.
-- In multi-user mode, give Codex a valid scoped service token through its
-  process environment. The plugin manifest contains only the token variable
-  name so Codex can pass it to the MCP process; it never contains the token
-  value.
-- Confirm the selected project works before installing the plugin:
+- Install the `memory` CLI and make sure its local service is healthy.
+- Initialize the repository with `memory wizard` or `memory init`.
+- In multi-user mode, provide Codex with a scoped service token through its process environment. The plugin refers only to the token variable name; it never contains the token value.
+- Check the active project first:
 
   ```bash
   memory mcp status --project <project-slug>
@@ -20,39 +15,36 @@ credentials, or replace Memory Layer's managed repo-local skill bundle.
 
 ## Install from this repository
 
-From the Memory Layer repository root, add the repository marketplace and
-install the plugin:
+From the Memory Layer repository root:
 
 ```bash
 codex plugin marketplace add "$PWD"
 codex plugin add memory-layer@memory-layer
 ```
 
-Start a new Codex task after installation so it loads the plugin's skill and
-MCP configuration. The plugin launches `memory mcp run` without a fixed project
-or working directory. Its tools therefore use the active Codex workspace unless
-a tool call explicitly supplies another project.
+Start a new Codex task after installation so it loads the plugin skill and MCP configuration. The MCP server uses the active Codex workspace unless an individual tool call supplies another project.
 
-Use exactly one Memory Layer MCP connection. Disable or remove any existing
-hand-authored Codex `mcp_servers.memory` entry before enabling this plugin, so
-the `memory_*` tools are not registered twice.
+Use exactly one Memory Layer MCP connection. Disable any hand-authored `mcp_servers.memory` configuration before enabling the plugin so `memory_*` tools are not registered twice.
 
-## Skills and project setup
+## How it fits with project setup
 
-The bundled `memory-layer-codex` skill guides Codex to retrieve or resume
-project context through MCP and to use the `memory` CLI for plan checkpoints
-and completed-work capture.
+The included `memory-layer-codex` skill helps Codex retrieve or resume project context through MCP and use the CLI for plan checkpoints and completed-work capture. It complements, rather than overwrites, the generated `.agents/skills/` bundle.
 
-It complements the canonical repository-local `.agents/skills/` bundle. Run
-`memory init` or `memory wizard` to install or refresh that bundle; the desktop
-plugin does not overwrite, update, or take precedence over those project files.
+Run `memory init` or `memory wizard` whenever the repo-local bundle needs installing or refreshing. The desktop plugin is a user-level integration; it does not write project instructions for you.
 
-## Versioning and validation
+## Source and dev mode
 
-The plugin starts at `0.1.0` and has its own semantic versioning lifecycle. It
-is tested against Memory Layer `2.0.0`. Any change to the Memory MCP surface or
-workflow-skill contract requires a compatibility review and a plugin version
-update.
+When developing Memory Layer from source, run the isolated backend with:
+
+```bash
+cargo run --bin memory -- service run
+```
+
+The source profile uses port `4250` and separate runtime state. Do not point a plugin task at it by accident when you intend to use the packaged service on `4040`; verify with `memory mcp status --project <project-slug>` before relying on results.
+
+## Versioning and maintainer validation
+
+The plugin currently uses the `0.1.0+codex.<build>` version line and is tested with Memory Layer `2.0.0`; it has its own compatibility boundary from the binary. A change to the MCP tool surface or the bundled workflow-skill contract needs a compatibility review and a plugin version update.
 
 Validate the repository-owned contract with:
 
@@ -60,18 +52,19 @@ Validate the repository-owned contract with:
 python3 scripts/check-codex-plugin.py
 ```
 
-Maintainers should also run Plugin Creator's `validate_plugin.py` against
-`plugins/memory-layer` from their installed Plugin Creator skill directory.
+Maintainers should also run Plugin Creator's `validate_plugin.py` against `plugins/memory-layer` from their installed Plugin Creator skill. This checks the desktop-plugin package in addition to the normal repository tests.
 
-## Troubleshooting
+## Verify and troubleshoot
 
-- **`memory` not found:** install Memory Layer so the binary is on `PATH` for
-  the Codex process.
-- **Service unavailable:** start or repair the local service, then rerun
-  `memory mcp status --project <project-slug>`.
-- **Authentication failed:** refresh the scoped service token used by the
-  Codex process, restart Codex, and verify with `memory auth whoami`. Codex
-  filters variables whose names contain `TOKEN` from ordinary child processes;
-  this plugin explicitly passes `MEMORY_LAYER_CLIENT_TOKEN` to `memory mcp run`.
-- **Wrong project:** work in an initialised repository or pass the project
-  explicitly to the relevant MCP tool.
+```bash
+memory mcp status --project <project-slug>
+memory auth whoami
+python3 scripts/check-codex-plugin.py
+```
+
+- **`memory` not found:** install Memory Layer so the Codex process can find it on `PATH`.
+- **Service unavailable:** start or repair the local service, then rerun MCP status.
+- **Authentication failed:** refresh the scoped token, restart Codex, and check `memory auth whoami`.
+- **Wrong project:** open an initialized repository or pass the intended project to the relevant tool call.
+
+See also: [Agents](https://www.memory-layer.dev/docs/agents), [MCP](https://www.memory-layer.dev/docs/mcp), and [daily workflow](https://www.memory-layer.dev/docs/daily-workflow).

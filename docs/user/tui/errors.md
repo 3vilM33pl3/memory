@@ -1,45 +1,18 @@
 # Errors Tab
 
-The Errors tab collects operational problems that would otherwise be hidden in service logs or short status messages.
+**Errors** collects operational diagnostics that would otherwise be scattered across service logs and short status messages.
 
-![Errors tab](../../img/tui/errors-tab.png)
+![Actionable error diagnostics in the TUI](https://www.memory-layer.dev/images/tui/errors-tab.png)
 
-Use it when the bottom bar shows an error count, a provider request fails, watchers look unhealthy, queries fail, or the TUI cannot explain why a tab is empty.
-
-## What It Shows
-
-- persisted backend diagnostics for the current project
-- provider quota/auth failures from embedding or LLM calls
-- query/search failures
-- watcher stale, failed, and restarting events
-- session-local TUI errors from tabs such as Query, Activity, Agents, Resume, and Embeddings
-
-The left pane lists errors by time, severity, source, component, and summary. The right pane explains the selected error.
-
-## Detail Pane
-
-Each diagnostic can include:
-
-- a stable code, for example `embedding_quota_exceeded`
-- source, component, and operation
-- a concise explanation
-- a fix hint
-- a `memory doctor` hint when health checks can help
-- a related command, such as `memory embeddings list`
-- the raw error chain for deeper debugging
+The list covers persisted backend diagnostics and session-local UI errors. A selected error can include a stable code, component, operation, concise explanation, fix hint, suggested diagnostic command, and raw error chain.
 
 ## Controls
 
-- `j` / `k` moves through errors
-- `PgUp` / `PgDn` scrolls the detail pane
-- `Home` jumps the detail pane back to the top
-- `r` refreshes activity-backed diagnostics
-- `h` open or close detailed help for this tab
+- `j` / `k` choose an error.
+- `PgUp` / `PgDn` and `Home` scroll detail.
+- `r` refreshes activity-backed diagnostics.
+- `h` opens help.
 
-## Common Examples
+For example, `embedding_quota_exceeded` means storage may have succeeded while the provider rejected follow-up embedding work. Restore provider quota or disable automatic creation, then rerun explicit maintenance. `auth_invalid_token` points to a credential mismatch; begin with `memory doctor`.
 
-`embedding_quota_exceeded` means memory storage succeeded, but automatic embedding creation failed because the configured embedding provider rejected the request. Restore provider quota/billing, disable automatic creation for the failing backend, or rerun explicit embedding maintenance after fixing the provider.
-
-`auth_invalid_token` means a client, watcher, manager, service, or provider rejected the configured token. Run `memory doctor`, refresh the relevant config, and restart the affected component.
-
-`database_pgvector_missing` means PostgreSQL does not have the pgvector extension available in the memory database. Install pgvector and run `CREATE EXTENSION IF NOT EXISTS vector;` in the configured database.
+See also: [Help](https://www.memory-layer.dev/docs/help) and [service diagnostics](https://www.memory-layer.dev/docs/reference/cli/service-health).

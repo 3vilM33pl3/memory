@@ -1,5 +1,7 @@
 {
   "title": "Classroom",
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "lesson-1-activation-and-decay",

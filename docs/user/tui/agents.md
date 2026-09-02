@@ -1,37 +1,18 @@
 # Agents Tab
 
-Use the `Agents` tab to monitor local Codex and Claude sessions across projects without leaving Memory Layer.
+**Agents** is a read-only monitor for local Codex and Claude sessions across projects.
 
-![Agents tab](../../img/tui/agents-tab.png)
+![Active coding-agent sessions in the TUI](https://www.memory-layer.dev/images/tui/agents-tab.png)
 
-## What It Shows
+Rows show project, agent type, state, token and context pressure, and current task. The selected detail can include process ID, session ID, working directory, model, Git state, child processes, open ports, and account-level rate-limit information when available.
 
-- one row per visible agent session across local projects
-- project, agent type, status, token volume, context-window percentage, and current task
-- selected-session details such as PID, session id, cwd, model, git state, and child processes
-- account-level rate-limit summaries when available
-- orphan listening ports detected from child processes whose parent session ended
+## Controls
 
-This tab is read-only. It is inspired by `abtop`, but it uses Memory Layer's own layout and controls.
+- `j` / `k` choose a visible session.
+- `PgUp` / `PgDn` and `Home` scroll details.
+- `r` refreshes the project snapshot; live session collection also updates in the background.
+- `h` opens help.
 
-## Key Controls
+Use Agents to spot worktree collisions, context pressure, stranded processes, or a session that needs a handoff. It does not control the selected agent.
 
-- `Tab` or `l` move forward through tabs; `Shift+Tab` or `Left` moves back
-- `j/k` move between visible sessions
-- `PgUp/PgDn` scroll the detail pane
-- `Home` jump detail scrolling back to the top
-- `r` refresh the wider Memory project state; agent session collection also keeps updating in the background
-- `h` open or close detailed help for this tab
-
-## When To Use It
-
-- seeing all active coding-agent sessions in one place
-- checking whether a session is working, waiting, or done
-- spotting context-window pressure or rising token usage
-- finding child processes and open ports started by an agent session
-- checking rate-limit state without opening a separate tool
-
-## See Also
-
-- [TUI Guide](README.md)
-- [Project Tab](project.md)
+See also: [Agent workspace coordination](https://www.memory-layer.dev/docs/reference/cli/integrations-evals).

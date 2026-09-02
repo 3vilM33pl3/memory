@@ -1,40 +1,16 @@
 # Automations Tab
 
-![Automations tab](../../img/tui/automations-tab.png)
+**Automations** is the read-oriented terminal view of the loop automation control plane.
 
-Use the `Automations` tab to inspect loop-engineering automation state from the
-terminal.
+![Automation loop state in the TUI](https://www.memory-layer.dev/images/tui/automations-tab.png)
 
-## What It Shows
+It shows registered loops, effective mode and scope, latest run state, risk level, pending approvals, load warnings, and the global kill-switch state when available. Use the Web UI or `memory loops` when you need to change settings, run a loop, or make an approval decision.
 
-- registered loop definitions
-- effective mode and scope for the current project/repo
-- latest run status for each loop
-- pending approval counts
-- selected loop description, risk level, default mode, effective settings,
-  latest run detail, pending approvals, and load warnings
-- global kill-switch state when reported by the service
+## Controls
 
-The TUI tab is read-oriented. Use the web UI or `memory loops ...` commands
-for mode changes, manual runs, approval decisions, or global kill-switch changes.
+- `j` / `k` select an automation.
+- `PgUp` / `PgDn` and `Home` navigate the detail.
+- `r` refreshes the project snapshot.
+- `h` opens help.
 
-## Key Controls
-
-- `j/k` move the selected automation
-- `PgUp/PgDn` scroll the selected automation detail
-- `Home` jump the detail pane back to the top
-- `r` refresh the project snapshot
-- `h` open or close detailed help for this tab
-
-## When To Use It
-
-- confirming which loop automations are registered
-- checking whether a loop is off, observing, suggesting, paused, snoozed, or blocked
-- seeing whether an automation has pending approval requests
-- checking the most recent loop run without leaving the terminal
-
-## See Also
-
-- [`memory loops`](../cli/loops.md)
-- [Web UI Automations](../web-ui.md#automations)
-- [TUI Guide](README.md)
+See also: [Automations](https://www.memory-layer.dev/docs/automations) and [loop commands](https://www.memory-layer.dev/docs/reference/cli/integrations-evals).

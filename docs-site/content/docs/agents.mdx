@@ -23,6 +23,8 @@ memory remember --project <slug> --title "…" --summary "…" --note "…"
 
 For agents that speak MCP rather than shell. Use the stdio server for local clients, or Streamable HTTP for local, token-bearing clients. See [MCP](/docs/mcp) for server setup, tools, and security.
 
+For Codex Desktop, use the [Codex plugin](/docs/codex-plugin). It packages the supported stdio MCP connection and workflow skill; keep one Memory Layer MCP connection enabled so tools are not registered twice.
+
 ### Repo-local instructions
 
 The project wizard writes `.agents/` files that agents pick up automatically. These contain `CLAUDE.md`, `AGENTS.md`, and Codex instructions with evidence-first rules already embedded.

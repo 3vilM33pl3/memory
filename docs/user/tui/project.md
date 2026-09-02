@@ -1,45 +1,16 @@
 # Project Tab
 
-The `Project` tab is the high-level health and maintenance dashboard for the current project.
+**Project** is the high-level dashboard for the active project.
 
-![Project tab](../../img/tui/project-tab.png)
+![Project health and memory summary in the TUI](https://www.memory-layer.dev/images/tui/project-tab.png)
 
-## What It Shows
+It summarizes memory, capture, session, and curation counts; the latest approved plan; embedding and automation state; CLI/service/watcher versions; skill freshness; top tags and files; pending replacement proposals; watcher health; and recent activity.
 
-- project-wide counts for memories, captures, sessions, and curation runs
-- the latest approved plan memory, including its `plan-thread` key when present
-- recent-memory timing and confidence breakdowns
-- embedding and automation status
-- Memory CLI/service/watcher versions and the repo-local `memory-layer`
-  umbrella skill status
-- top tags and top files
-- replacement-policy status and pending-proposal count (the review queue itself lives in the [Review](review.md) tab)
-- a compact watcher summary
-- recent operational activity such as queries, captures, curation, plan lifecycle events, and watcher-health transitions
+## Controls
 
-This tab is where you look when the question is about project state rather than one specific memory.
+- `j` / `k`, `PgUp` / `PgDn`, and `Home` move through the summary.
+- `h` opens help.
 
-## Key Controls
+Use Project when the question is “is this project healthy?” rather than “what does this one memory say?” Open Review to decide pending replacements and Activity to investigate a particular event.
 
-- `j/k` scroll the tab
-- `PgUp/PgDn` page through longer project summaries
-- `Home` jump back to the top
-- `h` open or close detailed help for this tab
-
-## When To Use It
-
-- checking whether the project is healthy
-- reviewing embedding coverage or automation state
-- checking whether the default `memory-layer` umbrella skill is current
-- understanding top files, tags, or memory-type distribution
-- confirming what the backend or TUI did recently without opening a separate activity view
-
-For approving or rejecting queued memory replacements, use the [Review Tab](review.md).
-
-## See Also
-
-- [Review Tab](review.md)
-- [Activity Events](activity.md)
-- [Embedding Operations](../cli/embeddings.md)
-- [Watcher Health](../cli/watchers.md)
-- [TUI Guide](README.md)
+See also: [Review](https://www.memory-layer.dev/docs/tui/review), [Activity](https://www.memory-layer.dev/docs/tui/activity), and [status/doctor](https://www.memory-layer.dev/docs/reference/cli/service-health).

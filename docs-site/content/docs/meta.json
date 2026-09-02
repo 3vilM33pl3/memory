@@ -9,6 +9,7 @@
     "tui",
     "web-ui",
     "agents",
+    "codex-plugin",
     "recipes",
     "help",
     "---Deep dives---",

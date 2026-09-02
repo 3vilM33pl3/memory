@@ -1,91 +1,46 @@
 # TUI Guide
 
-Memory Layer's TUI is the fastest way to browse project memory, ask cited questions, monitor live agents, switch embedding backends, get back into flow after an interruption, and inspect what the backend has been doing.
+The terminal UI is the fastest way to inspect what Memory Layer knows before you act on it. It combines cited query results, stored memory, project health, agent activity, watcher state, proposals, and diagnostics in one local surface.
 
-![Memory Layer TUI overview](../../img/tui/overview.png)
+![Memory Layer terminal UI overview](https://www.memory-layer.dev/images/tui-frontpage.png)
 
-## What Makes It Useful
+## Start the TUI
 
-- Query answers show citations, confidence, diagnostics, and the ranked memories behind the answer.
-- Agents and Watchers show live distributed agent state, token pressure, context usage, rate limits, heartbeats, and recovery behavior.
-- Skills shows the repo-local Memory skill bundle, version freshness, file paths, and repair controls.
-- Automations shows loop-engineering definitions, effective modes, latest runs, and pending approval counts.
-- Embeddings shows every configured backend and per-project coverage so model switching is visible instead of hidden in config files.
-- Activity and Resume turn persisted operations into get-up-to-speed context for new or returning agents.
-- Errors turns backend, provider, watcher, and TUI failures into actionable diagnostics with fix hints.
-- Memories and Review keep the durable knowledge base readable and maintainable.
+```bash
+memory tui
+memory tui --project <project-slug>
+```
 
-## Layout
+The header identifies the active project and the footer reports TUI, service, watcher, and skill health. A source checkout uses an isolated dev profile; its header is marked `[dev]` so it is not confused with a packaged installation.
 
-Every TUI screen uses the same four-part layout:
+## Shared navigation
 
-- the top tab bar
-- the controls row for the active tab
-- the main content area
-- the bottom status/footer area with TUI, service, watcher, and on Linux the watcher-manager state
+| Key | Action |
+| --- | --- |
+| `Tab`, `Right`, or `l` | Next tab |
+| `Shift+Tab` or `Left` | Previous tab |
+| `h` | Open or close help for the active tab |
+| `?` | Switch to Query and start a question |
+| `/` | Edit the global text filter |
+| `r` | Refresh current project state |
+| `Ctrl+C` | Exit |
 
-Shared navigation:
+## Choose a tab
 
-- `Tab`, `Right`, or `l` moves to the next tab
-- `Shift+Tab` or `Left` moves to the previous tab
-- `h` opens detailed help for the active tab; press `h` again or `Esc` to return
-- `r` refreshes the project state
-- `Ctrl+C` exits the TUI
+| Need | Tab |
+| --- | --- |
+| Read or filter known memory | [Memories](https://www.memory-layer.dev/docs/tui/memories) |
+| Ask a cited project question | [Query](https://www.memory-layer.dev/docs/tui/query) |
+| Review replacement proposals | [Review](https://www.memory-layer.dev/docs/tui/review) |
+| See active coding sessions | [Agents](https://www.memory-layer.dev/docs/tui/agents) |
+| Check watcher liveness | [Watchers](https://www.memory-layer.dev/docs/tui/watchers) |
+| Inspect the managed skill bundle | [Skills](https://www.memory-layer.dev/docs/tui/skills) |
+| See loop state | [Automations](https://www.memory-layer.dev/docs/tui/automations) |
+| Generate a handoff briefing | [Activity](https://www.memory-layer.dev/docs/tui/activity) or [Resume](https://www.memory-layer.dev/docs/tui/resume) |
+| Maintain semantic retrieval | [Embeddings](https://www.memory-layer.dev/docs/tui/embeddings) |
+| Diagnose a failure | [Errors](https://www.memory-layer.dev/docs/tui/errors) |
+| See the whole project at a glance | [Project](https://www.memory-layer.dev/docs/tui/project) |
 
-## Tabs
+The TUI is for human inspection. Agents should prefer structured CLI output such as `memory query --json` when another tool will parse the result.
 
-- [Memories Tab](memories.md)
-  - Browse the canonical memory list, filter it, and inspect one memory entry in detail.
-- [Agents Tab](agents.md)
-  - Monitor live Codex and Claude sessions across projects with token, context, rate-limit, process, and port details.
-- [Query Tab](query.md)
-  - Ask a question against project memory and inspect the ranked results.
-- [Activity Tab](activity.md)
-  - Review persisted activity history and generate get-up-to-speed briefings for new or returning agents.
-- [Errors Tab](errors.md)
-  - Inspect persisted diagnostics and session-local TUI errors with explanations and suggested fixes.
-- [Project Tab](project.md)
-  - Inspect project-level health, counts, embedding state, recent activity, and automation status.
-- [Review Tab](review.md)
-  - Work the queue of pending replacement proposals: approve, reject, or change the curation replacement policy.
-- [Watchers Tab](watchers.md)
-  - See active watchers, heartbeat state, restart attempts, and watcher recovery details.
-- [Skills Tab](skills.md)
-  - Inspect repo-local Memory skills, `SKILL.md` content, version freshness, and repair outdated bundle files.
-- [Automations Tab](automations.md)
-  - Inspect loop definitions, effective settings, latest runs, and pending approval requests.
-- [Embeddings Tab](embeddings.md)
-  - List configured embedding backends, see their per-project coverage, and activate a different backend without leaving the TUI.
-- [Resume Tab](resume.md)
-  - Use this after an interruption to get the current work thread, suggested next step, and recent timeline.
-
-## Where To Start
-
-- If you want to inspect or filter stored memory, open [Memories Tab](memories.md).
-- If you want to ask a question directly, open [Query Tab](query.md).
-- If you want a new-agent briefing or persisted operational history, open [Activity Tab](activity.md).
-- If the bottom bar shows errors or a provider/backend operation failed, open [Errors Tab](errors.md).
-- If you want to watch active coding-agent sessions across projects, open [Agents Tab](agents.md).
-- If you want high-level health or recent operational activity, open [Project Tab](project.md); for pending-proposal review, open [Review Tab](review.md).
-- If you want watcher liveness and watchdog status, open [Watchers Tab](watchers.md).
-- If repo-local skills look stale or you want to inspect the exact skill instructions an agent will read, open [Skills Tab](skills.md).
-- If you want to see loop-engineering automation state without opening the web UI, open [Automations Tab](automations.md).
-- If you want to see which embedding backends are configured and switch which one search uses, open [Embeddings Tab](embeddings.md).
-- If you are returning after time away, open [Resume Tab](resume.md) for the re-entry briefing.
-
-## Screenshot Gallery
-
-| Tab | Screenshot |
-|---|---|
-| Memories | ![Memories tab](../../img/tui/memories-tab.png) |
-| Agents | ![Agents tab](../../img/tui/agents-tab.png) |
-| Query | ![Query tab](../../img/tui/query-tab.png) |
-| Activity | ![Activity tab](../../img/tui/activity-tab.png) |
-| Errors | ![Errors tab](../../img/tui/errors-tab.png) |
-| Project | ![Project tab](../../img/tui/project-tab.png) |
-| Review | ![Review tab](../../img/tui/review-tab.png) |
-| Watchers | ![Watchers tab](../../img/tui/watchers-tab.png) |
-| Skills | ![Skills tab](../../img/tui/skills-tab.png) |
-| Automations | ![Automations tab](../../img/tui/automations-tab.png) |
-| Embeddings | ![Embeddings tab](../../img/tui/embeddings-tab.png) |
-| Resume | ![Resume tab](../../img/tui/resume-tab.png) |
+See also: [Daily workflow](https://www.memory-layer.dev/docs/daily-workflow) and the [Web UI](https://www.memory-layer.dev/docs/web-ui).

@@ -1,5 +1,7 @@
 {
   "title": "Reference",
+  "collapsible": true,
+  "defaultOpen": false,
   "pages": [
     "index",
     "glossary",
