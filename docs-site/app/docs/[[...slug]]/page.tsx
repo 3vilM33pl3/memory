@@ -41,7 +41,13 @@ export default async function Page({ params }: PageProps) {
   const MDX = page.data.body;
 
   return (
-    <DocsPage toc={page.data.toc} footer={{ component: <DocsFooter /> }}>
+    <DocsPage
+      aria-label="Documentation content"
+      footer={{ component: <DocsFooter /> }}
+      role="main"
+      tableOfContent={{ container: { 'aria-label': 'On this page', role: 'complementary' } }}
+      toc={page.data.toc}
+    >
       <DocsBody>
         <MDX components={getMDXComponents()} />
       </DocsBody>

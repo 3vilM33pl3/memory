@@ -1,27 +1,17 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-const root = process.cwd();
-const contentRoot = path.join(root, 'content/docs');
-const publicRoot = path.join(root, 'public');
+import {
+  collectDocsContent,
+  contentRoot,
+  docsSiteRoot,
+  isDocsSiteContent,
+  publicPathForReference,
+  publicRoot,
+} from './content-utils.mjs';
+
+const root = docsSiteRoot;
 const validPrefixes = ['/docs', '/demo', '/images', '/api/search'];
-
-function walk(dir, predicate = () => true) {
-  const entries = [];
-
-  for (const name of readdirSync(dir)) {
-    const file = path.join(dir, name);
-    const stat = statSync(file);
-
-    if (stat.isDirectory()) {
-      entries.push(...walk(file, predicate));
-    } else if (predicate(file)) {
-      entries.push(file);
-    }
-  }
-
-  return entries;
-}
 
 function contentPathForDocsUrl(url) {
   const clean = url.split('#')[0].replace(/\/$/, '');
@@ -53,21 +43,34 @@ function existsForDocsUrl(url) {
 }
 
 const errors = [];
+const { records, errors: contentErrors } = collectDocsContent();
+errors.push(...contentErrors);
 
-for (const file of walk(contentRoot, (entry) => entry.endsWith('.mdx'))) {
-  const text = readFileSync(file, 'utf8');
+for (const { file, text, includedBy } of records) {
   const rel = path.relative(root, file);
   const refs = [
     ...[...text.matchAll(/\[[^\]]+]\(([^)\s]+)\)/g)].map((match) => match[1]),
     ...[...text.matchAll(/href=["']([^"']+)["']/g)].map((match) => match[1]),
   ];
 
-  for (const ref of refs) {
-    if (/^(https?:|mailto:|#)/.test(ref)) {
+  for (const rawRef of refs) {
+    const ref = publicPathForReference(rawRef);
+    if (/^(mailto:|#)/.test(ref)) {
+      continue;
+    }
+
+    if (/^https?:/.test(ref)) {
       continue;
     }
 
     if (!ref.startsWith('/')) {
+      if (!isDocsSiteContent(file) && !includedBy) {
+        continue;
+      }
+      if (!isDocsSiteContent(file)) {
+        errors.push(`${rel}: included content must use an absolute docs or image URL: ${rawRef}`);
+        continue;
+      }
       errors.push(`${rel}: relative link should be absolute: ${ref}`);
       continue;
     }
@@ -81,7 +84,7 @@ for (const file of walk(contentRoot, (entry) => entry.endsWith('.mdx'))) {
       errors.push(`${rel}: missing docs page ${ref}`);
     }
 
-    if (ref.startsWith('/images') && !existsSync(path.join(publicRoot, ref))) {
+    if (ref.startsWith('/images') && !existsSync(path.join(publicRoot, ref.slice(1)))) {
       errors.push(`${rel}: missing image ${ref}`);
     }
   }

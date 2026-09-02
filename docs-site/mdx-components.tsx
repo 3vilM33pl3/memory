@@ -2,8 +2,8 @@ import Link from 'next/link';
 import defaultMdxComponents from 'fumadocs-ui/mdx';
 import type { MDXComponents } from 'mdx/types';
 
+import { CliCommandInventory } from '@/components/cli-command-inventory';
 import { Mermaid } from '@/components/mdx/mermaid';
-import { TuiScreenshotMosaic } from '@/components/tui-screenshot-mosaic';
 
 type CardProps = {
   title: string;
@@ -33,7 +33,7 @@ function CardGroup({
 function Card({ title, href, children }: CardProps) {
   const content = (
     <div className="rounded-lg border bg-fd-card p-4 text-fd-card-foreground transition-colors hover:bg-fd-accent/50">
-      <div className="font-medium">{title}</div>
+      <h3 className="m-0 font-medium">{title}</h3>
       {children ? (
         <div className="mt-2 text-sm text-fd-muted-foreground">{children}</div>
       ) : null}
@@ -45,7 +45,10 @@ function Card({ title, href, children }: CardProps) {
   }
 
   return (
-    <Link className="no-underline" href={href}>
+    <Link
+      className="rounded-lg no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fd-ring focus-visible:ring-offset-2 focus-visible:ring-offset-fd-background"
+      href={href}
+    >
       {content}
     </Link>
   );
@@ -88,11 +91,11 @@ export function getMDXComponents(components?: MDXComponents) {
     ...defaultMdxComponents,
     Card,
     CardGroup,
+    CliCommandInventory,
     Mermaid,
     PromptBox,
     Step,
     Steps,
-    TuiScreenshotMosaic,
     Warning,
     ...components,
   } satisfies MDXComponents;

@@ -44,83 +44,6 @@ body {
   font-size: 0.875rem;
 }
 
-.memory-screenshot-mosaic {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
-  gap: 0.75rem;
-  margin: 1.5rem 0;
-}
-
-.memory-screenshot-mosaic figure {
-  margin: 0;
-}
-
-.memory-screenshot-mosaic a {
-  display: block;
-  overflow: hidden;
-  border: 1px solid var(--color-fd-border);
-  border-radius: 0.5rem;
-  background: var(--color-fd-muted);
-}
-
-.memory-screenshot-mosaic img {
-  display: block;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
-  object-position: top left;
-  transition: transform 120ms ease;
-}
-
-.memory-screenshot-mosaic a:hover img {
-  transform: scale(1.02);
-}
-
-.memory-screenshot-mosaic figcaption {
-  margin-top: 0.3rem;
-  color: var(--color-fd-muted-foreground);
-  font-size: 0.8125rem;
-}
-
-.memory-screenshot-mosaic .memory-screenshot-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
-  border: 0;
-  border-radius: 0;
-  background: #050505;
-  cursor: zoom-out;
-}
-
-.memory-screenshot-mosaic .memory-screenshot-lightbox:target {
-  display: flex;
-}
-
-.memory-screenshot-mosaic .memory-screenshot-lightbox-open {
-  display: flex;
-}
-
-.memory-screenshot-mosaic .memory-screenshot-lightbox img {
-  width: auto;
-  max-width: min(96vw, 1600px);
-  max-height: 90vh;
-  aspect-ratio: auto;
-  object-fit: contain;
-  border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: 0.5rem;
-  background: #101827;
-  box-shadow: 0 2rem 5rem rgb(0 0 0 / 45%);
-  transform: none;
-}
-
-.memory-screenshot-mosaic .memory-screenshot-lightbox:hover img {
-  transform: none;
-}
-
 .memory-prompt-box [role='region'] {
   max-width: 100%;
   max-height: calc(11 * 1.5em + 1.75rem);
@@ -640,18 +563,8 @@ body {
   }
 
   .memory-card-group,
-  .memory-screenshot-grid,
-  .memory-screenshot-mosaic {
+  .memory-screenshot-grid {
     grid-template-columns: 1fr !important;
-  }
-
-  .memory-screenshot-mosaic .memory-screenshot-lightbox {
-    padding: 0.75rem;
-  }
-
-  .memory-screenshot-mosaic .memory-screenshot-lightbox img {
-    max-width: calc(100vw - 1.5rem);
-    max-height: calc(100dvh - 1.5rem);
   }
 
   .demo-page {

@@ -1,0 +1,107 @@
+{
+  "visibleRootCommands": [
+    "wizard",
+    "init",
+    "demo",
+    "tour",
+    "remember",
+    "query",
+    "resume",
+    "tui",
+    "status",
+    "health",
+    "doctor",
+    "capture",
+    "curate",
+    "scan",
+    "ingest",
+    "proposals",
+    "consolidate",
+    "structure",
+    "review",
+    "archive",
+    "scores",
+    "validate",
+    "history",
+    "prune-history",
+    "verify-provenance",
+    "bundle",
+    "checkpoint",
+    "activities",
+    "up-to-speed",
+    "service",
+    "auth",
+    "watcher",
+    "agent",
+    "loops",
+    "mcp",
+    "embeddings",
+    "commits",
+    "repo",
+    "graph",
+    "eval",
+    "upgrade"
+  ],
+  "groups": [
+    {
+      "title": "Start and set up",
+      "href": "/docs/reference/cli/setup",
+      "commands": ["wizard", "init", "demo", "tour"],
+      "description": "Configure Memory Layer, bootstrap a project, and try a guided example."
+    },
+    {
+      "title": "Use every day",
+      "href": "/docs/daily-workflow",
+      "commands": ["remember", "query", "resume", "tui"],
+      "description": "Capture finished work, ask cited questions, recover context, and inspect memory."
+    },
+    {
+      "title": "Diagnose",
+      "href": "/docs/reference/cli/service-health",
+      "commands": ["status", "health", "doctor"],
+      "description": "Check the service, project configuration, and environment health."
+    },
+    {
+      "title": "Capture and curate",
+      "href": "/docs/reference/cli/capture-curation",
+      "commands": ["capture", "curate", "scan", "ingest", "proposals", "consolidate", "structure", "review", "archive"],
+      "description": "Collect evidence, make it durable, and review changes to canonical memory."
+    },
+    {
+      "title": "Reinforce and validate",
+      "href": "/docs/reference/cli/reinforcement",
+      "commands": ["scores", "validate"],
+      "description": "Inspect what stays useful and validate it against project evidence."
+    },
+    {
+      "title": "History and sharing",
+      "href": "/docs/reference/cli/query-briefings",
+      "commands": ["history", "prune-history", "verify-provenance", "bundle"],
+      "description": "Inspect versions, prove sources, keep history manageable, and transfer memory."
+    },
+    {
+      "title": "Workflow continuity",
+      "href": "/docs/reference/cli/query-briefings",
+      "commands": ["checkpoint", "activities", "up-to-speed"],
+      "description": "Record execution state and prepare the next person or agent to continue."
+    },
+    {
+      "title": "Connect people and tools",
+      "href": "/docs/reference/cli/integrations-evals",
+      "commands": ["service", "auth", "watcher", "agent", "loops", "mcp", "embeddings"],
+      "description": "Run the backend, manage access, connect agents, and operate integrations."
+    },
+    {
+      "title": "Index project evidence",
+      "href": "/docs/reference/cli/repository-evidence",
+      "commands": ["commits", "repo", "graph"],
+      "description": "Import repository history and build code-aware retrieval evidence."
+    },
+    {
+      "title": "Maintain and evaluate",
+      "href": "/docs/reference/cli/integrations-evals",
+      "commands": ["eval", "upgrade"],
+      "description": "Measure memory quality and refresh repo-local integration files."
+    }
+  ]
+}

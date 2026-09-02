@@ -330,11 +330,8 @@ struct CliCommandInventoryGroup {
 fn docs_site_command_inventory_matches_visible_root_commands() {
     let manifest_path = repo_root_for_tests()
         .join("docs-site")
-        .join("content")
-        .join("docs")
-        .join("reference")
-        .join("cli")
-        .join("command-inventory.json");
+        .join("data")
+        .join("cli-command-inventory.json");
     let manifest: CliCommandInventory = serde_json::from_str(
         &fs::read_to_string(&manifest_path)
             .unwrap_or_else(|error| panic!("read {}: {error}", manifest_path.display())),
@@ -358,7 +355,10 @@ fn docs_site_command_inventory_matches_visible_root_commands() {
 
     let mut expected = actual;
     expected.sort();
-    assert_eq!(grouped, expected, "each visible root command needs one website group");
+    assert_eq!(
+        grouped, expected,
+        "each visible root command needs one website group"
+    );
 
     let reference_path = repo_root_for_tests()
         .join("docs-site")
@@ -2487,11 +2487,17 @@ fn ensure_shared_service_api_token_preserves_existing_non_placeholder() {
 
 #[test]
 fn write_headers_sends_token_for_loopback_service() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let previous = std::env::var("MEMORY_LAYER_CLIENT_TOKEN").ok();
+    unsafe {
+        std::env::remove_var("MEMORY_LAYER_CLIENT_TOKEN");
+    }
     let mut config = test_app_config();
     config.service.bind_addr = "127.0.0.1:4040".to_string();
     config.service.api_token = "ml_testtoken".to_string();
 
     let headers = write_headers(&config).unwrap();
+    restore_env_var("MEMORY_LAYER_CLIENT_TOKEN", previous);
 
     assert_eq!(
         headers
@@ -2504,11 +2510,17 @@ fn write_headers_sends_token_for_loopback_service() {
 
 #[test]
 fn write_headers_sends_token_for_non_loopback_service() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let previous = std::env::var("MEMORY_LAYER_CLIENT_TOKEN").ok();
+    unsafe {
+        std::env::remove_var("MEMORY_LAYER_CLIENT_TOKEN");
+    }
     let mut config = test_app_config();
     config.service.bind_addr = "10.22.6.42:4140".to_string();
     config.service.api_token = "ml_testtoken".to_string();
 
     let headers = write_headers(&config).unwrap();
+    restore_env_var("MEMORY_LAYER_CLIENT_TOKEN", previous);
 
     assert_eq!(
         headers

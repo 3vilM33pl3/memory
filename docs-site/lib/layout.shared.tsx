@@ -1,3 +1,5 @@
+import Image from 'next/image';
+
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
 
 function GitHubIcon() {
@@ -97,10 +99,13 @@ export function baseOptions(): BaseLayoutProps {
   return {
     nav: {
       title: (
-        <img
+        <Image
           src="/images/memory-layer-logo.png"
           alt="Memory Layer"
           className="memory-site-logo"
+          height={32}
+          priority
+          width={32}
         />
       ),
     },
