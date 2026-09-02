@@ -23,19 +23,22 @@ use crate::commands::{
 };
 
 const ROOT_AFTER_HELP: &str = "\
-New here? Run `memory setup`, load a demo project with `memory demo` (or take
-the guided `memory tour`), then explore with `memory query` and `memory tui`.
+New here? Run `memory wizard` for guided setup or `memory init` in a repository,
+then load a demo project with `memory demo` (or take the guided `memory tour`).
+Use `memory query` to ask a question, `memory resume` after an interruption, and
+`memory tui` when you want an interactive view.
 
 Command groups:
-  Core          setup, init, demo, tour, remember, query, resume, tui
-  Status        status, health, stats, doctor
-  Memory        capture, ingest, curate, scan, proposals, review, archive
-  Reinforcement scores, validate
-  History       history, prune-history, verify-provenance, bundle
-  Workflow      checkpoint, activities, up-to-speed
-  Service       service, auth, watcher, agent, loops, automation, mcp, embeddings
-  Repository    commits, repo, graph
-  Maintenance   eval, upgrade
+  Onboarding     wizard, init, demo, tour
+  Daily work     remember, query, resume, tui
+  Diagnose       status, health, doctor
+  Memory         capture, curate, scan, ingest, proposals, consolidate, structure, review, archive
+  Reinforcement  scores, validate
+  History        history, prune-history, verify-provenance, bundle
+  Workflow       checkpoint, activities, up-to-speed
+  Connect        service, auth, watcher, agent, loops, mcp, embeddings
+  Repository     commits, repo, graph
+  Maintenance    eval, upgrade
 
 Agent contract:
   Use this CLI from Codex, Claude, or scripts to read and write durable project memory.
@@ -1223,7 +1226,7 @@ Agent notes:
 Examples:
   memory health
   memory status --project memory
-  memory stats
+  memory doctor --project memory
 
 See also:
   docs/user/cli/health.md";
@@ -1239,17 +1242,20 @@ Examples:
 See also:
   docs/user/cli/archive.md";
 
-const AUTOMATION_FLUSH_AFTER_HELP: &str = "\
+const WATCHER_FLUSH_AFTER_HELP: &str = "\
 Agent notes:
-  Converts pending automation state into capture records and can optionally curate them.
+  Converts pending watcher-collected automation state into capture records and can optionally curate them.
   Use --dry-run before writing; add --curate only when canonical memory should be produced immediately.
 
+Migration note:
+  Older documentation called this `memory automation flush`. Use `memory watcher flush`.
+
 Examples:
-  memory automation flush --project memory
-  memory automation flush --project memory --curate --dry-run
+  memory watcher flush --project memory --dry-run
+  memory watcher flush --project memory --curate
 
 See also:
-  docs/user/cli/automation.md";
+  docs/user/cli/watchers.md";
 
 const LOOPS_GROUP_AFTER_HELP: &str = "\
 Agent notes:
@@ -1772,7 +1778,7 @@ pub(in crate::commands) enum WatcherCommand {
     Status(WatchProjectArgs),
     #[command(about = "Run or manage the Codex-linked watcher manager.", after_help = WATCHER_MANAGER_GROUP_AFTER_HELP)]
     Manager(WatcherManagerArgs),
-    #[command(about = "Flush pending automation work into capture and optional curation.", after_help = AUTOMATION_FLUSH_AFTER_HELP)]
+    #[command(about = "Flush pending watcher work into capture and optional curation.", after_help = WATCHER_FLUSH_AFTER_HELP)]
     Flush(AutomationFlushArgs),
 }
 

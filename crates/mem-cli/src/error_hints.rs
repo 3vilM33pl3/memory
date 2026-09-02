@@ -61,7 +61,8 @@ pub(crate) fn error_hint(error: &anyhow::Error) -> Option<String> {
     {
         return Some(
             "No project is configured here.\n  \
-             Inside a repository:  memory setup   (one-pass machine + project setup)\n  \
+             Inside a repository:  memory init    (scriptable project setup)\n  \
+             Or guided setup:      memory wizard\n  \
              or pass an explicit:  --project <slug>"
                 .to_string(),
         );
@@ -85,6 +86,15 @@ mod tests {
     fn token_mismatch_names_the_fix() {
         let error = anyhow::anyhow!("401 invalid api token");
         assert!(error_hint(&error).expect("hint").contains("api_token"));
+    }
+
+    #[test]
+    fn unconfigured_project_names_current_setup_commands() {
+        let error = anyhow::anyhow!("project not configured");
+        let hint = error_hint(&error).expect("hint");
+        assert!(hint.contains("memory init"));
+        assert!(hint.contains("memory wizard"));
+        assert!(!hint.contains("memory setup"));
     }
 
     #[test]

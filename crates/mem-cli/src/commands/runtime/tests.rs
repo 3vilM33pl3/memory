@@ -9,6 +9,7 @@ use std::{
 };
 
 use clap::{Command, CommandFactory, Parser, error::ErrorKind};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::commands::eval_support::{
@@ -313,6 +314,67 @@ fn root_commands_have_user_cli_reference_pages() {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CliCommandInventory {
+    visible_root_commands: Vec<String>,
+    groups: Vec<CliCommandInventoryGroup>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CliCommandInventoryGroup {
+    commands: Vec<String>,
+}
+
+#[test]
+fn docs_site_command_inventory_matches_visible_root_commands() {
+    let manifest_path = repo_root_for_tests()
+        .join("docs-site")
+        .join("content")
+        .join("docs")
+        .join("reference")
+        .join("cli")
+        .join("command-inventory.json");
+    let manifest: CliCommandInventory = serde_json::from_str(
+        &fs::read_to_string(&manifest_path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", manifest_path.display())),
+    )
+    .unwrap_or_else(|error| panic!("parse {}: {error}", manifest_path.display()));
+
+    let actual = Cli::command()
+        .get_subcommands()
+        .filter(|command| command.get_name() != "help" && !command.is_hide_set())
+        .map(|command| command.get_name().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(manifest.visible_root_commands, actual);
+
+    let mut grouped = manifest
+        .groups
+        .iter()
+        .flat_map(|group| group.commands.iter().cloned())
+        .collect::<Vec<_>>();
+    grouped.sort();
+    grouped.dedup();
+
+    let mut expected = actual;
+    expected.sort();
+    assert_eq!(grouped, expected, "each visible root command needs one website group");
+
+    let reference_path = repo_root_for_tests()
+        .join("docs-site")
+        .join("content")
+        .join("docs")
+        .join("reference")
+        .join("cli")
+        .join("index.mdx");
+    let reference = fs::read_to_string(&reference_path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", reference_path.display()));
+    assert!(
+        reference.contains("<CliCommandInventory />"),
+        "the CLI reference must render the checked command inventory"
+    );
+}
+
 fn collect_markdown_files(root: &Path, files: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(root).unwrap() {
         let path = entry.unwrap().path();
@@ -425,9 +487,28 @@ fn root_help_includes_examples_and_docs_hint() {
     assert!(output.contains("checkpoint start-task"));
     assert!(output.contains("checkpoint finish-execution"));
     assert!(output.contains("memory status --project memory"));
+    assert!(output.contains("memory wizard"));
+    assert!(output.contains("memory init"));
+    assert!(output.contains("ingest"));
+    assert!(output.contains("auth"));
+    assert!(!output.contains("memory setup"));
+    assert!(!output.contains("memory stats"));
+    assert!(!output.contains(", automation,"));
     assert!(output.contains("Examples:"));
     assert!(output.contains("docs/user/README.md"));
     assert!(output.contains("Ask a project-specific question against curated memory"));
+}
+
+#[test]
+fn health_and_watcher_flush_help_name_current_commands() {
+    let health = rendered_help(&["memory", "health", "--help"]);
+    assert!(health.contains("memory doctor --project memory"));
+    assert!(!health.contains("memory stats"));
+
+    let flush = rendered_help(&["memory", "watcher", "flush", "--help"]);
+    assert!(flush.contains("memory watcher flush --project memory --dry-run"));
+    assert!(flush.contains("Older documentation called this `memory automation flush`"));
+    assert!(!flush.contains("docs/user/cli/automation.md"));
 }
 
 #[test]
