@@ -39,7 +39,7 @@ The **More** menu holds the lower-frequency control surfaces:
 
 Automations, Bundles, and Access are not primary tabs. That keeps the everyday browser path focused while preserving the deeper controls when you need them.
 
-## Go deeper: Graph explorer
+## Graph explorer
 
 The Graph tab is a WebGL-only 3D explorer with three independently visible layers:
 
