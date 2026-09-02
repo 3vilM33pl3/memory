@@ -1,6 +1,6 @@
 ---
 title: "CLI: service and health"
-description: "Run the backend, diagnose configuration, inspect health, and check automation state."
+description: "Run the backend, diagnose configuration, inspect health, and recover watcher work."
 ---
 
 # CLI: service and health
@@ -29,7 +29,7 @@ memory service restart-all
 memory service ensure-api-token
 ```
 
-`memory service run` is a foreground command. A development `cargo run --bin memory service run` should not daemonize itself. Packaged installs use systemd on Linux or launchd on macOS for background operation.
+`memory service run` is a foreground command. A development `cargo run --bin memory -- service run` should not daemonize itself. Packaged installs use systemd on Linux or launchd on macOS for background operation.
 
 Development defaults commonly use `127.0.0.1:4250`; packaged installs commonly use `127.0.0.1:4040`. Check your config and `memory service status` instead of assuming a port.
 
@@ -65,15 +65,15 @@ Use health to confirm the backend responds; use `memory status` to confirm the e
 memory health
 ```
 
-If health is green but stats are empty, the service is probably healthy but the project slug or database is not the one you expected.
+If health is green but a project command is empty or unauthorized, verify the project slug and credential with `memory status --project <slug>` and `memory doctor --project <slug>`.
 
 ## `memory watcher`
 
-Automation commands inspect background queues and flush queued work when supported.
+Watchers inspect background work and can flush queued work when supported.
 
 ```bash
 memory watcher --help
 memory watcher status --project memory
 ```
 
-Treat automation flushes as write operations. Capture logs before changing queue state when diagnosing failures.
+Treat `memory watcher flush` as a write operation. Capture logs before changing queue state when diagnosing failures. The historic `memory automation flush` spelling is no longer a command.

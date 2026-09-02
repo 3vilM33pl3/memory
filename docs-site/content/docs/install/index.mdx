@@ -39,7 +39,7 @@ You need a PostgreSQL database with the pgvector extension enabled. See [Postgre
 | pgvector | Vector storage for semantic retrieval. | `psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"` |
 | `memory` binary | CLI, TUI launcher, service management, MCP, evals. | `memory --version` |
 | Optional LLM provider | Better curation, summaries, and answer synthesis. | `memory doctor` |
-| Optional embedding provider | Semantic search and graph-enhanced retrieval quality. | `memory embeddings status --project <slug>` |
+| Optional embedding provider | Semantic search and graph-enhanced retrieval quality. | `memory embeddings list` |
 
 ## Configure
 

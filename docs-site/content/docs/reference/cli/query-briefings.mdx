@@ -47,7 +47,7 @@ Use this for a new agent or a wider handoff.
 
 ```bash
 memory up-to-speed --project memory
-memory up-to-speed --project memory --include-llm-summary
+memory up-to-speed --project memory --llm
 ```
 
 It is broader than `resume` and should be run at task start when the agent lacks project continuity.
@@ -58,7 +58,7 @@ Activities are persisted audit events.
 
 ```bash
 memory activities --project memory --limit 30
-memory activities --project memory --kind checkpoint --json
+memory activities --project memory --kind checkpoint
 ```
 
 Use activity output to verify whether captures, curation, proposals, embedding jobs, watcher events, or checkpoints actually happened.

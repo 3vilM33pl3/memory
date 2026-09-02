@@ -10,10 +10,10 @@ These commands connect Memory Layer to humans, agents, built-in loop automations
 | Command | Writes | Purpose |
 |---|---:|---|
 | `memory tui` | Mostly read | Open the terminal UI. |
+| `memory auth` | Mixed | Inspect identity and administer scoped service access. |
 | `memory agent` | Yes | Coordinate concurrent agent branches and worktrees. |
 | `memory watcher` | Yes | Manage project watchers and watcher daemons. |
 | `memory loops` | Mixed | Inspect and operate built-in automation loops. |
-| `memory watcher` | Yes | Legacy/local automation queue controls. |
 | `memory mcp` | Mixed | Run and inspect the built-in Memory MCP server. |
 | `memory eval` | Yes | Run automated Memory quality evaluations. |
 
@@ -27,6 +27,15 @@ memory tui --project memory
 ```
 
 The TUI gives humans a dense view of memories, query evidence, replacement proposals, agents, watchers, activities, embeddings, errors, and project status.
+
+## `memory auth`
+
+Use `auth` to verify the credential seen by the backend and to administer scoped service tokens. For browser identity, project membership, and Authentik setup, see [Authentication](/docs/reference/authentication).
+
+```bash
+memory auth whoami
+memory auth token list
+```
 
 ## `memory agent`
 
@@ -79,16 +88,16 @@ memory loops memory-proposals --project memory --status pending
 
 Use `memory loops` for the Automations tab workflows from a terminal: definitions, settings, trigger routing, manual runs, context packs, approvals, and loop-produced memory proposals. See [Automations](/docs/automations) for the built-in loop catalog and safety model.
 
-## `memory watcher`
+## `memory watcher flush`
 
-Operate the older local automation queue controls where they are still used.
+Flush pending watcher-collected work into captures when waiting for the idle threshold is not useful. This writes state, so start with a dry run.
 
 ```bash
-memory watcher status --project memory
 memory watcher flush --project memory --dry-run
+memory watcher flush --project memory --curate
 ```
 
-Prefer `memory loops` for the current built-in automation control plane.
+**Migration note:** older documentation used `memory automation flush`. The current command is `memory watcher flush`. Use `memory loops` for the built-in automation control plane.
 
 ## `memory mcp`
 

@@ -11,6 +11,8 @@ These commands create or refresh configuration. Run dry-runs first when a comman
 |---|---:|---|
 | `memory wizard` | Yes | Interactive global or project setup. |
 | `memory init` | Yes | Non-interactive repo-local bootstrap. |
+| `memory demo` | Yes | Load a disposable example project to try queries immediately. |
+| `memory tour` | No | Walk through the core setup, query, and resume workflow. |
 | `memory upgrade` | Yes | Refresh generated repo-local Memory Layer skill and instruction files. |
 | `memory completion` | No | Print shell completion scripts. |
 | `memory dev` | Mixed | Scaffold or inspect the dev-profile overlay used by contributors. |
@@ -40,6 +42,17 @@ memory init --force
 ```
 
 Prefer `wizard` for humans and `init` for repeatable repository setup. Both should be reviewed before committing generated files.
+
+## `memory demo` and `memory tour`
+
+Use the demo when you want data to explore without first capturing your own work. Use the tour when you want a short, guided explanation of the core commands.
+
+```bash
+memory demo
+memory tour
+```
+
+The demo is a reproducible learning path, not a replacement for initializing the repository where you will actually work.
 
 ## `memory upgrade`
 
@@ -71,8 +84,8 @@ The dev command is for contributors running Memory Layer from source. Use it to 
 
 ```bash
 memory dev --help
-memory dev init --copy-from-global
-memory dev init --dry-run
+memory dev --copy-from-global
+memory dev --dry-run
 MEMORY_LAYER_PROFILE=dev cargo run --bin memory -- doctor
 ```
 

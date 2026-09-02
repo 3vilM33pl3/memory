@@ -28,7 +28,7 @@ Nothing downstream matters if install is hard.
 - **User-facing Docker Compose full stack** — `docker compose up` brings up pgvector + service + migrations + web. Highest-leverage item. *Reuse: `evals/docker/app-build-sequence/`.*
 - One-line curl installer for Linux/macOS. *Reuse: `Formula/memory-layer.rb`, `packaging/`.*
 - `memory doctor` preflight that detects and fixes the common failures (DB unreachable, pgvector missing, PATH, uninitialized project).
-- Collapse the two-phase wizard into a single `memory setup`.
+- Keep the guided `memory wizard` setup path cohesive as global and project configuration evolve.
 - Windows package publication (winget/scoop) and ARM64 follow-up; native x86_64 runtime and per-user MSI support are implemented.
 - **Spike:** a zero-dependency embedded mode for demos and classrooms (decision doc — bundling Postgres keeps 100% of the code; a DuckDB read path would mean reimplementing the repository layer, since today's offline mode is a write-only outbox).
 

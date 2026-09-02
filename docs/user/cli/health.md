@@ -2,7 +2,7 @@
 
 These two commands are lightweight operational checks.
 
-For first-line diagnosis, prefer [`memory status`](status.md). It aggregates service reachability, config, watcher state, MCP status, and doctor checks. `health` and `stats` remain compatibility commands for narrow scripts.
+For first-line diagnosis, prefer [`memory status`](status.md). It aggregates service reachability, config, watcher state, MCP status, and doctor checks. `health` remains useful for narrow service-health scripts; there is no separate `memory stats` command.
 
 ## `memory health`
 

@@ -12,8 +12,12 @@ These commands write or modify memory state. Use `--dry-run` where available, ke
 | `memory remember` | Yes | Capture and curate completed work into memory. |
 | `memory capture` | Yes | Store structured raw task context from a file. |
 | `memory scan` | Yes | Scan a repo for candidate durable memories. |
+| `memory ingest` | Yes | Import documents from a directory, with or without a Git repository. |
 | `memory curate` | Yes | Convert raw captures into canonical memories. |
 | `memory proposals` | Yes | Review, approve, or reject memory replacement proposals. |
+| `memory consolidate` | Mixed | Find related memories and prepare higher-level insight proposals. |
+| `memory structure` | No | Inspect the insight tree and discovered consolidation groups. |
+| `memory review` | Mixed | Review validation corrections proposed for existing memories. |
 | `memory archive` | Yes | Archive low-signal memories by confidence and importance. |
 | `memory prune-history` | Yes | Prune old versions and tombstoned canonicals. |
 | `memory checkpoint` | Yes | Save, inspect, and verify execution checkpoints. |
@@ -38,7 +42,7 @@ Remember should store durable, human-readable text with evidence. It is not a su
 Capture stores raw context; curate turns raw captures into canonical memories.
 
 ```bash
-memory capture task --file task-context.json
+memory capture --file task-context.json
 memory curate --project memory
 memory curate --project memory --batch-size 10 --dry-run
 ```
@@ -56,6 +60,15 @@ memory scan --project memory --dry-run --json
 ```
 
 Scan is useful for onboarding an existing repository, but it is not a replacement for human review. Prefer smaller scans when investigating a subsystem.
+
+## `memory ingest`
+
+Ingest is the document-first counterpart to repository scanning. It works when the source is a folder of notes, exported documents, or other material that does not need Git metadata.
+
+```bash
+memory ingest ./research --project memory --dry-run
+memory ingest ./research --project memory
+```
 
 ## `memory proposals`
 
