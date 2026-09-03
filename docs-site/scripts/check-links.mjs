@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -8,6 +8,7 @@ import {
   isDocsSiteContent,
   publicPathForReference,
   publicRoot,
+  repositoryRoot,
 } from './content-utils.mjs';
 
 const root = docsSiteRoot;
@@ -45,6 +46,43 @@ function existsForDocsUrl(url) {
 const errors = [];
 const { records, errors: contentErrors } = collectDocsContent();
 errors.push(...contentErrors);
+
+function markdownReferences(text) {
+  return [...text.matchAll(/!?\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)].map(
+    (match) => match[1],
+  );
+}
+
+function isInside(rootPath, candidate) {
+  const relative = path.relative(rootPath, candidate);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..');
+}
+
+function validateReadmeReferences() {
+  const readme = path.join(repositoryRoot, 'README.md');
+
+  for (const rawRef of markdownReferences(readFileSync(readme, 'utf8'))) {
+    if (/^(https?:|mailto:|#)/.test(rawRef)) {
+      continue;
+    }
+
+    const fileRef = rawRef.split(/[?#]/, 1)[0];
+    if (!fileRef) {
+      continue;
+    }
+
+    const target = path.resolve(repositoryRoot, fileRef);
+    if (!isInside(repositoryRoot, target)) {
+      errors.push(`README.md: local reference escapes repository: ${rawRef}`);
+      continue;
+    }
+    if (!existsSync(target)) {
+      errors.push(`README.md: missing local reference: ${rawRef}`);
+    }
+  }
+}
+
+validateReadmeReferences();
 
 for (const { file, text, includedBy } of records) {
   const rel = path.relative(root, file);
@@ -95,4 +133,4 @@ if (errors.length > 0) {
   process.exit(1);
 }
 
-console.log('checked docs links');
+console.log('checked docs and README links');
