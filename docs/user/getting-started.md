@@ -400,13 +400,22 @@ Set-Location C:\path\to\your-project
 memory wizard --dry-run
 memory wizard
 memory service enable
-memory watcher manager enable
 memory doctor
 memory health
 memory tui
 ```
 
-The backend and watcher manager are current-user, least-privilege Task Scheduler tasks named `MemoryLayer-Backend` and `MemoryLayer-WatcherManager`. Their config, state, cache, and task metadata live under `%LOCALAPPDATA%\memory-layer`.
+The backend is a current-user, least-privilege Task Scheduler task named
+`MemoryLayer-Backend`. If you want Codex-linked background watcher automation,
+enable the separate optional task:
+
+```powershell
+memory watcher manager enable
+```
+
+Its task is named `MemoryLayer-WatcherManager`. Backend and watcher-manager
+config, state, cache, and task metadata live under
+`%LOCALAPPDATA%\memory-layer`.
 
 ## What The Wizard Will Ask For
 

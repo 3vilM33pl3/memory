@@ -14,9 +14,10 @@ Windows ARM64 is not a release target yet.
 
 ## Native MSI
 
-Download the MSI from GitHub Releases and run it. The installer places
+Download the MSI from GitHub Releases and run it. The per-user installer places
 `memory.exe`, the bundled web UI, skill templates, README, example config, and
-PowerShell completion under `Program Files\Memory Layer`.
+PowerShell completion under `%LOCALAPPDATA%\Programs\Memory Layer`, then adds
+its `bin` directory to the user `PATH`.
 
 After installing:
 
