@@ -25,7 +25,11 @@ memory upgrade --force
 
 By default, it does not replace a project-local skill that is newer than the selected template. Use `--force` only when you intentionally want to replace all known Memory-owned skills from the template.
 
-All bundled Memory skills should report the same version as the Memory package. The JSON output includes a top-level bundle version/status and per-skill details for troubleshooting.
+All bundled Memory skills should report the same skill-bundle version. That
+version is independent from the Memory Layer binary and Codex plugin versions;
+for example, a v2.0.0 binary can correctly ship a `0.9.x` skill bundle. The JSON
+output includes a top-level bundle version/status and per-skill details for
+troubleshooting.
 
 The Memory-owned skill set is:
 
