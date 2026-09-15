@@ -2,10 +2,12 @@
 
 Memory Layer uses GitHub Actions for incremental validation, release publishing, dependency upkeep, and optional Codex-agent workflows.
 
-All repository workflows run on project-owned self-hosted runners. The primary
-Linux x86_64 runner is `Monolith_Memory`, registered with the labels
-`self-hosted`, `memory`, `Linux`, and `X64`. Workflow jobs must include the
-`memory` label so they cannot be assigned to unrelated host runners.
+CI, nightly, and agent workflows run on project-owned self-hosted runners. The
+primary Linux x86_64 runner is `Monolith_Memory`, registered with the labels
+`self-hosted`, `memory`, `Linux`, and `X64`. Those jobs must include the
+`memory` label so they cannot be assigned to unrelated host runners. Release
+jobs use GitHub-hosted platform runners so publishing does not depend on five
+separate machines being online at the same time.
 
 ## Self-hosted runner operation
 
@@ -122,24 +124,18 @@ uploads every package plus its `.sha256` file. Homebrew formula updates happen
 after the release archive exists, because the formula checksum must match the
 published tarball.
 
-Release jobs also use self-hosted runners. Before pushing a release tag, confirm
-that all of these label combinations are online:
+Release jobs use these pinned GitHub-hosted runner labels:
 
-| Artifact | Required runner labels |
+| Artifact | Runner label |
 | --- | --- |
-| Debian amd64, validation, source, publish | `self-hosted`, `memory`, `Linux`, `X64` |
-| Debian arm64 | `self-hosted`, `memory`, `Linux`, `ARM64` |
-| macOS Intel | `self-hosted`, `memory`, `macOS`, `X64` |
-| macOS Apple Silicon | `self-hosted`, `memory`, `macOS`, `ARM64` |
-| Windows x86_64 | `self-hosted`, `memory`, `Windows`, `X64` |
+| Debian amd64, validation, source, publish | `ubuntu-24.04` |
+| Debian arm64, including Raspberry Pi 4/5 | `ubuntu-24.04-arm` |
+| macOS Intel | `macos-15-intel` |
+| macOS Apple Silicon | `macos-15` |
+| Windows x86_64 | `windows-2025` |
 
-Missing runners leave the corresponding release jobs queued indefinitely. List
-the repository runner inventory with:
-
-```bash
-gh api repos/3vilM33pl3/memory/actions/runners \
-  --jq '.runners[] | {name, status, busy, labels: [.labels[].name]}'
-```
+The Debian arm64 job is a native ARM64 build. Keep these labels pinned and
+review GitHub runner-image deprecation notices before changing them.
 
 ## Agent PR Workflow
 

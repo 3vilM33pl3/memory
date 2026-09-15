@@ -61,11 +61,10 @@ extensions.
    ./packaging/build-deb.sh --arch amd64
    ```
 
-9. Confirm every self-hosted release runner is online. A complete release needs
-   Linux x86_64 and ARM64, macOS x86_64 and ARM64, and Windows x86_64 runners,
-   all with the `memory` label. See
-   [GitHub Actions](github-actions.md#release-publishing) for the exact labels
-   and inventory command.
+9. Confirm the release workflow uses the pinned GitHub-hosted Linux x86_64,
+   Linux ARM64, macOS x86_64, macOS ARM64, and Windows x86_64 labels documented
+   in [GitHub Actions](github-actions.md#release-publishing). The Linux ARM64
+   job produces the package for 64-bit Raspberry Pi 4/5 systems.
 10. Commit and push the release-prep changes before tagging.
 
 ## Tag and publish
@@ -121,9 +120,9 @@ memory status --project <project-slug>
 ## Known cautions
 
 - Do not edit already-applied database migrations.
-- Do not push a release tag while a required self-hosted platform runner is
-  offline; the release workflow will remain queued and cannot publish a partial
-  supported artifact set.
+- Do not push a release tag when GitHub reports a required hosted runner image
+  unavailable or deprecated; the release workflow publishes only after every
+  supported platform job succeeds.
 - Do not update the Homebrew formula before the release source tarball exists.
 - If macOS signing secrets are absent, the release may contain unsigned `.pkg`
   files; note that in release communication.
