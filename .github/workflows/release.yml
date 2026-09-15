@@ -73,7 +73,10 @@ jobs:
             --prefix="memory-${version}/" \
             --output="target/source/memory-${version}.tar.gz" \
             "$GITHUB_SHA"
-          sha256sum "target/source/memory-${version}.tar.gz" > "target/source/memory-${version}.tar.gz.sha256"
+          (
+            cd target/source
+            sha256sum "memory-${version}.tar.gz" > "memory-${version}.tar.gz.sha256"
+          )
 
       - uses: actions/upload-artifact@v4
         with:
@@ -111,8 +114,11 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          deb="target/debian/memory-layer_${version}_${{ matrix.deb_arch }}.deb"
-          sha256sum "$deb" > "${deb}.sha256"
+          deb="memory-layer_${version}_${{ matrix.deb_arch }}.deb"
+          (
+            cd target/debian
+            sha256sum "$deb" > "${deb}.sha256"
+          )
 
       - uses: actions/upload-artifact@v4
         with:
@@ -152,8 +158,11 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          pkg="target/memory-layer-${version}-macos-${{ matrix.pkg_arch }}.pkg"
-          shasum -a 256 "$pkg" > "${pkg}.sha256"
+          pkg="memory-layer-${version}-macos-${{ matrix.pkg_arch }}.pkg"
+          (
+            cd target
+            shasum -a 256 "$pkg" > "${pkg}.sha256"
+          )
 
       - uses: actions/upload-artifact@v4
         with:
