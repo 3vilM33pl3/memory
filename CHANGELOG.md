@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 - 2026-08-25
+## 2.0.0 - 2026-09-15
 
 Pre-ATProto refactor: six waves of simplification, boundary work, and record
 model changes preparing the codebase for AT Protocol federation. This is a

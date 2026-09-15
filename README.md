@@ -7,7 +7,7 @@ Claude, or human session can start with evidence instead of guesswork.
 It captures what happened, curates what matters, stores it in PostgreSQL with
 pgvector, and exposes it through a TUI, browser UI, and agent-friendly CLI.
 
-[Website](https://www.memory-layer.dev) · [Documentation](https://www.memory-layer.dev/docs)
+[Website](https://www.memory-layer.dev) · [Documentation](https://www.memory-layer.dev/docs) · [v2.0.0](https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0)
 
 ![Memory Layer memories tab](docs/img/tui/memories-tab.png)
 
@@ -39,8 +39,11 @@ demo path.
 ### Use it in a project
 
 For a native installation, prerequisites, and verification, start with the
-[Install guide](https://www.memory-layer.dev/docs/install) or download a
-package from [GitHub Releases](https://github.com/3vilM33pl3/memory/releases).
+[Install guide](https://www.memory-layer.dev/docs/install) or download the
+[v2.0.0 release](https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0).
+Version 2 is a breaking upgrade from v1; existing users should follow the
+[Update guide](https://www.memory-layer.dev/docs/install/update) before
+restarting the service.
 The setup wizard configures the machine once and the project you are working
 in:
 

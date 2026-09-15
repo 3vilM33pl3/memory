@@ -53,7 +53,8 @@ It records:
 - base commit and head commit when Git can resolve them
 - current dirty files from `git status --porcelain`
 - agent CLI name and agent session id
-- writer id, hostname, profile, and service endpoint
+- authenticated principal plus advisory writer label, hostname, profile, and
+  service endpoint
 
 Useful options:
 

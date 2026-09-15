@@ -1,35 +1,52 @@
 # Release Compatibility And Known Limitations
 
-Memory Layer v1.0 is intended to be a stable local-first release. It preserves
-the documented install, service, query, TUI, web UI, watcher, skill, and MCP
-workflows while keeping newer automation surfaces conservative.
+Memory Layer v2.0.0 is the current stable release. It is a breaking major
+release that simplifies the runtime and prepares the record model for future
+federation work. Existing PostgreSQL databases migrate in place, and bundle v1
+imports remain supported, but v1 clients and configuration should be reviewed
+before upgrading.
 
-## Compatibility promise
+Read the [v2.0.0 release](https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0)
+and [changelog](../../CHANGELOG.md) before updating a production installation.
 
-The v1 line aims to preserve:
+## The v2 compatibility boundary
 
-- documented CLI commands and `--json` response shapes for core workflows
-- global config, project config, and repo-local skill locations
-- append-only database migrations; already-applied migrations must not be edited
+The v2 line preserves these documented boundaries:
+
+- the current core CLI workflows and their documented `--json` response shapes
+- append-only database migrations; already-applied migrations are never edited
+- the OpenAPI operations marked `x-stability: core`; control-plane operations
+  marked `internal` may evolve between minor releases
 - read-only MCP query, search, resume, resource, and prompt tools
-- packaged service behavior for Debian, Homebrew, macOS `.pkg`, and Windows x86_64 installs
+- deterministic bundle schema v2 exports and backward-compatible bundle v1 imports
+- packaged operation on Debian amd64/arm64, Homebrew, macOS Intel/Apple Silicon,
+  and Windows x86_64
 - source/dev isolation from the installed service profile
 
-Compatibility does not mean every experimental feature is frozen. Advanced
-surfaces may change if the docs mark them as experimental or advanced.
+Advanced surfaces remain deliberately conservative. Loop automations are
+approval-gated, graph quality depends on repository/extractor coverage, and
+evaluation claims require reviewed suites and passing gates.
 
-## Advanced surfaces
+## Upgrading from v1
 
-Treat these as advanced in v1.0:
+Review these breaking changes before restarting the service:
 
-- Loop automation: approval-gated and local-first; risky actions must stop for
-  human review.
-- Code graph visualization: useful for navigation, but WebGL support and graph
-  extraction quality depend on the browser, repository, and extractor coverage.
-- Evaluation research extensions: useful for release discipline, but benchmark
-  claims still depend on reviewed held-out suites.
-- Browser demo data: shows product behavior without a backend, but it is not a
-  substitute for a live service.
+- Remove `capnp_unix_socket` and `capnp_tcp_addr`; clients now receive live
+  updates from the `/ws` WebSocket stream.
+- Replace `memory automation flush` with `memory watcher flush`,
+  `memory capture task` with `memory capture`, and `memory dev init` with
+  `memory dev`. The duplicate `memory setup` command is gone; use
+  `memory wizard`.
+- Update direct API integrations against the running service's
+  `GET /v1/openapi.yaml`. v2 removed `/v1/stats`, `/v1/offline/pending`, and the
+  browser auth-token handoff, and consolidated several loop/activity routes.
+- Treat `--writer-id` and `[writer]` as advisory labels. Durable authorship is
+  derived from the authenticated principal.
+- Reissue least-privilege service tokens where appropriate. Role names remain
+  convenient presets, but authorization is enforced as explicit permission
+  sets rather than an ordinal role ladder.
+- Re-export shared bundles when practical. New exports use deterministic,
+  content-addressed schema v2; existing schema v1 bundles still import.
 
 ## Upgrade guidance
 
@@ -51,8 +68,10 @@ memory status --project <project-slug>
 memory upgrade --dry-run
 ```
 
-Run `memory upgrade` only after reviewing the dry run because it can refresh
-repo-local `.agents/` skills and instructions.
+The service applies migrations 0027-0032 when it starts. Do not downgrade the
+binary against a migrated database; restore the pre-upgrade database backup if
+you must roll back. Run `memory upgrade` only after reviewing the dry run
+because it can refresh repo-local `.agents/` skills and instructions.
 
 ## Release artifacts
 
@@ -64,12 +83,16 @@ GitHub Releases publish the supported native installer set:
 - macOS Apple Silicon: `memory-layer-<version>-macos-aarch64.pkg`
 - Windows x86_64: `memory-layer-<version>-windows-x86_64.msi`
 - Windows x86_64 portable archive: `memory-layer-<version>-windows-x86_64.zip`
+- Homebrew source archive: `memory-<version>.tar.gz`
+
+For v2.0.0, replace `<version>` with `2.0.0`. Every published package has a
+matching `.sha256` checksum file.
 
 The Debian arm64 package targets 64-bit ARM Linux, including Raspberry Pi 4/5
 systems running a 64-bit Debian-family OS. Windows ARM64 and 32-bit Raspberry Pi
 OS are not release targets yet.
 
-## Release cautions
+## Current limitations
 
 - Run `memory doctor` and `memory health` after every package upgrade.
 - Review `memory upgrade --dry-run` before refreshing repo-local skills or
@@ -77,6 +100,11 @@ OS are not release targets yet.
 - Verify the installer architecture before installing: Debian publishes `amd64`
   and `arm64`, macOS publishes Intel and Apple Silicon packages, and Windows
   publishes x86_64 packages.
+- The code graph UI depends on browser WebGL support and extractor coverage.
+- The interactive browser demo uses static sample data; it does not prove that
+  your local backend, database, or authentication is healthy.
+- Loop automations remain approval-gated by design, and risky actions must stop
+  for human review.
 
 ## Next
 

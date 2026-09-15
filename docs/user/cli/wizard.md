@@ -28,7 +28,9 @@ psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 've
 For local and hosted database setup examples, see [Getting Started: PostgreSQL Requirement](../getting-started.md#postgresql-requirement).
 
 The shared service API token is usually generated automatically into the adjacent `memory-layer.env` file. The wizard only needs an explicit token value if you want to override that generated token.
-If you leave `writer.id` unset, Memory Layer derives a stable writer identity automatically at runtime.
+If you leave `writer.id` unset, Memory Layer derives a stable advisory writer
+label automatically at runtime. In v2, the authenticated principal supplies
+durable authorship and permissions.
 
 `memory wizard` inside a repository is project-first and bootstraps user-local project config plus repo-local agent files such as:
 

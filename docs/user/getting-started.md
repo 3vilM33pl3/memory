@@ -292,7 +292,10 @@ psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 've
 memory wizard --global
 ```
 
-This is where you set the shared database URL. The shared service API token is provisioned automatically if it is missing or still using the development placeholder. A writer ID is optional; if you do not set one, Memory Layer derives a stable writer identity automatically.
+This is where you set the shared database URL. The shared service API token is
+provisioned automatically if it is missing or still using the development
+placeholder. A writer ID is optional advisory metadata; authenticated
+principals provide durable authorship in v2.
 
 5. Go to the project you want to use:
 
@@ -424,7 +427,7 @@ The wizard can set up:
 - shared/global settings when that scope is enabled:
   - the PostgreSQL database URL
   - the shared service API token override, if you want to replace the auto-generated one
-  - an optional shared `writer.id`
+  - an optional shared `writer.id` advisory label
 - optional LLM settings for `scan`
 - user-local project config plus the repo-local `.mem/project.toml` marker
 - optional watcher setup
@@ -516,7 +519,7 @@ Use this for project-specific overrides:
 - watcher settings
 - local backend ports
 - project-specific DB override if needed
-- repo-specific `writer.id` override if one project should write under a different custom writer identity
+- repo-specific `writer.id` override if one project needs a different activity label
 
 ### Project memory behavior
 
@@ -590,9 +593,11 @@ audit activity.
 
 ## Writer ID
 
-Each coding agent or tool that writes memory gets a writer ID.
+Memory Layer v2 derives durable authorship from the authenticated principal.
+The writer ID is an advisory runtime label for activity and diagnostics; it
+does not grant access and cannot replace principal identity.
 
-If you do nothing, Memory Layer derives one automatically from:
+If you do nothing, Memory Layer derives the label automatically from:
 
 - the writing tool
 - the local user
@@ -603,7 +608,7 @@ That gives stable defaults such as:
 - `memory-olivier-monolith`
 - `memory-watcher-olivier-monolith`
 
-For most setups, that automatic writer identity is enough.
+For most setups, that automatic label is enough.
 
 You can configure it in TOML:
 
@@ -619,7 +624,9 @@ or with an environment variable:
 export MEMORY_LAYER_WRITER_ID=codex-cli-main
 ```
 
-Use an explicit writer ID only when you want a custom stable label shared across tools or machines.
+Use an explicit writer ID only when you want a custom stable label shared
+across tools or machines. It changes display/runtime attribution, not the
+authenticated author.
 
 ## Primary And Relay Services
 

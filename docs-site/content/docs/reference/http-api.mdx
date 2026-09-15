@@ -1,6 +1,6 @@
 ---
 title: "HTTP API"
-description: "The Memory Layer REST API: authentication, the v1 stability contract, core endpoints, and the OpenAPI specification."
+description: "The Memory Layer v2 REST API: authentication, stability markers, core endpoints, and the OpenAPI specification."
 ---
 
 # HTTP API
@@ -32,12 +32,21 @@ the principal is valid but lacks the required role or project. Read
 [Authentication and access](/docs/reference/authentication) for configuration,
 roles, token lifecycle, and migration.
 
-## The v1 stability contract
+## API version and stability
+
+The `/v1` prefix is the HTTP API namespace; it is not the Memory Layer product
+release number. Memory Layer v2.0.0 retained that namespace but made documented
+breaking changes, including removing obsolete routes and consolidating loop and
+activity operations. Fetch the specification from the running service when
+upgrading a direct integration.
 
 Every operation in the spec carries an `x-stability` marker:
 
-- **`core`** — frozen. Existing fields never change meaning; additive fields may appear over time, and clients must ignore unknown fields. These are the endpoints to integrate against.
+- **`core`** — the supported integration boundary for the current v2 line. Additive fields may appear, and clients must ignore unknown fields.
 - **`internal`** — the service control plane (loops, watchers, agent workspaces, admin, embeddings management). Used by the bundled UIs; may change between minor versions.
+
+For v1-to-v2 route removals and migration steps, read the
+[Update guide](/docs/install/update).
 
 ## Core endpoints
 
@@ -45,7 +54,7 @@ Every operation in the spec carries an `x-stability` marker:
 |---|---|
 | `POST /v1/query` | Query one project's memory: hybrid retrieval plus a cited, synthesized answer — or an honest refusal (`insufficient_evidence`). |
 | `POST /v1/query/global` | The same across every project. |
-| `POST /v1/capture/task` | Capture completed work — the write entry point, optionally with pre-distilled `structured_candidates`. |
+| `POST /v1/capture/task` | Capture completed work — the HTTP write entry point, optionally with pre-distilled `structured_candidates`. The CLI spelling is `memory capture`. |
 | `POST /v1/curate` | Curate raw captures into canonical memories. |
 | `GET /v1/memory/{id}` | One memory with tags, sources, relations, and scores. |
 | `GET /v1/memory/{id}/history` | Full version history, including tombstones. |
@@ -57,6 +66,10 @@ Every operation in the spec carries an `x-stability` marker:
 | `POST /v1/provenance/verify` | Verify source provenance against the filesystem. |
 | `POST /v1/projects/{slug}/bundle/export` · `import` | Shareable, privacy-safe memory bundles (with `/preview` variants). |
 | `GET /healthz` | Health probe. |
+
+Capture requests still require `writer_id` as an advisory activity label, but
+v2 derives durable authorship and permissions from the authenticated principal.
+Changing the label does not impersonate another principal or grant access.
 
 ## A five-line integration
 

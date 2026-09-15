@@ -1,32 +1,128 @@
 ---
 title: "Update"
-description: "Update Memory Layer while preserving data and checking migrations."
+description: "Upgrade to Memory Layer v2.0.0 safely, including backups, breaking changes, migrations, and verification."
 ---
 
 # Update
 
-Update Memory Layer while preserving data and checking migrations.
+Memory Layer v2.0.0 is the current stable release. It is a breaking major
+upgrade from v1: PostgreSQL data migrates in place and old bundles still import,
+but direct API clients, configuration, and renamed CLI commands need review.
 
-## Practical guidance
+Read the [v2.0.0 release notes](https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0)
+before upgrading a production installation.
 
-- Prefer local repository facts and current CLI help over stale examples.
-- Keep secrets, database URLs, and provider keys out of committed docs.
-- Treat Memory Layer as evidence infrastructure: useful results should be inspectable and bounded.
-## Verify
+## 1. Back up and inspect
+
+Stop if either diagnostic already reports a database or authentication problem:
 
 ```bash
+memory --version
+memory status --project <project-slug>
+memory doctor
+memory health
+```
+
+Back up PostgreSQL before starting the v2 binary:
+
+```bash
+pg_dump "$DATABASE_URL" > memory-layer-before-v2.sql
+```
+
+If `DATABASE_URL` is stored only in `memory-layer.env`, load it through your
+normal secret-management workflow rather than copying it into shell history.
+For a portable memory-level backup, also export important projects:
+
+```bash
+memory bundle export --project <project-slug> --out <project-slug>-before-v2.mlbundle.zip
+```
+
+## 2. Review the v2 breaks
+
+- Delete `capnp_unix_socket` and `capnp_tcp_addr`; the TUI and clients now use
+  the `/ws` WebSocket stream.
+- Replace `memory automation flush` with `memory watcher flush`,
+  `memory capture task` with `memory capture`, and `memory dev init` with
+  `memory dev`. Use `memory wizard` instead of the removed `memory setup`.
+- Update direct HTTP integrations from the running service's
+  `GET /v1/openapi.yaml`. v2 removed `/v1/stats`, `/v1/offline/pending`, and the
+  browser auth-token handoff, and consolidated loop/activity routes.
+- Treat `[writer]`, `--writer-id`, and `MEMORY_LAYER_WRITER_ID` as advisory
+  labels. The authenticated principal supplies durable authorship.
+- Expect new bundle exports to use deterministic schema v2. Existing schema v1
+  bundles remain importable.
+
+## 3. Install v2.0.0
+
+Choose the command for the way you installed Memory Layer.
+
+### Debian or Ubuntu
+
+Download the matching v2.0.0 `.deb` and checksum from
+[GitHub Releases](https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0),
+verify the checksum, then install it:
+
+```bash
+sha256sum -c memory-layer_2.0.0_amd64.deb.sha256
+sudo dpkg -i memory-layer_2.0.0_amd64.deb
+```
+
+Use the `arm64` filenames on 64-bit ARM Linux.
+
+### Homebrew
+
+```bash
+brew update
+brew upgrade 3vilM33pl3/memory/memory-layer
+```
+
+### macOS package or Windows MSI
+
+Download the v2.0.0 installer and matching checksum from the release page, then
+run it over the existing installation. Windows remains a per-user install under
+`%LOCALAPPDATA%\Programs\Memory Layer`.
+
+### Source checkout
+
+Check out the signed `v2.0.0` tag, build with `--locked`, and follow the same
+service restart and verification steps as your original source installation.
+
+## 4. Restart and migrate
+
+```bash
+memory service restart-all
 memory doctor
 memory health
 memory status --project <project-slug>
 ```
 
-Use command-specific help for exact flags:
+The service applies append-only migrations 0027-0032 at startup. Do not run a
+v1 binary against the migrated database. To roll back, restore the database
+backup and the previous binary/config together.
+
+Refresh repo-local Memory Layer skills only after reviewing the preview:
 
 ```bash
-memory --help
-memory <command> --help
+cd /path/to/project
+memory upgrade --dry-run
+memory upgrade
 ```
+
+## 5. Verify integrations
+
+```bash
+memory --version
+memory query --project <project-slug> --question "What changed recently?"
+memory resume --project <project-slug>
+memory watcher status --project <project-slug>
+memory mcp doctor
+```
+
+Direct API clients should fetch `GET /v1/openapi.yaml` from the upgraded
+service. MCP and agent clients should reconnect after the service restart so
+they negotiate the current tool surface.
 
 ## Next
 
-Return to [Install](/docs/install) or continue with the related page in the left navigation.
+Read [Release compatibility and known limitations](/docs/help/known-limitations),
+[Operations](/docs/operations), or [Doctor and health](/docs/help/doctor-and-health).
