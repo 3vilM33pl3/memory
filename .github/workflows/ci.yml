@@ -117,6 +117,16 @@ jobs:
           components: clippy
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  windows-compile:
+    name: Windows Compile
+    runs-on: windows-2025
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.package == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --locked --features full --package mem-cli --bin memory
+
   db-integration:
     name: DB Integration
     runs-on: [self-hosted, memory, Linux, X64]
