@@ -52,6 +52,61 @@ for (const [siteRelative, canonicalRelative] of sharedGuidePairs) {
   }
 }
 
+const workspaceManifest = readFileSync(path.join(repositoryRoot, 'Cargo.toml'), 'utf8');
+const workspacePackage = workspaceManifest.match(
+  /^\[workspace\.package\][\s\S]*?^version\s*=\s*"([^"]+)"/m,
+);
+
+if (!workspacePackage) {
+  errors.push('Cargo.toml: could not resolve workspace.package version');
+} else {
+  const releaseVersion = workspacePackage[1];
+  const releaseLabel = `v${releaseVersion}`;
+  const docsPackage = JSON.parse(
+    readFileSync(path.join(docsSiteRoot, 'package.json'), 'utf8'),
+  );
+
+  if (docsPackage.version !== releaseVersion) {
+    errors.push(
+      `package.json: version ${docsPackage.version} does not match Cargo workspace ${releaseVersion}`,
+    );
+  }
+
+  const releaseReferences = [
+    ['README.md', `[${releaseLabel}]`],
+    ['CHANGELOG.md', `## ${releaseVersion} -`],
+    [
+      'docs/user/release-compatibility.md',
+      `Memory Layer ${releaseLabel} is the current stable release.`,
+    ],
+    ['docs-site/content/docs/index.mdx', `Memory Layer ${releaseLabel} is available.`],
+    [
+      'docs-site/content/docs/help/known-limitations.mdx',
+      `Memory Layer ${releaseLabel} is the current stable release.`,
+    ],
+    [
+      'docs-site/content/docs/install/update.mdx',
+      `Memory Layer ${releaseLabel} is the current stable release.`,
+    ],
+    ['docs-site/content/docs/install/index.mdx', `[${releaseLabel}]`],
+    ['docs-site/lib/layout.shared.tsx', `text: '${releaseLabel}'`],
+    ['docs-site/components/demo/demo-data.ts', `version: "${releaseVersion}"`],
+  ];
+
+  for (const [relativeFile, expectedText] of releaseReferences) {
+    const absoluteFile = path.join(repositoryRoot, relativeFile);
+    if (!existsSync(absoluteFile)) {
+      errors.push(`${relativeFile}: missing release-aware source`);
+      continue;
+    }
+    if (!readFileSync(absoluteFile, 'utf8').includes(expectedText)) {
+      errors.push(
+        `${relativeFile}: expected current release marker ${JSON.stringify(expectedText)}`,
+      );
+    }
+  }
+}
+
 if (errors.length > 0) {
   console.error(errors.join('\n'));
   process.exit(1);
