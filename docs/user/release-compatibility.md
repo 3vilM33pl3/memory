@@ -4,6 +4,28 @@ Memory Layer v1.0 is intended to be a stable local-first release. It preserves
 the documented install, service, query, TUI, web UI, watcher, skill, and MCP
 workflows while keeping newer automation surfaces conservative.
 
+## v2.0.1 schema compatibility repair
+
+Release `v2.0.1` restores migrations 33 through 52 to every release artifact.
+Some `v2.0.0` artifacts only embedded migrations through version 32, so they
+refused to start when pointed at a database that had already applied the newer
+migrations. The `v2.0.1` application code is otherwise the `v2.0.0` release.
+
+Upgrade the application package to `v2.0.1`; do not downgrade the database,
+delete rows from `_sqlx_migrations`, or edit an applied migration. Existing
+databases at migration 52 are accepted without changing their migration ledger,
+while databases below migration 52 are upgraded normally.
+
+After installing `v2.0.1`, restart the service and verify both the binary and
+database health:
+
+```bash
+memory --version
+memory service restart-all
+memory doctor
+memory health
+```
+
 ## Compatibility promise
 
 The v1 line aims to preserve:
