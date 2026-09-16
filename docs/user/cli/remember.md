@@ -40,20 +40,13 @@ That helper ultimately drives the same write path.
 
 ## Requirements
 
-`remember` always writes with a writer ID, but you usually do not need to configure one manually.
+In v2, durable authorship comes from the authenticated principal. The CLI also
+sends a writer ID as advisory runtime metadata, but it cannot substitute for
+the principal or grant access.
 
-By default, Memory Layer derives a stable writer identity from:
-
-- the writing tool
-- the local user
-- the local host name
-
-Examples:
-
-- `memory-olivier-monolith`
-- `memory-watcher-olivier-monolith`
-
-Set an explicit writer only when you want a custom shared label across tools or machines.
+By default, Memory Layer derives that advisory label from the writing tool,
+local user, and host name. Set an explicit writer only when a custom label
+makes activity and diagnostics easier to distinguish across tools or machines.
 
 You can configure one with:
 
@@ -68,7 +61,8 @@ or:
 export MEMORY_LAYER_WRITER_ID=codex-cli-main
 ```
 
-CLI and environment overrides still take precedence over config and the derived fallback.
+CLI and environment overrides take precedence over config and the derived
+fallback. They change the label, not the authenticated author.
 
 ## Basic Examples
 

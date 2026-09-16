@@ -21,19 +21,23 @@ Memory Layer service tokens for CLI, TUI, watchers, relays, and HTTP MCP.
 Authentik authenticates people. OpenBao is recommended for distributing machine
 secrets, but Memory Layer does not call OpenBao at runtime.
 
-## Roles
+## Permission sets and role presets
 
-Roles are cumulative: `reader < writer < operator < admin`.
+Authorization in v2 checks explicit permissions. Role names remain convenient
+presets, and applicable grants are combined; the service does not authorize by
+comparing an ordinal `reader < writer < operator < admin` ladder.
 
 | Role | Typical capability |
 |---|---|
-| `reader` | Query, inspect memories, resources, status, and project data. |
-| `writer` | Reader access plus capture and workspace activity. |
-| `operator` | Writer access plus curation, validation, and loop operations. |
-| `admin` | Access administration and installation-wide controls. |
+| `reader` | `memory_read`, `bundle_export` |
+| `writer` | Reader preset plus `activity_capture` |
+| `operator` | Writer preset plus `memory_curate`, `loops_run`, `bundle_import` |
+| `admin` | Every permission, including delete, loop configuration, embeddings management, access management, and system administration |
 
-A global role applies to every project. Explicit memberships and Authentik
-group mappings apply to named projects.
+A global preset applies to every project. Explicit memberships and Authentik
+group mappings apply to named projects. `/v1/auth/me` exposes the expanded
+permission names so clients do not need to infer capabilities from the role
+label.
 
 ## Authentik setup
 

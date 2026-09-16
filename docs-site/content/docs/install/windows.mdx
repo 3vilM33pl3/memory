@@ -7,14 +7,16 @@ description: "Install Memory Layer on Windows with the native x86_64 MSI/ZIP, Do
 
 Memory Layer publishes native Windows x86_64 release artifacts:
 
-- `memory-layer-<version>-windows-x86_64.msi`
-- `memory-layer-<version>-windows-x86_64.zip`
+- `memory-layer-2.0.0-windows-x86_64.msi`
+- `memory-layer-2.0.0-windows-x86_64.zip`
 
 Windows ARM64 is not a release target yet.
 
 ## Native MSI
 
-Download the MSI from GitHub Releases and run it. The per-user installer places
+Download the MSI and matching checksum from the
+[v2.0.0 release](https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0),
+verify it, and run the installer. The per-user installer places
 `memory.exe`, the bundled web UI, skill templates, README, example config, and
 PowerShell completion under `%LOCALAPPDATA%\Programs\Memory Layer`, then adds
 its `bin` directory to the user `PATH`.

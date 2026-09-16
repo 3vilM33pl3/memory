@@ -13,6 +13,11 @@ curl -fsSL https://raw.githubusercontent.com/3vilM33pl3/memory/main/scripts/inst
 
 The installer detects your platform, checks whether PostgreSQL is reachable, and points you at the bundled Docker stack when none is found.
 
+The current stable release is
+[v2.0.0](https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0). If you are
+upgrading from v1, stop here and use the [Update guide](/docs/install/update)
+before restarting the service.
+
 ## Choose a platform
 
 <CardGroup cols={3}>
@@ -37,7 +42,7 @@ You need a PostgreSQL database with the pgvector extension enabled. See [Postgre
 |---|---|---|
 | PostgreSQL | Durable storage for projects, captures, memories, activity, and history. | `psql "$DATABASE_URL" -c "SELECT 1;"` |
 | pgvector | Vector storage for semantic retrieval. | `psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"` |
-| `memory` binary | CLI, TUI launcher, service management, MCP, evals. | `memory --version` |
+| `memory` binary | CLI, TUI launcher, service management, MCP, evals. | `memory --version` (current release: `2.0.0`) |
 | Optional LLM provider | Better curation, summaries, and answer synthesis. | `memory doctor` |
 | Optional embedding provider | Semantic search and graph-enhanced retrieval quality. | `memory embeddings list` |
 

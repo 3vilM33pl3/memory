@@ -50,7 +50,7 @@ export interface DemoGraphLink {
 export const demoSnapshot = {
   project: "memory",
   repoRoot: "/workspace/memory",
-  version: "0.9.5",
+  version: "2.0.0",
   capturedAt: "2026-06-27T18:00:00Z",
   overview: {
     activeMemories: 184,

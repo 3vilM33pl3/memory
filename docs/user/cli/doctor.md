@@ -16,7 +16,7 @@ Use `doctor` when Memory Layer is installed but something is not working the way
 
 - missing or placeholder database URL
 - missing or placeholder service API token
-- unexpected auto-derived or overridden writer identity
+- unexpected auto-derived or overridden advisory writer label
 - backend connectivity issues
 - Ollama reachability and missing local LLM models when `[llm].provider = "ollama"`
 - missing `pgvector`
@@ -47,8 +47,10 @@ It is especially useful after:
 
 Typical remediation paths are:
 
-- unexpected writer identity
-  - set `[writer].id` or `MEMORY_LAYER_WRITER_ID` if you want a custom stable label instead of the auto-derived default
+- unexpected writer label
+  - set `[writer].id` or `MEMORY_LAYER_WRITER_ID` if you want a custom stable
+    activity label instead of the auto-derived default; authentication still
+    determines durable authorship
 - missing `pgvector`
   - install pgvector on the PostgreSQL server, then enable `vector` in the specific Memory Layer database with `CREATE EXTENSION IF NOT EXISTS vector;`
   - verify the same database URL Memory Layer uses with `psql "$DATABASE_URL" -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"`

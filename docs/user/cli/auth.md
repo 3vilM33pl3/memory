@@ -13,10 +13,12 @@ TUI, watcher, relay, and MCP clients use a Memory Layer service token.
   rejected unless `auth.multi_user_legacy_token_enabled = true` is set for a
   temporary bootstrap or migration window.
 
-Roles are cumulative: `reader` can inspect/query, `writer` can capture,
-`operator` can curate and operate loops, and `admin` can manage access and
-installation-wide controls. A global role applies to every project. A project
-membership applies only to its project.
+Role names are presets for explicit permission sets: `reader` can
+inspect/query, `writer` adds capture, `operator` adds curation and loop runs,
+and `admin` receives every permission. Authorization checks the resulting
+permissions rather than comparing roles as an ordinal ladder. A global preset
+applies to every project; a project membership applies only to its project,
+and permissions from applicable grants are combined.
 
 ## Client Credential
 
@@ -38,9 +40,10 @@ memory auth whoami
 memory auth whoami --json
 ```
 
-The output includes principal ID, kind, global role, and effective project
-access. A `401` means the credential is missing, expired, revoked, or invalid. A
-`403` means the credential is valid but lacks the required role or project.
+The output includes principal ID, kind, role presets, expanded permissions,
+and effective project access. A `401` means the credential is missing,
+expired, revoked, or invalid. A `403` means the credential is valid but lacks
+the required permission or project membership.
 
 ## Service Tokens
 

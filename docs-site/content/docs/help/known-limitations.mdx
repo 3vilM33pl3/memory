@@ -1,23 +1,28 @@
 ---
 title: "Known limitations"
-description: "What is stable in v1.0 and what remains advanced or release-candidate gated."
+description: "The Memory Layer v2 compatibility boundary, advanced surfaces, and upgrade cautions."
 ---
 
 # Known limitations
 
-Memory Layer v1.0 is a stability release for the local-first service, CLI, TUI,
-web UI, watcher, skills, and read-only MCP workflows. Some newer surfaces remain
-advanced and should be used with that context.
+Memory Layer v2.0.0 is the current stable release. It is a breaking major
+release: databases migrate in place and bundle v1 imports remain supported,
+but v1 clients, direct API integrations, and configuration need review before
+an upgrade.
 
-## Stable compatibility targets
+Read the [v2.0.0 release notes](https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0)
+and [Update guide](/docs/install/update) before changing a production install.
 
-| Surface | v1 expectation |
+## v2 compatibility targets
+
+| Surface | v2 expectation |
 |---|---|
-| CLI | Documented core commands and `--json` shapes remain stable. |
-| Config | Global config, project config, and repo-local skills keep their documented locations. |
+| CLI | Current documented core commands and `--json` shapes are the public surface. Removed v1 spellings are migration notes only. |
+| HTTP API | Operations marked `x-stability: core` in the running OpenAPI document are the integration boundary. Control-plane operations marked `internal` can evolve. |
 | Database | Migrations are append-only; applied migrations are not edited. |
-| MCP | Read-only query, global search, resume, resource, and prompt tools remain protocol adapters over the service API. |
-| Service | Debian, Homebrew, and source/dev profiles keep distinct runtime behavior. |
+| Bundles | New exports use deterministic schema v2; schema v1 imports remain supported. |
+| MCP | Read-only query, global search, resume, resource, and prompt tools remain adapters over the service API. |
+| Packages | Debian amd64/arm64, Homebrew, macOS Intel/Apple Silicon, and Windows x86_64 are release targets. |
 
 ## Advanced surfaces
 
@@ -28,15 +33,18 @@ advanced and should be used with that context.
 | Eval research workflows | Release claims still require reviewed held-out suites and a passing gate. |
 | Demo web UI | Uses browser-local sample data and is not a live backend. |
 
-## Release-candidate blockers
+## Breaking changes from v1
 
-- Final v1.0 should only be tagged after packaged install and upgrade testing
-  passes for the release candidate.
-
-Two previously listed blockers are fixed: plan flows now curate only their own
-capture (bounded, no whole-project timeout) and degrade to a warning when the
-plan is already durable, and `finish-execution` resolves the plan thread
-recorded at `start-execution` so `--thread-key` is only needed to override.
+- Cap'n Proto endpoints and config keys are gone; live clients use `/ws`.
+- `memory automation flush` became `memory watcher flush`, `memory capture task`
+  became `memory capture`, and `memory dev init` became `memory dev`.
+  `memory setup` was removed in favour of `memory wizard`.
+- `/v1/stats`, `/v1/offline/pending`, and the browser auth-token handoff were
+  removed; several loop and activity routes were consolidated.
+- Authenticated principals now determine durable authorship. `--writer-id` and
+  `[writer]` remain advisory labels.
+- Authorization uses explicit permission sets. Role names remain convenient
+  presets, not an ordinal authorization ladder.
 
 ## Upgrade checklist
 
@@ -57,5 +65,9 @@ memory health
 memory status --project <project-slug>
 memory upgrade --dry-run
 ```
+
+The service applies migrations 0027-0032 at startup. Do not run an older binary
+against a migrated database; restore the pre-upgrade backup if you need to roll
+back. Review `memory upgrade --dry-run` before refreshing repo-local skills.
 
 Read [Operations](/docs/operations), [Doctor and health](/docs/help/doctor-and-health), or [Update](/docs/install/update).

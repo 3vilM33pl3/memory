@@ -36,6 +36,10 @@ def npc_remember(npc: str, text: str, importance: int = 3):
 npc_remember("mara", "The player returned Mara's stolen ledger instead of selling it.", importance=4)
 ```
 
+The `writer_id` field labels activity from the game server. Authentication
+determines the durable principal and permissions; changing this label does not
+impersonate another caller.
+
 ## Ask what an NPC remembers
 
 ```python

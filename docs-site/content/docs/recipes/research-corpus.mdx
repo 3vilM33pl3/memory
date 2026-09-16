@@ -33,7 +33,7 @@ For higher-precision recall, post distilled claims per paper through the [HTTP A
 
 ```bash
 curl -s http://127.0.0.1:4040/v1/capture/task \
-  -H "Authorization: Bearer $MEMORY_API_TOKEN" -H "Content-Type: application/json" -d '{
+  -H "Authorization: Bearer $MEMORY_LAYER_CLIENT_TOKEN" -H "Content-Type: application/json" -d '{
   "project": "lit-review", "task_title": "Cepeda 2006 notes",
   "user_prompt": "Distill Cepeda et al. 2006", "writer_id": "reading-notes",
   "agent_summary": "Distilled distributed-practice meta-analysis.",
@@ -45,9 +45,12 @@ curl -s http://127.0.0.1:4040/v1/capture/task \
     "sources": [{"source_kind": "note", "excerpt": "Cepeda, Pashler, Vul, Wixted & Rohrer (2006)"}]
   }]}'
 curl -s http://127.0.0.1:4040/v1/curate \
-  -H "Authorization: Bearer $MEMORY_API_TOKEN" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MEMORY_LAYER_CLIENT_TOKEN" -H "Content-Type: application/json" \
   -d '{"project": "lit-review"}'
 ```
+
+`writer_id` is a required advisory label for capture activity. The authenticated
+principal remains the authoritative author in v2.
 
 ## Share it
 

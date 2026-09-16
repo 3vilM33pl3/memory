@@ -59,9 +59,9 @@ const socialLinks = [
     icon: <GitHubIcon />,
   },
   {
-    label: 'GitHub releases',
-    text: 'Releases',
-    href: 'https://github.com/3vilM33pl3/memory/releases',
+    label: 'Memory Layer v2.0.0 release',
+    text: 'v2.0.0',
+    href: 'https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0',
     icon: <ReleaseIcon />,
   },
   {

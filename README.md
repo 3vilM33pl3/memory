@@ -1,5 +1,9 @@
 # Memory Layer
 
+[![CI](https://github.com/3vilM33pl3/memory/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/3vilM33pl3/memory/actions/workflows/ci.yml?query=branch%3Amain) [![Nightly](https://github.com/3vilM33pl3/memory/actions/workflows/nightly.yml/badge.svg?branch=main&event=schedule)](https://github.com/3vilM33pl3/memory/actions/workflows/nightly.yml?query=branch%3Amain) [![Latest release](https://img.shields.io/github/v/release/3vilM33pl3/memory?display_name=tag&sort=semver&style=flat)](https://github.com/3vilM33pl3/memory/releases/latest) [![Release date](https://img.shields.io/github/release-date/3vilM33pl3/memory?label=release%20date&style=flat)](https://github.com/3vilM33pl3/memory/releases/latest) [![Downloads](https://img.shields.io/github/downloads/3vilM33pl3/memory/total?label=downloads&style=flat)](https://github.com/3vilM33pl3/memory/releases) [![Docs](https://img.shields.io/website?url=https%3A%2F%2Fwww.memory-layer.dev%2Fdocs&label=docs&style=flat)](https://www.memory-layer.dev/docs)
+
+[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later%20%2F%20commercial-2563eb?style=flat)](#license) [![Rust 2024](https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white&style=flat)](Cargo.toml) [![Linux](https://img.shields.io/badge/platform-Linux-333333?logo=linux&logoColor=white&style=flat)](https://github.com/3vilM33pl3/memory/releases/latest) [![macOS](https://img.shields.io/badge/platform-macOS-333333?logo=apple&logoColor=white&style=flat)](https://github.com/3vilM33pl3/memory/releases/latest) [![Windows](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white&style=flat)](https://github.com/3vilM33pl3/memory/releases/latest) [![Stars](https://img.shields.io/github/stars/3vilM33pl3/memory?label=stars&style=flat)](https://github.com/3vilM33pl3/memory) [![Forks](https://img.shields.io/github/forks/3vilM33pl3/memory?label=forks&style=flat)](https://github.com/3vilM33pl3/memory/forks) [![Open issues](https://img.shields.io/github/issues/3vilM33pl3/memory?label=open%20issues&style=flat)](https://github.com/3vilM33pl3/memory/issues) [![Open PRs](https://img.shields.io/github/issues-pr/3vilM33pl3/memory?label=open%20PRs&style=flat)](https://github.com/3vilM33pl3/memory/pulls) [![Last commit](https://img.shields.io/github/last-commit/3vilM33pl3/memory/main?label=last%20commit&style=flat)](https://github.com/3vilM33pl3/memory/commits/main) [![Citation](https://img.shields.io/badge/citation-CITATION.cff-2563eb?style=flat)](CITATION.cff)
+
 Memory Layer is a local-first memory system for coding agents and developers.
 It turns project work into durable, searchable knowledge, so the next Codex,
 Claude, or human session can start with evidence instead of guesswork.
@@ -7,7 +11,7 @@ Claude, or human session can start with evidence instead of guesswork.
 It captures what happened, curates what matters, stores it in PostgreSQL with
 pgvector, and exposes it through a TUI, browser UI, and agent-friendly CLI.
 
-[Website](https://www.memory-layer.dev) · [Documentation](https://www.memory-layer.dev/docs)
+[Website](https://www.memory-layer.dev) · [Documentation](https://www.memory-layer.dev/docs) · [v2.0.0](https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0)
 
 ![Memory Layer memories tab](docs/img/tui/memories-tab.png)
 
@@ -39,8 +43,11 @@ demo path.
 ### Use it in a project
 
 For a native installation, prerequisites, and verification, start with the
-[Install guide](https://www.memory-layer.dev/docs/install) or download a
-package from [GitHub Releases](https://github.com/3vilM33pl3/memory/releases).
+[Install guide](https://www.memory-layer.dev/docs/install) or download the
+[v2.0.0 release](https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0).
+Version 2 is a breaking upgrade from v1; existing users should follow the
+[Update guide](https://www.memory-layer.dev/docs/install/update) before
+restarting the service.
 The setup wizard configures the machine once and the project you are working
 in:
 

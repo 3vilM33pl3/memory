@@ -16,8 +16,8 @@ Install PostgreSQL and pgvector first, or use a reachable PostgreSQL server with
 
 Release packages are published for:
 
-- x86_64 Debian/Ubuntu: `memory-layer_<version>_amd64.deb`
-- arm64 Debian/Ubuntu: `memory-layer_<version>_arm64.deb`
+- x86_64 Debian/Ubuntu: `memory-layer_2.0.0_amd64.deb`
+- arm64 Debian/Ubuntu: `memory-layer_2.0.0_arm64.deb`
 
 The arm64 package is the Raspberry Pi 4/5 path when the Pi runs a 64-bit
 Debian-family OS. 32-bit Raspberry Pi OS is not a release target yet.
@@ -26,10 +26,10 @@ Debian-family OS. 32-bit Raspberry Pi OS is not a release target yet.
 
 ```bash
 # x86_64
-sudo dpkg -i memory-layer_<version>_amd64.deb
+sudo dpkg -i memory-layer_2.0.0_amd64.deb
 
 # arm64 / Raspberry Pi 4/5 with a 64-bit OS
-sudo dpkg -i memory-layer_<version>_arm64.deb
+sudo dpkg -i memory-layer_2.0.0_arm64.deb
 
 memory wizard --global
 cd /path/to/project
@@ -41,7 +41,10 @@ memory health
 memory tui
 ```
 
-Use the release assets from GitHub for the package. If `dpkg` reports missing dependencies, install those packages with your normal package manager and rerun the package install.
+Use the [v2.0.0 GitHub release assets](https://github.com/3vilM33pl3/memory/releases/tag/v2.0.0)
+and verify the matching `.sha256` file before installation. If `dpkg` reports
+missing dependencies, install those packages with your normal package manager
+and rerun the package install.
 
 ## Verify
 

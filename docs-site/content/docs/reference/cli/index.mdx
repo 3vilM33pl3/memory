@@ -20,8 +20,8 @@ memory <command> <subcommand> --help
 | Option | Env var | Purpose |
 |---|---|---|
 | `--config <path>` | `MEMORY_LAYER_CONFIG` | Use a specific global config file. |
-| `--writer-id <id>` | `MEMORY_LAYER_WRITER_ID` | Override the writer identity for captures and activity. |
-| `--agent-id <id>` | `MEMORY_LAYER_WRITER_ID` | Alias for `--writer-id`. |
+| `--writer-id <id>` | `MEMORY_LAYER_WRITER_ID` | Override the advisory writer label for captures and activity; authenticated principal identity is authoritative. |
+| `--agent-id <id>` | `MEMORY_LAYER_WRITER_ID` | Alias for `--writer-id`; it changes the label, not authorization. |
 
 Many commands also support `--project <slug>`, `--json`, or `--dry-run`. Prefer `--json` for agent automation and `--dry-run` before commands that write config, memory, history, embeddings, or repo metadata.
 

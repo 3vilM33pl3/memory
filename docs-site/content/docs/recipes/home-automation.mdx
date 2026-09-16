@@ -32,6 +32,9 @@ rest_command:
          "sources": [{"source_kind": "note", "excerpt": "{{ trigger_desc }}"}]}]}
 ```
 
+`writer_id` is an advisory activity label. In v2, the service records the
+authenticated principal as the authoritative author.
+
 Call it from an automation's action with the decision and its trigger:
 
 ```yaml

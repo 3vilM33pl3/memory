@@ -14,7 +14,7 @@ Project config is still needed, but most operational project settings are no lon
 | `.mem/project.toml` | Repo-local project marker, usually just the slug. | Usually yes |
 | `.agents/memory-layer.toml` | Agent-facing behavior: capture include/ignore paths, analyzers, retrieval, replacement policy. | Usually yes |
 | `.agents/skills/` | Repo-local Memory Layer skill bundle copied by `wizard`, `init`, or `upgrade`. | Usually yes |
-| User-local `projects/<project-key>/config.toml` | Per-project runtime overrides and optional service/db/writer settings. | No |
+| User-local `projects/<project-key>/config.toml` | Per-project runtime overrides and optional service/database/advisory writer settings. | No |
 | User-local `projects/<project-key>/memory-layer.env` | Per-project secrets or provider env values. | No |
 | User-local state/cache dirs | Runtime state, indexes, automation state, logs. | No |
 
@@ -68,7 +68,15 @@ cargo run --bin memory -- dev --copy-from-global
 cargo run --bin memory -- service run
 ```
 
-Default dev endpoints are `127.0.0.1:4250` for HTTP and `127.0.0.1:4251` for Cap'n Proto TCP.
+The default dev endpoint is `127.0.0.1:4250` for HTTP; live updates use `/ws`
+on the same listener. The old `capnp_tcp_addr` and `capnp_unix_socket` settings
+were removed in v2.
+
+The adjacent project env file overrides shared env values. Define
+`MEMORY_LAYER__SERVICE__API_TOKEN` there only when the project deliberately
+uses a separate service; otherwise omit it so production commands keep the
+shared service credential. If you do run a separate dev backend, make sure its
+token and the dev client's token match.
 
 ## Commands
 

@@ -89,4 +89,6 @@ memory dev --dry-run
 MEMORY_LAYER_PROFILE=dev cargo run --bin memory -- doctor
 ```
 
-The dev profile keeps source-tree experimentation separate from the packaged service. Cargo-run dev defaults use `127.0.0.1:4250` for HTTP and `127.0.0.1:4251` for Cap'n Proto TCP.
+The dev profile keeps source-tree experimentation separate from the packaged
+service. Cargo-run dev defaults use `127.0.0.1:4250` for HTTP and the `/ws`
+WebSocket stream. The Cap'n Proto endpoints used before v2 no longer exist.

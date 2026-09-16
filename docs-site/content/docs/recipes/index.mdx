@@ -31,4 +31,7 @@ Memory Layer is built for coding agents, but the engine underneath — capture, 
 Two building blocks appear in every recipe:
 
 - **[`memory ingest`](/docs/reference/cli)** — turn a directory of documents into memories, no git required.
-- **The [HTTP API](/docs/reference/http-api)** — the frozen v1 surface (`/v1/capture/task`, `/v1/query`, …) for anything that isn't a directory of files.
+- **The [HTTP API](/docs/reference/http-api)** — the current v2 contract under
+  the `/v1` route namespace (`/v1/capture/task`, `/v1/query`, …) for anything
+  that is not a directory of files. Fetch `/v1/openapi.yaml` from the running
+  service before upgrading a direct integration.

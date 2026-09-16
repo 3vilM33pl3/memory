@@ -24,12 +24,12 @@ The env file is loaded next to the config file and is the right place for genera
 
 | Section | Purpose |
 | --- | --- |
-| `[service]` | HTTP bind address, Cap'n Proto endpoints, API token, request timeout, optional web root, and `read_only` (student mode: every mutating endpoint returns 403 while queries, briefings, and exports keep working — see the [classroom pack](/docs/classroom)). |
+| `[service]` | HTTP bind address, API token, request timeout, optional web root, and `read_only` (student mode: every mutating endpoint returns 403 while queries, briefings, and exports keep working — see the [classroom pack](/docs/classroom)). Live updates share the HTTP listener at `/ws`; v2 has no Cap'n Proto endpoint settings. |
 | `[auth]`, `[auth.oidc]`, `[[auth.group_mappings.rules]]` | Single-user compatibility or Authentik multi-user mode, browser session lifetime, OIDC client, and global/project group roles. |
 | `[mcp]` | Built-in MCP enablement, HTTP path, token requirement, read-only mode. |
 | `[database]` | PostgreSQL URL. The database must already exist and have `vector` enabled. |
 | `[cluster]` | Local-network primary/relay discovery and service identity. |
-| `[writer]` | Optional shared writer identity; most installs can use the derived default. |
+| `[writer]` | Optional advisory writer label for activity and diagnostics. The authenticated principal supplies durable authorship. |
 | `[llm]` and `[features]` | LLM provider settings and curation feature toggle. |
 | `[llm_audit]` | Optional redacted debug trail for service-side LLM calls. |
 | `[embeddings]` / `[[embeddings.backends]]` | Semantic retrieval providers and active embedding backend. |
@@ -155,7 +155,18 @@ utility_floor = 0.0
 
 ## Precedence and diagnostics
 
-For prod/profile-installed commands, config is loaded from the explicit `--config` path if supplied, otherwise from the discovered global config and the current repo's user-local project config when available. Environment variables with the `MEMORY_LAYER__...` shape override TOML values.
+For prod/profile-installed commands, config is loaded from the explicit
+`--config` path if supplied, otherwise from the discovered global config and
+the current repo's user-local project config when available. Environment files
+beside later project config can override shared values, and process variables
+with the `MEMORY_LAYER__...` shape override TOML and env-file values.
+
+Keep `MEMORY_LAYER__SERVICE__API_TOKEN` in the shared env file unless a project
+really targets a separate service. If a project env file defines that key, its
+token must authenticate the project-selected endpoint. `401` from repo-local
+commands while `memory health` succeeds is a strong sign that endpoint and
+token overrides do not belong to the same profile; compare the resolved paths
+in `memory doctor --json` or pin the intended config with `--config`.
 
 Useful checks:
 

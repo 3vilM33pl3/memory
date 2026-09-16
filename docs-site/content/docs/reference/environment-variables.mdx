@@ -13,7 +13,7 @@ Memory Layer reads values from the process environment, from `memory-layer.env` 
 | --- | ---: | --- |
 | `MEMORY_LAYER_CONFIG` | Optional | Same as `--config <path>` for commands that load app config. |
 | `MEMORY_LAYER_PROFILE` | Optional | Force `dev` or `prod`; normally inferred from binary path. |
-| `MEMORY_LAYER_WRITER_ID` | Optional | Same as `--writer-id` / `--agent-id` for write-capable commands. |
+| `MEMORY_LAYER_WRITER_ID` | Optional | Same as `--writer-id` / `--agent-id`: an advisory activity label. The authenticated principal remains authoritative. |
 | `MEMORY_LAYER__SERVICE__API_TOKEN` | Usually generated | Service API token when supplied through env instead of TOML. |
 | `MEMORY_LAYER_CLIENT_TOKEN` | Multi-user non-browser clients | Scoped `mlt_...` token used by CLI, TUI, watcher, and stdio MCP; takes precedence over the legacy service token. |
 | `MEMORY_LAYER_OIDC_CLIENT_SECRET` | Multi-user browser login | Default environment variable containing the Authentik confidential-client secret. The name is configurable with `auth.oidc.client_secret_env`. |
